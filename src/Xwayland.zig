@@ -9,6 +9,7 @@ const wlr = @import("wlroots");
 const Server = @import("Server.zig");
 const XwaylandOutputManager = @import("xwayland_output.zig").XwaylandOutputManager;
 const gpa = @import("main.zig").gpa;
+const xscale = @import("xwayland_scale.zig");
 
 const Xwayland = @This();
 const log = std.log.scoped(.xwayland);
@@ -20,6 +21,9 @@ scale: f64 = 1,
 native_scaling: bool = false,
 scale_locked: bool = false,
 ready: bool = false,
+root_x: i32 = 0,
+root_y: i32 = 0,
+root_zoom: f64 = 1,
 stop_source: ?*wl.EventSource = null,
 
 on_ready: wl.Listener(void) = .init(handleReady),
@@ -54,13 +58,10 @@ pub fn create(server: *Server) ?*Xwayland {
         return null;
     };
     const scale = server.computeXwaylandScale();
-    var output_manager: ?*XwaylandOutputManager = null;
-    if (native_scaling) {
-        output_manager = XwaylandOutputManager.create(server) catch |err| blk: {
-            log.err("failed to create xwayland xdg-output manager: {}", .{err});
-            break :blk null;
-        };
-    }
+    const output_manager = XwaylandOutputManager.create(server) catch |err| blk: {
+        log.err("failed to create xwayland xdg-output manager: {}", .{err});
+        break :blk null;
+    };
     xwayland.* = .{
         .server = server,
         .wlr_xwayland = wlr_xwayland,
@@ -95,6 +96,41 @@ pub fn destroy(xwayland: *Xwayland) void {
 
 pub fn displayName(xwayland: *const Xwayland) []const u8 {
     return std.mem.span(xwayland.wlr_xwayland.display_name);
+}
+
+/// X11 pointer events are clipped to its nonnegative root rectangle. Keep
+/// that rectangle over the camera's viewport, while scene geometry stays in
+/// world coordinates. Surface sizes and surface-local input stay unscaled.
+pub fn syncGeometry(self: *Xwayland) void {
+    const world = &self.server.world;
+    const x: i32 = @intFromFloat(@round((world.bounds.origin_x + world.camera.offset_x) * self.scale));
+    const y: i32 = @intFromFloat(@round((world.bounds.origin_y + world.camera.offset_y) * self.scale));
+    const zoom = world.camera.zoom();
+    if (x == self.root_x and y == self.root_y and zoom == self.root_zoom) return;
+    const dx = self.root_x - x;
+    const dy = self.root_y - y;
+    self.root_x = x;
+    self.root_y = y;
+    self.root_zoom = zoom;
+    if (self.output_manager) |mgr| mgr.refreshAll();
+    var it = world.toplevels.iterator(.forward);
+    while (it.next()) |toplevel| {
+        if (toplevel.backend != .xwayland or toplevel.backend_gone) continue;
+        const adapter = &toplevel.backend.xwayland;
+        const surface = adapter.xsurface;
+        const px = xscale.surfacePosition(toplevel.x + toplevel.borderWidth(), self.scale) - x;
+        const py = xscale.surfacePosition(toplevel.y + toplevel.titlebarHeight(), self.scale) - y;
+        if (px != surface.x or py != surface.y) {
+            surface.configure(@import("xwayland_surface.zig").clampPos(px), @import("xwayland_surface.zig").clampPos(py), surface.width, surface.height);
+        }
+    }
+    if (dx != 0 or dy != 0) {
+        var nodes = world.tree.children.iterator(.forward);
+        while (nodes.next()) |node| {
+            const data = @import("scene_data.zig").SceneData.fromNode(node) orelse continue;
+            if (data.role == .xwayland_unmanaged) data.role.xwayland_unmanaged.rebase(dx, dy);
+        }
+    }
 }
 
 /// Stop the compositor-owned wrapper through wlroots' supported teardown
@@ -308,7 +344,7 @@ pub fn globalVisible(xwayland: *const Xwayland, client: *const wl.Client, global
     if (global == xwayland.wlr_xwayland.shell_v1.global) {
         return is_xwayland;
     }
-    if (xwayland.native_scaling) {
+    if (xwayland.output_manager != null) {
         if (xwayland.server.xdg_output_manager) |mgr| {
             if (global == mgr.global) {
                 if (is_xwayland) return false;

@@ -217,6 +217,33 @@ fn openDirectory(root: c_int, path: []const u8) !c_int {
     return fd;
 }
 
+const Links = std.StringHashMapUnmanaged([]const u8);
+
+/// Resolve archive links component by component, including links before '..'.
+/// Lexical normalization alone can miss escapes through another symlink.
+fn resolveLink(mem: Allocator, links: *const Links, path: []const u8, resolved: *std.ArrayList(u8), followed: *usize) anyerror!void {
+    if (path.len == 0 or path.len > 4095 or path[0] == '/' or std.mem.indexOfAny(u8, path, "\\\x00:") != null) return error.UnsafeArchivePath;
+    var parts = std.mem.splitScalar(u8, path, '/');
+    while (parts.next()) |part| {
+        if (part.len == 0 or std.mem.eql(u8, part, ".")) continue;
+        if (std.mem.eql(u8, part, "..")) {
+            if (resolved.items.len == 0) return error.UnsafeArchivePath;
+            resolved.shrinkRetainingCapacity(std.mem.lastIndexOfScalar(u8, resolved.items, '/') orelse 0);
+            continue;
+        }
+        const parent_len = resolved.items.len;
+        if (parent_len > 0) try resolved.append(mem, '/');
+        try resolved.appendSlice(mem, part);
+        if (resolved.items.len > 4095) return error.UnsafeArchivePath;
+        if (links.get(resolved.items)) |target| {
+            followed.* += 1;
+            if (followed.* > 40) return error.UnsafeArchivePath;
+            resolved.shrinkRetainingCapacity(parent_len);
+            try resolveLink(mem, links, target, resolved, followed);
+        }
+    }
+}
+
 /// Destination must be a private, newly created staging directory. Publication
 /// into the user's folder is handled by JobRunner's no-overwrite transfer path.
 pub fn extract(mem: Allocator, path: []const u8, destination: []const u8, member: ?[]const u8, cancel: *const Cancel) !void {
@@ -227,6 +254,11 @@ pub fn extract(mem: Allocator, path: []const u8, destination: []const u8, member
     const root = c.open(zdest, c.O_RDONLY | c.O_DIRECTORY | c.O_NOFOLLOW | c.O_CLOEXEC);
     if (root < 0) return error.WriteFailed;
     defer _ = c.close(root);
+    var arena = std.heap.ArenaAllocator.init(mem);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    var links: Links = .empty;
+    var link_bytes: usize = 0;
     var found = false;
     while (try reader.next(cancel)) |entry| {
         const raw = a.archive_entry_pathname(entry) orelse return error.InvalidArchive;
@@ -238,6 +270,15 @@ pub fn extract(mem: Allocator, path: []const u8, destination: []const u8, member
         }
         if (member) |wanted| if (!std.mem.eql(u8, name, wanted)) continue;
         const kind = a.archive_entry_filetype(entry);
+        if (kind == c.S_IFLNK and a.archive_entry_hardlink(entry) == null and member == null) {
+            const target = std.mem.span(a.archive_entry_symlink(entry) orelse return error.InvalidArchive);
+            link_bytes += name.len + target.len;
+            if (links.count() >= 250_000 or link_bytes > 32 * 1024 * 1024) return error.ArchiveTooLarge;
+            const slot = try links.getOrPut(alloc, try alloc.dupe(u8, name));
+            if (slot.found_existing) return error.InvalidArchive;
+            slot.value_ptr.* = try alloc.dupe(u8, target);
+            continue;
+        }
         if ((kind != c.S_IFREG and kind != c.S_IFDIR) or a.archive_entry_hardlink(entry) != null) return error.UnsupportedArchiveEntry;
         const parent = try openDirectory(root, if (kind == c.S_IFDIR) name else std.fs.path.dirname(name) orelse "");
         defer _ = c.close(parent);
@@ -269,4 +310,26 @@ pub fn extract(mem: Allocator, path: []const u8, destination: []const u8, member
         if (member != null) break;
     }
     if (member != null and !found) return error.MemberNotFound;
+    // Finish all file writes before installing links. Never traverse a link to
+    // create archive content, and validate the complete graph before publication.
+    var resolved: std.ArrayList(u8) = .empty;
+    defer resolved.deinit(mem);
+    var iterator = links.iterator();
+    while (iterator.next()) |link| {
+        try check(cancel);
+        resolved.clearRetainingCapacity();
+        var followed: usize = 0;
+        try resolveLink(mem, &links, link.key_ptr.*, &resolved, &followed);
+    }
+    iterator = links.iterator();
+    while (iterator.next()) |link| {
+        try check(cancel);
+        const parent = try openDirectory(root, std.fs.path.dirname(link.key_ptr.*) orelse "");
+        defer _ = c.close(parent);
+        const name = try mem.dupeZ(u8, std.fs.path.basename(link.key_ptr.*));
+        defer mem.free(name);
+        const target = try mem.dupeZ(u8, link.value_ptr.*);
+        defer mem.free(target);
+        if (c.symlinkat(target, parent, name) != 0) return error.WriteFailed;
+    }
 }

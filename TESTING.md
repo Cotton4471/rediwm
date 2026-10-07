@@ -112,6 +112,12 @@ disabling without closing clients, close-confirmation dialogs, fullscreen and
 failed launches. It supports `REDIWM_TEST_SCALE`,
 `REDIWM_TEST_RENDERER`, and `REDIWM_TABS_PREVIEW`.
 
+`appearance_settings.py --app-colors-only` exercises the GTK/Qt apply buttons,
+configuration preservation and backups, failure reporting, and the persisted
+launch environment. When development packages are available it also compiles
+small GTK3, GTK4, libadwaita, Qt5 and Qt6 clients to check the actual loaded
+colors. All configuration, clients and displays stay in temporary directories.
+
 `kde_decorations.py` covers KDE decoration startup ordering, mode changes,
 window rules, fullscreen/remapping, lifetime and titlebar controls. To also
 check the installed Ghostty in a private D-Bus session, run
@@ -170,6 +176,12 @@ mid-fade still mutes.
 never uses the host `DISPLAY`), `xwayland_fractional.py`,
 `xwayland_hardening.py` (extreme/invalid client size hints and recovery; needs
 Xwayland and libxcb).
+
+`xwayland.py` checks actual GTK click delivery on negative-origin outputs and
+after panning beyond the physical display in either direction, including 1.5x
+X11 rendering and clicking an already-open menu after another pan. X11 root
+coordinates follow the camera viewport; scene and native Wayland coordinates
+remain in world space.
 
 **File dialogs**: `zig build test-file-chooser` (private D-Bus; OpenFile,
 SaveFile, SaveFiles, filters, multiple selection, breadcrumbs, overwrite

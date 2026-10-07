@@ -1324,7 +1324,7 @@ def test_gtk_combo_and_tooltip():
             log.close()
 
 
-def test_gtk_menu_alignment_zoomed():
+def test_gtk_menu_alignment_zoomed(pan_x=20, pan_y=15, factor=0, zoom=70):
     """Same real-GTK-menu alignment check as test_gtk_menu_alignment, but
     under camera zoom and pan. xwayland_unmanaged.zig's own comment claims
     the popup is "positioned in world coordinates ... so camera pan/zoom
@@ -1341,7 +1341,7 @@ def test_gtk_menu_alignment_zoomed():
     """
     with tempfile.TemporaryDirectory(prefix="rediwm-xwayland-gtk-zoom-") as directory:
         tmp = Path(directory)
-        compositor, log = start_compositor(tmp, "[compositor]\nxwayland = true\n")
+        compositor, log = start_compositor(tmp, f"[compositor]\nxwayland = true\nxwayland_scale = {factor}\ncanvas_columns = 5\ncanvas_rows = 5\n")
         client = None
         try:
             sock, reader = ipc_connect(tmp)
@@ -1401,12 +1401,12 @@ def test_gtk_menu_alignment_zoomed():
                     request(sock, reader, {'version': 1, 'command': 'pointer_button', 'params': {"button": 273, "pressed": True}})
                     request(sock, reader, {'version': 1, 'command': 'pointer_button', 'params': {"button": 273, "pressed": False}})
 
-                request(sock, reader, {"version": 1, "command": 'move_window_to', "params": {"id": wid, "x": 300, "y": 200}})
-                wait_for(lambda: abs(client_box()["x"] - 300) < 4, "window did not move")
+                request(sock, reader, {"version": 1, "command": 'move_window_to', "params": {"id": wid, "x": pan_x + 280, "y": pan_y + 185}})
+                wait_for(lambda: abs(client_box()["x"] - (pan_x + 280)) < 4, "window did not move")
 
-                request(sock, reader, {'version': 1, 'command': 'set_zoom', 'params': {"percent": 70}})
-                request(sock, reader, {'version': 1, 'command': 'set_camera', 'params': {"x": 20, "y": 15}})
-                wait_for(lambda: camera()["zoom_percent"] == 70 and camera()["x"] == 20, "zoom/pan did not apply")
+                request(sock, reader, {'version': 1, 'command': 'set_zoom', 'params': {"percent": zoom}})
+                request(sock, reader, {'version': 1, 'command': 'set_camera', 'params': {"x": pan_x, "y": pan_y}})
+                wait_for(lambda: camera()["zoom_percent"] == zoom and camera()["x"] == pan_x, "zoom/pan did not apply")
                 # GetCamera reflects the new state immediately, but a click
                 # fired in the same instant can still race the projection
                 # pipeline settling onto it (confirmed empirically: ~20%
@@ -1416,7 +1416,7 @@ def test_gtk_menu_alignment_zoomed():
                 time.sleep(0.15)
 
                 box = client_box()
-                assert box["x"] == 301, f"MoveWindowTo/client_box drifted with the camera: {box}"
+                assert box["x"] == pan_x + 281, f"MoveWindowTo/client_box drifted with the camera: {box}"
                 wx, wy = box["x"] + 60, box["y"] + 60
                 sx, sy = world_to_screen(wx, wy)
                 right_click_screen(sx, sy)
@@ -1424,11 +1424,28 @@ def test_gtk_menu_alignment_zoomed():
                 hx, hy = world_to_screen(wx + 5, wy + 5)
                 wait_for(
                     lambda: hit_type(round(hx), round(hy)) == "xwayland_unmanaged",
-                    "context menu not aligned under 70% zoom + (20,15) pan",
+                    f"context menu not aligned at {zoom}% zoom, pan=({pan_x},{pan_y})",
                     timeout=5,
                 )
-                print("PASS: GTK context menu aligned under 70% zoom + (20,15) pan")
+                print(f"PASS: GTK receives clicks and aligns menus at {zoom}% zoom, pan=({pan_x},{pan_y}), factor={factor}")
 
+                # Rebase an already mapped override-redirect popup too. Its
+                # visible position and X11 input target must stay together.
+                request(sock, reader, {'version': 1, 'command': 'set_camera', 'params': {"x": pan_x - 20, "y": pan_y + 10}})
+                time.sleep(0.15)
+                hx, hy = world_to_screen(wx + 5, wy + 5)
+                assert hit_type(round(hx), round(hy)) == "xwayland_unmanaged", "mapped popup moved in world coordinates during pan"
+                sx, sy = world_to_screen(wx + 15, wy + 15)
+                request(sock, reader, {"version": 1, "command": "move_cursor", "params": {"x": round(sx), "y": round(sy)}})
+                for pressed in (True, False):
+                    request(sock, reader, {"version": 1, "command": "pointer_button", "params": {"button": 272, "pressed": pressed}})
+                wait_for(lambda: "activated One" in client_log.read_text().splitlines(),
+                         lambda: f"mapped menu lost clicks after panning: {client_log.read_text()}", timeout=3)
+                print("PASS: an open GTK menu remains clickable after panning")
+
+                sx, sy = world_to_screen(wx + 2, wy + 2)
+                right_click_screen(sx, sy)
+                wait_for(lambda: hit_type(round(hx), round(hy)) == "xwayland_unmanaged", "menu did not reopen")
                 request(sock, reader, {'version': 1, 'command': 'key_press', 'params': {"key": "Escape"}})
                 wait_for(
                     lambda: hit_type(round(hx), round(hy)) != "xwayland_unmanaged",
@@ -1542,16 +1559,12 @@ def test_gtk_menu_multi_output():
             log.close()
 
 
-def test_negative_output_origin():
-    """Compositor-side placement and hit-testing on a configured negative origin.
-
-    xdg_output.py separately verifies native clients receive negative logical
-    positions. This test does not verify X11 pointer delivery at negative origins.
-    """
+def test_negative_output_origin(factor=1):
+    """Placement, hit-testing and actual X11 clicks at a negative origin."""
     with tempfile.TemporaryDirectory(prefix="rediwm-xwayland-negorigin-") as directory:
         tmp = Path(directory)
         config = (
-            "[compositor]\nxwayland = true\n"
+            f"[compositor]\nxwayland = true\nxwayland_scale = {factor}\n"
             "\n[[outputs]]\nname = \"HEADLESS-1\"\nx = 0\ny = 0\n"
             "\n[[outputs]]\nname = \"HEADLESS-2\"\nx = -1280\ny = 0\n"
         )
@@ -1622,9 +1635,21 @@ def test_negative_output_origin():
                     "x": box["x"] + 60 - neg["x"], "y": box["y"] + 60 - neg["y"], "output": neg["name"],
                 }})["HitTest"]
                 assert hit["target_type"] == "window" and hit["window_id"] == wid, hit
-                assert hit["local_x"] == 60 and hit["local_y"] == 60, hit
+                assert abs(hit["local_x"] - 60 * factor) < 1 and abs(hit["local_y"] - 60 * factor) < 1, hit
                 assert hit["layout_x"] < 0, hit
                 print("PASS: scene hit-testing at negative layout coordinates resolves to the right window")
+
+                time.sleep(0.2)  # Let projection settle before delivering input.
+                request(sock, reader, {"version": 1, "command": "move_cursor", "params": {
+                    "x": box["x"] + 60 - neg["x"], "y": box["y"] + 60 - neg["y"], "output": neg["name"],
+                }})
+                for pressed in (True, False):
+                    request(sock, reader, {"version": 1, "command": "pointer_button", "params": {
+                        "button": 273, "pressed": pressed,
+                    }})
+                wait_for(lambda: "popup" in client_log.read_text().splitlines(),
+                         lambda: f"X11 click at negative origin was lost: {client_log.read_text()}", timeout=3)
+                print(f"PASS: GTK receives a click at negative output origin (factor={factor})")
 
                 client.stdin.write("quit\n")
                 client.stdin.flush()
@@ -2336,8 +2361,12 @@ def run():
     test_withdrawn_window_survives_close_animation()
     test_gtk_menu_alignment()
     test_gtk_menu_alignment_zoomed()
+    test_gtk_menu_alignment_zoomed(-1280, -720, 1.5)
+    test_gtk_menu_alignment_zoomed(-1706, 0, 1.5, zoom=100)
+    test_gtk_menu_alignment_zoomed(1920, 1080)
     test_gtk_menu_multi_output()
     test_negative_output_origin()
+    test_negative_output_origin(1.5)
     test_gtk_menu_fractional_scale()
     test_gtk_menu_fractional_scale("2")
     test_gtk_transient_dialog()

@@ -465,6 +465,7 @@ pub fn deinit(world: *World) void {
     Projection.destroy(world.projection);
 }
 pub fn syncPresentation(world: *World) void {
+    if (world.server.xwayland) |xwayland| xwayland.syncGeometry();
     const now = anim.nowMs();
     var it = world.toplevels.iterator(.forward);
     while (it.next()) |toplevel| {

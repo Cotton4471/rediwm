@@ -146,10 +146,15 @@ pub fn serverDecorations(self: *const Adapter) bool {
     return !(d.no_title and d.no_border);
 }
 
+/// Positions arrive in world coordinates multiplied by the X11 rendering
+/// factor; only the protocol boundary subtracts the current root origin.
 pub fn configure(self: *Adapter, x: i32, y: i32, width: i32, height: i32) void {
     const hints: ?*const SizeHints = if (self.xsurface.size_hints) |ptr| @ptrCast(@alignCast(ptr)) else null;
     const size = applySizeHints(width, height, hints);
-    self.xsurface.configure(clampPos(x), clampPos(y), clampSize(size.width), clampSize(size.height));
+    const xwayland = self.window.server.xwayland;
+    const root_x = if (xwayland) |xw| xw.root_x else 0;
+    const root_y = if (xwayland) |xw| xw.root_y else 0;
+    self.xsurface.configure(clampPos(x - root_x), clampPos(y - root_y), clampSize(size.width), clampSize(size.height));
     self.awaiting_commit = true;
 }
 
@@ -306,8 +311,9 @@ fn handleRequestConfigure(
         toplevel.clientSurfaceGeometry().height;
 
     if (!toplevel.in_world) {
-        if (event.mask & config_x != 0) x = xscale.worldFloor(event.x, n);
-        if (event.mask & config_y != 0) y = xscale.worldFloor(event.y, n);
+        const xwayland = toplevel.server.xwayland;
+        if (event.mask & config_x != 0) x = xscale.worldFloor(@as(i32, event.x) + (if (xwayland) |xw| xw.root_x else @as(i32, 0)), n);
+        if (event.mask & config_y != 0) y = xscale.worldFloor(@as(i32, event.y) + (if (xwayland) |xw| xw.root_y else @as(i32, 0)), n);
     }
     if (toplevel.open_rules.width) |rw| width_x = xscale.surfaceLength(@as(i32, @intCast(rw)), n);
     if (toplevel.open_rules.height) |rh| height_x = xscale.surfaceLength(@as(i32, @intCast(rh)), n);

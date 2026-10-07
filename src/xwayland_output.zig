@@ -1,8 +1,8 @@
 // Specialized zxdg_output_manager_v1 global visible only to the Xwayland client.
-// Tells Xwayland the screen is N times larger than its logical geometry, so X11
-// apps render at panel resolution instead of 1x.
+// Describes the visible world in X11 pixels: rendering scale divided by camera
+// zoom, with the combined layout origin translated to zero. X11's root input
+// rectangle must cover everything visible even when the canvas is zoomed out.
 const std = @import("std");
-const xscale = @import("xwayland_scale.zig");
 const wayland = @import("wayland");
 const wl = wayland.server.wl;
 const zxdg = wayland.server.zxdg;
@@ -192,14 +192,25 @@ const XwaylandOutput = struct {
         }
     }
 
-    fn sendState(self: *XwaylandOutput, r: *OutputResource) void {
+    fn geometry(self: *XwaylandOutput) wlr.Box {
         var box: wlr.Box = undefined;
         self.manager.server.output_layout.getBox(self.wlr_output, &box);
         const n = self.manager.server.xwaylandScale();
-        const lx = xscale.surfacePosition(box.x, n);
-        const ly = xscale.surfacePosition(box.y, n);
-        const lw = xscale.surfacePosition(box.x + box.width, n) - lx;
-        const lh = xscale.surfacePosition(box.y + box.height, n) - ly;
+        const world = &self.manager.server.world;
+        const factor = n / world.camera.zoom();
+        const lx: i32 = @intFromFloat(@round((@as(f64, @floatFromInt(box.x)) - world.bounds.origin_x) * factor));
+        const ly: i32 = @intFromFloat(@round((@as(f64, @floatFromInt(box.y)) - world.bounds.origin_y) * factor));
+        const right: i32 = @intFromFloat(@round((@as(f64, @floatFromInt(box.x + box.width)) - world.bounds.origin_x) * factor));
+        const bottom: i32 = @intFromFloat(@round((@as(f64, @floatFromInt(box.y + box.height)) - world.bounds.origin_y) * factor));
+        return .{ .x = lx, .y = ly, .width = right - lx, .height = bottom - ly };
+    }
+
+    fn sendState(self: *XwaylandOutput, r: *OutputResource) void {
+        const box = self.geometry();
+        const lx = box.x;
+        const ly = box.y;
+        const lw = box.width;
+        const lh = box.height;
 
         self.last_x = lx;
         self.last_y = ly;
@@ -224,13 +235,11 @@ const XwaylandOutput = struct {
     }
 
     fn syncGeometry(self: *XwaylandOutput) void {
-        var box: wlr.Box = undefined;
-        self.manager.server.output_layout.getBox(self.wlr_output, &box);
-        const n = self.manager.server.xwaylandScale();
-        const lx = xscale.surfacePosition(box.x, n);
-        const ly = xscale.surfacePosition(box.y, n);
-        const lw = xscale.surfacePosition(box.x + box.width, n) - lx;
-        const lh = xscale.surfacePosition(box.y + box.height, n) - ly;
+        const box = self.geometry();
+        const lx = box.x;
+        const ly = box.y;
+        const lw = box.width;
+        const lh = box.height;
 
         if (lx == self.last_x and ly == self.last_y and lw == self.last_width and lh == self.last_height) {
             return;

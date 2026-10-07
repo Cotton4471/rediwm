@@ -231,6 +231,7 @@ app_scopes: ?*@import("session/app_scope.zig").Scopes = null,
 network: ?*@import("network/manager.zig").Manager = null,
 bluetooth: ?*@import("bluetooth.zig").Manager = null,
 services: ?*services_mod.Manager = null,
+qt_app_colors: bool = false,
 pending_launches: std.ArrayList(*@import("start_menu/launch.zig").Pending) = .empty,
 layout_autosave: ?*layout_autosave_mod.Autosave = null,
 session: ?*wlr.Session = null,
@@ -427,6 +428,18 @@ pub fn init(server: *Server, scale: ?f32, icon_theme_cfg: icon_theme.Config, io:
         .session = session,
         .greeter_mode = greeter,
     };
+
+    if (!greeter) {
+        const app_theme = @import("config").app_theme;
+        const a = @import("main.zig").gpa;
+        if (app_theme.configHome(a, environ)) |home| {
+            defer a.free(home);
+            server.qt_app_colors = app_theme.qtEnabled(a, io, home) catch |err| blk: {
+                log.warn("could not load app colors preference: {}", .{err});
+                break :blk false;
+            };
+        } else |_| {}
+    }
 
     if (!greeter) @import("config_runtime/region.zig").applyTimezone(@import("main.zig").gpa, loaded.region.timezone, environ.getPosix("TZ")) catch |err| {
         log.warn("could not apply personal timezone: {}", .{err});
@@ -682,6 +695,7 @@ pub fn applyChildEnvWithToken(server: *Server, map: *child_env.Map, token: ?[]co
     try map.put("PATH", path);
 
     try child_env.apply(map, .{
+        .qt_app_colors = !server.greeter_mode and server.qt_app_colors,
         .region = server.config.region,
         .input_method = server.config.input_method.env,
         .wayland_display = server.wl_server_socket_name,

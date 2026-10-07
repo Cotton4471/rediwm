@@ -1,5 +1,6 @@
 //! Configuration data, parsing and persistence. Runtime application lives in config_runtime/.
 pub const animations = @import("animations.zig");
+pub const app_theme = @import("app_theme.zig");
 pub const default = @import("default.zig");
 pub const keybinds = @import("keybinds.zig");
 pub const keymap = @import("keymap.zig");

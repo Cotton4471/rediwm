@@ -7,7 +7,7 @@ const linux = std.os.linux;
 const sys = @import("login_sys.zig");
 
 pub const owner_key = "REDIWM_ACTIVATION_OWNER";
-pub const allowlist = [_][]const u8{ "WAYLAND_DISPLAY", "DISPLAY", "REDIWM_SOCKET", "XDG_CURRENT_DESKTOP", "XDG_SESSION_TYPE", "PATH", owner_key };
+pub const allowlist = [_][]const u8{ "WAYLAND_DISPLAY", "DISPLAY", "REDIWM_SOCKET", "XDG_CURRENT_DESKTOP", "XDG_SESSION_TYPE", "PATH", "QT_QPA_PLATFORMTHEME", "QT_QPA_PLATFORMTHEME_QT6", "QT_STYLE_OVERRIDE", owner_key };
 
 pub const Env = std.StringArrayHashMapUnmanaged([]const u8);
 pub const Pair = struct { key: []const u8, value: []const u8 };
@@ -289,6 +289,23 @@ test "restore unsets or restores only allowlisted values" {
     try f.bus.expectEnv(&original);
     try testing.expectEqualStrings("", f.bus.activated.get("WAYLAND_DISPLAY").?);
     try testing.expectEqualStrings(":old", f.bus.activated.get("DISPLAY").?);
+}
+
+test "Qt app colors activation lease restores the previous desktop theme" {
+    var f: Fixture = undefined;
+    try f.init();
+    defer f.deinit();
+    try f.bus.systemd(&.{.{ .key = "QT_QPA_PLATFORMTHEME", .value = "gtk3" }}, &.{});
+    try f.owner.publish(&.{
+        .{ .key = "QT_QPA_PLATFORMTHEME", .value = "qt5ct" },
+        .{ .key = "QT_QPA_PLATFORMTHEME_QT6", .value = "qt6ct" },
+        .{ .key = "QT_STYLE_OVERRIDE", .value = "Fusion" },
+    });
+    try testing.expectEqualStrings("qt5ct", f.bus.env.get("QT_QPA_PLATFORMTHEME").?);
+    try f.owner.restore();
+    try testing.expectEqualStrings("gtk3", f.bus.env.get("QT_QPA_PLATFORMTHEME").?);
+    try testing.expect(!f.bus.env.contains("QT_QPA_PLATFORMTHEME_QT6"));
+    try testing.expect(!f.bus.env.contains("QT_STYLE_OVERRIDE"));
 }
 
 test "a value changed by someone else is not clobbered" {

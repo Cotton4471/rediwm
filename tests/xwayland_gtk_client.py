@@ -32,6 +32,7 @@ def build_menu():
     m = Gtk.Menu()
     for label in ("One", "Two", "Three"):
         item = Gtk.MenuItem(label=label)
+        item.connect("activate", lambda _item, name=label: emit(f"activated {name}"))
         item.show()
         m.append(item)
     m.attach_to_widget(window, None)

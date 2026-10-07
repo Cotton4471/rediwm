@@ -23,6 +23,40 @@ defaults, not the main theme's. The section's presence selects the taskbar
 theme (an empty one is the built-in colours); without it the taskbar follows
 `[theme]`. Sizes, gaps and radii always come from `[theme]`.
 
+## GTK and Qt app colors
+
+In **Settings → Appearance**, **Apply GTK colors** and **Apply Qt colors**
+sit below the Theme and Taskbar theme selectors. They export the current
+main theme's app backgrounds, toolbar, sidebar, text and shell accent.
+The taskbar override does not affect app colors. Exports are snapshots:
+apply again after selecting or editing a theme, then restart the apps.
+
+GTK colors are written to `gtk-3.0/rediwm-colors.css` and
+`gtk-4.0/rediwm-colors.css` under `$XDG_CONFIG_HOME` (otherwise `~/.config`).
+A marked import is added to each `gtk.css`, preserving existing rules and
+their precedence. GTK3 includes common widget color overrides; GTK4 also
+gets the CSS variables used by recent libadwaita. No theme package is patched
+and the dark-mode preference is never briefly flipped to force a refresh.
+
+Qt colors require **qt5ct** for Qt 5 apps and **qt6ct** for Qt 6 apps. The
+installed toolkit configurations select native `colors/rediwm.conf` palettes
+and the palette-aware Fusion style. Other preferences are preserved.
+RediWM launches receive the selected platform theme and style immediately;
+sign in again to update the environment for apps activated by D-Bus or
+launched elsewhere. This opt-in is recorded in `rediwm/app-colors.conf`.
+Bundled Qt runtimes, sandboxed apps, and apps with their own styles may need
+their own configuration.
+
+The first existing user configuration is backed up beside its original as
+`<filename>.rediwm-backup`; later applications keep that first backup.
+Managed symlinks are left alone and reported in Settings. To undo GTK colors,
+remove the marked RediWM import blocks from both `gtk.css` files (or restore
+their backups). To undo Qt colors, restore the qt5ct/qt6ct configuration
+backups (or delete configurations created by the export if no backup exists),
+remove `rediwm/app-colors.conf`, and sign in again.
+
+## Color tokens
+
 Colors accept `"#rrggbb"`, `"#rrggbbaa"`, or `"rgba(r,g,b,a)"` with RGB
 channels from 0 to 255 and alpha from 0 to 1. Numbers must be finite and
 nonnegative. Sizes are logical pixels. The tables describe appearance tokens;

@@ -13,6 +13,7 @@ pub const session_type = "wayland";
 pub const InputMethod = @import("config").types.InputMethod;
 
 pub const Spec = struct {
+    qt_app_colors: bool = false,
     region: @import("config").loader.RegionConfig = .{},
     input_method: InputMethod = .none,
     wayland_display: ?[]const u8 = null,
@@ -31,6 +32,11 @@ pub const Spec = struct {
 
 pub fn apply(map: *Map, spec: Spec) !void {
     try applyRegion(map, spec.region);
+    if (spec.qt_app_colors) {
+        try map.put("QT_QPA_PLATFORMTHEME", @import("config").app_theme.qt_platform);
+        try map.put("QT_QPA_PLATFORMTHEME_QT6", "qt6ct");
+        try map.put("QT_STYLE_OVERRIDE", "Fusion");
+    }
     // Private supervisor authority must never escape to descendant launches.
     inline for (.{ "REDIWM_SESSION_FD", "REDIWM_LOGIN_SESSION", "REDIWM_SESSION_PRIMARY" }) |key| _ = map.swapRemove(key);
     switch (spec.input_method) {
@@ -217,4 +223,18 @@ test "private session authority and stale activation tokens never reach children
     inline for (.{ "REDIWM_SESSION_FD", "REDIWM_LOGIN_SESSION", "REDIWM_SESSION_PRIMARY", "XDG_ACTIVATION_TOKEN", "DESKTOP_STARTUP_ID" }) |key| try map.put(key, "inherited");
     try apply(&map, .{});
     inline for (.{ "REDIWM_SESSION_FD", "REDIWM_LOGIN_SESSION", "REDIWM_SESSION_PRIMARY", "XDG_ACTIVATION_TOKEN", "DESKTOP_STARTUP_ID" }) |key| try std.testing.expect(map.get(key) == null);
+}
+
+test "Qt app colors override inherited theming only after explicit opt in" {
+    var map = Map.init(std.testing.allocator);
+    defer map.deinit();
+    try map.put("QT_QPA_PLATFORMTHEME", "gtk3");
+    try map.put("QT_STYLE_OVERRIDE", "kvantum");
+    try apply(&map, .{});
+    try std.testing.expectEqualStrings("gtk3", map.get("QT_QPA_PLATFORMTHEME").?);
+    try std.testing.expectEqualStrings("kvantum", map.get("QT_STYLE_OVERRIDE").?);
+    try apply(&map, .{ .qt_app_colors = true });
+    try std.testing.expectEqualStrings("qt5ct", map.get("QT_QPA_PLATFORMTHEME").?);
+    try std.testing.expectEqualStrings("qt6ct", map.get("QT_QPA_PLATFORMTHEME_QT6").?);
+    try std.testing.expectEqualStrings("Fusion", map.get("QT_STYLE_OVERRIDE").?);
 }

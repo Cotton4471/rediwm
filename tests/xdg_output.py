@@ -81,14 +81,21 @@ def run_case(binary, scale, count, placements="", xwayland=False):
                     owned_display = ipc.get_runtime()["xwayland_display"]
                     assert owned_display
                     # This display belongs to this test compositor. Never use host DISPLAY.
-                    result = subprocess.run(["xrandr", "-display", owned_display, "--query"],
-                                            env=dict(env, DISPLAY=owned_display),
-                                            capture_output=True, text=True, timeout=15)
-                    assert result.returncode == 0, result.stderr
-                    rectangles = [tuple(map(int, m)) for m in re.findall(
-                        r" connected[^\n]*? (\d+)x(\d+)\+(-?\d+)\+(-?\d+)", result.stdout)]
-                    wanted = sorted((o["logical_width"], o["logical_height"], o["x"], o["y"]) for o in expected)
-                    assert sorted(rectangles) == wanted, result.stdout
+                    ox, oy = min(o["x"] for o in expected), min(o["y"] for o in expected)
+                    wanted = sorted((o["logical_width"], o["logical_height"], o["x"] - ox, o["y"] - oy) for o in expected)
+
+                    def reset_randr_geometry():
+                        result = subprocess.run(["xrandr", "-display", owned_display, "--query"],
+                                                env=dict(env, DISPLAY=owned_display),
+                                                capture_output=True, text=True, timeout=15)
+                        assert result.returncode == 0, result.stderr
+                        rectangles = [tuple(map(int, m)) for m in re.findall(
+                            r" connected[^\n]*? (\d+)x(\d+)\+(-?\d+)\+(-?\d+)", result.stdout)]
+                        return sorted(rectangles) == wanted
+
+                    # Reset animates the camera. X11's root covers its world
+                    # viewport and returns to physical geometry when it settles.
+                    wait_for(reset_randr_geometry, "Xwayland RandR did not settle after camera reset")
                     print("xdg-output: Xwayland RandR reports the real side-by-side monitor layout")
 
                 with (tmp / "live-client.log").open("w") as client_log:

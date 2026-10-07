@@ -185,6 +185,10 @@ def run():
                     with zipfile.ZipFile(archive, "w") as z:
                         z.writestr("/", "")
                         z.writestr("nested/item.txt", "archive member")
+                        link = zipfile.ZipInfo("nested/link.txt")
+                        link.create_system = 3
+                        link.external_attr = 0o120777 << 16
+                        z.writestr(link, "../nested/item.txt")
                     key(38, ctrl=True)
                     text(str(archive_dir))
                     key(28)
@@ -209,7 +213,10 @@ def run():
                     key(28)
                     wait_for(lambda: (archive_dir / "nested/item.txt").exists(), "Extract in place failed")
                     assert (archive_dir / "nested/item.txt").read_text() == "archive member"
-                    print("PASS: ZIP root entry browsing, member opening and extraction")
+                    wait_for(lambda: (archive_dir / "nested/link.txt").is_symlink(), "Archive link was not extracted")
+                    assert os.readlink(archive_dir / "nested/link.txt") == "../nested/item.txt"
+                    assert (archive_dir / "nested/link.txt").read_text() == "archive member"
+                    print("PASS: ZIP root entry browsing, member opening and extraction with relative symlinks")
                     return
 
                 # Both common evdev side-button pairs navigate on press only.

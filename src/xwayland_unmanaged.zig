@@ -126,7 +126,17 @@ fn syncPosition(self: *Unmanaged) void {
         self.tree.node.setPosition(px + xscale.worldFloor(dx, n), py + xscale.worldFloor(dy, n));
         return;
     }
-    self.tree.node.setPosition(xscale.worldFloor(@as(i32, self.xsurface.x), n), xscale.worldFloor(@as(i32, self.xsurface.y), n));
+    const xwayland = self.server.xwayland;
+    const root_x = if (xwayland) |xw| xw.root_x else 0;
+    const root_y = if (xwayland) |xw| xw.root_y else 0;
+    self.tree.node.setPosition(xscale.worldFloor(@as(i32, self.xsurface.x) + root_x, n), xscale.worldFloor(@as(i32, self.xsurface.y) + root_y, n));
+}
+
+pub fn rebase(self: *Unmanaged, dx: i32, dy: i32) void {
+    const clamp = @import("xwayland_surface.zig").clampPos;
+    const xs = self.xsurface;
+    xs.configure(clamp(@as(i32, xs.x) + dx), clamp(@as(i32, xs.y) + dy), xs.width, xs.height);
+    self.syncPosition();
 }
 
 fn destroyRole(self: *Unmanaged) void {

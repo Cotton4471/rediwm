@@ -172,7 +172,10 @@ pub const Readiness = struct {
             .XDG_CURRENT_DESKTOP = child_env.desktop_name,
             .XDG_SESSION_TYPE = child_env.session_type,
             .PATH = map.get("PATH") orelse "",
-        }, .{});
+            .QT_QPA_PLATFORMTHEME = map.get("QT_QPA_PLATFORMTHEME"),
+            .QT_QPA_PLATFORMTHEME_QT6 = map.get("QT_QPA_PLATFORMTHEME_QT6"),
+            .QT_STYLE_OVERRIDE = map.get("QT_STYLE_OVERRIDE"),
+        }, .{ .emit_null_optional_fields = false });
         defer allocator.free(message);
 
         errdefer self.deinit();

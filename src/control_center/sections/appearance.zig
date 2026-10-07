@@ -33,6 +33,8 @@ const start_button = @import("../../taskbar/start_button.zig");
 const menu_size = @import("../../start_menu/size.zig");
 const wlr = @import("wlroots");
 const ipc_animations = @import("../../ipc/animations.zig");
+const app_theme = @import("config").app_theme;
+const AppColorsJob = @import("../../config_runtime/app_theme.zig").Job;
 
 const segmented_width: f32 = 180;
 
@@ -99,7 +101,7 @@ pub const Section = struct {
     cursor_themes: ?[]cursor_theme.Theme = null,
     cursor_row_children: [2]Widget = undefined,
     family_row_children: [2]Widget = undefined,
-    row_storage: [22]Widget = undefined,
+    row_storage: [23]Widget = undefined,
     focus_zoom_children: [3]Widget = undefined,
     /// Rescanned on every build, so images added meanwhile show up.
     wallpapers: []const wallpapers.Entry = &.{},
@@ -115,6 +117,12 @@ pub const Section = struct {
     wallpaper_footer_children: [2]Widget = undefined,
     theme_row_children: [2]Widget = undefined,
     taskbar_theme_row_children: [2]Widget = undefined,
+    app_colors_children: [3]Widget = undefined,
+    app_colors_buttons: [2]Widget = undefined,
+    app_colors_job: ?*AppColorsJob = null,
+    app_colors_source: ?*wl.EventSource = null,
+    app_colors_message: []const u8 = "Uses the main theme. Apply again after changing it; restart apps to see the colors.",
+    app_colors_message_buf: [384]u8 = undefined,
     dark_row_children: [2]Widget = undefined,
     dark_label_children: [2]Widget = undefined,
     splash_row_children: [2]Widget = undefined,
@@ -362,6 +370,15 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
     buildWallpaper(out, arena);
 
     const pal = panel.palette();
+    out.app_colors_buttons = .{
+        .{ .name = "apply_gtk_colors", .kind = .{ .button = .{ .label = "Apply GTK colors", .owner = out, .id = 0, .on_click = &onApplyAppColors, .state = if (out.app_colors_job != null) .disabled else .idle } }, .width = .{ .flex = 1 }, .height = .{ .fixed = 32 } },
+        .{ .name = "apply_qt_colors", .kind = .{ .button = .{ .label = "Apply Qt colors", .owner = out, .id = 1, .on_click = &onApplyAppColors, .state = if (out.app_colors_job != null) .disabled else .idle } }, .width = .{ .flex = 1 }, .height = .{ .fixed = 32 } },
+    };
+    out.app_colors_children = .{
+        labelWidget("App colors"),
+        .{ .kind = .container, .direction = .row, .gap = 8, .children = &out.app_colors_buttons },
+        appColorsNote(out, arena, pal.dim),
+    };
     const dark_mode = out.cc.server.config.compositor.dark_mode;
     out.dark_label_children = .{
         .{ .kind = .{ .text = .{ .content = "Dark mode", .font_size = 13, .weight = 600, .color = pal.fg } } },
@@ -667,6 +684,7 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
     out.row_storage = .{
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.theme_row_children },
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.taskbar_theme_row_children },
+        .{ .kind = .container, .direction = .column, .gap = 8, .children = &out.app_colors_children },
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.dark_row_children },
         .{ .kind = .container, .direction = .column, .gap = 12, .children = &out.wallpaper_children },
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.splash_row_children },
@@ -736,6 +754,92 @@ fn stopStrip(out: *Section) void {
 
 pub fn deinit(out: *Section) void {
     stopStrip(out);
+    finishAppColors(out, false);
+}
+
+fn appColorsNote(s: *Section, a: std.mem.Allocator, color: [4]f32) Widget {
+    const text = @import("ui").text;
+    const width: f32 = @floatFromInt(@max(120, s.cc.panel_box.width - @as(i32, if (s.cc.panel_box.width < 660) 70 else 238) - 100));
+    var lines: std.ArrayList(Widget) = .empty;
+    var start: usize = 0;
+    var words = std.mem.tokenizeScalar(u8, s.app_colors_message, ' ');
+    var end: usize = 0;
+    while (words.next()) |word| {
+        const next = @intFromPtr(word.ptr) - @intFromPtr(s.app_colors_message.ptr) + word.len;
+        const measured = text.measureWidthF(s.app_colors_message[start..next], .manrope, 12, 1) catch 0;
+        if (end > start and measured > width) {
+            lines.append(a, .{ .name = std.fmt.allocPrint(a, "app_colors_status_{d}", .{lines.items.len}) catch "app_colors_status_line", .kind = .{ .text = .{ .content = s.app_colors_message[start..end], .font_size = 12, .color = color } } }) catch break;
+            start = next - word.len;
+        }
+        end = next;
+    }
+    if (end > start) lines.append(a, .{ .name = std.fmt.allocPrint(a, "app_colors_status_{d}", .{lines.items.len}) catch "app_colors_status_line", .kind = .{ .text = .{ .content = s.app_colors_message[start..end], .font_size = 12, .color = color } } }) catch {};
+    return .{ .name = "app_colors_status", .kind = .container, .direction = .column, .gap = 2, .children = lines.toOwnedSlice(a) catch &.{} };
+}
+
+fn onApplyAppColors(owner: ?*anyopaque, id: usize) void {
+    const s = section(owner);
+    if (s.app_colors_job != null or s.cc.server.greeter_mode) return;
+    const job = AppColorsJob.create(s.cc.server.io, s.cc.server.environ, if (id == 0) .gtk else .qt, app_theme.Palette.fromTheme(theme.global)) catch |err| {
+        appColorsFailure(s, err);
+        return;
+    };
+    const source = s.cc.server.wl_server.getEventLoop().addFd(*Section, job.fd, .{ .readable = true }, appColorsReady, s) catch |err| {
+        job.deinit();
+        appColorsFailure(s, err);
+        return;
+    };
+    job.start() catch |err| {
+        source.remove();
+        job.deinit();
+        appColorsFailure(s, err);
+        return;
+    };
+    s.app_colors_job = job;
+    s.app_colors_source = source;
+    s.app_colors_message = "Applying app colors…";
+    s.cc.refresh();
+}
+
+fn appColorsFailure(s: *Section, err: anyerror) void {
+    s.app_colors_message = switch (err) {
+        error.QtToolsMissing => "Install qt5ct for Qt 5 apps or qt6ct for Qt 6 apps, then apply again.",
+        error.ManagedSymlink => "A toolkit file is managed by a symlink. Update its source configuration before applying colors.",
+        error.InvalidManagedCss => "The RediWM block in gtk.css is incomplete. Repair it before applying colors.",
+        else => std.fmt.bufPrint(&s.app_colors_message_buf, "Could not apply app colors: {s}. Check your configuration files and permissions.", .{@errorName(err)}) catch "Could not apply app colors. Check your configuration files and permissions.",
+    };
+    std.log.warn("app colors export failed: {}", .{err});
+    s.cc.refresh();
+}
+
+fn finishAppColors(s: *Section, refresh: bool) void {
+    if (s.app_colors_source) |source| source.remove();
+    s.app_colors_source = null;
+    const job = s.app_colors_job orelse return;
+    s.app_colors_job = null;
+    job.join();
+    defer job.deinit();
+    const support = job.result catch |err| {
+        if (refresh) appColorsFailure(s, err);
+        return;
+    };
+    if (job.toolkit == .qt) s.cc.server.qt_app_colors = true;
+    if (!refresh) return;
+    s.app_colors_message = switch (job.toolkit) {
+        .gtk => "GTK colors applied. Restart GTK apps. Apps with their own styles or sandbox settings may differ.",
+        .qt => if (support.qt5 and support.qt6)
+            "Qt 5 and Qt 6 colors applied. Restart apps; sign in again if their colors do not change."
+        else if (support.qt6)
+            "Qt 6 colors applied. Install qt5ct for Qt 5 apps. Restart apps; sign in again if their colors do not change."
+        else
+            "Qt 5 colors applied. Install qt6ct for Qt 6 apps. Restart apps; sign in again if their colors do not change.",
+    };
+    s.cc.refresh();
+}
+
+fn appColorsReady(_: c_int, _: wl.EventMask, s: *Section) c_int {
+    finishAppColors(s, true);
+    return 0;
 }
 
 /// Thumbnails arrive one by one; the panel repaints for each.
