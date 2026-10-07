@@ -27,6 +27,17 @@ pub fn show(server: *Server, state: State) void {
 }
 
 pub fn showOn(server: *Server, output: *Output, state: State) void {
+    if (server.locker) |lock| if (lock.greeter == null and lock.client == null) {
+        switch (state.kind) {
+            .volume, .brightness => {
+                var outputs = server.outputs.iterator(.forward);
+                while (outputs.next()) |other| other.osd.hide();
+                lock.showControl(if (state.kind == .volume) .volume else .brightness);
+                return;
+            },
+            else => {},
+        }
+    };
     var it = server.outputs.iterator(.forward);
     while (it.next()) |other| if (other != output) other.osd.hide();
     output.osd.present(output, state, true) catch |err| std.log.warn("OSD: {}", .{err});

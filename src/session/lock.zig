@@ -368,19 +368,32 @@ pub const Lock = struct {
         const previous_brightness = self.controls.brightness;
         if (self.controls.refresh(self.server)) {
             self.server.scheduleFrames();
-            if (self.controls.volume != previous_volume or self.controls.muted != previous_muted or self.controls.brightness != previous_brightness) {
-                self.showControls();
-            }
+            const active_changed = if (self.controls.active) |kind| switch (kind) {
+                .volume => self.controls.volume != previous_volume or self.controls.muted != previous_muted,
+                .brightness => self.controls.brightness != previous_brightness,
+            } else false;
+            if (self.controls_visible and active_changed) self.showControls(self.controls.active.?);
         }
     }
 
-    fn showControls(self: *Lock) void {
+    /// Hardware feedback selects the same row as pointer use, including when
+    /// a key leaves the value unchanged at its limit.
+    pub fn showControl(self: *Lock, kind: lock_controls.Kind) void {
+        if (self.greeter != null) return;
+        if (self.controls.refresh(self.server)) self.server.scheduleFrames();
+        self.showControls(kind);
+    }
+
+    fn showControls(self: *Lock, requested: lock_controls.Kind) void {
         if (self.greeter != null or self.controls.height() == 0) return;
+        const kind = if (self.controls.drag) |drag| drag.kind else requested;
+        const selected = self.controls.select(kind);
+        if (self.controls.active != kind) return;
         const newly_visible = !self.controls_visible;
         self.controls_visible = true;
         self.controls_hide_at = anim.nowMs() + 2500;
         self.scheduleClock();
-        if (newly_visible) self.server.scheduleFrames();
+        if (newly_visible or selected) self.server.scheduleFrames();
     }
 
     /// The control under a layout point, with its track's left edge and
@@ -406,7 +419,7 @@ pub const Lock = struct {
             return;
         }
         const at = self.controlsAt(x, y);
-        if (at != null) self.showControls();
+        if (at) |found| self.showControls(found.hit.kind);
         const hit: ?lock_controls.Hit = if (at) |found| found.hit else null;
         if (self.controls.setHover(hit)) self.server.scheduleFrames();
     }
@@ -649,7 +662,7 @@ pub const Lock = struct {
 
     pub fn click(self: *Lock, x: f64, y: f64) void {
         if (self.controlsAt(x, y)) |at| {
-            self.showControls();
+            self.showControls(at.hit.kind);
             switch (at.hit.part) {
                 .icon => if (at.hit.kind == .volume) lock_controls.toggleMute(self.server),
                 .track => self.controls.beginDrag(self.server, at.hit.kind, at.left, at.span, @floatCast(x)),
@@ -1090,7 +1103,7 @@ test "lock raster scales to small outputs and renders a solid accent unlock butt
     var lock = Lock{ .server = undefined, .timer = undefined, .controls_visible = true };
     @memcpy(lock.name[0..11], "Alex Morgan");
     @memcpy(lock.user[0..10], "alexmorgan");
-    lock.controls = .{ .has_volume = true, .volume = 0.5, .has_brightness = true, .brightness = 0.25 };
+    lock.controls = .{ .has_volume = true, .volume = 0.5, .has_brightness = true, .brightness = 0.25, .active = .volume };
     const scene = try wlr.Scene.create();
     defer scene.tree.node.destroy();
     var view = try View.create(&scene.tree);

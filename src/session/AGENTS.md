@@ -17,4 +17,8 @@ ext-session-lock) are in the root `AGENTS.md`.
   raster (`View.controls_node`), so a drag never re-rasters the clock, avatar
   and field. A row exists only while its backend reports
   (`Lock.controlsChanged` from the audio wake and the brightness helper's
-  result); a drag shows its own value until release. Events only, no timer.
+  result); a drag shows its own value until release. Only the row selected by
+  pointer use or hardware feedback is painted; both pointer regions retain
+  their positions. Hardware volume/brightness OSDs use `Lock.showControl`
+  rather than drawing another overlay. Backend reports alone don't reveal
+  controls. The clock timer also handles their idle timeout; no polling.

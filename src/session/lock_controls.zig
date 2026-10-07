@@ -9,8 +9,9 @@
 //! row exists only while its backend reports one: no default sink, no
 //! backlight, no row. A drag shows its own value until release, then the
 //! backend's report takes over again.
-//! The block is hidden at rest and appears on pointer use or a hardware value
-//! change, then hides again after a short idle timeout.
+//! The block is hidden at rest. Only the row used by the pointer or hardware
+//! keys appears, then hides again after a short idle timeout. Both pointer
+//! regions keep their positions so switching rows never moves a drag target.
 //!
 //! Everything here is in the block's design units (the lock's 600x900
 //! canvas) except the drag's track, which is kept in layout pixels so a drag
@@ -48,6 +49,7 @@ pub const Controls = struct {
     has_volume: bool = false,
     brightness: f32 = 1,
     has_brightness: bool = false,
+    active: ?Kind = null,
     hover: ?Kind = null,
     drag: ?Drag = null,
     /// Bumped by anything the block draws differently; `lock.View` compares.
@@ -123,6 +125,13 @@ pub const Controls = struct {
         return true;
     }
 
+    pub fn select(self: *Controls, kind: Kind) bool {
+        if (self.slot(kind) == null or self.active == kind) return false;
+        self.active = kind;
+        self.revision +%= 1;
+        return true;
+    }
+
     /// Starts dragging `kind`'s track, whose left edge and width are given
     /// in layout pixels, with the pointer at `x` (layout pixels).
     pub fn beginDrag(self: *Controls, server: *Server, kind: Kind, left: f32, span: f32, x: f32) void {
@@ -164,6 +173,7 @@ pub const Controls = struct {
     pub fn paint(self: *const Controls, r: *ui.paint.Renderer) void {
         const t = r.palette orelse ui.theme.global;
         for ([_]Kind{ .volume, .brightness }) |kind| {
+            if (self.active != kind) continue;
             const i = self.slot(kind) orelse continue;
             const top = rowY(i);
             const value = if (kind == .volume) self.volume else self.brightness;
@@ -218,6 +228,7 @@ test "lock controls rows are compacted to the backends that exist" {
     var c = Controls{};
     try std.testing.expectEqual(@as(f32, 0), c.height());
     try std.testing.expectEqual(@as(?Hit, null), c.pick(60, 10));
+    try std.testing.expect(!c.select(.volume));
     c.has_brightness = true;
     try std.testing.expectEqual(@as(f32, 32), c.height());
     try std.testing.expectEqual(Kind.brightness, c.pick(60, 10).?.kind);
@@ -225,6 +236,24 @@ test "lock controls rows are compacted to the backends that exist" {
     try std.testing.expectEqual(@as(f32, 72), c.height());
     try std.testing.expectEqual(Kind.volume, c.pick(60, 10).?.kind);
     try std.testing.expectEqual(Kind.brightness, c.pick(60, 50).?.kind);
+
+    // Reserve both pointer regions, but paint only the control being used.
+    var pixels: [260 * 72]u32 = @splat(0);
+    var renderer = ui.paint.Renderer.init(&pixels, 260, 72, 1);
+    c.paint(&renderer);
+    try std.testing.expect(std.mem.allEqual(u32, &pixels, 0));
+    const before = c.revision;
+    try std.testing.expect(c.select(.volume));
+    try std.testing.expect(!c.select(.volume));
+    try std.testing.expectEqual(before + 1, c.revision);
+    c.paint(&renderer);
+    try std.testing.expect(!std.mem.allEqual(u32, pixels[0 .. 260 * 32], 0));
+    try std.testing.expect(std.mem.allEqual(u32, pixels[260 * 32 ..], 0));
+    @memset(&pixels, 0);
+    try std.testing.expect(c.select(.brightness));
+    c.paint(&renderer);
+    try std.testing.expect(std.mem.allEqual(u32, pixels[0 .. 260 * 40], 0));
+    try std.testing.expect(!std.mem.allEqual(u32, pixels[260 * 40 ..], 0));
 }
 
 test "lock controls: the icon, the track and the gaps are told apart" {
