@@ -1,0 +1,162 @@
+{
+ "scale1/windows-HEADLESS-1": {
+  "scale": 1,
+  "output": "HEADLESS-1",
+  "mask": [
+   0,
+   676,
+   1280,
+   44
+  ]
+ },
+ "scale1/fullscreen-HEADLESS-1": {
+  "scale": 1,
+  "output": "HEADLESS-1",
+  "mask": [
+   0,
+   676,
+   1280,
+   44
+  ]
+ },
+ "scale1/zoom70-HEADLESS-1": {
+  "scale": 1,
+  "output": "HEADLESS-1",
+  "mask": [
+   0,
+   676,
+   1280,
+   44
+  ]
+ },
+ "scale1/zoom_min-HEADLESS-1": {
+  "scale": 1,
+  "output": "HEADLESS-1",
+  "mask": [
+   0,
+   676,
+   1280,
+   44
+  ]
+ },
+ "scale1.5/windows-HEADLESS-1": {
+  "scale": 1.5,
+  "output": "HEADLESS-1",
+  "mask": [
+   0,
+   676,
+   1280,
+   44
+  ]
+ },
+ "scale1.5/fullscreen-HEADLESS-1": {
+  "scale": 1.5,
+  "output": "HEADLESS-1",
+  "mask": [
+   0,
+   676,
+   1280,
+   44
+  ]
+ },
+ "scale1.5/zoom70-HEADLESS-1": {
+  "scale": 1.5,
+  "output": "HEADLESS-1",
+  "mask": [
+   0,
+   676,
+   1280,
+   44
+  ]
+ },
+ "scale1.5/zoom_min-HEADLESS-1": {
+  "scale": 1.5,
+  "output": "HEADLESS-1",
+  "mask": [
+   0,
+   676,
+   1280,
+   44
+  ]
+ },
+ "mixed/windows-HEADLESS-2": {
+  "scale": 1.5,
+  "output": "HEADLESS-2",
+  "mask": [
+   0,
+   676,
+   1280,
+   44
+  ]
+ },
+ "mixed/windows-HEADLESS-1": {
+  "scale": 1,
+  "output": "HEADLESS-1",
+  "mask": [
+   0,
+   676,
+   1280,
+   44
+  ]
+ },
+ "mixed/fullscreen-HEADLESS-2": {
+  "scale": 1.5,
+  "output": "HEADLESS-2",
+  "mask": [
+   0,
+   676,
+   1280,
+   44
+  ]
+ },
+ "mixed/fullscreen-HEADLESS-1": {
+  "scale": 1,
+  "output": "HEADLESS-1",
+  "mask": [
+   0,
+   676,
+   1280,
+   44
+  ]
+ },
+ "mixed/zoom70-HEADLESS-2": {
+  "scale": 1.5,
+  "output": "HEADLESS-2",
+  "mask": [
+   0,
+   676,
+   1280,
+   44
+  ]
+ },
+ "mixed/zoom70-HEADLESS-1": {
+  "scale": 1,
+  "output": "HEADLESS-1",
+  "mask": [
+   0,
+   676,
+   1280,
+   44
+  ]
+ },
+ "mixed/zoom_min-HEADLESS-2": {
+  "scale": 1.5,
+  "output": "HEADLESS-2",
+  "mask": [
+   0,
+   676,
+   1280,
+   44
+  ]
+ },
+ "mixed/zoom_min-HEADLESS-1": {
+  "scale": 1,
+  "output": "HEADLESS-1",
+  "mask": [
+   0,
+   676,
+   1280,
+   44
+  ]
+ }
+}

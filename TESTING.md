@@ -314,6 +314,13 @@ scale, input rate and compiler backend identical across comparisons.
 - `motion_perf.py` measures idle, pointer motion, selection, hover, drags and
   panning (`--rate 1000` for high-rate mice); it asserts that motion over
   unchanged desktop content repaints nothing.
+- `scene_baseline.py` is the fixed workload for `docs/plans/scene-graph.md`:
+  three glass windows, 60 fps damage, drag, resize, fullscreen and camera
+  zoom on GLES2 at scale 1, 1.5 and mixed. A "clean" session records process
+  cost (CPU, `perf stat` instructions:u, context switches, RSS) and a "stats"
+  session the frame timers; `--out`/`--report --against` diff two builds,
+  `--capture`/`--compare` keep and check golden screenshots. See
+  `docs/plans/scene-graph-baseline.md`.
 - `spawn_latency.py` times spawn → map → first presented frame.
 - `startup_perf.py --binary zig-out/release-safe/bin/rediwm --runs 7`
   measures process entry → first scene commit, responsive IPC, catalogue and

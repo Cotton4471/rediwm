@@ -95,7 +95,10 @@ a presenter consumes it and holds no geometry of its own. Switching between
 presenters during the migration uses a temporary config key (not an
 environment variable: no test hooks in production), removed in stage 6.
 
-0. **Baseline and inventory (no behaviour change).**
+0. **Baseline and inventory (no behaviour change).** *Done 2026-10-09 except
+   the decisions: harness `tests/scene_baseline.py`, numbers, findings, both
+   inventories and the decisions to confirm are in
+   [scene-graph-baseline.md](scene-graph-baseline.md).*
    * Fixed workload and harness: three windows with glass, a 60 fps damage
      client, drag and resize, a fullscreen client, zoom steps and
      scales 1, 1.5 and mixed. Record `cpu_frame`, `projection_cpu`,
@@ -179,10 +182,11 @@ makes scanout irrelevant. The render invariants are in
 
 ## Risks and open decisions
 
-* **Renderer policy.** Masked draws need GLES2 (as glass already does). Open:
-  require GLES2 for the desktop session and run tests on a render node (as
-  `test-glass` already does), or keep a pixman path. Recommended: require
-  GLES2; do not keep a software path alive as a second renderer.
+* **Renderer policy (decided 2026-10-09).** The session requires GLES2, as
+  glass already does; no pixman path is kept. Tests that default to pixman move
+  to a render node (as `test-glass` already does); a machine without a GPU needs
+  Mesa llvmpipe through `WLR_RENDERER_ALLOW_SOFTWARE`. Client-side-decorated
+  windows are not clipped unless a rule asks (decided the same day).
 * **Reimplementing `wlr_scene_output` behaviour** is the main regression risk
   (frame callbacks, presentation timestamps, dmabuf feedback, enter/leave,
   release points). The stage 0 table and per-item tests are the mitigation.

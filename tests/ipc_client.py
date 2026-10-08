@@ -512,8 +512,9 @@ def spawn_compositor(
     config_content: str = "",
     renderer: str = "pixman",
     env_extra: Optional[Dict[str, str]] = None,
+    binary: Optional[Union[str, Path]] = None,
 ) -> Tuple[subprocess.Popen, Any]:
-    """Spawn a headless rediwm compositor instance."""
+    """Spawn a headless rediwm compositor instance (`binary` defaults to zig-out/bin/rediwm)."""
     env = dict(
         os.environ,
         XDG_RUNTIME_DIR=str(tmp_dir),
@@ -545,7 +546,7 @@ def spawn_compositor(
 
     log_file = (tmp_dir / "compositor.log").open("w")
     proc = subprocess.Popen(
-        [str(ROOT / "zig-out/bin/rediwm")],
+        [str(binary or ROOT / "zig-out/bin/rediwm")],
         env=env,
         stdout=log_file,
         stderr=log_file,

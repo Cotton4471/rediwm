@@ -42,6 +42,9 @@ static int edge_transform;
 static int edge_mode;
 static int perf_mode;
 static int perf_damage;
+// REDIWM_TEST_PERF_DAMAGE_RECT="x,y,w,h": perf-damage frames report only this
+// rectangle (a spinner-sized update) instead of the whole surface.
+static int perf_rect[4], perf_rect_set, perf_rect_active;
 static const char *app_id = "rediwm.zoom-fixture";
 static const char *title = "Zoom fixture";
 static int late_app_id = 0;
@@ -72,7 +75,10 @@ static void paint(struct wl_surface *s, int w, int h, unsigned color) {
   struct wl_buffer *buffer =
       wl_shm_pool_create_buffer(pool, 0, w, h, w * 4, WL_SHM_FORMAT_ARGB8888);
   wl_surface_attach(s, buffer, 0, 0);
-  wl_surface_damage(s, 0, 0, w, h);
+  if (perf_rect_active)
+    wl_surface_damage(s, perf_rect[0], perf_rect[1], perf_rect[2], perf_rect[3]);
+  else
+    wl_surface_damage(s, 0, 0, w, h);
   wl_buffer_add_listener(buffer, &buffer_listener, NULL);
   wl_shm_pool_destroy(pool);
   munmap(pixels, w * h * 4);
@@ -169,8 +175,11 @@ static void frame_done(void *data, struct wl_callback *callback,
   }
   if (perf_mode) {
     request_frame();
-    if (perf_damage)
+    if (perf_damage) {
+      perf_rect_active = perf_rect_set;
       paint(surface, width, height, 0);
+      perf_rect_active = 0;
+    }
     wl_surface_commit(surface);
     return;
   }
@@ -578,6 +587,9 @@ int main(int argc, char *argv[]) {
   edge_mode = getenv("REDIWM_TEST_EDGE") != NULL;
   perf_mode = getenv("REDIWM_TEST_PERF") != NULL;
   perf_damage = getenv("REDIWM_TEST_PERF_DAMAGE") != NULL;
+  const char *rect = getenv("REDIWM_TEST_PERF_DAMAGE_RECT");
+  perf_rect_set = rect && sscanf(rect, "%d,%d,%d,%d", &perf_rect[0], &perf_rect[1],
+                                 &perf_rect[2], &perf_rect[3]) == 4;
   for (int i = 1; i < argc; i++) {
     if (!strcmp(argv[i], "--app-id") && i + 1 < argc) {
       app_id = argv[++i];
