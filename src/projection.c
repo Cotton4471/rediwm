@@ -39,6 +39,8 @@ struct group {
 struct view_state {
   int x, y, width, height;
   bool enabled, opaque;
+  // Hash of the source's opaque region as mirrored onto the view.
+  uint64_t opaque_hash;
   struct wlr_fbox src_box;
   enum wl_output_transform transform;
   float opacity;
@@ -55,7 +57,8 @@ static bool view_state_equal(const struct view_state *a,
                              const struct view_state *b) {
   return a->x == b->x && a->y == b->y && a->width == b->width &&
          a->height == b->height && a->enabled == b->enabled &&
-         a->opaque == b->opaque && a->src_box.x == b->src_box.x &&
+         a->opaque == b->opaque && a->opaque_hash == b->opaque_hash &&
+         a->src_box.x == b->src_box.x &&
          a->src_box.y == b->src_box.y &&
          a->src_box.width == b->src_box.width &&
          a->src_box.height == b->src_box.height &&
@@ -408,6 +411,49 @@ static struct leaf *get_leaf(struct rediwm_projection *p,
   }
   return l;
 }
+// The source's opaque region mapped onto its view, never larger than the real
+// one, returning a hash of the source region for the view-state cache.
+//
+// wlroots knows a client surface is opaque from its raw buffer's format (an
+// XRGB buffer covers the whole surface) or from the client's own opaque
+// region, and keeps that in the node's opaque region. The view's buffer is a
+// wlr_client_buffer, which reveals no pixel format, so its own flag is false
+// for every client: without this no window occluded anything below it, every
+// damaged frame redrew the wallpaper and the windows underneath, and a
+// fullscreen client could never be the only thing left to scan out.
+//
+// A 1:1 view uses the region as is. Otherwise each rectangle is scaled with
+// the view and pulled one pixel inward, so rounding and the filter's reach
+// beyond an opaque edge can never mark a translucent pixel opaque.
+static uint64_t mirror_opaque(pixman_region32_t *out, const pixman_region32_t *source,
+                              int source_width, int source_height, int width,
+                              int height) {
+  uint64_t hash = UINT64_C(14695981039346656037);
+  int count = 0;
+  const pixman_box32_t *box =
+      pixman_region32_rectangles((pixman_region32_t *)source, &count);
+  const bool exact = width == source_width && height == source_height;
+  for (int i = 0; i < count; i++) {
+    const int edges[4] = {box[i].x1, box[i].y1, box[i].x2, box[i].y2};
+    for (int j = 0; j < 4; j++)
+      hash = (hash ^ (uint64_t)(uint32_t)edges[j]) * UINT64_C(1099511628211);
+    if (exact) {
+      pixman_region32_union_rect(out, out, box[i].x1, box[i].y1,
+                                 box[i].x2 - box[i].x1, box[i].y2 - box[i].y1);
+    } else if (source_width > 0 && source_height > 0) {
+      const double sx = (double)width / source_width;
+      const double sy = (double)height / source_height;
+      const int x1 = (int)ceil(box[i].x1 * sx) + 1;
+      const int y1 = (int)ceil(box[i].y1 * sy) + 1;
+      const int x2 = (int)floor(box[i].x2 * sx) - 1;
+      const int y2 = (int)floor(box[i].y2 * sy) - 1;
+      if (x2 > x1 && y2 > y1)
+        pixman_region32_union_rect(out, out, x1, y1, x2 - x1, y2 - y1);
+    }
+  }
+  pixman_region32_intersect_rect(out, out, 0, 0, width, height);
+  return hash;
+}
 // Glass writes its own projected buffers after this synchronization pass.
 extern bool rediwm_glass_is_effect_node(struct wlr_scene_node *node);
 static void project(struct rediwm_projection *p, struct group *g,
@@ -532,6 +578,11 @@ static void project(struct rediwm_projection *p, struct group *g,
     next.color_range = b->color_range;
     // Read after the buffer update above, which can change it.
     next.opaque = v->private.buffer_is_opaque;
+    pixman_region32_t mirrored;
+    pixman_region32_init(&mirrored);
+    if (!next.opaque && width > 0 && height > 0)
+      next.opaque_hash =
+          mirror_opaque(&mirrored, &b->opaque_region, l->width, l->height, width, height);
     if (!l->has_applied || !view_state_equal(&next, &l->applied)) {
       wlr_scene_node_set_position(l->view, next.x, next.y);
       wlr_scene_node_set_enabled(l->view, next.enabled);
@@ -549,16 +600,15 @@ static void project(struct rediwm_projection *p, struct group *g,
       // buffer_is_opaque on buffer replacement without recomputing visibility
       // when the size is unchanged. Changing this region invalidates occlusion,
       // so an opaque -> translucent single-pixel buffer reveals the nodes below.
-      // Keep partial client opaque regions conservatively empty under projection.
-      pixman_region32_t opaque;
-      pixman_region32_init(&opaque);
+      // A client's own region (see mirror_opaque) is used when the view's
+      // buffer does not know it is opaque.
       if (next.opaque && width > 0 && height > 0)
-        pixman_region32_union_rect(&opaque, &opaque, 0, 0, width, height);
-      wlr_scene_buffer_set_opaque_region(v, &opaque);
-      pixman_region32_fini(&opaque);
+        pixman_region32_union_rect(&mirrored, &mirrored, 0, 0, width, height);
+      wlr_scene_buffer_set_opaque_region(v, &mirrored);
       l->applied = next;
       l->has_applied = true;
     }
+    pixman_region32_fini(&mirrored);
   }
   l->dirty = false;
   l->full_damage = false;

@@ -45,6 +45,13 @@ static int perf_damage;
 // REDIWM_TEST_PERF_DAMAGE_RECT="x,y,w,h": perf-damage frames report only this
 // rectangle (a spinner-sized update) instead of the whole surface.
 static int perf_rect[4], perf_rect_set, perf_rect_active;
+// REDIWM_TEST_OPAQUE: XRGB8888 buffers (no alpha channel), the opaque case a
+// compositor may scan out. REDIWM_TEST_HIDE_CURSOR: hide the pointer over the
+// window, since a visible software cursor rules scanout out.
+// REDIWM_TEST_NO_CHILD: no green subsurface, so the window is one surface.
+// REDIWM_TEST_OPAQUE_REGION: an ARGB buffer whose opaque region covers it, as
+// most toolkits send.
+static int test_opaque, test_hide_cursor, test_no_child, test_opaque_region;
 static const char *app_id = "rediwm.zoom-fixture";
 static const char *title = "Zoom fixture";
 static int late_app_id = 0;
@@ -73,8 +80,15 @@ static void paint(struct wl_surface *s, int w, int h, unsigned color) {
         pixels[y * w + x] = y < h / 2 ? 0xffff0000 : 0xff0000ff;
   struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, w * h * 4);
   struct wl_buffer *buffer =
-      wl_shm_pool_create_buffer(pool, 0, w, h, w * 4, WL_SHM_FORMAT_ARGB8888);
+      wl_shm_pool_create_buffer(pool, 0, w, h, w * 4,
+                                test_opaque ? WL_SHM_FORMAT_XRGB8888 : WL_SHM_FORMAT_ARGB8888);
   wl_surface_attach(s, buffer, 0, 0);
+  if (test_opaque_region && s == surface) {
+    struct wl_region *opaque = wl_compositor_create_region(compositor);
+    wl_region_add(opaque, 0, 0, w, h);
+    wl_surface_set_opaque_region(s, opaque);
+    wl_region_destroy(opaque);
+  }
   if (perf_rect_active)
     wl_surface_damage(s, perf_rect[0], perf_rect[1], perf_rect[2], perf_rect[3]);
   else
@@ -216,7 +230,7 @@ static void configured(void *data, struct xdg_surface *xs, uint32_t serial) {
     xdg_surface_set_window_geometry(xdg, edge_geom_inset, edge_geom_inset,
                                     width - 2 * edge_geom_inset, height - 2 * edge_geom_inset);
   paint(surface, width, height, 0);
-  if (!child) {
+  if (!child && !test_no_child) {
     child = wl_compositor_create_surface(compositor);
     struct wl_subsurface *sub =
         wl_subcompositor_get_subsurface(subcompositor, child, surface);
@@ -343,8 +357,8 @@ static const char *name(struct wl_surface *s) {
 static void pointer_enter(void *d, struct wl_pointer *p, uint32_t serial,
                           struct wl_surface *s, wl_fixed_t x, wl_fixed_t y) {
   (void)d;
-  (void)p;
-  (void)serial;
+  if (test_hide_cursor)
+    wl_pointer_set_cursor(p, serial, NULL, 0, 0);
   printf("enter %s %.3f %.3f\n", name(s), wl_fixed_to_double(x),
          wl_fixed_to_double(y));
 }
@@ -587,6 +601,10 @@ int main(int argc, char *argv[]) {
   edge_mode = getenv("REDIWM_TEST_EDGE") != NULL;
   perf_mode = getenv("REDIWM_TEST_PERF") != NULL;
   perf_damage = getenv("REDIWM_TEST_PERF_DAMAGE") != NULL;
+  test_opaque = getenv("REDIWM_TEST_OPAQUE") != NULL;
+  test_hide_cursor = getenv("REDIWM_TEST_HIDE_CURSOR") != NULL;
+  test_no_child = getenv("REDIWM_TEST_NO_CHILD") != NULL;
+  test_opaque_region = getenv("REDIWM_TEST_OPAQUE_REGION") != NULL;
   const char *rect = getenv("REDIWM_TEST_PERF_DAMAGE_RECT");
   perf_rect_set = rect && sscanf(rect, "%d,%d,%d,%d", &perf_rect[0], &perf_rect[1],
                                  &perf_rect[2], &perf_rect[3]) == 4;

@@ -149,7 +149,9 @@ virtual-keyboard), `dead_keys.py` (a virtual `latam` keyboard types dead-key
 sequences into the start menu and Files' rename field under `pt_BR` and
 `es_MX`; acute then c must give ç and ć), `pointer_constraints.py`, `shortcuts_inhibit.py`, `cursor_shape.py`,
 `single_pixel.py`, `xdg_output.py` (`--xwayland` adds RandR via `xrandr`),
-`presentation_time.py`, `explicit_sync.py` (gles2; vkcube), `layer_lifecycle.py`,
+`presentation_time.py`, `explicit_sync.py` (gles2; vkcube), `direct_scanout.py` (gles2;
+an opaque fullscreen client, XRGB or ARGB with an opaque region, is scanned out, a
+translucent one is not), `layer_lifecycle.py`,
 `idle.py`, `layout_ipc.py`, `clipboard_gtk_client.py`/`dnd_gtk_client.py`
 (fixtures used by `xwayland.py`).
 

@@ -144,6 +144,34 @@ The same binary, twice in a row on the same session of the machine (scenario-lev
 | scene commit ms | 9.7% | 24.9% | 33.7% | 41 |
 | gpu ms | 10.2% | 29.1% | 54.1% | 41 |
 
+### After the stage 0 fixes
+
+The same harness on the build with the glass-scale, projection-occlusion,
+autosave and session-reaping fixes (`after-stage0-fixes.json`, same machine, AC
+power) against the numbers above:
+
+* **Single scale (1 and 1.5):** instructions/s within 1-2 % on every scenario
+  but `fullscreen` at 1.5 (-12 %). Timers and CPU % move inside the run-to-run
+  noise. The fixture windows are ARGB without an opaque region, so the
+  occlusion fix has nothing to cull here.
+* **Mixed scales:** the glass fix, as in finding 2: idle 8.9 % CPU → 0.00 %,
+  `spinner_clear` -79 % instructions, `drag` -67 %, `zoom_70` -67 %,
+  `zoom_min_hold` -80 %, `resize` -16 %, `fullscreen` -45 %.
+* **An opaque fullscreen client** (XRGB, one surface, 60 fps full damage, scale
+  1; the case the projection fix targets): instructions 60.4 → 27.8 M/s
+  (-54 %), `cpu_frame` 0.394 → 0.150 ms (-62 %), and "Direct scan-out enabled"
+  appears where it never did. CPU % stays 34-43 % because the dominant cost is
+  the shm upload on commit, which scanout does not remove.
+* **Pixels:** 16 of 16 screenshots identical to the goldens at scale 1 and 1.5
+  and for the mixed-scale second output, including the zoomed ones, so the
+  culling is exact. Two mixed-scale images differ on the scale-1 output in 14
+  pixels (at most 11 levels) at the edge of the straddling window's glass, the
+  glass fix drawing that effect at the sharper scale.
+* **Other suites:** the 19 integration suites that exercise glass, outputs,
+  damage, capture of windows, zoom and the session pass; `capture.py`,
+  `screencast.py`, `single_pixel.py`, `desktop_zoom.py` and `mini_map.py` fail
+  identically on the unfixed build.
+
 ## Findings
 
 1. **No meaningful regression since `190cb65` (2026-09-23).** Interleaved
@@ -215,9 +243,23 @@ The same binary, twice in a row on the same session of the machine (scenario-lev
    outside this plan; the cause is unprofiled (likely the shm upload in the
    commit handler), but it dominates that row, so judge `fullscreen` by
    instructions and the stages, not CPU %.
-6. **Direct scanout has never engaged in the retained live logs, and per-surface
-   dmabuf feedback is never sent** (rows 9 and 10 above). The stage 3 exit
-   criterion "scanout where it applied" may be vacuous; confirm on hardware.
+6. **Direct scanout never engaged, and the cause also meant no window occluded
+   anything.** wlroots decides a client surface is opaque from its raw buffer's
+   format (XRGB covers the surface) or the client's `set_opaque_region` and
+   keeps it in the node's opaque region. The projection copied only the view's
+   `buffer_is_opaque`, and the view's buffer is a `wlr_client_buffer`, which
+   exposes no format, so it was false for every client. No window culled what
+   was below it: every damaged frame redrew the wallpaper and the windows
+   underneath (a wlroots render list of 3 for one fullscreen client instead of
+   1), and a fullscreen client could never be the single entry left to scan
+   out. **Fixed**: `mirror_opaque` in `projection.c` carries the source's
+   region onto the view (exact at 1:1; scaled and pulled one pixel inward
+   otherwise, never larger than the real one), and the view-state cache
+   includes it. `direct_scanout.py` shows "Direct scan-out enabled" for an XRGB
+   and for an ARGB-plus-opaque-region fullscreen client and none for a
+   translucent one (the XRGB case fails on the previous build); `projection_test.c`
+   covers full, partial, changed, scaled and translucent regions. Per-surface
+   dmabuf feedback is also never sent (rows 9 and 10), which is a separate gap.
 7. **Gate on instructions and RSS; treat timers with care.** Two identical runs
    differ by a median 0.4 % (p90 2.8 %) in instructions/s and 0.2 % (p90
    0.9 %) in RSS, but ~10 % (p90 25-30 %) in every frame-stage timer and 7 %
@@ -262,14 +304,14 @@ record a conscious drop.
 |---|---|---|---|
 | 1 | **Output lifecycle.** Create attaches commit/damage/needs-frame listeners and a damage ring (W:1766); a commit that changes mode, enabled, transform, scale or subpixel damages the whole output and re-evaluates every buffer node's outputs (W:1700); destroy leaves all nodes (W:1832); position follows the output layout (W:1884). | `Output.zig` `createSceneOutput` + `scene_output_layout.addOutput`; `scene_output.destroy()` runs first in the output teardown, before any scene mutation. | `output_destroy`, `display_arrangement`, `output_scale`, hotplug and mode-change cases of the suites below. |
 | 2 | **Damage.** Node moves, resizes, buffer changes and visibility changes damage every output they touch (W:397); `wlr_damage_ring` rotated by swapchain buffer age gives the region to repaint (W:2535); `pending_commit_damage` is what the backend has not acknowledged (W:1709); scale, transform or gamma-transform changes damage everything (W:2357-2371, 2338). `needs_frame` = output latch, pending damage or gamma change (W:2183). | `Output.runFrame` asks `scene_output.needsFrame()`; `commitIsRedundant` reads `scene_output.private.pending_commit_damage` and `gamma_lut_changed` directly, so skipped commits depend on private wlroots fields. | `desktop_damage`, `panel_damage`, `glass_hold`, `zig build test-projection`; buffer-age correctness under an effect (stage 1 gate). |
-| 3 | **Visibility and culling.** Every node keeps a `visible` region (opaque regions above subtract, W:650/722); nodes with an empty region are skipped in the render list and in frame-done (W:1961, 1122); a black rect, and at integer scale an opaque black single-pixel buffer, is not drawn because the background is black (W:1941-1959); the black clear covers only damage not under an opaque node, grown by 1 px at fractional scale (W:2538-2579); opaque nodes blend with `NONE` (W:1549). | Projection sets each view node's opaque region from `buffer_is_opaque`; partial client opaque regions are conservatively empty (`projection.c`, `next.opaque`). | Occlusion cases in `popup_constraint`, `layer_lifecycle`, `lock_screen`; CPU/GPU cost against baseline. |
+| 3 | **Visibility and culling.** Every node keeps a `visible` region (opaque regions above subtract, W:650/722); nodes with an empty region are skipped in the render list and in frame-done (W:1961, 1122); a black rect, and at integer scale an opaque black single-pixel buffer, is not drawn because the background is black (W:1941-1959); the black clear covers only damage not under an opaque node, grown by 1 px at fractional scale (W:2538-2579); opaque nodes blend with `NONE` (W:1549). | Projection sets each view node's opaque region from `buffer_is_opaque` and, for client surfaces, mirrors the source node's own region (`mirror_opaque`): exact at 1:1, scaled and pulled one pixel in otherwise. Until 2026-10-09 it copied only `buffer_is_opaque`, which is false for every `wlr_client_buffer`, so no client window occluded anything. | Occlusion cases in `popup_constraint`, `layer_lifecycle`, `lock_screen`; CPU/GPU cost against baseline. |
 | 4 | **Per-node draw.** Paint order = tree order; clip = visible ∩ damage in buffer coordinates, rounded outward at fractional scale; destination box by `round(len·s)` vs `round((off+len)·s)−round(off·s)`; buffer/output transform composition; `src_box`; bilinear/nearest by node mode; alpha = node opacity; premultiplied blend; single-pixel buffers drawn as rects (W:1451-1582). A node whose texture cannot be created re-damages itself (W:1520). | Same code, fed by view nodes; projection picks bilinear whenever zoom ≠ 1. | `screenshot_regressions`, `edge_sampling` (until deleted), mixed-scale and zoom suites, pixel diff against the stage 0 goldens. |
 | 5 | **Explicit sync.** Each buffer carries `wait_timeline/point`, waited on GPU-side with an EGL wait-sync before sampling (GLES2 `pass.c:206`). Release points are `scene_output.in_timeline/in_point`, signalled from an EGL fence imported as a sync file (`pass.c:42`; otherwise `glFlush`); only created with a DRM backend and renderer timeline support (W:1794). | Projection copies the wait point to the view (`projection.c`, `.wait_timeline`); `explicit_sync.c` adds `ReadFence` and `AcquireWait` for other GPU or CPU reads. | `explicit_sync` (a real vkcube client on headless GLES2; skips without vkcube or a GPU); release points on a DRM backend are manual. |
 | 6 | **Frame callbacks.** `send_frame_done` walks enabled nodes; a buffer node emits `frame_done` only when its visible region is non-empty (W:1120, 2664); the surface handler delivers `wl_surface.frame` only for the surface's pacing output: the entered, non-suspended output with the highest refresh (S:182). | `Output.zig` calls `scene_output.sendFrameDone` after each commit and, for skipped commits, from `vblank_timer` (`deferFrameDone`). | Frame-callback pacing in `perf`/`idle`, `desktop_damage`, `presentation_time`. |
 | 7 | **Enter/leave and preferred scale.** Per buffer node: output overlap > 10 % of its visible area makes the output active, the largest overlap is the primary output (W:416-536); the `outputs_update` handler sends `wl_surface.enter/leave`, with *no* leave when a node becomes fully hidden (suspended), the fractional preferred scale = largest entered-output scale, `preferred_buffer_scale = ceil` and the colour-manager preferred description (S:93-156). | Routed onto view nodes, so enter/leave follows the zoomed, on-screen footprint. Preferred scale ignores camera zoom (see the client-density note in memory). | `output_scale`, `wlr_protocols`, `xwayland_fractional`, mixed-scale and zoom suites. |
 | 8 | **Presentation feedback.** `output_sample` marks the surface `textured` (or `scanned_out`) on its pacing output; `wlr_presentation` sends the feedback from the output's present event (S:158). | `Server.zig` creates `wlr.Presentation`; the sample event comes from view nodes. | `presentation_time`. |
 | 9 | **dmabuf feedback and preferred transform.** Scanout/composition tranches per surface (W:1988), only when `wlr_scene_set_linux_dmabuf_v1` was called and the node is a surface. | **Not provided today.** RediWM never calls `wlr_scene_set_linux_dmabuf_v1`, and view nodes carry no surface addon: clients only see the default (main-device) feedback. | None to reproduce. Decide whether to keep it dropped or add tranches with scanout. |
-| 10 | **Direct scanout.** Tried only when the render list has exactly one entry (after culling), no colour transform, no pending modeset, scanout allowed on the output, the buffer's transform and colour description match, and `wlr_output_test_state` accepts it; release through the out-timeline; hardware cursor stays on its plane (W:2061-2181, 2446). | Available in principle for an opaque fullscreen client with everything else culled; `tearingAllowed`/`commitFrameState` sit beside it. **Never logged in the two retained live logs** (`session.log`, `session.previous.log`: 28 k wlroots debug lines, no "Direct scan-out" line), and headless cannot exercise it. | Manual on hardware with a fullscreen opaque client (`WLR_DEBUG` "Direct scan-out enabled"). The stage 3 exit criterion "scanout where it applied" may be vacuous: confirm on hardware before relying on it. |
+| 10 | **Direct scanout.** Tried only when the render list has exactly one entry (after culling), no colour transform, no pending modeset, scanout allowed on the output, the buffer's transform and colour description match, and `wlr_output_test_state` accepts it; release through the out-timeline; hardware cursor stays on its plane (W:2061-2181, 2446). | Available for an opaque fullscreen client with everything else culled; `tearingAllowed`/`commitFrameState` sit beside it. **It never engaged** (no "Direct scan-out" line in the two retained live logs) because the projection dropped client opaque regions, so the wallpaper and every window under the client stayed in the list. **Fixed 2026-10-09**; it can be tested headless, since the headless backend accepts any buffer and wlroots logs the transitions. | `direct_scanout.py` (GLES2; XRGB, ARGB with an opaque region, and a translucent ARGB that must not scan out). The DRM release path (out-timeline, a real plane) still needs hardware. |
 | 11 | **Software cursors** are drawn into the same pass, limited to damage (W:2619). | `CursorState`/`committed_cursor` decide whether a skipped commit is safe. | Cursor suites (`client_cursor`, `cursor_shape`), `commitIsRedundant` cases. |
 | 12 | **Colour.** An output colour transform (gamma LUT, image description) is only rendered when the renderer has `output_color_transform`; GLES2 and pixman do not (`renderer.c:529`), so wlroots tries a KMS gamma state instead (W:2212, 2506). | RediWM never sets the scene's gamma-control manager; night light rides `Output.color` in `commitFrameState`. The colour-management protocol is wired (`extra_protocols.c`) but with GLES2 (`input_color_transform = false`) advertises no transfer functions or primaries, so only default sRGB/gamma 2.2 buffers exist. | Night-light and colour suites; nothing to reproduce in an owned GLES2 shader. |
 | 13 | **State build outside the frame path.** `build_state` consumes a swapchain buffer, rotates the damage ring and, with a timer, brackets the pass (W:2313). | Screenshots (`screenshot/capture.zig`) and IPC `sample_pixels` call it directly on the live scene output. | `capture`, `screencast`, `screenshot_regressions`: the buffer-age contract must survive a capture between two frames. |
@@ -313,6 +355,6 @@ evidence found; the last column is what is still open.
 | **Footer reservation** | Drop `max(border, ceil(radius))` to the border width. | Needs the audit the plan lists (snap, resize edges, layout, saved layouts, Xwayland, tabs, tests pinning titlebar/body heights). | Audit at stage 4. |
 | **Colour management** | Nothing to reproduce; drop. | GLES2 ignores transfer function, primaries, range, encoding and luminance, cannot apply output transforms, and the colour manager advertises no transfer functions or primaries (`input_color_transform` is false). | Decided by evidence. |
 | **dmabuf feedback** | Keep dropped for now. | Never sent today (row 9). | Revisit with scanout. |
-| **Direct scanout** | Verify on hardware before stage 3's exit criterion. | Never logged in the retained live logs; headless cannot test it. | A fullscreen opaque client on a real session. |
+| **Direct scanout** | Keep it as a stage 3 exit criterion. | It now engages and is testable headless (finding 6); only the DRM plane and release path need hardware. | A fullscreen opaque client on a real session. |
 | **Mixed-scale idle loop** | Fix in `glass.c` independently, now. | Finding 2: a pre-existing idle regression with a small likely cause. | **Decided 2026-10-09 and done** (finding 2). |
 | **`glass_hold.py`** | The default theme follows the backdrop; keep the 0.98 case as the hold. | Finding 3. | Done: the default case now expects a follow. |

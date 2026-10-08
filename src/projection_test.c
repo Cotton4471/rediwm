@@ -41,6 +41,67 @@ static void assert_position(struct rediwm_projection *p,
   assert(wlr_scene_node_coords(view, &actual_x, &actual_y));
   assert(actual_x == x && actual_y == y);
 }
+static bool visible_at(struct wlr_scene_node *node, int x, int y) {
+  return pixman_region32_contains_point(&node->private.visible, x, y, NULL);
+}
+// A client surface's opaque region has to reach its view, or nothing below the
+// window is ever culled. The buffers here reveal no format, like a
+// wlr_client_buffer, so only the node's own region can say they are opaque.
+static void test_opaque(struct wlr_scene *scene) {
+  struct wlr_scene_tree *source = wlr_scene_tree_create(&scene->tree);
+  struct wlr_scene_tree *view = wlr_scene_tree_create(&scene->tree);
+  struct rediwm_projection *p = rediwm_projection_create(source, view, scene);
+  assert(p);
+  struct wlr_buffer *below_buffer = buffer_create(), *client_buffer = buffer_create();
+  struct wlr_scene_buffer *below = wlr_scene_buffer_create(source, below_buffer);
+  struct wlr_scene_buffer *client = wlr_scene_buffer_create(source, client_buffer);
+  assert(below && client);
+  wlr_scene_node_set_position(&below->node, 20, 10);
+  wlr_scene_node_set_position(&client->node, 20, 10);
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  struct wlr_scene_node *below_view = rediwm_projection_node(p, &below->node);
+  assert(below_view && visible_at(below_view, 100, 60));
+
+  pixman_region32_t region;
+  pixman_region32_init_rect(&region, 0, 0, 200, 120);
+  wlr_scene_buffer_set_opaque_region(client, &region);
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  assert(!visible_at(below_view, 100, 60) && !visible_at(below_view, 21, 11));
+
+  // Only the client's own region occludes, and a changed region is applied
+  // although the view's geometry did not change.
+  pixman_region32_clear(&region);
+  pixman_region32_union_rect(&region, &region, 50, 30, 100, 60);
+  wlr_scene_buffer_set_opaque_region(client, &region);
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  assert(!visible_at(below_view, 100, 60) && !visible_at(below_view, 70, 40));
+  assert(visible_at(below_view, 30, 20) && visible_at(below_view, 215, 125));
+  pixman_region32_clear(&region);
+  wlr_scene_buffer_set_opaque_region(client, &region);
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  assert(visible_at(below_view, 100, 60));
+
+  // Scaled with the view and pulled one pixel in: the middle is culled, the
+  // edge pixels, which the filter may blend with what is outside, are drawn.
+  pixman_region32_union_rect(&region, &region, 0, 0, 200, 120);
+  wlr_scene_buffer_set_opaque_region(client, &region);
+  rediwm_projection_sync(p, .5, 0, 0, 0, 0);
+  assert(!visible_at(below_view, 60, 35));
+  assert(visible_at(below_view, 10, 5) && visible_at(below_view, 109, 64));
+
+  // A translucent node hides nothing, whatever its region says.
+  wlr_scene_buffer_set_opacity(client, .5f);
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  assert(visible_at(below_view, 100, 60));
+  wlr_scene_buffer_set_opacity(client, 1.f);
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  assert(!visible_at(below_view, 100, 60));
+
+  pixman_region32_fini(&region);
+  rediwm_projection_destroy(p);
+  wlr_buffer_drop(below_buffer);
+  wlr_buffer_drop(client_buffer);
+}
 static void test_groups(struct wlr_scene *scene, struct wlr_scene_output *out) {
   struct wlr_scene_tree *source = wlr_scene_tree_create(&scene->tree);
   struct wlr_scene_tree *view = wlr_scene_tree_create(&scene->tree);
@@ -341,11 +402,12 @@ int main(void) {
   pixman_region32_fini(&surface.buffer_damage);
   rediwm_projection_destroy(p);
   test_groups(scene, out);
+  test_opaque(scene);
   wlr_scene_node_destroy(&scene->tree.node);
   wlr_buffer_drop(a);
   wlr_buffer_drop(b);
   wlr_backend_destroy(backend);
   wl_display_destroy(display);
-  puts("PASS: projection damage, grouping, geometry and lifecycle");
+  puts("PASS: projection damage, grouping, geometry, opaque regions and lifecycle");
   return 0;
 }
