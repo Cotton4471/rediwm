@@ -690,6 +690,18 @@ pub fn build(b: *std.Build) void {
     const run_glass_tests = b.addRunArtifact(glass_tests);
     run_glass_tests.setEnvironmentVariable("WLR_RENDERER", "gles2");
     b.step("test-glass", "Run backdrop pixel checks with a headless GLES2 renderer").dependOn(&run_glass_tests.step);
+    // Stage 1 spike of docs/plans/scene-graph.md: the owned pass's primitives, pixel-tested.
+    const pass_spike_tests = b.addExecutable(.{
+        .name = "pass-spike-tests",
+        .root_module = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true }),
+    });
+    pass_spike_tests.root_module.addCSourceFile(.{ .file = b.path("src/pass_spike_test.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra" } });
+    inline for (.{ "wlroots-0.20", "wayland-server", "pixman-1", "egl", "glesv2" }) |lib| {
+        pass_spike_tests.root_module.linkSystemLibrary(lib, .{});
+    }
+    const run_pass_spike_tests = b.addRunArtifact(pass_spike_tests);
+    run_pass_spike_tests.setEnvironmentVariable("WLR_RENDERER", "gles2");
+    b.step("test-pass-spike", "Run the owned-pass spike's pixel gates on a headless GLES2 renderer").dependOn(&run_pass_spike_tests.step);
     const run_glass_damage_tests = b.addRunArtifact(glass_tests);
     run_glass_damage_tests.addArg("--damage-only");
     b.step("test-glass-damage", "Test backdrop invalidation without a GPU").dependOn(&run_glass_damage_tests.step);

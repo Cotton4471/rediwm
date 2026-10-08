@@ -55,8 +55,11 @@ Client surface semantics stay behind an adapter; they are not reimplemented.
   skirt, `probeClientEdge`, `side_fills`, the straight-rect border path and the
   chrome arcs. xdg popups are separate trees and are never clipped by a
   parent's shape.
-* *Analytic primitives.* Borders and shadows become shader primitives. CPU
-  raster is left for what is really content: title text, icons, buttons.
+* *Analytic primitives.* Borders and shadows become shader primitives. A
+  border is evaluated in the same fragment pass as the body it surrounds, never
+  as a second draw over it (the two partial coverages multiply and leave a seam;
+  stage 1, gate 3). CPU raster is left for what is really content: title text,
+  icons, buttons.
 * *Output pass.* Per output: acquire swapchain buffer (age), accumulate
   damage, walk in paint order with opaque-region culling, draw with an owned
   GLES2 program driven directly on the wlroots context and buffer FBO, as
@@ -113,6 +116,9 @@ environment variable: no test hooks in production), removed in stage 6.
      function and primaries, range/encoding, premultiplied blending, filters.
    * Confirm the policy defaults above and the renderer decision below.
 1. **Pass spike (noninstalled fixture, `test-glass`-style pixel tests).**
+   *Done 2026-10-09: all ten gates pass, after two design changes; results,
+   costs and the open integration risks are in
+   [scene-graph-stage1.md](scene-graph-stage1.md).*
    Draw a 2D and an external-OES client texture through the rounded clip at
    fractional scale and zoom; analytic border and shadow; blur from a
    framebuffer copy. Gate: no seams or fringe (extend `window_corners.py`

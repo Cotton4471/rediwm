@@ -48,6 +48,11 @@ the one for the directory you work in: `src/files`, `src/editor`,
   never from the output being updated: it is in the effect's hash, and an
   output-dependent value made outputs of different scales re-blur and damage
   each other forever (`glass_hold.py`).
+* **Owned GL beside wlroots:** wlroots draws with client-side vertex arrays, so
+  any GL work of ours must put `GL_ARRAY_BUFFER` (and the rest of the state it
+  touched) back before a wlroots pass runs, as `glass.c`'s `leave()` does; a quad
+  VBO left bound makes wlroots draw half a rectangle. A border is drawn in the
+  same pass as its body, never over it (`docs/plans/scene-graph-stage1.md`).
 * **Commit only via `Output.commitFrameState`**, never
   `wlr_output_commit_state`. `commitIsRedundant` skips commits with no damage,
   colour change, attach-render lock or cursor change; register anything new

@@ -15,6 +15,7 @@ debugging on the host, see AGENTS.md, "Rendering".
 | --- | --- |
 | `zig build test` | In-process unit tests: rasterizers vs. full rasters, UI, config, IPC parser/serializer fixtures, glass damage, projection damage, lifecycle/allocation failures, Files/desktop logic. No compositor or bus. |
 | `zig build test-glass` | Real GLES2 pixels on a headless backend (needs a DRM render node). |
+| `zig build test-pass-spike` | The owned-pass spike of `docs/plans/scene-graph-stage1.md`: rounded clip, border, shadow, external-OES texture, backdrop blur, buffer-age damage and cost on headless GLES2 (needs a render node; `-Doptimize=ReleaseSafe` for cost). |
 | `zig build test-lock` | Lock/greeter painter, password editing, PAM transitions (PAM is replaced at link time in test binaries only), greeter↔rediwm-dm conversation. |
 | `zig build test-dm` | rediwm-dm relay state machine and framing. |
 | `zig build test-dbus`, `test-polkit`, `test-polkit-ui`, `test-notifications`, `test-settings-portal`, `test-power`, `test-power-profiles`, `test-tray`, `test-app-activation`, `test-rediwm-session`, `test-layout-autosave`, `test-files`, `test-images` | Subsystem suites; the D-Bus ones re-exec under `dbus-run-session`. |
