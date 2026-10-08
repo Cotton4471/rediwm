@@ -1024,19 +1024,50 @@ void rediwm_glass_project(struct glass_engine *engine, struct rediwm_projection 
         effect->zoom = node ? rediwm_projection_node_zoom(node) : 1;
     }
 }
-static void update_tree(struct glass_engine *engine, struct wlr_scene_tree *tree, float scale)
+// The highest scale among the outputs showing the effect's target, or among all
+// outputs when it is on none. A scene node shows one buffer, so the blur is
+// rendered once for every output it spans, at the sharpest scale. It must not
+// depend on which output is being updated: the scale is part of the effect's
+// hash, so with outputs of different scales each output's update used to see a
+// new scale, re-render the blur and damage the others, and such a desktop never
+// went idle.
+static float effect_scale(struct glass_engine *engine, struct glass_effect *effect)
+{
+	struct wlr_scene_buffer *target =
+	    effect->projected_node && effect->projected_target ? effect->projected_target : effect->target;
+	struct wlr_box box = {0};
+	int x = 0, y = 0;
+	if (wlr_scene_node_coords(&target->node, &x, &y))
+		box = (struct wlr_box){x, y, target->dst_width, target->dst_height};
+	float shown = 0, any = 0;
+	struct wlr_scene_output *out;
+	wl_list_for_each(out, &engine->scene->outputs, link)
+	{
+		if (!out->output->enabled)
+			continue;
+		float scale = out->output->scale;
+		any = fmaxf(any, scale);
+		int width, height;
+		wlr_output_effective_resolution(out->output, &width, &height);
+		struct wlr_box area = {out->x, out->y, width, height}, overlap;
+		if (!wlr_box_empty(&box) && wlr_box_intersection(&overlap, &box, &area))
+			shown = fmaxf(shown, scale);
+	}
+	return shown > 0 ? shown : any > 0 ? any : 1;
+}
+static void update_tree(struct glass_engine *engine, struct wlr_scene_tree *tree)
 {
 	struct wlr_scene_node *node;
 	wl_list_for_each(node, &tree->children, link)
 	{
 		struct glass_effect *effect = effect_for(engine, node);
 		if (effect)
-			update_effect(effect, scale);
+			update_effect(effect, effect_scale(engine, effect));
 		else if (node->enabled && node->type == WLR_SCENE_NODE_TREE)
-			update_tree(engine, wlr_scene_tree_from_node(node), scale);
+			update_tree(engine, wlr_scene_tree_from_node(node));
 	}
 }
-void rediwm_glass_update(struct glass_engine *engine, struct wlr_scene_output *output, float scale)
+void rediwm_glass_update(struct glass_engine *engine, struct wlr_scene_output *output)
 {
 	if (!engine || engine->failed)
 		return;
@@ -1064,5 +1095,5 @@ void rediwm_glass_update(struct glass_engine *engine, struct wlr_scene_output *o
 			engine->bounds = (struct wlr_box){x, y, right - x, bottom - y};
 		}
 	}
-	update_tree(engine, &engine->scene->tree, scale);
+	update_tree(engine, &engine->scene->tree);
 }

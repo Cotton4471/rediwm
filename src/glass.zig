@@ -18,7 +18,7 @@ pub const Engine = opaque {
     pub const hold = rediwm_glass_hold;
     extern fn rediwm_glass_hold_all(engine: ?*Engine, hold: bool) void;
     pub const holdAll = rediwm_glass_hold_all;
-    extern fn rediwm_glass_update(engine: ?*Engine, output: *wlr.SceneOutput, scale: f32) void;
+    extern fn rediwm_glass_update(engine: ?*Engine, output: *wlr.SceneOutput) void;
     pub const update = rediwm_glass_update;
     extern fn rediwm_glass_project(engine: ?*Engine, projection: ?*anyopaque, zoom: f32) void;
     pub const project = rediwm_glass_project;

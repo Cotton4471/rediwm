@@ -15,7 +15,7 @@ import time
 from PIL import Image, ImageChops
 
 from desktop_zoom import ROOT, build_client, wait_for
-from ipc_client import IPCClient
+from ipc_client import IPCClient, spawn_compositor, stop_process
 
 SCALE = 1.5
 TITLEBAR_HEIGHT = 55  # chrome.titlebar_height
@@ -103,12 +103,66 @@ def differs(a, b):
     return ImageChops.difference(a, b).getbbox() is not None
 
 
+def mixed_scale_idle():
+    """Outputs of different scales share glass effects; a static desktop must stay idle.
+
+    The effect's scale is part of its hash, so rendering it for whichever output
+    was updating made each output re-blur it and damage the other, forever.
+    """
+    with tempfile.TemporaryDirectory(prefix="rediwm-glass-mixed-") as directory:
+        tmp = Path(directory)
+        build_client(tmp)
+        config = ('[compositor]\nxwayland = false\n[[outputs]]\nname = "HEADLESS-1"\nscale = 1\n'
+                  '[[outputs]]\nname = "HEADLESS-2"\nscale = 1.5\n')
+        process, log = spawn_compositor(
+            tmp, scale="auto", outputs="2", config_content=config,
+            renderer=os.environ.get("REDIWM_TEST_RENDERER", "gles2"),
+            env_extra={"DBUS_SESSION_BUS_ADDRESS": "", "REDIWM_THEME": str(tmp / "rediwm-config.toml")})
+        client = None
+        try:
+            with IPCClient(tmp) as ipc:
+                ipc.wait_for("wallpaper_presented", timeout_ms=10000)
+                outputs = sorted(ipc.get_outputs(), key=lambda out: out["x"])
+                assert sorted(out["scale"] for out in outputs) == [1, 1.5], outputs
+                display = wait_for(lambda: next((p.name for p in tmp.glob("wayland-*")
+                                                 if not p.name.endswith(".lock")), None), "display unavailable")
+                client = subprocess.Popen([str(tmp / "client")], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                          env=dict(os.environ, XDG_RUNTIME_DIR=str(tmp), WAYLAND_DISPLAY=display,
+                                                   REDIWM_TEST_DECORATION="server"))
+                win = wait_for(lambda: next(iter(ipc.get_windows()), None), "window unavailable")
+                # Straddle the boundary so its titlebar glass is seen by both outputs.
+                ipc.action("move_window_to", {"id": win["id"], "x": outputs[1]["x"] - 200, "y": 120})
+                time.sleep(1.0)
+                ipc.wait_for_frame()
+                ipc.reset_perf()
+                time.sleep(1.5)
+                perf = ipc.get_perf()
+                assert perf["output_commits"] == 0, ("mixed-scale desktop keeps repainting", perf["output_commits"])
+                print("PASS: outputs of different scales settle with a glass window across both")
+        except Exception:
+            print(log_text(tmp))
+            raise
+        finally:
+            if client is not None and client.poll() is None:
+                client.terminate()
+                client.wait(timeout=3)
+            stop_process(process)
+            log.close()
+
+
+def log_text(tmp):
+    path = tmp / "compositor.log"
+    return path.read_text()[-3000:] if path.exists() else ""
+
+
 def run():
+    mixed_scale_idle()
     with tempfile.TemporaryDirectory(prefix="rediwm-glass-hold-") as directory:
         tmp = Path(directory)
         build_client(tmp)
-        # 250/255 is the nearest hex alpha at or above the 98% threshold.
-        for window_bg, holds in ((None, True), ("#101215fa", True), ("rgba(16,18,21,0.90)", False)):
+        # 250/255 is the nearest hex alpha at or above the 98% threshold. The default
+        # theme is 80% opaque, so it follows the backdrop like the 90% case.
+        for window_bg, holds in ((None, False), ("#101215fa", True), ("rgba(16,18,21,0.90)", False)):
             moved, drag = session(tmp, window_bg, None, holds)
             placed, reference = session(tmp, window_bg, moved)
             assert (placed["x"], placed["y"]) == (moved["x"], moved["y"]), (placed, moved)

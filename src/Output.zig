@@ -1285,7 +1285,7 @@ fn runFrame(output: *Output) void {
         false;
     glass.Engine.hold(output.server.glass_engine, output.server.input.heldGlass());
     glass.Engine.holdAll(output.server.glass_engine, output.server.world.holdingGlass());
-    glass.Engine.update(output.server.glass_engine, scene_output, output.wlr_output.scale);
+    glass.Engine.update(output.server.glass_engine, scene_output);
     stats.global_stats.glass_cpu.record(stats.nowNs() -% glass_started);
     var captured = false;
     if (output.server.screenshot_mgr) |sm| {

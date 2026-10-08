@@ -42,8 +42,12 @@ the one for the directory you work in: `src/files`, `src/editor`,
   stays): persist raster sizes; test with `REDIWM_TEST_RENDERER=gles2`.
 * **Glass** samples `wlr_client_buffer_get(buffer)->texture` and tracks
   source-surface damage per effect. Empty commits and buffer rotation keep the
-  blur. Drags may hold titlebar blur at ≥ 0.98 opacity, so every path ending a
-  move schedules a frame.
+  blur. Drags may hold titlebar blur at ≥ 0.98 opacity (the default theme is
+  0.80, so it follows), so every path ending a move schedules a frame. An
+  effect's scale comes from the outputs its target overlaps (`effect_scale`),
+  never from the output being updated: it is in the effect's hash, and an
+  output-dependent value made outputs of different scales re-blur and damage
+  each other forever (`glass_hold.py`).
 * **Commit only via `Output.commitFrameState`**, never
   `wlr_output_commit_state`. `commitIsRedundant` skips commits with no damage,
   colour change, attach-render lock or cursor change; register anything new
