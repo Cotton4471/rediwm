@@ -48,10 +48,11 @@ pub fn supervise(comptime Publication: type, options: Options(Publication)) !u8 
     var preexisting = try descendants(allocator, linux.getpid());
     defer preexisting.deinit(allocator);
 
-    // Logout signals arrive through a signalfd; the child gets the old mask back.
+    // Logout signals and child exits arrive through a signalfd; the child gets the old mask back.
     var mask = linux.sigemptyset();
     linux.sigaddset(&mask, .TERM);
     linux.sigaddset(&mask, .INT);
+    linux.sigaddset(&mask, .CHLD);
     var old_mask: linux.sigset_t = undefined;
     _ = try sys.check(linux.sigprocmask(linux.SIG.BLOCK, &mask, &old_mask));
     defer _ = linux.sigprocmask(linux.SIG.SETMASK, &old_mask, null);
@@ -108,7 +109,7 @@ pub fn supervise(comptime Publication: type, options: Options(Publication)) !u8 
                 sys.close(pidfd);
                 if (options.publication) |p| p.restore() catch |err| sys.diagnostic("activation cleanup pending: {t}", .{err});
             }
-            stopping = try waitForExit(allocator, parent, pidfd, signal_fd, options.publication, &locked);
+            stopping = try waitForExit(allocator, pid, parent, pidfd, signal_fd, options.publication, &locked);
         }
         if (stopping) return 0;
         const raw = status orelse return 1;
@@ -124,7 +125,7 @@ pub fn supervise(comptime Publication: type, options: Options(Publication)) !u8 
 
 /// Serves readiness handshakes and records lock reports until the compositor
 /// exits (false) or the supervisor is asked to stop (true).
-fn waitForExit(allocator: std.mem.Allocator, parent: i32, pidfd: i32, signal_fd: i32, maybe_publication: anytype, locked: *bool) !bool {
+fn waitForExit(allocator: std.mem.Allocator, compositor: Pid, parent: i32, pidfd: i32, signal_fd: i32, maybe_publication: anytype, locked: *bool) !bool {
     var deadline: ?i64 = sys.monotonicMs() + readiness_timeout_ms;
     var parent_open = true;
     var packet: [16384]u8 = undefined;
@@ -146,7 +147,12 @@ fn waitForExit(allocator: std.mem.Allocator, parent: i32, pidfd: i32, signal_fd:
         }
         if (fds[1].revents != 0) {
             var info: linux.signalfd_siginfo = undefined;
-            _ = linux.read(signal_fd, @ptrCast(&info), @sizeOf(linux.signalfd_siginfo));
+            const got = linux.read(signal_fd, @ptrCast(&info), @sizeOf(linux.signalfd_siginfo));
+            if (linux.errno(got) != .SUCCESS or got != @sizeOf(linux.signalfd_siginfo)) continue;
+            if (info.signo == @intFromEnum(linux.SIG.CHLD)) {
+                reapAdopted(compositor);
+                continue;
+            }
             return true;
         }
         if (fds[2].revents == 0) continue;
@@ -168,6 +174,24 @@ fn waitForExit(allocator: std.mem.Allocator, parent: i32, pidfd: i32, signal_fd:
             else => return err,
         };
         deadline = null;
+    }
+}
+
+/// The supervisor is a child subreaper, so every orphan of the session (a
+/// double-forked helper, an app whose launcher exited first) becomes its child
+/// and stays a zombie until someone waits for it. Nothing did, so a day of use
+/// left hundreds. Peek first (`NOWAIT`): the compositor's own status is
+/// collected by `stopGroup` and must not be consumed here. A zombie compositor
+/// can hide others behind it, but then the loop is already ending.
+fn reapAdopted(compositor: Pid) void {
+    while (true) {
+        var info = std.mem.zeroes(linux.siginfo_t);
+        const peeked = linux.waitid(.ALL, 0, &info, linux.W.EXITED | linux.W.NOHANG | linux.W.NOWAIT, null);
+        if (linux.errno(peeked) != .SUCCESS) return;
+        const pid = info.fields.common.first.piduid.pid;
+        if (pid == 0 or pid == compositor) return;
+        var reaped = std.mem.zeroes(linux.siginfo_t);
+        if (linux.errno(linux.waitid(.PID, pid, &reaped, linux.W.EXITED | linux.W.NOHANG, null)) != .SUCCESS) return;
     }
 }
 

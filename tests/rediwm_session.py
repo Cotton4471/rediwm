@@ -13,6 +13,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 
 SUPERVISOR = Path(sys.argv[1] if len(sys.argv) > 1 else Path(__file__).resolve().parents[1] / "zig-out/bin/rediwm-session")
 
@@ -175,6 +176,47 @@ def test_compositor_environment():
     print("rediwm-session: the compositor gets the session PATH/XDG environment and no host display")
 
 
+def zombie_children(pid):
+    """Direct children of `pid` that have exited but not been waited for."""
+    children = Path(f"/proc/{pid}/task/{pid}/children").read_text().split()
+    zombies = []
+    for child in children:
+        try:
+            state = Path(f"/proc/{child}/stat").read_text().rsplit(")", 1)[1].split()[0]
+        except OSError:
+            continue
+        if state == "Z":
+            zombies.append(int(child))
+    return zombies
+
+
+def test_adopted_orphans_are_reaped():
+    """The supervisor is a subreaper: orphans of the session become its children and must be reaped."""
+    with tempfile.TemporaryDirectory(prefix="rediwm-session-test-") as directory:
+        tmp = Path(directory)
+        # Each inner subshell loses its parent at once, so the supervisor adopts it; it exits 0.3 s later.
+        body = 'echo ran >>"$0.count"\n( (sleep 0.3) & )\n( (sleep 0.3) & )\n( (sleep 0.3) & )\nsleep 3\nexit 0\n'
+        wrapper, fake = build_wrapper(tmp, body)
+        home = tmp / "home"
+        home.mkdir()
+        process = subprocess.Popen([str(wrapper)], env=isolated_env(home), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            time.sleep(1.5)
+            deadline = time.monotonic() + 1.0
+            zombies = zombie_children(process.pid)
+            while zombies and time.monotonic() < deadline:
+                time.sleep(0.1)
+                zombies = zombie_children(process.pid)
+            assert not zombies, ("exited orphans were never reaped", zombies)
+            assert process.wait(timeout=15) == 0
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+        assert count_runs(fake, "ran") == 1, "reaping must not look like a compositor exit"
+    print("rediwm-session: adopted orphans are reaped while the compositor runs")
+
+
 if __name__ == "__main__":
     test_clean_exit_does_not_restart()
     test_sigterm_does_not_restart()
@@ -183,3 +225,4 @@ if __name__ == "__main__":
     test_crash_while_locked_restarts_locked()
     test_previous_log_rotated_once_per_login()
     test_compositor_environment()
+    test_adopted_orphans_are_reaped()
