@@ -425,6 +425,61 @@ pub fn restoreLayoutFromPath(server: *Server, path: []const u8) !void {
         }
     }
 }
+/// The startup restore of a flat (non-workspace) desktop, kept across the
+/// several delayed attempts (session/layout_autosave.zig).
+///
+/// It works from one snapshot of the saved layout, not from the file: the
+/// periodic autosave rewrites the file with the *current* layout every 10 s,
+/// so re-reading it at each attempt put windows back wherever they had been up
+/// to 10 s earlier (and moved a full-screen window to its old origin). Each
+/// saved row is claimed by at most one window and each window is placed at most
+/// once, so a window the user has moved since is never touched again.
+pub const FlatRestore = struct {
+    arena: std.heap.ArenaAllocator,
+    layout: @import("config").workspace_layout.Flat,
+    placed: std.AutoHashMapUnmanaged(u64, void) = .empty,
+
+    pub fn load(server: *Server, path: []const u8) !FlatRestore {
+        const bytes = try IoDir.cwd().readFileAlloc(server.io, path, gpa, .limited(1 << 20));
+        defer gpa.free(bytes);
+        var arena = std.heap.ArenaAllocator.init(gpa);
+        errdefer arena.deinit();
+        const layout = try @import("config").workspace_layout.Flat.fromBytes(arena.allocator(), bytes);
+        return .{ .arena = arena, .layout = layout };
+    }
+
+    pub fn deinit(self: *FlatRestore) void {
+        self.arena.deinit();
+    }
+
+    /// Whether some saved row has not found its window yet.
+    pub fn pending(self: *const FlatRestore) bool {
+        return self.layout.pending();
+    }
+
+    pub fn apply(self: *FlatRestore, server: *Server) void {
+        const applying = server.undo.applying;
+        server.undo.applying = true;
+        defer server.undo.applying = applying;
+        var it = server.world.toplevels.iterator(.reverse);
+        while (it.next()) |top| {
+            if (top.tab_hidden or self.placed.contains(top.id)) continue;
+            const row = self.layout.claim(top.appId()) orelse continue;
+            self.placed.put(self.arena.allocator(), top.id, {}) catch continue;
+            // Claimed even when skipped, so a later attempt cannot move it. A
+            // window that is already full-screen or maximized keeps its own geometry.
+            if (top.isFullscreen() or top.isMaximized()) continue;
+            if (row.geometry) |g| {
+                top.restoreGeometryNow(.{ .x = g.x, .y = g.y, .width = g.width, .height = g.height });
+                top.setZoomOrigin(@min(row.zoom_index, camera_mod.zoom_levels.len - 1));
+            } else {
+                top.setPosition(row.x, row.y);
+                top.setZoom(@min(row.zoom_index, camera_mod.zoom_levels.len - 1), server.input.cursor.x, server.input.cursor.y);
+            }
+        }
+    }
+};
+
 fn matchSavedWindow(server: *Server, app_id: []const u8, used: *std.AutoHashMapUnmanaged(u64, void), a: std.mem.Allocator) ?*Toplevel {
     var it = server.world.toplevels.iterator(.reverse);
     while (it.next()) |top| {

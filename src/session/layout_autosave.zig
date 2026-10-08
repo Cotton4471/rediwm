@@ -6,17 +6,21 @@
 //!
 //! This has nothing to do with detecting whether the previous shutdown was
 //! clean or a crash — matching is by app_id against whatever toplevels
-//! happen to exist (see `applySavedWindow`), so reapplying a saved position
-//! to a window that's already there, or finding nothing to match at all, is
-//! harmless. That's true on every normal startup, not just after a crash;
-//! this is what makes `data/rediwm-session`'s crash-restart loop useful
-//! instead of just reopening every app in the top-left corner.
+//! happen to exist, and finding nothing to match at all is harmless. That's
+//! true on every normal startup, not just after a crash; this is what makes
+//! `data/rediwm-session`'s crash-restart loop useful instead of just
+//! reopening every app in the top-left corner.
 //!
 //! Restoring is retried on a few delays rather than once, because a slow
 //! launching app (a browser, say) may not have mapped its first window yet
-//! at the first attempt — restore_layout has the same "only affects windows
-//! open right now" limitation when a human presses it, so this doesn't
-//! introduce a new one.
+//! at the first attempt. The attempts share one snapshot of the file taken at
+//! startup (`FlatRestore`): each saved row is claimed by one window and each
+//! window is placed once. Re-reading the file at every attempt was wrong, since
+//! the periodic save below rewrites it with the current layout, so a later
+//! attempt moved windows back to where they were up to 10 s before. For the
+//! same reason the periodic save waits while rows are still unclaimed: it
+//! would overwrite the previous session's layout with a partial one before
+//! slow apps have mapped, and a crash then would lose their positions.
 const std = @import("std");
 const wl = @import("wayland").server.wl;
 
@@ -35,6 +39,9 @@ pub const Autosave = struct {
     save_timer: ?*wl.EventSource = null,
     restore_timer: ?*wl.EventSource = null,
     restore_attempt: usize = 0,
+    /// The startup snapshot of a flat (non-workspace) layout, claimed window by
+    /// window across the restore attempts; null once they are over.
+    flat_restore: ?actions.FlatRestore = null,
     /// Hash of the layout this process last wrote; unchanged ticks skip I/O.
     last_saved_hash: ?u64 = null,
     workspace_hash: ?u64 = null,
@@ -55,6 +62,13 @@ pub const Autosave = struct {
 
         var arena = std.heap.ArenaAllocator.init(gpa);
         defer arena.deinit();
+        // Taken before the first periodic save (10 s) can replace the file.
+        if (autosavePath(arena.allocator(), server)) |path| {
+            self.flat_restore = actions.FlatRestore.load(server, path) catch |err| blk: {
+                if (err != error.FileNotFound) log.warn("autosave snapshot: {s}", .{@errorName(err)});
+                break :blk null;
+            };
+        }
         if (workspacePath(arena.allocator(), server)) |path| {
             self.workspace_restore = @import("../workspace_persistence.zig").Restore.load(server, path) catch |err| blk: {
                 if (err != error.FileNotFound) log.warn("workspace restore: {s}", .{@errorName(err)});
@@ -68,6 +82,7 @@ pub const Autosave = struct {
         if (self.save_timer) |t| t.remove();
         if (self.restore_timer) |t| t.remove();
         if (self.workspace_restore) |*restore| restore.deinit();
+        if (self.flat_restore) |*restore| restore.deinit();
         gpa.destroy(self);
     }
 
@@ -117,8 +132,10 @@ pub const Autosave = struct {
     fn onSaveTimer(self: *Autosave) c_int {
         // Keep the original snapshot on disk while slow startup clients can
         // still claim it. Explicit saves and shutdown retain saveNow semantics.
-        const pending = self.server.world.workspaces.active and
-            (if (self.workspace_restore) |*restore| restore.pending() else false);
+        const pending = if (self.server.world.workspaces.active)
+            (if (self.workspace_restore) |*restore| restore.pending() else false)
+        else
+            (if (self.flat_restore) |*restore| restore.pending() else false);
         if (!pending) self.saveNow();
         self.save_timer.?.timerUpdate(autosave_interval_ms) catch {};
         return 0;
@@ -126,17 +143,15 @@ pub const Autosave = struct {
 
     fn onRestoreTimer(self: *Autosave) c_int {
         if (self.workspace_restore) |*restore| restore.prepare(self.server);
-        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-        defer arena.deinit();
-        if (autosavePath(arena.allocator(), self.server)) |path| {
-            if (!self.server.world.workspaces.active) actions.restoreLayoutFromPath(self.server, path) catch |err| {
-                if (err != error.FileNotFound) log.warn("autosave restore: {}", .{err});
-            };
-        }
+        if (!self.server.world.workspaces.active) if (self.flat_restore) |*restore| restore.apply(self.server);
         self.restore_attempt += 1;
         if (self.restore_attempt < restore_delays_ms.len) {
             self.restore_timer.?.timerUpdate(restore_delays_ms[self.restore_attempt]) catch {};
-        } else self.cancelWorkspaceRestore();
+        } else {
+            self.cancelWorkspaceRestore();
+            if (self.flat_restore) |*restore| restore.deinit();
+            self.flat_restore = null;
+        }
         return 0;
     }
 };

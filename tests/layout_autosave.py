@@ -21,6 +21,8 @@ from xwayland import wayland_display_name
 APP_ID = "rediwm.zoom-fixture"
 SAVED_X = 321
 SAVED_Y = 87
+MOVED_X = 500
+MOVED_Y = 260
 
 
 def wait_for(check, message, timeout=15):
@@ -90,6 +92,7 @@ def run():
         print("layout autosave: periodic save records the moved window's position")
 
         # Phase 2: fresh compositor and fixture, same state dir: restore on startup.
+        started = time.monotonic()
         process, log = spawn_compositor(run2, env_extra={"XDG_STATE_HOME": str(state_dir)})
         client = client_log = None
         try:
@@ -103,11 +106,21 @@ def run():
                     "startup restore did not reposition the fixture",
                     timeout=25,
                 )
+                print("layout autosave: startup restore repositions a matching window from the autosave")
+                # The restore is retried at about 2, 7, 17 and 37 s. The periodic save rewrites the
+                # file every 10 s, so a retry that re-read it moved the window back to where it
+                # was up to 10 s earlier. Move it after the 10 s save and before the 17 s retry:
+                # it has to stay where it was put.
+                time.sleep(max(0.0, started + 13.5 - time.monotonic()))
+                ipc.action('move_window_to', {"id": win["id"], "x": MOVED_X, "y": MOVED_Y})
+                time.sleep(max(0.0, started + 23.0 - time.monotonic()))
+                win = fixture_window(ipc)
+                assert (win["x"], win["y"]) == (MOVED_X, MOVED_Y), ("later restore attempt moved the window back", win["x"], win["y"])
         finally:
             stop_client(client, client_log)
             stop_process(process)
             log.close()
-        print("layout autosave: startup restore repositions a matching window from the autosave")
+        print("layout autosave: a window moved after the restore is not put back by later attempts")
 
 
 if __name__ == "__main__":

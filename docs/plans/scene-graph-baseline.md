@@ -233,14 +233,19 @@ The same binary, twice in a row on the same session of the machine (scenario-lev
    level, between two runs, so `--compare` can use a tolerance of 0-2 levels
    locally. Other GPUs or Mesa versions will differ (GLES2 at a fractional
    scale can move one level with render history).
-10. **The layout autosave can move a window back within 37 s of start.**
-    `session/layout_autosave.zig` writes the layout every 10 s and restores
-    from that same file at about 2, 7, 17 and 37 s after start. A window moved,
-    resized or made fullscreen shortly before a restore tick is put back at its
-    previous saved position; a fullscreen window kept its fullscreen size but
-    was moved to its old origin (seen: `client_box` jumped from (0,0) to
-    (700,40) while `fullscreen` stayed true). Not investigated further; the
-    harness avoids it by giving the compositor an uncreatable state directory.
+10. **The layout autosave could move a window back within 37 s of start.**
+    `session/layout_autosave.zig` wrote the layout every 10 s and restored from
+    that same file at about 2, 7, 17 and 37 s after start, so a window moved,
+    resized or made fullscreen shortly before a restore tick was put back where
+    it had been up to 10 s earlier; a fullscreen window kept its fullscreen
+    size but was moved to its old origin (`client_box` jumped from (0,0) to
+    (700,40) while `fullscreen` stayed true). **Fixed**: the attempts now share
+    one snapshot taken at startup (`FlatRestore`), each saved row is claimed by
+    one window, each window is placed once, fullscreen and maximized windows
+    are left alone, and the periodic save waits while rows are unclaimed.
+    `layout_autosave.py` moves the window between the 10 s save and the 17 s
+    attempt (it snapped back before). The harness still gives the compositor an
+    uncreatable state directory so runs never read or write real state.
 
 ## What `wlr_scene_output` does today
 

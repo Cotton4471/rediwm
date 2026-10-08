@@ -163,6 +163,96 @@ pub fn parseLegacy(a: std.mem.Allocator, bytes: []const u8) ![]const LegacyWindo
     return list.toOwnedSlice(a);
 }
 
+/// The saved rows of a flat (non-workspace) layout, each claimable by one window.
+/// Reads both the legacy `[[window]]` TOML and the canvas rows of a workspace
+/// snapshot. No compositor dependencies: the startup restore keeps one of these
+/// for its whole run (session/layout_autosave.zig).
+pub const Flat = struct {
+    rows: []Row,
+
+    pub const Row = struct {
+        app_id: []const u8,
+        x: i32,
+        y: i32,
+        /// Only canvas rows of a workspace snapshot carry a size; legacy rows
+        /// restore position and zoom.
+        geometry: ?Geometry = null,
+        zoom_index: usize = 0,
+        claimed: bool = false,
+    };
+
+    /// `a` owns the result (it is meant to be an arena).
+    pub fn fromBytes(a: std.mem.Allocator, bytes: []const u8) !Flat {
+        var rows: std.ArrayList(Row) = .empty;
+        if (std.mem.startsWith(u8, std.mem.trimStart(u8, bytes, " \t\r\n"), "{")) {
+            var saved = try parse(a, bytes);
+            defer saved.deinit();
+            for (saved.value.windows) |window| {
+                const canvas = window.canvas orelse continue;
+                try rows.append(a, .{
+                    .app_id = try a.dupe(u8, window.app_id),
+                    .x = canvas.geometry.x,
+                    .y = canvas.geometry.y,
+                    .geometry = canvas.geometry,
+                    .zoom_index = canvas.zoom_index,
+                });
+            }
+        } else for (try parseLegacy(a, bytes)) |window| {
+            try rows.append(a, .{ .app_id = window.app_id, .x = window.x, .y = window.y, .zoom_index = window.zoom_index });
+        }
+        return .{ .rows = try rows.toOwnedSlice(a) };
+    }
+
+    /// The first unclaimed row for `app_id`, marked claimed: separate windows of
+    /// one app get their rows in saved order, and never the same row twice.
+    pub fn claim(self: *Flat, app_id: []const u8) ?*const Row {
+        for (self.rows) |*row| {
+            if (row.claimed or !std.mem.eql(u8, row.app_id, app_id)) continue;
+            row.claimed = true;
+            return row;
+        }
+        return null;
+    }
+
+    /// Whether some row has not found its window yet.
+    pub fn pending(self: *const Flat) bool {
+        for (self.rows) |row| if (!row.claimed) return true;
+        return false;
+    }
+};
+
+test "flat layout rows are claimed once, in order, per app" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var flat = try Flat.fromBytes(arena.allocator(), "[[window]]\napp_id = \"a\"\nx = 1\n[[window]]\napp_id = \"b\"\nx = 2\n[[window]]\napp_id = \"a\"\nx = 3\n");
+    try std.testing.expectEqual(@as(usize, 3), flat.rows.len);
+    try std.testing.expect(flat.pending());
+    try std.testing.expectEqual(@as(i32, 1), flat.claim("a").?.x);
+    try std.testing.expectEqual(@as(i32, 3), flat.claim("a").?.x);
+    try std.testing.expect(flat.claim("a") == null);
+    try std.testing.expect(flat.claim("missing") == null);
+    try std.testing.expect(flat.pending());
+    try std.testing.expectEqual(@as(i32, 2), flat.claim("b").?.x);
+    try std.testing.expect(!flat.pending());
+}
+
+test "flat layout reads canvas rows of a workspace snapshot and skips the rest" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const json =
+        \\{"workspaces":[{"id":1,"nodes":[]}],"windows":[
+        \\{"app_id":"x","workspace":1,"order":1,"geometry":{"x":0,"y":0,"width":9,"height":9},
+        \\ "canvas":{"geometry":{"x":10,"y":20,"width":300,"height":200},"zoom_index":2}},
+        \\{"app_id":"y","workspace":1,"order":2,"geometry":{"x":0,"y":0,"width":9,"height":9}}]}
+    ;
+    var flat = try Flat.fromBytes(arena.allocator(), json);
+    try std.testing.expectEqual(@as(usize, 1), flat.rows.len);
+    const row = flat.claim("x").?;
+    try std.testing.expectEqual(@as(i32, 20), row.y);
+    try std.testing.expectEqual(@as(i32, 300), row.geometry.?.width);
+    try std.testing.expectEqual(@as(usize, 2), row.zoom_index);
+}
+
 test "legacy layout keeps separate occurrences of an app" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
