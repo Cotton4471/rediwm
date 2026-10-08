@@ -117,7 +117,11 @@ pub const RegionConfig = struct {
 
 pub const TaskbarItems = @import("taskbar_items.zig").Config;
 
+pub const DesktopMode = enum { canvas, workspaces };
+
 pub const CompositorConfig = struct {
+    desktop_mode: DesktopMode = .canvas,
+    floating_apps: []const []const u8 = &.{},
     default_file_manager: []const u8 = "",
     default_terminal: []const u8 = "",
     taskbar_items: TaskbarItems = .{},
@@ -143,8 +147,8 @@ pub const CompositorConfig = struct {
     camera_zoom_max: f32 = 1.0,
     /// How explicit window switching brings a small window into focus.
     focus_zoom: types.FocusZoom = .boost,
-    /// Space around and between half/quarter tiles (snap.tileRect).
-    window_gap: u32 = 0,
+    /// Explicit space around/between tiles. Unset uses the active mode's default.
+    window_gap: ?u32 = null,
     /// Dragging a window to an open screen edge tiles or maximizes it.
     snap_to_edges: bool = true,
     /// A file manager slides aside while a file is dragged out of it; see
@@ -175,6 +179,10 @@ pub const CompositorConfig = struct {
     /// Lock before the system sleeps, however sleep was requested; logind
     /// waits until the lock is on screen (`session/power.zig`).
     lock_on_suspend: bool = true,
+
+    pub fn windowGap(self: CompositorConfig) u32 {
+        return self.window_gap orelse if (self.desktop_mode == .workspaces) 8 else 0;
+    }
 };
 
 pub const LidAction = types.LidAction;
@@ -271,6 +279,8 @@ pub const Config = struct {
     ipc: IpcConfig = .{},
     outputs: []OutputConfig = &.{},
     keybinds: []Keybind = &.{},
+    workspace_keybinds: []Keybind = &.{},
+    workspace_lookup: std.AutoHashMapUnmanaged(u64, usize) = .empty,
     lookup: std.AutoHashMapUnmanaged(u64, usize) = .empty,
     autostart: [][]const u8 = &.{},
     window_rules: []WindowRule = &.{},
@@ -287,7 +297,12 @@ pub const Config = struct {
     }
 
     pub fn lookupKeybind(self: *const Config, mods: anytype, sym: xkb.Keysym) ?Action {
+        if (self.compositor.desktop_mode == .workspaces) return keybinds.lookupKey(self.workspace_keybinds, self.workspace_lookup, mods, sym);
         return keybinds.lookupKey(self.keybinds, self.lookup, mods, sym);
+    }
+
+    pub fn activeKeybinds(self: *const Config) []Keybind {
+        return if (self.compositor.desktop_mode == .workspaces) self.workspace_keybinds else self.keybinds;
     }
 
     pub fn sandboxAllowGroups(self: *const Config, app_id: ?[]const u8, engine: ?[]const u8) sandbox_allow.GroupSet {
@@ -309,6 +324,7 @@ pub fn default(allocator: Allocator) !Config {
     errdefer cfg.deinit();
     cfg.keyboard_keymap = try @import("keymap.zig").compile(allocator, cfg.input);
     try applyDefaultKeybinds(&cfg);
+    try applyWorkspaceKeybinds(&cfg, .empty);
     return cfg;
 }
 
@@ -454,6 +470,7 @@ pub fn parse(allocator: Allocator, bytes: []const u8, path: []const u8) !Config 
     var seen_frame_radius = false;
     var autostart_list: std.ArrayListUnmanaged([]const u8) = .empty;
     var bind_list: std.ArrayListUnmanaged(Keybind) = .empty;
+    var workspace_binds: std.ArrayListUnmanaged(Keybind) = .empty;
     var outputs_list: std.ArrayListUnmanaged(OutputConfig) = .empty;
     var current_output: OutputConfig = .{};
     var have_current_output = false;
@@ -591,7 +608,7 @@ pub fn parse(allocator: Allocator, bytes: []const u8, path: []const u8) !Config 
                 fail(path, line_no, "invalid night_light field '{s}': {s}", .{ key, @errorName(err) });
                 return error.InvalidConfig;
             },
-            .keybinds => {
+            .keybinds, .workspace_keybinds => {
                 const spec = keybinds.parseKeybind(key) catch {
                     fail(path, line_no, "invalid keybind '{s}'", .{key});
                     return error.InvalidConfig;
@@ -604,7 +621,8 @@ pub fn parse(allocator: Allocator, bytes: []const u8, path: []const u8) !Config 
                     fail(path, line_no, "invalid action '{s}'", .{action_str});
                     return error.InvalidConfig;
                 };
-                bind_list.append(cfg.arena.allocator(), .{
+                const list = if (section == .workspace_keybinds) &workspace_binds else &bind_list;
+                list.append(cfg.arena.allocator(), .{
                     .modifiers = spec.modifiers,
                     .sym = spec.sym,
                     .action = action,
@@ -686,6 +704,7 @@ pub fn parse(allocator: Allocator, bytes: []const u8, path: []const u8) !Config 
     } else {
         try applyDefaultKeybinds(&cfg);
     }
+    try applyWorkspaceKeybinds(&cfg, workspace_binds);
     cfg.autostart = autostart_list.items;
     cfg.outputs = outputs_list.items;
     var have_primary = false;
@@ -721,6 +740,7 @@ const Section = union(enum) {
     autostart,
     outputs,
     keybinds,
+    workspace_keybinds,
     polkit,
     idle,
     window_rules,
@@ -793,6 +813,7 @@ fn parseSection(line: []const u8) !Section {
     }
     const close = std.mem.indexOfScalar(u8, line, ']') orelse return error.InvalidConfig;
     const name = line[1..close];
+    if (std.mem.eql(u8, name, "keybinds.workspace")) return .workspace_keybinds;
     // Array tables and internal tags are deliberately not accepted here.
     inline for (.{ .theme, .taskbar_theme, .input, .input_method, .compositor, .region, .keybinds, .polkit, .idle, .night_light, .notifications, .desktop, .ipc, .animations }) |tag| {
         if (std.mem.eql(u8, name, @tagName(tag))) return tag;
@@ -841,6 +862,24 @@ fn parseKeybindsOnly(allocator: Allocator, bytes: []const u8) ![]Keybind {
         });
     }
     return list.items;
+}
+
+fn applyWorkspaceKeybinds(cfg: *Config, overrides: std.ArrayListUnmanaged(Keybind)) !void {
+    const a = cfg.arena.allocator();
+    var list = overrides;
+    const defaults = try parseKeybindsOnly(a, @import("workspace_defaults.zig").source);
+    const canvas = try parseKeybindsOnly(a, default_file.source);
+    for ([_][]Keybind{ defaults, canvas }, 0..) |binds, source| for (binds) |bind| {
+        if (source == 1 and !keybinds.isHardwareAction(bind.action) and bind.action != .restore_shortcuts) continue;
+        const key = keybinds.pack(bind.modifiers, bind.sym);
+        const overridden = for (list.items) |custom| {
+            if (keybinds.pack(custom.modifiers, custom.sym) == key) break true;
+        } else false;
+        if (!overridden) try list.append(a, bind);
+    };
+    cfg.workspace_keybinds = list.items;
+    cfg.workspace_lookup = .empty;
+    for (list.items, 0..) |bind, i| try cfg.workspace_lookup.put(a, keybinds.pack(bind.modifiers, bind.sym), i);
 }
 
 fn rebuildLookup(cfg: *Config) !void {
@@ -943,6 +982,8 @@ const region_rules: std.enums.EnumFieldStruct(std.meta.FieldEnum(RegionConfig), 
 };
 
 const compositor_rules: std.enums.EnumFieldStruct(std.meta.FieldEnum(CompositorConfig), FieldRule, null) = .{
+    .desktop_mode = .enumeration,
+    .floating_apps = .json_string_list,
     .taskbar_items = .taskbar_items,
     .taskbar_position = .enumeration,
     .window_tab_apps = .json_string_list,
@@ -1661,6 +1702,12 @@ test "config field parsing preserves ranges and derived zoom state" {
     }
 
     var c = CompositorConfig{};
+    try std.testing.expectEqual(@as(u32, 0), c.windowGap());
+    c.desktop_mode = .workspaces;
+    try std.testing.expectEqual(@as(u32, 8), c.windowGap());
+    try applyCompositorKey(&c, a, "window_gap", "0");
+    try std.testing.expectEqual(@as(u32, 0), c.windowGap());
+    c.desktop_mode = .canvas;
     inline for (.{
         .{ "canvas_width", "1", "100000", "0", "100001" },
         .{ "canvas_height", "1", "100000", "0", "100001" },
@@ -1668,9 +1715,9 @@ test "config field parsing preserves ranges and derived zoom state" {
         .{ "border_radius", "0", "128", "129", "130" },
     }) |fixture| {
         try applyCompositorKey(&c, a, fixture[0], fixture[1]);
-        try std.testing.expectEqual(try std.fmt.parseInt(u32, fixture[1], 10), @field(c, fixture[0]));
+        try std.testing.expectEqual(@as(@TypeOf(@field(c, fixture[0])), try std.fmt.parseInt(u32, fixture[1], 10)), @field(c, fixture[0]));
         try applyCompositorKey(&c, a, fixture[0], fixture[2]);
-        try std.testing.expectEqual(try std.fmt.parseInt(u32, fixture[2], 10), @field(c, fixture[0]));
+        try std.testing.expectEqual(@as(@TypeOf(@field(c, fixture[0])), try std.fmt.parseInt(u32, fixture[2], 10)), @field(c, fixture[0]));
         try std.testing.expectError(error.InvalidValue, applyCompositorKey(&c, a, fixture[0], fixture[3]));
         try std.testing.expectError(error.InvalidValue, applyCompositorKey(&c, a, fixture[0], fixture[4]));
     }
@@ -2172,4 +2219,30 @@ test "mini map defaults and validated configuration" {
     inline for (.{ "mini_map_position = \"top\"", "mini_map_hide_ms = 0", "mini_map_hide_ms = 10001", "mini_map_enabled = 1" }) |line| {
         try std.testing.expectError(error.InvalidConfig, parse(a, "[compositor]\n" ++ line ++ "\n", "invalid"));
     }
+}
+
+test "workspace preset is independent, overrides include noop, and mode preserves canvas bindings" {
+    var cfg = try parse(std.testing.allocator, "[keybinds]\n\"Super+q\" = \"spawn custom-canvas\"\n" ++
+        "[keybinds.workspace]\n\"Super+c\" = \"noop\"\n\"Super+F12\" = \"workspace 8\"\n", "test");
+    defer cfg.deinit();
+    const q = try keybinds.parseKeybind("Super+q");
+    const c = try keybinds.parseKeybind("Super+c");
+    const two = try keybinds.parseKeybind("Super+2");
+    try std.testing.expectEqualStrings("custom-canvas", cfg.lookupKeybind(q.modifiers, q.sym).?.spawn);
+    cfg.compositor.desktop_mode = .workspaces;
+    try std.testing.expectEqualStrings("default-terminal", cfg.lookupKeybind(q.modifiers, q.sym).?.spawn);
+    try std.testing.expectEqual(Action.noop, cfg.lookupKeybind(c.modifiers, c.sym).?);
+    try std.testing.expectEqual(@as(u8, 2), cfg.lookupKeybind(two.modifiers, two.sym).?.workspace);
+    const v = try keybinds.parseKeybind("Super+v");
+    const rotate = try keybinds.parseKeybind("Super+j");
+    const swap = try keybinds.parseKeybind("Super+Shift+Right");
+    const split = try keybinds.parseKeybind("Super+Ctrl+Right");
+    try std.testing.expectEqual(Action.toggle_floating, cfg.lookupKeybind(v.modifiers, v.sym).?);
+    try std.testing.expectEqual(Action.toggle_split, cfg.lookupKeybind(rotate.modifiers, rotate.sym).?);
+    try std.testing.expectEqual(Action.swap_right, cfg.lookupKeybind(swap.modifiers, swap.sym).?);
+    try std.testing.expectEqual(Action.resize_split_right, cfg.lookupKeybind(split.modifiers, split.sym).?);
+    cfg.compositor.desktop_mode = .canvas;
+    try std.testing.expectEqual(@as(?Action, null), cfg.lookupKeybind(v.modifiers, v.sym));
+    try std.testing.expectEqualStrings("custom-canvas", cfg.lookupKeybind(q.modifiers, q.sym).?.spawn);
+    try std.testing.expectEqual(@as(?Action, null), cfg.lookupKeybind(two.modifiers, two.sym));
 }

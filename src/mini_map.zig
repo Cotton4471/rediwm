@@ -42,7 +42,6 @@ const Outline = struct {
 const Cache = struct { map: geo.Map, bounds: @import("camera.zig").Bounds, columns: u32, rows: u32, scale: f32, bg: [4]f32, fg: [4]f32, bg_opacity: f32 = 0.91, grid_alpha: f32 = 0.065, border_alpha: f32 = 0.12, radius: f32 = 4 };
 const MarkerCache = struct { width: i32, height: i32, scale: f32, accent: [4]f32, fill_alpha: f32 = 0.12, border_alpha: f32 = 0.85, radius: f32 = 4 };
 
-
 fn blocked(server: *Server) bool {
     if (server.tray) |tray| if (tray.menu_item != 0) return true;
     return server.greeter_mode or server.locker != null or server.polkit_dialog != null or
@@ -52,7 +51,7 @@ fn blocked(server: *Server) bool {
 }
 
 pub fn show(self: *Self, server: *Server, x: f64, y: f64) void {
-    if (!server.config.compositor.mini_map_enabled or blocked(server)) return;
+    if (server.world.workspaces.active or !server.config.compositor.mini_map_enabled or blocked(server)) return;
     self.server = server;
     if (self.dragging) return;
     const output = Output.atLayout(server, x, y) orelse server.getDefaultOutput() orelse return;
@@ -188,7 +187,7 @@ pub fn release(self: *Self) void {
 pub fn tick(self: *Self, output: *Output, now: i64) bool {
     if (!self.visible or self.output != output) return false;
     const server = self.server.?;
-    if (blocked(server) or !server.config.compositor.mini_map_enabled or !output.isAvailable() or output.idle_blanked) {
+    if (blocked(server) or server.world.workspaces.active or !server.config.compositor.mini_map_enabled or !output.isAvailable() or output.idle_blanked) {
         self.hide();
         return false;
     }

@@ -78,10 +78,11 @@ pub fn build(b: *std.Build) void {
     const ui_mod = b.createModule(.{ .root_source_file = b.path("src/ui/mod.zig"), .target = target, .optimize = optimize, .link_libc = true });
     ui_mod.addImport("memory", memory_mod);
     ui_mod.addImport("wayland", wayland);
+    ui_mod.linkSystemLibrary("xkbcommon", .{});
     addShellUi(b, ui_mod);
-    ui_mod.addAnonymousImport("theme-rediwm-dark", .{ .root_source_file = b.path("src/assets/themes/rediwm-dark.toml") });
-    ui_mod.addAnonymousImport("theme-rediwm-light", .{ .root_source_file = b.path("src/assets/themes/rediwm-light.toml") });
-    ui_mod.addAnonymousImport("theme-redi-blue", .{ .root_source_file = b.path("src/assets/themes/redi-blue.toml") });
+    ui_mod.addAnonymousImport("theme-rediwm-dark", .{ .root_source_file = b.path("assets/themes/rediwm-dark.toml") });
+    ui_mod.addAnonymousImport("theme-rediwm-light", .{ .root_source_file = b.path("assets/themes/rediwm-light.toml") });
+    ui_mod.addAnonymousImport("theme-redi-blue", .{ .root_source_file = b.path("assets/themes/redi-blue.toml") });
     const dbus_mod = b.createModule(.{ .root_source_file = b.path("src/dbus/mod.zig"), .target = target, .optimize = optimize, .link_libc = true });
     dbus_mod.addImport("wayland", wayland);
     dbus_mod.linkSystemLibrary("wayland-server", .{});
@@ -179,7 +180,7 @@ pub fn build(b: *std.Build) void {
     b.getInstallStep().dependOn(&install_files.step);
     b.getInstallStep().dependOn(&install_files_desktop_entry.step);
     const install_files_icon = b.addSystemCommand(&.{ "install", "-Dm644" });
-    install_files_icon.addFileArg(b.path("icons/redi-fm-icon.png"));
+    install_files_icon.addFileArg(b.path("assets/icons/redi-fm-icon.png"));
     install_files_icon.addArg(b.getInstallPath(.prefix, "share/icons/hicolor/256x256/apps/redi-fm-icon.png"));
     b.getInstallStep().dependOn(&install_files_icon.step);
     // rediwm-files links neither wlroots-server nor libinput/libpulse, so it
@@ -781,7 +782,8 @@ fn addShellUi(b: *std.Build, module: *std.Build.Module) void {
 
 // Bundle shell glyphs so installed binaries never depend on the checkout.
 fn addShellIcons(b: *std.Build, module: *std.Build.Module) void {
+    module.addAnonymousImport("redi-logo", .{ .root_source_file = b.path("assets/redi-logo.svg") });
     inline for (.{ "git-branch", "home", "folder", "settings", "keyboard", "edit", "mouse", "display", "music", "headphones", "wifi", "ethernet", "globe", "bluetooth", "battery", "notification-bell", "speaker", "speaker-xmark", "power-button", "clock", "lock", "logout", "restart", "eye", "eye-off", "refresh", "cut", "copy", "paste", "trash-outline", "trash", "view-grid", "view-list", "sort", "filter", "zoom-in", "zoom-out", "rotate", "crop", "undo", "save", "fit", "print", "open", "usb-stick", "drive", "eject", "users", "squares" }) |name| {
-        module.addAnonymousImport("shell-icon-" ++ name, .{ .root_source_file = b.path("icons/" ++ name ++ ".svg") });
+        module.addAnonymousImport("shell-icon-" ++ name, .{ .root_source_file = b.path("assets/icons/" ++ name ++ ".svg") });
     }
 }

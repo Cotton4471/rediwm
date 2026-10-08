@@ -115,7 +115,7 @@ pub fn handleRequest(
             }
         },
         .workspaces => {
-            return .{ .ok = .{ .workspaces = &.{.{ .id = 1, .name = "Canvas", .is_focused = true }} } };
+            return .{ .ok = .{ .workspaces = try server.world.workspaces.data(server, allocator) } };
         },
         .event_stream => {
             return .{ .ok = .handled };
@@ -146,7 +146,7 @@ pub fn handleRequest(
                 .camera = makeCameraData(server),
                 .focused_window_id = focused_id,
                 .shell = makeShellStateData(server),
-                .workspaces = &.{.{ .id = 1, .name = "Canvas", .is_focused = true }},
+                .workspaces = try server.world.workspaces.data(server, allocator),
             } } };
         },
         .get_window_debug => |p| {
@@ -208,7 +208,7 @@ pub fn handleRequest(
                         .maximized = toplevel.isMaximized(),
                         .fullscreen = toplevel.isFullscreen(),
                         .is_resizing = toplevel.isResizing(),
-                        .zoom_percent = @import("../camera.zig").zoom_levels[toplevel.zoom_index],
+                        .zoom_percent = if (server.world.workspaces.active) 100 else @import("../camera.zig").zoom_levels[toplevel.zoom_index],
                         .effective_zoom = toplevel.zoom(),
                         .zoom_boosted = toplevel.zoom_boost.to != 0,
                         .source_box = .{ .x = src_box.x, .y = src_box.y, .width = src_box.width, .height = src_box.height },
@@ -724,7 +724,7 @@ fn handleAction(
                 const msg = try std.fmt.allocPrint(allocator, "UnknownWindow: {d}", .{p.id});
                 return .{ .err = msg };
             };
-            if (toplevel.isResizing() or (server.input.cursor_mode == .move and server.input.grabbed_toplevel == toplevel)) return .{ .err = "Busy" };
+            if (toplevel.isResizing() or ((server.input.cursor_mode == .move or server.input.tiling_grab != null) and server.input.grabbed_toplevel == toplevel)) return .{ .err = "Busy" };
 
             if (p.output) |name| {
                 const target_output = findOutputByName(server, name) orelse {
@@ -732,6 +732,11 @@ fn handleAction(
                     return .{ .err = msg };
                 };
                 if (!target_output.isAvailable()) return .{ .err = "OutputUnavailable" };
+                var transaction: ?@import("../layout_undo.zig").Transaction = if (server.world.workspaces.active)
+                    @import("../layout_undo.zig").Transaction.begin(server, &.{ toplevel.workspace_id, target_output.workspace_id })
+                else
+                    null;
+                defer if (transaction) |*change| change.finish();
                 const old_x = toplevel.x;
                 const old_y = toplevel.y;
                 if (!toplevel.moveToOutput(target_output)) return .{ .err = "WindowUnavailable" };
@@ -746,7 +751,21 @@ fn handleAction(
                     child.setPosition(child.x + dx, child.y + dy);
                 }
             } else {
+                var transaction: ?@import("../layout_undo.zig").Transaction = if (server.world.workspaces.active)
+                    @import("../layout_undo.zig").Transaction.begin(server, &.{toplevel.workspace_id})
+                else
+                    null;
+                defer if (transaction) |*change| change.finish();
+                const floating = toplevel.auto_restore;
+                @import("../auto_tiling.zig").setFloating(toplevel, true);
                 toplevel.setPosition(p.x, p.y);
+                if (floating) |saved| {
+                    // This explicit placement is final; a delayed restore must
+                    // not move it back after a subsequent interactive drag.
+                    toplevel.pending_restore = null;
+                    toplevel.finishSizeAnimation();
+                    _ = toplevel.requestSize(saved.width, saved.height);
+                }
             }
             toplevel.syncChrome(false, false, Toplevel.nowMs()) catch {};
             return .{ .ok = .handled };
@@ -1273,6 +1292,41 @@ fn handleAction(
         },
 
         // Phase 4 targeted actions
+        .set_desktop_mode => |p| {
+            @import("../config_runtime/workspace_controls.zig").mode(server, p.mode, p.persist) catch |err| return .{ .err = @errorName(err) };
+            return .{ .ok = .handled };
+        },
+        .set_window_gap => |p| {
+            @import("../config_runtime/workspace_controls.zig").gap(server, p.gap, p.persist) catch |err| return .{ .err = @errorName(err) };
+            return .{ .ok = .handled };
+        },
+        .set_floating_apps => |p| {
+            @import("../config_runtime/workspace_controls.zig").floatingApps(server, p.apps, p.persist) catch |err| return .{ .err = @errorName(err) };
+            return .{ .ok = .handled };
+        },
+        .set_workspace_layout => |p| {
+            if (!server.world.workspaces.active) return .{ .err = "WorkspaceModeRequired" };
+            @import("../config_runtime/workspace_controls.zig").automatic(server, p.workspace, p.automatic);
+            return .{ .ok = .handled };
+        },
+        .switch_workspace => |p| {
+            if (!server.world.workspaces.active) return .{ .err = "WorkspaceModeRequired" };
+            server.world.workspaces.switchTo(server, p.workspace);
+            return .{ .ok = .handled };
+        },
+        .move_to_workspace => |p| {
+            if (!server.world.workspaces.active) return .{ .err = "WorkspaceModeRequired" };
+            const top = findToplevelById(server, p.id) orelse return .{ .err = "UnknownWindow" };
+            server.world.workspaces.moveTo(top, p.workspace);
+            return .{ .ok = .handled };
+        },
+        .tiling_action => |p| {
+            if (!server.world.workspaces.active) return .{ .err = "WorkspaceModeRequired" };
+            const top = if (p.id) |id| findToplevelById(server, id) orelse return .{ .err = "UnknownWindow" } else findFocusedToplevel(server);
+            if (top) |target| if (!target.in_world or !@import("../workspaces.zig").visible(target)) return .{ .err = "WindowNotVisible" };
+            @import("../auto_tiling.zig").execute(server, top, p.action);
+            return .{ .ok = .handled };
+        },
         .maximize_window => |p| {
             const toplevel = findToplevelById(server, p.id) orelse return .{ .err = "UnknownWindow" };
             toplevel.setMaximized(true);
@@ -1287,9 +1341,9 @@ fn handleAction(
             const toplevel = findToplevelById(server, p.id) orelse return .{ .err = "UnknownWindow" };
             if (toplevel.minimized) {
                 toplevel.restore();
-            } else if (toplevel.isMaximized()) {
+            } else if (toplevel.maximized) {
                 toplevel.setMaximized(false);
-            } else if (toplevel.isFullscreen()) {
+            } else if (toplevel.fullscreen) {
                 toplevel.setFullscreen(false);
             }
             return .{ .ok = .handled };
@@ -1297,7 +1351,7 @@ fn handleAction(
         .fullscreen_window => |p| {
             const toplevel = findToplevelById(server, p.id) orelse return .{ .err = "UnknownWindow" };
             _ = p.output;
-            toplevel.setFullscreen(!toplevel.isFullscreen());
+            toplevel.toggleFullscreen();
             return .{ .ok = .handled };
         },
         .stop_xwayland => {
@@ -1308,6 +1362,14 @@ fn handleAction(
         .set_window_size => |p| {
             const toplevel = findToplevelById(server, p.id) orelse return .{ .err = "UnknownWindow" };
             if (p.width <= 0 or p.height <= 0) return .{ .err = "InvalidCoordinates" };
+            if (server.input.tiling_grab != null) server.input.finishTilingGrab(false);
+            var transaction: ?@import("../layout_undo.zig").Transaction = if (server.world.workspaces.active)
+                @import("../layout_undo.zig").Transaction.begin(server, &.{toplevel.workspace_id})
+            else
+                null;
+            defer if (transaction) |*change| change.finish();
+            if (transaction) |*change| change.resized = .{ .id = toplevel.id, .width = p.width, .height = p.height };
+            if (toplevel.auto_target != null) toplevel.leaveLayout();
             _ = toplevel.requestSizeAnimated(p.width, p.height);
             return .{ .ok = .handled };
         },
@@ -1641,6 +1703,7 @@ fn getWindowRules(server: *Server, id: u64, allocator: std.mem.Allocator) !proto
             .effective_opacity = effective_opacity,
             .decorations = dec_str,
             .skip_taskbar = toplevel.live_rules.skip_taskbar,
+            .floating = toplevel.live_rules.floating,
         },
         .resolved_before_app_id = toplevel.resolved_before_app_id,
     } } };
@@ -1690,6 +1753,7 @@ fn matchWindowRules(server: *Server, params: protocol.MatchWindowRulesParams, al
             .effective_opacity = null,
             .decorations = dec_str,
             .skip_taskbar = live_r.skip_taskbar,
+            .floating = live_r.floating,
         },
     } } };
 }
@@ -2739,7 +2803,10 @@ pub fn makeWindowData(server: *Server, toplevel: *Toplevel) protocol.WindowData 
         .tab_group = if (toplevel.tab_group != 0) toplevel.tab_group else null,
         .tab_active = !toplevel.tab_hidden,
         .is_maximized = toplevel.isMaximized(),
-        .workspace_id = 1,
+        .workspace_order = toplevel.workspace_order,
+        .placement = if (toplevel.fullscreen) "fullscreen" else if (toplevel.maximized) "maximized" else if (toplevel.tile != null) "manual" else if (toplevel.auto_target != null) "automatic" else "floating",
+        .floating_override = toplevel.auto_float_override,
+        .workspace_id = if (server.world.workspaces.active) toplevel.workspace_id else 1,
         .tag = @import("../extra_protocols.zig").tag(toplevel.surface(), false),
         .description = @import("../extra_protocols.zig").tag(toplevel.surface(), true),
         .content_type = @import("../extra_protocols.zig").content(server, toplevel.surface()),
@@ -2747,7 +2814,7 @@ pub fn makeWindowData(server: *Server, toplevel: *Toplevel) protocol.WindowData 
         .y = toplevel.y,
         .width = toplevel.logicalWidth(),
         .height = toplevel.logicalHeight(),
-        .zoom_percent = @import("../camera.zig").zoom_levels[toplevel.zoom_index],
+        .zoom_percent = if (server.world.workspaces.active) 100 else @import("../camera.zig").zoom_levels[toplevel.zoom_index],
         .backend = toplevel.backendName(),
         .x11_class = toplevel.x11Class(),
         .x11_instance = toplevel.x11Instance(),
@@ -2867,7 +2934,10 @@ pub fn findToplevelById(server: *Server, id: u64) ?*Toplevel {
 }
 
 pub fn findFocusedToplevel(server: *Server) ?*Toplevel {
-    if (server.input.seat.keyboard_state.focused_surface) |surface| return Toplevel.fromSurface(server, surface);
+    if (server.input.seat.keyboard_state.focused_surface) |surface| {
+        const top = Toplevel.fromSurface(server, surface) orelse return null;
+        return if (@import("../workspaces.zig").visible(top)) top else null;
+    }
     // The settings window is focused without a wl_surface.
     if (server.input.open_control_center) |cc| if (cc.hasKeyboardFocus()) return cc.toplevel;
     return null;

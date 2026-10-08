@@ -455,7 +455,7 @@ def test_appearance_settings():
                 ipc.wait_for_panel_settled("control_center")
                 assert ui.scroll_into_view("theme")["selected_index"] == 2
                 blue_theme = tomllib.loads((Path(__file__).resolve().parents[1] /
-                                           "src/assets/themes/redi-blue.toml").read_text())["theme"]
+                                           "assets/themes/redi-blue.toml").read_text())["theme"]
 
                 def check_blue():
                     tokens = ipc.action("get_theme")["tokens"]

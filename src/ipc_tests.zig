@@ -877,15 +877,15 @@ test "every v1 command parses" {
         \\"text":"hi","volume":0.7,"index":1,"muted":false,"ms":null,
         \\"condition":"menu_opened","timeout_ms":42,"seconds":2,"enabled":true,
         \\"blank_after_seconds":600,"suspend_after_seconds":0,"desktop_id":"example.desktop",
-        \\"action_key":"default","phase":"begin","scale":1.2,"rotation":0,
+        \\"action":"toggle_split","action_key":"default","phase":"begin","scale":1.2,"rotation":0,
         \\"fingers":2,"cancelled":false,"layout":"next","path":"start_menu/settings","at":0.5,
-        \\"service":"alpha.service","mode":"on","event":"bell","color":"#aabbcc"}
+        \\"service":"alpha.service","mode":"on","event":"bell","color":"#aabbcc","workspace":2,"automatic":true,"gap":12,"apps":["utility*"]}
     ;
     inline for (protocol.commands.specs) |s| {
         var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
         defer arena.deinit();
         const a = arena.allocator();
-        const input = try std.fmt.allocPrint(a, "{{\"version\":1,\"command\":\"{s}\",\"params\":{s}}}", .{ comptime s.wire(), params });
+        const input = try std.fmt.allocPrint(a, "{{\"version\":1,\"command\":\"{s}\",\"params\":{s}}}", .{ comptime s.wire(), if (s.id == .set_desktop_mode) "{\"mode\":\"workspaces\"}" else params });
         const request = try protocol.parseRequest(a, input);
         try std.testing.expectEqualStrings(@tagName(s.id), requestCommandName(request));
     }
@@ -982,5 +982,38 @@ test "v1 rejects legacy envelopes names versions and ambiguous fields" {
         if (protocol.parseEnvelope(arena.allocator(), input)) |_| {
             return error.TestUnexpectedResult;
         } else |_| {}
+    }
+}
+
+test "tiling IPC accepts only the shared tiling actions" {
+    const a = std.testing.allocator;
+    const request = try protocol.parseRequest(a, "{\"version\":1,\"command\":\"tiling_action\",\"params\":{\"action\":\"toggle_floating\",\"id\":7}}");
+    try std.testing.expectEqual(@as(?u64, 7), request.action.tiling_action.id);
+    try std.testing.expect(request.action.tiling_action.action == .toggle_floating);
+    inline for (.{
+        "{\"action\":\"spawn\"}",
+        "{\"action\":\"toggle_split\",\"id\":-1}",
+        "{\"action\":42}",
+        "{}",
+    }) |params| {
+        try std.testing.expectError(error.InvalidRequest, protocol.parseRequest(a, "{\"version\":1,\"command\":\"tiling_action\",\"params\":" ++ params ++ "}"));
+    }
+}
+
+test "workspace controls validate IDs, spacing, patterns and mode" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const cases = .{
+        .{ "switch_workspace", "{\"workspace\":0}" },
+        .{ "move_to_workspace", "{\"id\":7,\"workspace\":33}" },
+        .{ "set_workspace_layout", "{\"workspace\":2,\"automatic\":1}" },
+        .{ "set_window_gap", "{\"gap\":513}" },
+        .{ "set_floating_apps", "{\"apps\":[true]}" },
+        .{ "set_desktop_mode", "{\"mode\":\"unknown\"}" },
+    };
+    inline for (cases) |item| {
+        const input = "{\"version\":1,\"command\":\"" ++ item[0] ++ "\",\"params\":" ++ item[1] ++ "}";
+        try std.testing.expectError(error.InvalidRequest, protocol.parseRequest(a, input));
     }
 }

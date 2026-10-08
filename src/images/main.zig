@@ -27,6 +27,21 @@ const OutputInfo = struct {
     logical: ?*zxdg.OutputV1 = null,
     logical_width: i32 = 0,
     logical_height: i32 = 0,
+    mode_width: i32 = 0,
+    mode_height: i32 = 0,
+
+    /// Physical pixels per logical pixel. `wl_output.scale` is the integer
+    /// ceiling, so a 1.5 output reads as 2; the mode and the logical size
+    /// give the real factor. Anything outside (scale - 1, scale] (a rotated
+    /// or nested output) falls back to the integer.
+    fn density(self: OutputInfo) f64 {
+        const whole: f64 = @floatFromInt(self.scale);
+        const logical = @max(self.logical_width, self.logical_height);
+        const mode = @max(self.mode_width, self.mode_height);
+        if (logical <= 0 or mode <= 0) return whole;
+        const real = @as(f64, @floatFromInt(mode)) / @as(f64, @floatFromInt(logical));
+        return if (real > whole - 1 and real <= whole + 0.01) real else whole;
+    }
 };
 
 pub const Client = struct {
@@ -37,6 +52,7 @@ pub const Client = struct {
     outputs: std.ArrayList(*OutputInfo) = .empty,
     entered_outputs: std.ArrayList(*OutputInfo) = .empty,
     scale: i32 = 1,
+    density: f64 = 1,
     seat: ?*wl.Seat = null,
     pointer: ?*wl.Pointer = null,
     keyboard: ?*wl.Keyboard = null,
@@ -67,6 +83,9 @@ pub const Client = struct {
     xkb_context: ?*c.xkb_context = null,
     xkb_state: ?*c.xkb_state = null,
     key_repeat: key_repeat.KeyRepeat = .{},
+    compose: @import("ui").compose.Compose = .{},
+    /// LC_CTYPE of the session; picks the Compose table (´+c is ç in pt_BR).
+    locale: []const u8 = "",
     app: app_mod.App,
 
     pub fn registryEvent(registry: *wl.Registry, event: wl.Registry.Event, self: *Client) void {
@@ -173,13 +192,22 @@ pub const Client = struct {
         if (event == .logical_size) {
             info.logical_width = event.logical_size.width;
             info.logical_height = event.logical_size.height;
+            info.client.recomputeScale();
         }
     }
 
     fn outputEvent(_: *wl.Output, event: wl.Output.Event, info: *OutputInfo) void {
-        if (event == .scale) {
-            info.scale = std.math.clamp(event.scale.factor, 1, 4);
-            info.client.recomputeScale();
+        switch (event) {
+            .scale => |ev| {
+                info.scale = std.math.clamp(ev.factor, 1, 4);
+                info.client.recomputeScale();
+            },
+            .mode => |ev| if (ev.flags.current) {
+                info.mode_width = ev.width;
+                info.mode_height = ev.height;
+                info.client.recomputeScale();
+            },
+            else => {},
         }
     }
 
@@ -189,10 +217,16 @@ pub const Client = struct {
     // wl_surface.enter is received.
     fn recomputeScale(self: *Client) void {
         var new_scale: i32 = 1;
-        for (self.entered_outputs.items) |info| new_scale = @max(new_scale, info.scale);
-        if (new_scale != self.scale) {
+        var new_density: f64 = 1;
+        for (self.entered_outputs.items) |info| {
+            new_scale = @max(new_scale, info.scale);
+            new_density = @max(new_density, info.density());
+        }
+        if (new_scale != self.scale or new_density != self.density) {
             self.scale = new_scale;
+            self.density = new_density;
             self.app.scale = new_scale;
+            self.app.density = new_density;
             self.app.dirty = true;
         }
     }
@@ -443,10 +477,20 @@ pub const Client = struct {
         const sym = c.xkb_state_key_get_one_sym(state, key + 8);
         var buf: [64]u8 = undefined;
         const n = c.xkb_state_key_get_utf8(state, key + 8, &buf, buf.len);
+        // Dead keys have no text of their own: sequences resolve here, and a
+        // shortcut modifier abandons a half-typed one.
+        if (!self.app.ctrl and !self.app.alt) {
+            var composed: [64]u8 = undefined;
+            if (self.compose.feed(self.locale, sym, &composed)) |text| {
+                if (text.len > 0) self.app.handleKey(0, text);
+                return;
+            }
+        } else self.compose.reset();
         self.app.handleKey(sym, buf[0..@intCast(std.math.clamp(n, 0, 63))]);
     }
 
     fn appRepeats(self: *Client, key: u32) bool {
+        if (self.compose.consumed) return false;
         const state = self.xkb_state orelse return false;
         var buf: [64]u8 = undefined;
         const n = c.xkb_state_key_get_utf8(state, key + 8, &buf, buf.len);
@@ -465,6 +509,7 @@ pub const Client = struct {
         switch (event) {
             .leave => {
                 self.key_repeat.stop();
+                self.compose.reset();
                 self.app.cancelDrag();
                 self.app.ctrl = false;
                 self.app.shift = false;
@@ -714,7 +759,8 @@ pub fn run(init: std.process.Init, paths: []const [:0]const u8, selected: usize,
     }
     const display = try wl.Display.connect(null);
     defer display.disconnect();
-    var self = Client{ .display = display, .app = try app_mod.App.init(paths, selected), .return_focus = return_focus };
+    var self = Client{ .display = display, .app = try app_mod.App.init(paths, selected), .return_focus = return_focus, .locale = @import("ui").compose.localeFromEnviron(init.minimal.environ) };
+    defer self.compose.deinit();
     self.app.io = init.io;
     defer self.app.deinit();
     defer for (self.buffers) |slot| {

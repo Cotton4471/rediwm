@@ -176,6 +176,9 @@ fn handleNewSurface(listener: *wl.Listener(*wlr.XwaylandSurface), xsurface: *wlr
 fn handleReady(listener: *wl.Listener(void)) void {
     const xwayland: *Xwayland = @fieldParentPtr("on_ready", listener);
     xwayland.ready = true;
+    // wlroots' xwm_destroy clears the seat when a lazy Xwayland exits idle,
+    // and the restarted xwm never gets it back: no X11 clipboard or DnD.
+    if (xwayland.wlr_xwayland.seat == null) xwayland.wlr_xwayland.setSeat(xwayland.server.input.seat);
     xwayland.applyCursor();
     if (xwayland.native_scaling) {
         xwayland.applyScaleHints();

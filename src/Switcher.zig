@@ -98,7 +98,7 @@ fn open(self: *Self, server: *Server) !void {
     self.background = try self.makeNode(&bg.base, self.width, height);
     var it = server.world.toplevels.iterator(.forward);
     while (it.next()) |tl| {
-        if (!tl.isMapped() or tl.tab_hidden) continue;
+        if (!tl.isMapped() or tl.tab_hidden or !@import("workspaces.zig").visible(tl)) continue;
         const image = try PanelBuffer.create(card_w, card_h, self.scale);
         defer image.base.drop();
         r = Renderer.init(image.pixels, image.width, image.height, self.scale);

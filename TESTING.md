@@ -84,8 +84,20 @@ slide to the visible screen for windows panned or zoomed away from the world
 origin), `zoom_osd.py` (shared zoom OSD,
 100% camera cap, pixels, timeout and input), `decorations.py`, `kde_decorations.py`, `window_corners.py`
 (border antialiasing and filled side edges on dark/light backgrounds at
-integer/fractional scales), `switcher.py`,
-`switcher_live.py`, `window_snapping.py`, `initial_window_state.py` (startup
+integer/fractional scales, plus workspace focus outlines on server/client
+decorations, mode transitions, fullscreen and default/explicit gaps), `switcher.py`,
+`switcher_live.py`, `workspaces.py` (floating rules, Settings/IPC layout controls,
+versioned restart/named-save restoration, duplicate app occurrences, restored tab groups,
+saved canvas state and multi-window layout undo, both sides of tiled/floating
+output transfers, dialog transfers, closed-member reconciliation, late configure
+replies, keyboard/IPC tiling controls, drag previews and Escape, live
+split resizing, unmap/remap, placeholder replacement, automatic split geometry,
+constraints/overflow, stable focus,
+minimize/maximize/fullscreen reinsertion, manual placement, workspace membership,
+hidden input, dialog transfers, Settings, workspace protocol activation,
+canvas restore and shortcut overrides; supports `REDIWM_TEST_OUTPUTS=2`,
+`REDIWM_TEST_SCALE=1.5`, `REDIWM_TEST_NEGATIVE=1`, and `REDIWM_TEST_XWAYLAND=1` for real GTK click delivery;
+GLES requires a render node; `--persistence-only` runs the restart/control checks), `window_snapping.py`, `initial_window_state.py` (startup
 maximize/fullscreen placement, restore, window rules and depth), `taskbar_peek.py`,
 `taskbar_title_repaint.py`, `window_urgency.py`, `start_menu.py`,
 `power_menu.py` (only ever activates Log Out), `control_center.py`,
@@ -111,6 +123,8 @@ and off-canvas reachability).
 disabling without closing clients, close-confirmation dialogs, fullscreen and
 failed launches. It supports `REDIWM_TEST_SCALE`,
 `REDIWM_TEST_RENDERER`, and `REDIWM_TABS_PREVIEW`.
+`REDIWM_TEST_WORKSPACES=1` also checks group layout undo, selected-tab closure
+and remapping into the surviving group.
 
 `appearance_settings.py --app-colors-only` exercises the GTK/Qt apply buttons,
 configuration preservation and backups, failure reporting, and the persisted
@@ -131,7 +145,9 @@ wlr-randr, wlr-foreign-toplevel via wlrctl, wlr-screencopy, virtual-pointer,
 ext-session-lock via a fixture and real swaylock; workspace enumeration, tags,
 content/tearing hints and renderer colour negotiation via the same fixture), `input_protocols.py`
 (data-control with wl-clipboard, xdg-activation, text-input/IME,
-virtual-keyboard), `pointer_constraints.py`, `shortcuts_inhibit.py`, `cursor_shape.py`,
+virtual-keyboard), `dead_keys.py` (a virtual `latam` keyboard types dead-key
+sequences into the start menu and Files' rename field under `pt_BR` and
+`es_MX`; acute then c must give ç and ć), `pointer_constraints.py`, `shortcuts_inhibit.py`, `cursor_shape.py`,
 `single_pixel.py`, `xdg_output.py` (`--xwayland` adds RandR via `xrandr`),
 `presentation_time.py`, `explicit_sync.py` (gles2; vkcube), `layer_lifecycle.py`,
 `idle.py`, `layout_ipc.py`, `clipboard_gtk_client.py`/`dnd_gtk_client.py`
@@ -171,6 +187,29 @@ WirePlumber's smart filters, `dbus-run-session`, `pw-record`, `pw-link`,
 `paplay`) records the bass filter's output: mute fades out before the device
 mutes, unmute fades in, a quick re-press turns the fade around, quitting
 mid-fade still mutes.
+
+`python3 tests/workspaces.py --controls-only` isolates tiling controls and lifecycle
+checks; `--automatic-only` skips the older workspace-mode suite.
+`--acceptance-only` runs live scale/origin reloads, tile-grab cancellation,
+actual Wayland click delivery, per-thread idle wakeups, configure stability and
+workspace IPC/protocol lock guards, including lock-client death. It uses
+per-output scaling (`REDIWM_SCALE=auto`) and also supports two outputs.
+The split engine also has pure unit tests in `src/auto_layout.zig`, included in
+`zig build test`.
+
+The [optional tiling qualification record](docs/plans/optional-tiling-qualification.md)
+contains the renderer-specific GLES results, HEAD failure comparisons and the
+pending physical-display checklist. Workspace GTK/Xwayland routing honors
+`REDIWM_TEST_RENDERER` too. Select `WLR_RENDER_DRM_DEVICE` explicitly on multi-GPU
+machines: headless multi-output idle and glass results can differ by driver.
+
+`REDIWM_TEST_WORKSPACES=1 python3 tests/output_destroy.py` repeats hot-unplug
+and reconnects the same connector, checking visible/hidden workspace ownership,
+activation after migration and undo of transfers to the reconnected output. Use the same
+flag with `keyboard_shortcuts.py` to exercise workspace preset editing and
+disabling through Settings, or `window_tabs.py` for tab groups in automatically
+tiled workspaces. `shortcuts_inhibit.py` also supports this flag for tiled/floating
+bindings, Alt+Tab, number/wheel navigation, Super-drag and Super+Escape revocation.
 
 **Xwayland**: `xwayland.py` (needs Xwayland, libxcb, `xdpyinfo`, PyGObject/GTK 3;
 never uses the host `DISPLAY`), `xwayland_fractional.py`,

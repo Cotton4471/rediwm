@@ -30,10 +30,24 @@ pub fn bindingSyms(config: anytype, state: *xkb.State, key: xkb.Keycode, mods: a
     const active = state.keyGetSyms(key);
     for (active) |sym| if (config.lookupKeybind(mods, sym) != null) return active;
     const layout = state.keyGetLayout(key);
-    if (layout == 0 or layout == std.math.maxInt(u32)) return active;
+    if (layout == std.math.maxInt(u32)) return active;
     const level = state.keyGetLevel(key, layout);
     if (level == std.math.maxInt(u32)) return active;
-    return state.getKeymap().keyGetSymsByLevel(key, 0, level);
+    const shifted_fallback = state.getKeymap().keyGetSymsByLevel(key, 0, level);
+    if (layout != 0) for (shifted_fallback) |sym| {
+        if (config.lookupKeybind(mods, sym) != null) return shifted_fallback;
+    };
+    // Shift+number bindings name the number row, although XKB emits !/@/….
+    // Prefer an explicit shifted-symbol binding; then try the unshifted key
+    // while retaining the full modifier mask. Text still uses active XKB state.
+    if (mods.shift) {
+        const base = state.getKeymap().keyGetSymsByLevel(key, layout, 0);
+        for (base) |sym| if (config.lookupKeybind(mods, sym) != null) return base;
+        const fallback = state.getKeymap().keyGetSymsByLevel(key, 0, 0);
+        for (fallback) |sym| if (config.lookupKeybind(mods, sym) != null) return fallback;
+    }
+    if (layout == 0) return active;
+    return shifted_fallback;
 }
 
 pub fn namesEqual(a: anytype, b: @TypeOf(a)) bool {

@@ -252,6 +252,7 @@ pub const ChromeState = struct {
     tabs: @import("chrome_tabs.zig").Strip = .{},
     radius: f32,
     active: bool = false,
+    workspace_focus: bool = false,
     maximized: bool = false,
     density: f32 = 1,
     title: []const u8 = "",
@@ -291,6 +292,8 @@ pub const TitlebarMemo = struct {
     radius: f32,
     density: f32 = 1,
     active: bool = false,
+    workspace_focus: bool = false,
+    workspace_active_border: [4]f32 = @splat(0),
     // wlroots strdup's the title on set_title, so pointer equality implies
     // content equality without owning a copy of the string.
     title_ptr: ?[*:0]const u8,
@@ -324,6 +327,8 @@ pub const TitlebarMemo = struct {
             .radius = state.radius,
             .density = state.density,
             .active = state.active,
+            .workspace_focus = state.workspace_focus,
+            .workspace_active_border = t.workspace_active_border,
             .title_ptr = title_ptr,
             .tabs_hash = @import("chrome_tabs.zig").hash(state.tabs),
             .scale = state.scale,
@@ -358,12 +363,13 @@ pub const TitlebarMemo = struct {
     }
 
     /// Whether `ChromeBuffer.createUpdated` can derive `b` from the buffer
-    /// painted for `a`: only hover, the hovered control, title or weight differ.
+    /// painted for `a`: only hover, focus, the hovered control, title or weight differ.
     pub fn reusableFor(a: TitlebarMemo, b: TitlebarMemo) bool {
         var normalized = a;
         normalized.title_ptr = b.title_ptr;
         normalized.tabs_hash = b.tabs_hash;
         normalized.active = b.active;
+        normalized.workspace_focus = b.workspace_focus;
         return normalized.stableEql(b);
     }
 
@@ -373,13 +379,14 @@ pub const TitlebarMemo = struct {
         if (a.height != b.height) return false;
         if (a.radius != b.radius or a.density != b.density) return false;
         if (a.active != b.active) return false;
+        if (a.workspace_focus != b.workspace_focus) return false;
         if (a.title_ptr != b.title_ptr or a.tabs_hash != b.tabs_hash) return false;
         if (a.scale != b.scale) return false;
         if (a.hover != b.hover) return false;
         if (a.chip_pos != b.chip_pos or a.chip_alpha != b.chip_alpha) return false;
         if (a.maximized != b.maximized) return false;
         if (!iconEql(a.icon, b.icon)) return false;
-        inline for (.{ "glass", "border", "border_soft", "fg", "dim", "border_hover", "surface_hover", "danger", "close_fg" }) |field| {
+        inline for (.{ "glass", "border", "border_soft", "fg", "dim", "border_hover", "surface_hover", "danger", "close_fg", "workspace_active_border" }) |field| {
             if (!rgbaEql(@field(a, field), @field(b, field))) return false;
         }
         return a.close_hover_alpha == b.close_hover_alpha and a.title_size == b.title_size and a.chrome_height == b.chrome_height and a.chrome_control_gap == b.chrome_control_gap and a.chrome_round_buttons == b.chrome_round_buttons;
@@ -396,6 +403,8 @@ pub const FooterMemo = struct {
     skirt_fill: ?[4]f32,
     scale: f32,
     hover: f32,
+    workspace_focus: bool = false,
+    workspace_active_border: [4]f32 = @splat(0),
     glass: [4]f32,
     border: [4]f32,
     border_hover: [4]f32,
@@ -410,6 +419,8 @@ pub const FooterMemo = struct {
             .skirt_fill = state.skirt_fill,
             .scale = state.scale,
             .hover = state.hover,
+            .workspace_focus = state.workspace_focus,
+            .workspace_active_border = t.workspace_active_border,
             .glass = t.window_bg,
             .border = t.window_border,
             .border_hover = t.window_border_hover,
@@ -419,6 +430,7 @@ pub const FooterMemo = struct {
     pub fn stableEql(a: FooterMemo, b: FooterMemo) bool {
         var normalized = a;
         normalized.hover = b.hover;
+        normalized.workspace_focus = b.workspace_focus;
         return normalized.eql(b);
     }
 
@@ -429,7 +441,8 @@ pub const FooterMemo = struct {
         if (!optionalRgbaEql(a.skirt_fill, b.skirt_fill)) return false;
         if (a.scale != b.scale) return false;
         if (a.hover != b.hover) return false;
-        inline for (.{ "glass", "border", "border_hover" }) |field| {
+        if (a.workspace_focus != b.workspace_focus) return false;
+        inline for (.{ "glass", "border", "border_hover", "workspace_active_border" }) |field| {
             if (!rgbaEql(@field(a, field), @field(b, field))) return false;
         }
         return true;
@@ -564,10 +577,10 @@ pub const ChromeBuffer = struct {
         frame.state = state;
         frame.base.init(&impl, frame.width, frame.height);
         const corners: i32 = @min(frame.logical_width, @as(i32, @intFromFloat(@ceil(state.radius))) + 1);
-        const border_changed = previous.state.hover != state.hover;
+        const border_changed = previous.state.hover != state.hover or previous.state.workspace_focus != state.workspace_focus;
         if (state.tabs.tabs.len > 0 and frame.band == .titlebar) {
             const tabs = @import("chrome_tabs.zig");
-            if (previous.tabs_layout_hash == tabs.layoutHash(state.tabs) and
+            if (!border_changed and previous.tabs_layout_hash == tabs.layoutHash(state.tabs) and
                 previous.state.hover == state.hover and previous.state.chip_pos == state.chip_pos and previous.state.chip_alpha == state.chip_alpha and previous.state.maximized == state.maximized)
             {
                 const geom = tabs.geometry(frame.logical_width, state.density, state.tabs);
@@ -690,7 +703,7 @@ pub const ChromeBuffer = struct {
         const icon_left: f32 = @floatFromInt(m.length(title_inset));
         const icon_top: f32 = @floatFromInt(@divTrunc(m.titlebarHeight() - m.iconSize(), 2));
         // Hover gently brightens the same border used by the straight edges.
-        const edge_color = borderFill(frame.state.hover);
+        const edge_color = windowBorderFill(frame.state.hover, frame.state.workspace_focus);
         // The titlebar uses the window tint. The
         // skirt continues the client, so it takes the client's own edge colour.
         const base = switch (frame.band) {
@@ -1271,6 +1284,14 @@ fn borderFill(hover: f32) Color {
 /// Straight border edges, matching the rasterized corner arcs.
 pub fn borderColor(hover: f32) col.Premul {
     return borderFill(hover).straight().premultiply();
+}
+
+fn windowBorderFill(hover: f32, workspace_focus: bool) Color {
+    return if (workspace_focus) Color.fromRgba(theme.global.workspace_active_border) else borderFill(hover);
+}
+
+pub fn windowBorderColor(hover: f32, workspace_focus: bool) col.Premul {
+    return windowBorderFill(hover, workspace_focus).straight().premultiply();
 }
 
 /// Chrome backing beneath the border, shared by the header and client sides.
@@ -1859,6 +1880,7 @@ test "cached chrome updates exactly match complete rasters across hover controls
                                 state.chip_alpha = if (control == null) 0.35 else 1;
                                 state.title = titles[step % titles.len];
                                 state.active = step % 2 == 0;
+                                state.workspace_focus = step % 3 == 0;
                                 step += 1;
                                 const expected = try ChromeBuffer.create(width, 350, band, state);
                                 defer expected.base.drop();

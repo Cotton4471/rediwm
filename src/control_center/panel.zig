@@ -325,7 +325,7 @@ pub const ControlCenter = struct {
     pub fn hasKeyboardFocus(cc: *const ControlCenter) bool {
         if (!cc.focused) return false;
         const toplevel = cc.toplevel;
-        if (!toplevel.in_world or toplevel.minimized) return false;
+        if (!toplevel.in_world or toplevel.minimized or !@import("../workspaces.zig").visible(toplevel)) return false;
         if (cc.server.world.toplevels.first() != toplevel) return false;
         if (cc.server.input.seat.keyboard_state.focused_surface != null) return false;
         if (cc.server.desktop) |desktop| if (desktop.keyboard_focused) return false;

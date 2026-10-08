@@ -14,8 +14,20 @@ const gpa = @import("../main.zig").gpa;
 
 pub fn executeAction(server: *Server, action: Action) void {
     if (server.locker != null and !keybinds.isHardwareAction(action)) return;
+    if (server.world.workspaces.active) switch (action) {
+        .set_depth, .zoom_in, .zoom_out, .zoom_reset, .camera_zoom_in, .camera_zoom_out, .camera_zoom_reset, .pan_left, .pan_right, .pan_up, .pan_down => return,
+        else => {},
+    };
     switch (action) {
+        .toggle_floating, .toggle_split, .toggle_workspace_tiling, .swap_left, .swap_right, .swap_up, .swap_down, .resize_split_left, .resize_split_right, .resize_split_up, .resize_split_down => @import("../auto_tiling.zig").execute(server, focusedToplevel(server), std.meta.stringToEnum(keybinds.TilingAction, @tagName(action)).?),
         .noop => {},
+        .workspace => |id| server.world.workspaces.switchTo(server, id),
+        .move_to_workspace => |id| if (focusedToplevel(server)) |top| server.world.workspaces.moveTo(top, id),
+        .workspace_next => server.world.workspaces.cycle(server, true),
+        .workspace_prev => server.world.workspaces.cycle(server, false),
+        .toggle_power_menu => if (server.getDefaultOutput()) |output| {
+            if (output.power_menu != null) output.closePowerMenu() else output.openPowerMenu();
+        },
         .volume_up, .volume_down, .volume_mute, .mic_mute, .brightness_up, .brightness_down => @import("../hardware_keys.zig").execute(server, action),
         .power_profile_cycle => if (server.power_profiles) |pp| pp.cycle(),
         .spawn => |cmd| launchPreferred(server, cmd),
@@ -63,12 +75,18 @@ pub fn executeAction(server: *Server, action: Action) void {
 }
 
 pub fn focusedToplevel(server: *Server) ?*Toplevel {
+    if (server.world.workspaces.active) return @import("../ipc/handlers.zig").findFocusedToplevel(server);
     return @import("../ipc/handlers.zig").findFocusedToplevel(server) orelse server.world.toplevels.first();
 }
 
 fn tileFocused(server: *Server, dir: snap.Direction) void {
     const toplevel = focusedToplevel(server) orelse return;
     if (!toplevel.in_world or toplevel.minimized) return;
+    var transaction: ?@import("../layout_undo.zig").Transaction = if (server.world.workspaces.active)
+        @import("../layout_undo.zig").Transaction.begin(server, &.{toplevel.workspace_id})
+    else
+        null;
+    defer if (transaction) |*change| change.finish();
     const before = toplevel.layout();
     const geom = toplevel.clientGeometry();
     const window: @import("../undo.zig").WindowState = .{
@@ -223,7 +241,7 @@ fn focusDirection(server: *Server, dir: Dir) void {
     var best_score: i64 = std.math.maxInt(i64);
     var it = server.world.toplevels.iterator(.forward);
     while (it.next()) |t| {
-        if (t == focused or t.minimized or t.tab_hidden) continue;
+        if (!@import("../workspaces.zig").visible(t) or t == focused or t.minimized or t.tab_hidden) continue;
         const tx = t.x + @divTrunc(t.chrome_width, 2);
         const ty = t.y + @divTrunc(t.chrome_height, 2);
         const dx = tx - fx;
@@ -305,6 +323,7 @@ pub fn saveLayoutToPathIfChanged(server: *Server, path: []const u8, last_hash: *
 }
 
 fn writeLayout(server: *Server, path: []const u8, last_hash: ?*?u64) !void {
+    if (server.world.workspaces.active) return @import("../workspace_persistence.zig").save(server, path, last_hash);
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(gpa);
     var it = server.world.toplevels.iterator(.forward);
@@ -350,59 +369,80 @@ fn restoreLayout(server: *Server, name: []const u8) void {
 /// (session/layout_autosave.zig) — the latter just picks a different path
 /// and tolerates a missing file (nothing to recover) silently.
 pub fn restoreLayoutFromPath(server: *Server, path: []const u8) !void {
-    const bytes = try IoDir.cwd().readFileAlloc(server.io, path, gpa, .limited(1 << 20));
-    defer gpa.free(bytes);
-
-    var app_id: []const u8 = "";
-    var x: i32 = 0;
-    var y: i32 = 0;
-    var zoom_index: usize = 0;
-    var have = false;
-    var lines = std.mem.splitScalar(u8, bytes, '\n');
-    while (lines.next()) |raw| {
-        const line = std.mem.trim(u8, raw, " \t\r");
-        if (std.mem.eql(u8, line, "[[window]]")) {
-            if (have) applySavedWindow(server, app_id, x, y, zoom_index);
-            have = false;
-            app_id = "";
-            x = 0;
-            y = 0;
-            zoom_index = 0;
-            continue;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const bytes = try IoDir.cwd().readFileAlloc(server.io, path, a, .limited(1 << 20));
+    const trimmed = std.mem.trimStart(u8, bytes, " \t\r\n");
+    const applying = server.undo.applying;
+    server.undo.applying = true;
+    defer server.undo.applying = applying;
+    if (std.mem.startsWith(u8, trimmed, "{")) {
+        if (server.world.workspaces.active) {
+            var restore = try @import("../workspace_persistence.zig").Restore.fromBytes(bytes);
+            defer restore.deinit();
+            var it = server.world.toplevels.iterator(.reverse);
+            while (it.next()) |top| restore.apply(server, top);
+            it = server.world.toplevels.iterator(.reverse);
+            while (it.next()) |top| restore.finish(server, top);
+            if (server.layout_autosave) |autosave| for (restore.parsed.value.workspaces) |workspace| autosave.touch(&.{workspace.id});
+        } else {
+            const saved = try @import("config").workspace_layout.parse(a, bytes);
+            var used: std.AutoHashMapUnmanaged(u64, void) = .empty;
+            for (saved.value.windows) |window| {
+                const top = matchSavedWindow(server, window.app_id, &used, a) orelse continue;
+                const c = window.canvas orelse continue;
+                top.restoreGeometryNow(.{ .x = c.geometry.x, .y = c.geometry.y, .width = c.geometry.width, .height = c.geometry.height });
+                top.setZoomOrigin(@min(c.zoom_index, camera_mod.zoom_levels.len - 1));
+            }
         }
-        const eq = std.mem.indexOfScalar(u8, line, '=') orelse continue;
-        const key = std.mem.trim(u8, line[0..eq], " \t");
-        const value = std.mem.trim(u8, line[eq + 1 ..], " \t");
-        if (std.mem.eql(u8, key, "app_id")) {
-            if (value.len >= 2 and value[0] == '"') app_id = value[1 .. value.len - 1];
-            have = true;
-        } else if (std.mem.eql(u8, key, "x")) {
-            x = std.fmt.parseInt(i32, value, 10) catch 0;
-        } else if (std.mem.eql(u8, key, "y")) {
-            y = std.fmt.parseInt(i32, value, 10) catch 0;
-        } else if (std.mem.eql(u8, key, "zoom_index")) {
-            zoom_index = std.fmt.parseInt(usize, value, 10) catch 0;
-        }
-    }
-    if (have) applySavedWindow(server, app_id, x, y, zoom_index);
-}
-
-fn applySavedWindow(server: *Server, app_id: []const u8, x: i32, y: i32, zoom_index: usize) void {
-    var it = server.world.toplevels.iterator(.forward);
-    while (it.next()) |t| {
-        const id = t.appId();
-        if (t.tab_hidden or !std.mem.eql(u8, id, app_id)) continue;
-        // restore_layout is not a user gesture; suppress undo recording.
-        server.undo.applying = true;
-        defer server.undo.applying = false;
-        t.setPosition(x, y);
-        const max_index = camera_mod.zoom_levels.len - 1;
-        t.setZoom(@min(zoom_index, max_index), server.input.cursor.x, server.input.cursor.y);
         return;
     }
+    const rows = try @import("config").workspace_layout.parseLegacy(a, bytes);
+    var used: std.AutoHashMapUnmanaged(u64, void) = .empty;
+    for (rows) |row| {
+        const top = matchSavedWindow(server, row.app_id, &used, a) orelse continue;
+        const zoom_index = @min(row.zoom_index, camera_mod.zoom_levels.len - 1);
+        if (server.world.workspaces.active) {
+            // Older canvas saves update the return-to-canvas state, never the
+            // fixed workspace camera or the current automatic rectangles.
+            var canvas = top.canvas_state orelse @import("../workspaces.zig").CanvasWindow{
+                .geometry = top.rememberGeometry(),
+                .zoom_index = 0,
+                .layout = .floating,
+                .fullscreen = false,
+                .maximize_restore = null,
+                .tile_restore = null,
+                .fullscreen_restore = null,
+            };
+            canvas.geometry.x = row.x;
+            canvas.geometry.y = row.y;
+            canvas.zoom_index = zoom_index;
+            top.canvas_state = canvas;
+        } else {
+            top.setPosition(row.x, row.y);
+            top.setZoom(zoom_index, server.input.cursor.x, server.input.cursor.y);
+        }
+    }
+}
+fn matchSavedWindow(server: *Server, app_id: []const u8, used: *std.AutoHashMapUnmanaged(u64, void), a: std.mem.Allocator) ?*Toplevel {
+    var it = server.world.toplevels.iterator(.reverse);
+    while (it.next()) |top| {
+        if (top.tab_hidden or used.contains(top.id) or !std.mem.eql(u8, top.appId(), app_id)) continue;
+        used.put(a, top.id, {}) catch return null;
+        return top;
+    }
+    return null;
 }
 
 fn executeUndo(server: *Server) void {
+    if (server.input.tiling_grab != null) server.input.finishTilingGrab(true);
+    const resizing = if (server.input.resize_session) |session| @as(?@import("../layout_undo.zig").Resize, .{
+        .id = session.toplevel.id,
+        .width = session.latest_desired_size.width,
+        .height = session.latest_desired_size.height,
+    }) else null;
+    _ = @import("../layout_undo.zig").commitGesture(server, resizing);
     const now_ms = Server.undoNowMs();
     // Commit any in-flight gesture so a late event cannot clobber the restored state.
     if (server.undo.pending) |pending| {
@@ -427,18 +467,31 @@ fn executeUndo(server: *Server) void {
                 .zoom_index = server.world.camera.zoom_index,
                 .focus_zoom = server.world.camera.focus_zoom,
             } },
-            .focus => .none,
+            .focus, .workspace_layout => .none,
         };
         server.undo.commit(now_ms, live);
     }
 
+    if (server.world.workspaces.active) {
+        const applying = server.undo.applying;
+        server.undo.applying = true;
+        @import("../workspaces.zig").cancelGestures(server);
+        server.undo.applying = applying;
+    }
+
     const change = server.undo.slot orelse return;
     server.undo.slot = null;
+    defer change.deinit();
 
     // Guard: setters in setPosition / setZoom / focusSurface must not record
     // while we are applying an undo.
     server.undo.applying = true;
     defer server.undo.applying = false;
+
+    if (change.snapshot) |snapshot| {
+        @import("../layout_undo.zig").apply(server, snapshot);
+        return;
+    }
 
     // 1. Camera
     if (change.camera) |cam| {
@@ -475,7 +528,7 @@ fn executeUndo(server: *Server) void {
                         toplevel.leaveLayout();
                         toplevel.restoreGeometry(.{ .x = win.x, .y = win.y, .width = win.width, .height = win.height });
                     },
-                    .maximized, .tiled => toplevel.applyLayout(win.layout),
+                    .maximized, .tiled, .automatic => toplevel.applyLayout(win.layout),
                 }
             } else if (change.kind == .resize) {
                 toplevel.restoreGeometry(.{ .x = win.x, .y = win.y, .width = win.width, .height = win.height });

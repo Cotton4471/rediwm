@@ -121,6 +121,9 @@ pub const Client = struct {
     xkb_context: ?*c.xkb_context = null,
     xkb_state: ?*c.xkb_state = null,
     key_repeat: key_repeat.KeyRepeat = .{},
+    compose: @import("ui").compose.Compose = .{},
+    /// LC_CTYPE of the session; picks the Compose table (´+c is ç in pt_BR).
+    locale: []const u8 = "",
     app: app_mod.App,
 
     pub fn registryEvent(registry: *wl.Registry, event: wl.Registry.Event, self: *Client) void {
@@ -545,10 +548,20 @@ pub const Client = struct {
         const sym = c.xkb_state_key_get_one_sym(state, key + 8);
         var buf: [64]u8 = undefined;
         const n = c.xkb_state_key_get_utf8(state, key + 8, &buf, buf.len);
+        // Dead keys have no text of their own: sequences resolve here, and a
+        // shortcut modifier abandons a half-typed one.
+        if (!self.app.ctrl and !self.app.alt) {
+            var composed: [64]u8 = undefined;
+            if (self.compose.feed(self.locale, sym, &composed)) |text| {
+                if (text.len > 0) self.app.handleKey(0, text);
+                return;
+            }
+        } else self.compose.reset();
         self.app.handleKey(sym, buf[0..@intCast(std.math.clamp(n, 0, 63))]);
     }
 
     fn appRepeats(self: *Client, key: u32) bool {
+        if (self.compose.consumed) return false;
         const state = self.xkb_state orelse return false;
         var buf: [64]u8 = undefined;
         const n = c.xkb_state_key_get_utf8(state, key + 8, &buf, buf.len);
@@ -568,6 +581,7 @@ pub const Client = struct {
             .enter => self.app.refreshPins(),
             .leave => {
                 self.key_repeat.stop();
+                self.compose.reset();
                 self.app.menu = null;
                 self.app.ctrl = false;
                 self.app.shift = false;
@@ -1266,7 +1280,9 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
     var self = Client{
         .display = display,
         .app = app,
+        .locale = @import("ui").compose.localeFromEnviron(init.minimal.environ),
     };
+    defer self.compose.deinit();
     defer self.app.deinit();
     if (chooser) |options| try self.app.configureChooser(options);
     if (selected_file) |path| self.app.selectOnLoad(path);

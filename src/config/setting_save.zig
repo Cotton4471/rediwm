@@ -10,7 +10,9 @@ pub fn saveInput(allocator: std.mem.Allocator, io: Io, path: []const u8, comptim
 }
 
 pub fn saveCompositor(allocator: std.mem.Allocator, io: Io, path: []const u8, comptime key: []const u8, value: @FieldType(loader.CompositorConfig, key)) !void {
-    try save(allocator, io, path, "compositor", key, value);
+    if (@typeInfo(@TypeOf(value)) == .optional) {
+        try save(allocator, io, path, "compositor", key, value orelse return error.InvalidValue);
+    } else try save(allocator, io, path, "compositor", key, value);
 }
 
 pub fn saveRegion(allocator: std.mem.Allocator, io: Io, path: []const u8, comptime key: []const u8, value: @FieldType(loader.RegionConfig, key)) !void {
@@ -200,7 +202,7 @@ test "compositor dark_mode saves beside other compositor keys and matching key n
     var cfg = try loader.parse(a, updated, "test");
     defer cfg.deinit();
     try std.testing.expect(cfg.compositor.dark_mode);
-    try std.testing.expectEqual(@as(u32, 12), cfg.compositor.window_gap);
+    try std.testing.expectEqual(@as(u32, 12), cfg.compositor.windowGap());
     try std.testing.expect(!cfg.input.tap_drag);
     try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, updated, "dark_mode"));
     try std.testing.expect(std.mem.indexOf(u8, updated, "# apps") != null);
@@ -245,7 +247,7 @@ test "taskbar item order and visibility save without changing other settings" {
     var cfg = try loader.parse(a, updated, "test");
     defer cfg.deinit();
     try std.testing.expectEqualDeep(items, cfg.compositor.taskbar_items);
-    try std.testing.expectEqual(@as(u32, 12), cfg.compositor.window_gap);
+    try std.testing.expectEqual(@as(u32, 12), cfg.compositor.windowGap());
     try std.testing.expect(std.mem.indexOf(u8, updated, "# keep") != null);
 }
 
@@ -264,7 +266,7 @@ test "animations settings save and preserve other settings" {
     try std.testing.expect(!cfg.animations.enabled);
     try std.testing.expectEqual(@as(f32, 1.5), cfg.animations.speed);
     try std.testing.expectEqual(anim.ReducedMotion.on, cfg.animations.reduced_motion);
-    try std.testing.expectEqual(@as(u32, 8), cfg.compositor.window_gap);
+    try std.testing.expectEqual(@as(u32, 8), cfg.compositor.windowGap());
 }
 
 test "window switching modes persist without replacing unrelated configuration" {
@@ -277,7 +279,7 @@ test "window switching modes persist without replacing unrelated configuration" 
         var cfg = try loader.parse(allocator, updated, "test");
         defer cfg.deinit();
         try std.testing.expectEqual(mode, cfg.compositor.focus_zoom);
-        try std.testing.expectEqual(@as(u32, 12), cfg.compositor.window_gap);
+        try std.testing.expectEqual(@as(u32, 12), cfg.compositor.windowGap());
         try std.testing.expect(std.mem.indexOf(u8, updated, "# switching") != null);
     }
     try std.testing.expectError(error.InvalidConfig, loader.parse(allocator, "[compositor]\nfocus_zoom = \"unknown\"\n", "test"));

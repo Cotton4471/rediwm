@@ -31,9 +31,17 @@ def run():
         compile_client(tmp)
         # restore_shortcuts (Super+Escape) is inherited even by configs with
         # their own [keybinds], like hardware keys.
-        compositor, log = start_compositor(tmp, '[compositor]\nxwayland = false\n[keybinds]\n'
-                                                '"super+z" = "set_depth 2"\n"super+x" = "set_depth 0"\n'
-                                                '"alt+tab" = "focus_next"\n')
+        workspace_mode = os.getenv("REDIWM_TEST_WORKSPACES") == "1"
+        config = ('[compositor]\nxwayland = false\n' +
+                  ('desktop_mode = "workspaces"\n[keybinds.workspace]\n'
+                   '"super+z" = "toggle_floating"\n"super+x" = "toggle_floating"\n'
+                   if workspace_mode else '[keybinds]\n'
+                   '"super+z" = "set_depth 2"\n"super+x" = "set_depth 0"\n') +
+                  '"alt+tab" = "focus_next"\n')
+        compositor, log = start_compositor(tmp, config, {
+            "XDG_STATE_HOME": str(tmp / "state"), "XDG_CACHE_HOME": str(tmp / "cache"),
+            "DBUS_SYSTEM_BUS_ADDRESS": "unix:path=/nonexistent-rediwm-test-system-bus",
+            "DBUS_SESSION_BUS_ADDRESS": ""})
         clients = []
         sock = reader = None
         try:
@@ -81,11 +89,16 @@ def run():
                     assert self.count(line) == count, f"expected exactly {count}x {line!r}: {self.text()[-1500:]}"
 
             def zoom(name, percent):
-                wait_for(lambda: window(name)["zoom_percent"] == percent,
-                         lambda: f"{name} zoom {window(name)['zoom_percent']} != {percent}")
+                if workspace_mode:
+                    placement = "floating" if percent == 70 else "automatic"
+                    wait_for(lambda: window(name)["placement"] == placement,
+                             lambda: f"{name} placement {window(name)['placement']} != {placement}")
+                else:
+                    wait_for(lambda: window(name)["zoom_percent"] == percent,
+                             lambda: f"{name} zoom {window(name)['zoom_percent']} != {percent}")
 
             def binding_fires(peer):
-                """Super+Z zooms the focused window without reaching it."""
+                """The mode's binding runs without reaching the focused client."""
                 presses = peer.count(f"key {KEY_Z} 1")
                 chord(KEY_LEFTMETA, KEY_Z)
                 zoom(peer.name, 70)
@@ -98,11 +111,16 @@ def run():
                 chord(KEY_LEFTMETA, KEY_Z)
                 peer.expect_count(f"key {KEY_Z} 1", presses + 1)
                 assert window(peer.name)["zoom_percent"] == 100, "inhibited binding still ran"
+                if workspace_mode:
+                    assert window(peer.name)["placement"] == "automatic", "inhibited tiling binding still ran"
 
             vm = Peer("rediwm.vm")
             assert "global zwp_keyboard_shortcuts_inhibit_manager_v1 1" in vm.text().splitlines(), vm.text()
             other = Peer("rediwm.other")
             focus("rediwm.vm")
+            if workspace_mode:
+                action('switch_workspace', {"workspace": 9})
+                focus("rediwm.vm")
             binding_fires(vm)
             print("PASS: global advertised; bindings run without an inhibitor")
 
@@ -119,13 +137,30 @@ def run():
                 w = window("rediwm.vm")
                 action('move_cursor', {"x": w["x"] + 40, "y": w["y"] + 40})
                 key(KEY_LEFTMETA, True)
-                key(KEY_LEFTALT, True)
+                if workspace_mode:
+                    action('pointer_button', {"button": 272, "pressed": True})
+                else:
+                    key(KEY_LEFTALT, True)
                 action('move_cursor_relative', {"dx": 30, "dy": 10})
                 mode = input_state()["cursor_mode"]
-                key(KEY_LEFTALT, False)
+                if workspace_mode:
+                    # Cancel the insertion after inspecting the grab.
+                    if mode != "passthrough":
+                        key(KEY_ESC, True)
+                        key(KEY_ESC, False)
+                    action('pointer_button', {"button": 272, "pressed": False})
+                else:
+                    key(KEY_LEFTALT, False)
                 key(KEY_LEFTMETA, False)
                 return mode
             assert super_drag() == "passthrough", "Super-drag panned under an inhibitor"
+            if workspace_mode:
+                before = req({'version': 1, 'command': 'workspaces'})["Workspaces"]
+                chord(KEY_LEFTMETA, 10)  # Super+9 must reach the inhibited client.
+                key(KEY_LEFTMETA, True)
+                action('scroll', {"dx": 0, "dy": -15})
+                key(KEY_LEFTMETA, False)
+                assert req({'version': 1, 'command': 'workspaces'})["Workspaces"] == before, "inhibited number/wheel switched workspace"
             print("PASS: active inhibitor gets bindings, Alt+Tab and Super-drag")
 
             # Super+Escape takes the bindings back; Escape itself is consumed.
@@ -135,7 +170,8 @@ def run():
             vm.expect_count(f"key {KEY_ESC} 1", escapes)
             vm.expect_count(f"key {KEY_ESC} 0", 0)
             binding_fires(vm)
-            assert super_drag() == "pan", "Super-drag did not pan once shortcuts were restored"
+            expected_mode = "move" if workspace_mode else "pan"
+            assert super_drag() == expected_mode, "Super-drag did not resume once shortcuts were restored"
             # The revocation lasts until focus leaves the surface.
             focus("rediwm.other")
             focus("rediwm.vm")

@@ -348,12 +348,20 @@ static uint32_t supported_tf, supported_primaries;
 static bool configured, image_ready, color_done, representation_done;
 static unsigned workspace_count, group_count, workspace_outputs;
 static bool canvas_name, canvas_id, canvas_active;
+static bool workspace_test_mode;
+static unsigned activate_workspace_id;
+static struct ext_workspace_handle_v1 *activate_workspace;
 static void ping(void *data, struct xdg_wm_base *base, uint32_t serial) {
   (void)data; xdg_wm_base_pong(base, serial);
 }
 static const struct xdg_wm_base_listener xdg_listener = {.ping = ping};
 static void ws_id(void *data, struct ext_workspace_handle_v1 *w, const char *id) {
-  (void)data; (void)w; canvas_id = strcmp(id, "rediwm-canvas") == 0;
+  (void)data; canvas_id = strcmp(id, "rediwm-canvas") == 0;
+  if (workspace_test_mode) {
+    printf("workspace %s\n", id);
+    unsigned number = 0;
+    if (sscanf(id, "rediwm-workspace-%u", &number) == 1 && number == activate_workspace_id) activate_workspace = w;
+  }
 }
 static void ws_name(void *data, struct ext_workspace_handle_v1 *w, const char *name) {
   (void)data; (void)w; canvas_name = strcmp(name, "Canvas") == 0;
@@ -365,7 +373,7 @@ static void ws_state(void *data, struct ext_workspace_handle_v1 *w, uint32_t sta
   (void)data; (void)w; canvas_active = (state & EXT_WORKSPACE_HANDLE_V1_STATE_ACTIVE) != 0;
 }
 static void ws_caps(void *data, struct ext_workspace_handle_v1 *w, uint32_t caps) {
-  (void)data; (void)w; assert(caps == 0);
+  (void)data; (void)w; assert(caps == (workspace_test_mode ? EXT_WORKSPACE_HANDLE_V1_WORKSPACE_CAPABILITIES_ACTIVATE : 0));
 }
 static void ws_removed(void *data, struct ext_workspace_handle_v1 *w) { (void)data; (void)w; }
 static const struct ext_workspace_handle_v1_listener ws_listener = {
@@ -509,12 +517,27 @@ int main(int argc, char **argv) {
     return 1;
   }
   if (strcmp(argv[1], "dump-registry") == 0) dump_registry_mode = true;
-  extras_mode = strcmp(argv[1], "extras") == 0;
+  workspace_test_mode = strcmp(argv[1], "workspaces") == 0;
+  if (workspace_test_mode && argc > 2) activate_workspace_id = (unsigned)atoi(argv[2]);
+  extras_mode = strcmp(argv[1], "extras") == 0 || workspace_test_mode;
   display = wl_display_connect(NULL);
   assert(display);
   struct wl_registry *registry = wl_display_get_registry(display);
   wl_registry_add_listener(registry, &registry_listener, NULL);
   wl_display_roundtrip(display);
+  if (workspace_test_mode) {
+    assert(workspace_manager);
+    assert(wl_display_roundtrip(display) >= 0);
+    printf("groups %u outputs %u\n", group_count, workspace_outputs);
+    if (activate_workspace_id) {
+      assert(activate_workspace);
+      ext_workspace_handle_v1_activate(activate_workspace);
+      ext_workspace_manager_v1_commit(workspace_manager);
+      assert(wl_display_roundtrip(display) >= 0);
+    }
+    wl_display_disconnect(display);
+    return 0;
+  }
   if (extras_mode) return run_extras();
   if (strcmp(argv[1], "screencopy") == 0) return run_screencopy();
   if (strcmp(argv[1], "lock") == 0) return run_lock();

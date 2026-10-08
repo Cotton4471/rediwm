@@ -106,6 +106,10 @@ pub const source =
     \\env = "none"                 # none | fcitx | ibus; daemon uses [[autostart]]
     \\
     \\[compositor]
+    \\# Optional automatically tiled workspaces; canvas remains the default.
+    \\# Workspace shortcuts are overridden separately in [keybinds.workspace].
+    \\desktop_mode = "canvas"
+    \\floating_apps = []          # app ID glob patterns that float in workspaces
     \\# Allow fullscreen clients to request asynchronous presentation (may tear).
     \\allow_tearing = false
     \\# Only windows launched with the chrome + join that window’s tabs.
@@ -128,7 +132,8 @@ pub const source =
     \\camera_zoom_min       = 0.25
     \\camera_zoom_max       = 1.0
     \\focus_zoom            = "boost" # Window switching: keep, boost, or camera
-    \\window_gap            = 0      # px around and between snapped windows
+    \\# Default tile gap: 0 px in canvas, 8 px in workspaces. Uncomment to override.
+    \\# window_gap          = 8      # px around and between tiled windows
     \\snap_to_edges         = true   # drag a window to a screen edge to tile or maximize it
     \\dodge_file_drags      = true   # a file manager slides aside while you drag a file out of it
     \\switcher_opacity      = 1.0   # 0.0-1.0, background only; previews stay opaque

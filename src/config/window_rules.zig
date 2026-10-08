@@ -67,6 +67,7 @@ pub const WindowRule = struct {
     opacity: ?f32 = null,
     decorations: ?DecorationMode = null,
     skip_taskbar: ?bool = null,
+    floating: ?bool = null,
 
     pub fn hasProperties(self: WindowRule) bool {
         return self.output != null or
@@ -81,7 +82,7 @@ pub const WindowRule = struct {
             self.depth != null or
             self.opacity != null or
             self.decorations != null or
-            self.skip_taskbar != null;
+            self.skip_taskbar != null or self.floating != null;
     }
 
     pub fn hasMatchers(self: WindowRule) bool {
@@ -123,6 +124,7 @@ pub const Resolved = struct {
     opacity: ?f32 = null,
     decorations: ?DecorationMode = null,
     skip_taskbar: ?bool = null,
+    floating: ?bool = null,
     matched_rules: std.StaticBitSet(max_rules) = std.StaticBitSet(max_rules).initEmpty(),
 };
 
@@ -192,12 +194,14 @@ pub const LiveRules = struct {
     opacity: ?f32 = null,
     decorations: ?DecorationMode = null,
     skip_taskbar: ?bool = null,
+    floating: ?bool = null,
 
     pub fn fromResolved(resolved: Resolved) LiveRules {
         return .{
             .opacity = resolved.opacity,
             .decorations = resolved.decorations,
             .skip_taskbar = resolved.skip_taskbar,
+            .floating = resolved.floating,
         };
     }
 };
@@ -326,6 +330,7 @@ pub fn resolve(rules: []const WindowRule, id: WindowIdentity) Resolved {
         if (rule.opacity != null) res.opacity = rule.opacity;
         if (rule.decorations != null) res.decorations = rule.decorations;
         if (rule.skip_taskbar != null) res.skip_taskbar = rule.skip_taskbar;
+        if (rule.floating != null) res.floating = rule.floating;
     }
 
     // Across rules, fullscreen wins over maximized if fullscreen is true.
@@ -456,6 +461,8 @@ pub fn applyRuleKey(rule: *WindowRule, allocator: Allocator, key: []const u8, va
     } else if (std.mem.eql(u8, key, "decorations")) {
         const str = try theme_mod.unquote(value);
         rule.decorations = try DecorationMode.parse(str);
+    } else if (std.mem.eql(u8, key, "floating")) {
+        rule.floating = try parseBool(value);
     } else if (std.mem.eql(u8, key, "skip_taskbar")) {
         rule.skip_taskbar = try parseBool(value);
     } else {
@@ -660,4 +667,15 @@ test "open rules snapshot survives config deinit" {
     try std.testing.expectEqual(@as(?u32, 700), open_snapshot.height);
     try std.testing.expectEqual(@as(?bool, true), open_snapshot.center);
     try std.testing.expectEqual(@as(?f32, null), live_snapshot.opacity);
+}
+
+test "floating rules follow matcher specificity and last matching value" {
+    const rules: []const WindowRule = &.{ .{ .app_id = &.{"tool*"}, .floating = true }, .{ .title = &.{"Main"}, .floating = false } };
+    try std.testing.expect(resolve(rules, .{ .app_id = "tool", .title = "Utility" }).floating.?);
+    try std.testing.expect(!resolve(rules, .{ .app_id = "tool", .title = "Main" }).floating.?);
+    try std.testing.expect(LiveRules.fromResolved(resolve(rules, .{ .app_id = "tool" })).floating.?);
+    var rule: WindowRule = .{};
+    try applyRuleKey(&rule, std.testing.allocator, "floating", "false");
+    try std.testing.expect(rule.hasProperties());
+    try std.testing.expectError(error.InvalidValue, applyRuleKey(&rule, std.testing.allocator, "floating", "1"));
 }

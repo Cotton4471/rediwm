@@ -5,6 +5,9 @@ const IconId = @import("layout.zig").IconId;
 const c = @cImport({
     @cInclude("cairo.h");
 });
+/// The start-button logo; not an `IconId` glyph because it keeps its own colours.
+pub const redi_logo = @embedFile("redi-logo");
+
 const Handle = opaque {};
 const GError = opaque {};
 const Rectangle = extern struct { x: f64 = 0, y: f64 = 0, width: f64, height: f64 };

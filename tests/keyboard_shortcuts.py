@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Shortcut recording, conflict/cancel handling and persistence in an isolated session."""
+import os
 from pathlib import Path
 import tempfile
 import time
@@ -11,6 +12,9 @@ def run():
     with tempfile.TemporaryDirectory(prefix="rediwm-shortcuts-") as directory:
         tmp = Path(directory)
         original = '# preserved\n[input]\npointer_speed = 0.4\n[keybinds]\n"Super+q" = "close_window"\n"Super+f" = "toggle_fullscreen"\n'
+        workspace_mode = os.getenv("REDIWM_TEST_WORKSPACES") == "1"
+        if workspace_mode:
+            original = '[compositor]\ndesktop_mode = "workspaces"\n' + original.replace('[keybinds]', '[keybinds.workspace]')
         process, log = spawn_compositor(tmp, config_content=original, env_extra={"DBUS_SESSION_BUS_ADDRESS": ""})
         try:
             with IPCClient(tmp, timeout=15) as ipc:
@@ -57,7 +61,7 @@ def run():
                 assert has("Super+F12") and not has("Cancel")
                 saved = (tmp / "rediwm-config.toml").read_text()
                 assert '"Super+F12" = "close_window"' in saved
-                assert '"Super+q"' not in saved
+                assert ('"Super+q" = "noop"' in saved) if workspace_mode else ('"Super+q"' not in saved)
                 assert '# preserved' in saved and 'pointer_speed = 0.4' in saved
                 # Previously disabled bindings can be reclaimed.
                 click("Super+F12")
@@ -124,6 +128,11 @@ def run():
                 assert not has("Close Window")
                 click("Window Management")
                 assert has("Close Window")
+                if workspace_mode:
+                    click("Disable shortcut")
+                    assert '"Super+q" = "noop"' in (tmp / "rediwm-config.toml").read_text()
+                    chord("q")
+                    assert ipc.get_shell_state()["control_center"] is not None
             print("PASS: shortcut conflicts, capture, cancel, save, reuse and groups")
         finally:
             stop_process(process)

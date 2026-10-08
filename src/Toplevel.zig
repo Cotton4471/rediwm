@@ -158,6 +158,10 @@ frame_data: scene_data.SceneData = undefined,
 chrome_data: scene_data.SceneData = undefined,
 
 id: u64 = 0,
+workspace_id: u8 = 0,
+workspace_order: u64 = 0,
+workspace_generation: u64 = 0,
+canvas_state: ?@import("workspaces.zig").CanvasWindow = null,
 // Hidden tabs stay mapped; this is independent of client minimization.
 tab_group: u64 = 0,
 tab_identity: []const u8 = "",
@@ -268,8 +272,17 @@ maximize_restore: ?RestoreGeometry = null,
 fullscreen_restore: ?RestoreGeometry = null,
 maximize_target: ?RestoreGeometry = null,
 fullscreen_target: ?RestoreGeometry = null,
-// Half/quarter-screen tile (snap.zig). Like maximize, the compositor owns the
-// geometry; `tile_restore` is the floating geometry to return to.
+// Automatic rectangles are independent of manual half/quarter tiles.
+// Explicit floating placement opts a member out; overflow can retry later.
+auto_target: ?RestoreGeometry = null,
+auto_restore: ?RestoreGeometry = null,
+auto_float: bool = false,
+auto_float_override: ?bool = null,
+auto_seen: ?@import("auto_tiling.zig").State = null,
+auto_reinsert: ?@import("auto_layout.zig").Placement = null,
+tab_resume_group: u64 = 0,
+tab_resume_restore: ?RestoreGeometry = null,
+// Manual half/quarter tile and the floating geometry to return to.
 tile: ?tiling.Tile = null,
 tile_target: ?RestoreGeometry = null,
 tile_restore: ?RestoreGeometry = null,
@@ -285,12 +298,7 @@ reconnect_maximized: bool = false,
 reconnect_fullscreen: bool = false,
 reconnect_tile: ?tiling.Tile = null,
 
-pub const RestoreGeometry = struct {
-    x: i32,
-    y: i32,
-    width: i32,
-    height: i32,
-};
+pub const RestoreGeometry = @import("undo.zig").Geometry;
 
 const ChromeNodes = struct {
     frame_tree: *wlr.SceneTree,
@@ -486,7 +494,7 @@ fn handleDelayTimeout(toplevel: *Toplevel) c_int {
         ph.delay_timer = null;
     }
     if (!ph.matched and !ph.cancelled and toplevel.in_world) {
-        toplevel.frame_tree.node.setEnabled(true);
+        toplevel.frame_tree.node.setEnabled(@import("window_tabs.zig").visible(toplevel));
         toplevel.server.scheduleFrames();
     }
     return 0;
@@ -648,6 +656,8 @@ pub fn createPlaceholder(
 
     server.world.toplevels.prepend(toplevel);
     toplevel.in_world = true;
+    toplevel.server.world.workspaces.mapped(toplevel);
+    if (server.layout_autosave) |autosave| autosave.finishMapped(toplevel);
     server.world.focus(toplevel);
     server.refreshTaskbars();
 
@@ -668,7 +678,7 @@ pub fn createPlaceholder(
             _ = t.timerUpdate(@intCast(delay_ms)) catch {};
         }
     } else {
-        toplevel.frame_tree.node.setEnabled(true);
+        toplevel.frame_tree.node.setEnabled(@import("window_tabs.zig").visible(toplevel));
     }
 
     toplevel.backend.placeholder.timeout_timer = server.wl_server.getEventLoop().addTimer(
@@ -1087,6 +1097,10 @@ pub fn raise(toplevel: *Toplevel) void {
 
 fn syncXwaylandStack(toplevel: *Toplevel) void {
     if (toplevel.backend != .xwayland or toplevel.backend_gone) return;
+    if (!@import("workspaces.zig").visible(toplevel)) {
+        toplevel.backend.xwayland.xsurface.restack(null, .below);
+        return;
+    }
     // Use the nearest managed X11 sibling above us. This also covers an
     // initially unfocused window placed below a focused Wayland window.
     if (toplevel.frame_tree.node.parent) |parent| {
@@ -1101,7 +1115,7 @@ fn syncXwaylandStack(toplevel: *Toplevel) void {
             const data = scene_data.SceneData.fromNode(node) orelse continue;
             if (data.role != .toplevel) continue;
             const other = data.role.toplevel;
-            if (!other.in_world or other.minimized or other.backend_gone or other.backend != .xwayland) continue;
+            if (!other.in_world or other.minimized or !@import("workspaces.zig").visible(other) or other.backend_gone or other.backend != .xwayland) continue;
             toplevel.backend.xwayland.xsurface.restack(other.backend.xwayland.xsurface, .below);
             return;
         }
@@ -1137,6 +1151,7 @@ pub fn setActivated(toplevel: *Toplevel, activated: bool) void {
 /// Publishes state, title, output and parent changes to wlr foreign-toplevel
 /// clients; unchanged values send nothing.
 pub fn syncForeign(toplevel: *Toplevel) void {
+    @import("auto_tiling.zig").observe(toplevel);
     if (toplevel.wlr_foreign) |handle| handle.sync();
 }
 
@@ -1304,6 +1319,10 @@ pub fn setPosition(toplevel: *Toplevel, x: i32, y: i32) void {
 /// are refit directly because their geometry is owned by the target output.
 pub fn moveToOutput(toplevel: *Toplevel, output: *Output) bool {
     if (!toplevel.in_world or !output.isAvailable()) return false;
+    if (toplevel.server.world.workspaces.active) {
+        toplevel.server.world.workspaces.moveTo(toplevel, output.workspace_id);
+        return true;
+    }
     if (toplevel.isMaximized()) {
         toplevel.setMaximizedOn(output);
         return true;
@@ -1450,8 +1469,8 @@ fn commitPosition(toplevel: *Toplevel, x: i32, y: i32, update_scene: bool) void 
                         adapter.configure(
                             xscale.surfacePosition((x + toplevel.borderWidth()), n),
                             xscale.surfacePosition((y + toplevel.titlebarHeight()), n),
-                            geom.width,
-                            geom.height,
+                            if (toplevel.auto_target != null and !toplevel.maximized and !toplevel.fullscreen) xscale.surfaceLength(toplevel.auto_target.?.width, n) else geom.width,
+                            if (toplevel.auto_target != null and !toplevel.maximized and !toplevel.fullscreen) xscale.surfaceLength(toplevel.auto_target.?.height, n) else geom.height,
                         );
                     }
                 },
@@ -1848,6 +1867,14 @@ pub fn borderWidth(toplevel: *const Toplevel) i32 {
     return if (toplevel.hasServerDecorations()) chrome.frame_border else 0;
 }
 
+fn hasWorkspaceFocusBorder(toplevel: *const Toplevel) bool {
+    return toplevel.server.world.workspaces.active and toplevel.activated and !toplevel.isFullscreen();
+}
+
+fn borderColor(toplevel: *const Toplevel) col.Premul {
+    return chrome.windowBorderColor(toplevel.last_painted_hover, toplevel.hasWorkspaceFocusBorder());
+}
+
 pub fn footerHeight(toplevel: *const Toplevel) i32 {
     if (!toplevel.hasServerDecorations()) return 0;
     return chrome.footerHeight(toplevel.cornerRadius());
@@ -1874,6 +1901,7 @@ pub fn zoom(toplevel: *const Toplevel) f64 {
 /// Client units to presented world units, including the temporary focus boost.
 /// The saved frame position, client size and zoom_index remain unchanged.
 pub fn worldScale(toplevel: *const Toplevel) f64 {
+    if (toplevel.server.world.workspaces.active) return 1;
     return @import("camera.zig").boostedScale(toplevel.zoom_scale, toplevel.server.world.camera.zoom(), toplevel.zoom_boost_value);
 }
 
@@ -1914,6 +1942,7 @@ fn takeZoomBoost(toplevel: *Toplevel) void {
 }
 
 fn cameraFocusOpacity(toplevel: *const Toplevel) f32 {
+    if (toplevel.server.world.workspaces.active) return 1;
     if (toplevel.server.config.compositor.focus_zoom != .camera or toplevel.layout() != .floating or toplevel.isFullscreen()) return 1;
     // Windows passed by the camera fade away, and stop accepting input once
     // invisible. Reversing the zoom reveals the same retained scene again.
@@ -1966,6 +1995,7 @@ pub fn tickZoom(toplevel: *Toplevel, now_ms: i64) bool {
 }
 
 pub fn setZoom(toplevel: *Toplevel, index: usize, lx: f64, ly: f64) void {
+    if (toplevel.server.world.workspaces.active) return;
     toplevel.takeZoomBoost();
     const next = @min(index, @import("camera.zig").zoom_levels.len - 1);
     if (next == toplevel.zoom_index and toplevel.zoom_scale == @as(f64, @floatFromInt(@import("camera.zig").zoom_levels[next])) / 100) return;
@@ -1999,6 +2029,7 @@ pub fn setZoom(toplevel: *Toplevel, index: usize, lx: f64, ly: f64) void {
 }
 
 pub fn setZoomAnimated(toplevel: *Toplevel, index: usize, lx: f64, ly: f64) void {
+    if (toplevel.server.world.workspaces.active) return;
     toplevel.takeZoomBoost();
     const next = @min(index, @import("camera.zig").zoom_levels.len - 1);
     const target_scale = @as(f64, @floatFromInt(@import("camera.zig").zoom_levels[next])) / 100;
@@ -2092,6 +2123,11 @@ pub fn handleSurfaceCommit(toplevel: *Toplevel) void {
     toplevel.syncChrome(true, true, nowMs()) catch |err| {
         log.err("handleCommit: could not update window decoration: {}", .{err});
     };
+    if (toplevel.in_world) if (toplevel.server.layout_autosave) |autosave| {
+        autosave.mapped(toplevel);
+        autosave.finishMapped(toplevel);
+    };
+    @import("auto_tiling.zig").observe(toplevel);
     toplevel.server.window_tabs.reconcile(toplevel);
     if (toplevel.tab_hidden) {
         if (@import("window_tabs.zig").active(toplevel.server, toplevel.tab_group)) |active_tab| active_tab.syncChrome(false, false, nowMs()) catch {};
@@ -2134,6 +2170,13 @@ pub fn handleMapped(toplevel: *Toplevel) void {
     if (maybe_ph) |ph_top| {
         if (ph_top.in_world and ph_top.backend == .placeholder and !ph_top.backend.placeholder.cancelled) {
             inherited_placeholder = ph_top;
+            toplevel.workspace_id = ph_top.workspace_id;
+            toplevel.workspace_order = ph_top.workspace_order;
+            toplevel.workspace_generation = ph_top.workspace_generation;
+            toplevel.canvas_state = ph_top.canvas_state;
+            toplevel.auto_float = ph_top.auto_float;
+            toplevel.auto_restore = ph_top.auto_restore;
+            toplevel.auto_reinsert = ph_top.auto_reinsert;
             const ph = &ph_top.backend.placeholder;
             ph.matched = true;
             ph_token = ph.token;
@@ -2179,11 +2222,16 @@ pub fn handleMapped(toplevel: *Toplevel) void {
         }
     }
 
-    const want_focus = if (inherited_placeholder != null) ph_had_focus else (toplevel.open_rules.focus orelse true);
+    toplevel.server.world.workspaces.mapped(toplevel);
+    const want_focus = (if (inherited_placeholder != null) ph_had_focus else (toplevel.open_rules.focus orelse true)) and @import("workspaces.zig").visible(toplevel);
     if (want_focus) {
         toplevel.needs_attention = false;
         toplevel.server.world.toplevels.prepend(toplevel);
         toplevel.in_world = true;
+        toplevel.server.world.workspaces.mapped(toplevel);
+        const undo_applying = toplevel.server.undo.applying;
+        if (inherited_placeholder != null and toplevel.server.world.workspaces.active) toplevel.server.undo.applying = true;
+        defer toplevel.server.undo.applying = undo_applying;
         toplevel.server.world.focus(toplevel);
     } else {
         toplevel.needs_attention = true;
@@ -2195,6 +2243,7 @@ pub fn handleMapped(toplevel: *Toplevel) void {
             toplevel.server.world.toplevels.prepend(toplevel);
         }
         toplevel.in_world = true;
+        toplevel.server.world.workspaces.mapped(toplevel);
         toplevel.setActivated(false);
         @import("config_runtime/apply.zig").applyWindowOpacity(toplevel.server);
         toplevel.server.refreshTaskbars();
@@ -2221,6 +2270,7 @@ pub fn handleMapped(toplevel: *Toplevel) void {
     }
 
     if (inherited_placeholder) |ph_top| {
+        @import("layout_undo.zig").replaced(toplevel.server, ph_top.id, toplevel.id);
         if (toplevel.server.ipc) |ipc| {
             events.onLaunchMatched(ipc, ph_desktop_id, toplevel.id, ph_pid);
         }
@@ -2250,6 +2300,7 @@ pub fn handleMapped(toplevel: *Toplevel) void {
     }
     toplevel.server.window_tabs.mapped(toplevel);
     toplevel.server.window_tabs.mappedToken(toplevel);
+    if (toplevel.server.layout_autosave) |autosave| autosave.finishMapped(toplevel);
     toplevel.syncChrome(false, false, nowMs()) catch {};
     toplevel.frame_tree.node.setEnabled(@import("window_tabs.zig").visible(toplevel));
     // A newly focused app must not open behind the camera's current depth.
@@ -2264,14 +2315,20 @@ pub fn handleUnmapped(toplevel: *Toplevel) void {
     toplevel.finishMoveAnimation();
     toplevel.server.switcher.cancel();
     if (!toplevel.in_world) return;
+    const undo_applying = toplevel.server.undo.applying;
+    toplevel.server.undo.applying = true;
+    defer toplevel.server.undo.applying = undo_applying;
     const was_focused = toplevel.server.world.toplevels.first() == toplevel;
     const was_tab = toplevel.tab_group != 0;
+    @import("auto_tiling.zig").unmapped(toplevel);
+    @import("window_tabs.zig").rememberUnmap(toplevel);
     toplevel.server.window_tabs.remove(toplevel, false);
+    toplevel.auto_target = null;
     toplevel.in_world = false;
     toplevel.needs_attention = false;
     toplevel.detachInput();
     toplevel.resetEdgeSample();
-    const keep_scene = if (was_tab) false else toplevel.beginCloseAnimation();
+    const keep_scene = if (was_tab or !@import("workspaces.zig").visible(toplevel)) false else toplevel.beginCloseAnimation();
     if (!keep_scene) {
         toplevel.clearChromeCache();
         toplevel.frame_tree.node.setEnabled(false);
@@ -2314,6 +2371,7 @@ pub fn handleUnmapped(toplevel: *Toplevel) void {
         toplevel.wlr_foreign = null;
     }
     toplevel.link.remove();
+    toplevel.server.world.workspaces.tiler.schedule(toplevel.server);
     toplevel.server.refreshTaskbars();
     // A dismissed transient dialog returns focus to the window it was
     // opened from, rather than leaving the seat with no keyboard focus at
@@ -2323,6 +2381,7 @@ pub fn handleUnmapped(toplevel: *Toplevel) void {
             if (owner_toplevel.in_world) toplevel.server.world.focus(owner_toplevel);
         }
     }
+    if (was_focused and toplevel.server.world.workspaces.active) @import("workspaces.zig").focusFallback(toplevel.server, toplevel.workspace_id);
     if (toplevel.server.ipc) |ipc| {
         events.onWindowClosed(ipc, toplevel.id);
         ipc.wait_mgr.checkAll();
@@ -2374,6 +2433,7 @@ pub fn destroyNow(toplevel: *Toplevel) void {
     if (toplevel.in_world) {
         toplevel.in_world = false;
         toplevel.link.remove();
+        toplevel.server.world.workspaces.tiler.schedule(toplevel.server);
         toplevel.server.refreshTaskbars();
         if (toplevel.server.ipc) |ipc| {
             events.onWindowClosed(ipc, toplevel.id);
@@ -2692,6 +2752,7 @@ fn applyEdgeSample(toplevel: *Toplevel) void {
 /// color/size, so already-open windows must pick it up immediately, same as
 /// border/titlebar colors already do.
 pub fn refreshTheme(toplevel: *Toplevel) void {
+    defer @import("auto_tiling.zig").observe(toplevel);
     const height_changed = if (toplevel.last_titlebar) |memo| memo.chrome_height != theme.global.chrome_height else false;
     switch (toplevel.backend) {
         .placeholder => |*ph| col.setRect(ph.body_rect, col.Straight.fromRgba(theme.global.window_bg).premultiply()),
@@ -2777,7 +2838,7 @@ pub fn syncChrome(toplevel: *Toplevel, sample_edge: bool, rebuild_shadow: bool, 
     toplevel.titlebar_buffer.node.setEnabled(decorated);
     toplevel.footer_buffer.node.setEnabled(decorated);
     for (toplevel.side_fills) |rect| rect.node.setEnabled(decorated);
-    for (toplevel.border_rects) |rect| rect.node.setEnabled(decorated);
+    for (toplevel.border_rects) |rect| rect.node.setEnabled(decorated or toplevel.hasWorkspaceFocusBorder());
     if (!decorated) {
         toplevel.resetEdgeSample();
         toplevel.releaseIcon();
@@ -2796,6 +2857,7 @@ pub fn syncChrome(toplevel: *Toplevel, sample_edge: bool, rebuild_shadow: bool, 
         toplevel.hover_anim.cancel(0);
         toplevel.resetChip();
         toplevel.last_painted_hover = 0;
+        toplevel.syncBorders(animated.w, animated.h);
         return;
     }
 
@@ -2824,6 +2886,7 @@ pub fn syncChrome(toplevel: *Toplevel, sample_edge: bool, rebuild_shadow: bool, 
         .tabs = toplevel.tabStrip(&tab_storage),
         .radius = radius,
         .active = toplevel.activated,
+        .workspace_focus = toplevel.hasWorkspaceFocusBorder(),
         .maximized = toplevel.isMaximized(),
         .density = toplevel.chromeDensity(),
         .title = window_title,
@@ -3003,12 +3066,26 @@ fn syncResizeGrab(toplevel: *Toplevel, width: i32, height: i32) void {
 }
 
 fn syncBorders(toplevel: *Toplevel, width: i32, height: i32) void {
+    const color = toplevel.borderColor();
+    for (toplevel.border_rects) |rect| col.setRect(rect, color);
+    if (!toplevel.hasServerDecorations()) {
+        // Outline CSD frames outside their content. Client geometry and input
+        // coordinates stay unchanged, and the content remains above the stroke.
+        const edge = chrome.frame_border;
+        toplevel.border_rects[0].node.setPosition(-edge, -edge);
+        toplevel.border_rects[0].setSize(width + 2 * edge, edge);
+        toplevel.border_rects[1].node.setPosition(-edge, 0);
+        toplevel.border_rects[1].setSize(edge, height);
+        toplevel.border_rects[2].node.setPosition(width, 0);
+        toplevel.border_rects[2].setSize(edge, height);
+        toplevel.border_rects[3].node.setPosition(-edge, height);
+        toplevel.border_rects[3].setSize(width + 2 * edge, edge);
+        return;
+    }
     const inset: i32 = if (toplevel.isMaximized())
         0
     else
         @intFromFloat(@ceil(toplevel.cornerRadius()));
-    const color = chrome.borderColor(toplevel.last_painted_hover);
-    for (toplevel.border_rects) |rect| col.setRect(rect, color);
 
     // Only back the client-height gap: overlapping the retained bands would
     // apply the translucent chrome twice at the joins.
@@ -3061,7 +3138,7 @@ pub fn applyOpacity(toplevel: *Toplevel, now_ms: i64) void {
             buffer.setOpacity(value.*);
         }
     }.iter, &opacity);
-    const color = chrome.borderColor(toplevel.last_painted_hover).scale(opacity);
+    const color = toplevel.borderColor().scale(opacity);
     for (toplevel.border_rects) |rect| col.setRect(rect, color);
     for (toplevel.side_fills) |rect| col.setRect(rect, chrome.fillColor().scale(opacity));
     glass.Effect.configure(toplevel.glass_effect, toplevel.cornerRadius(), opacity);
@@ -3221,6 +3298,7 @@ pub fn minimize(toplevel: *Toplevel) void {
     }
 
     if (toplevel.tab_group != 0) @import("window_tabs.zig").refreshVisibility(server);
+    if (server.world.workspaces.active) @import("workspaces.zig").focusFallback(server, toplevel.workspace_id);
     // Must run last: content_tree stays alive and rendering-ready while
     // minimized (only the frame is hidden), so a window-capture source
     // over it wouldn't otherwise notice — unlike a real close, nothing
@@ -3240,7 +3318,7 @@ pub fn restore(toplevel: *Toplevel) void {
     defer if (toplevel.tab_group != 0) @import("window_tabs.zig").refreshVisibility(toplevel.server);
     if (!toplevel.minimized or !toplevel.in_world) return;
     toplevel.minimized = false;
-    toplevel.frame_tree.node.setEnabled(true);
+    toplevel.frame_tree.node.setEnabled(@import("window_tabs.zig").visible(toplevel));
     switch (toplevel.backend) {
         .xwayland => |*adapter| adapter.xsurface.setMinimized(false),
         .xdg, .placeholder, .shell => {},
@@ -3266,6 +3344,25 @@ pub fn rememberGeometry(toplevel: *const Toplevel) RestoreGeometry {
     };
 }
 
+/// Immediate floating placement, with no deferred restore that can undo a drag.
+pub fn restoreGeometryNow(toplevel: *Toplevel, saved: RestoreGeometry) void {
+    toplevel.pending_restore = null;
+    toplevel.finishSizeAnimation();
+    var x = saved.x;
+    var y = saved.y;
+    if (@import("workspaces.zig").outputFor(toplevel)) |output| {
+        // A restore may have been captured before transfer or hot-unplug.
+        // Keep its titlebar on the workspace's current output.
+        const usable = output.usableBox();
+        const width = saved.width +| (2 * toplevel.borderWidth());
+        const height = saved.height +| toplevel.titlebarHeight() +| toplevel.footerHeight();
+        x = std.math.clamp(x, usable.x, usable.x + @max(0, usable.width - width));
+        y = std.math.clamp(y, usable.y, usable.y + @max(0, usable.height - height));
+    }
+    toplevel.setPosition(x, y);
+    _ = toplevel.requestSize(saved.width, saved.height);
+}
+
 pub fn restoreGeometry(toplevel: *Toplevel, saved: RestoreGeometry) void {
     toplevel.pending_restore = saved;
     _ = toplevel.requestSizeAnimated(saved.width, saved.height);
@@ -3274,13 +3371,21 @@ pub fn restoreGeometry(toplevel: *Toplevel, saved: RestoreGeometry) void {
 }
 
 pub fn forcedGeometry(toplevel: *const Toplevel) ?RestoreGeometry {
-    return toplevel.fullscreen_target orelse toplevel.maximize_target orelse toplevel.tile_target orelse toplevel.pending_restore;
+    return toplevel.fullscreen_target orelse toplevel.maximize_target orelse toplevel.tile_target orelse toplevel.auto_target orelse toplevel.pending_restore;
 }
 
 fn applyForcedGeometry(toplevel: *Toplevel) c_int {
     const forced = toplevel.forcedGeometry() orelse return 0;
-    _ = toplevel.requestSizeAnimated(forced.width, forced.height);
-    toplevel.setPositionAnimated(forced.x, forced.y);
+    if (toplevel.auto_target != null and !toplevel.maximized and !toplevel.fullscreen) {
+        // Automatic frames must not inherit a size-animation endpoint computed
+        // with the old maximized/fullscreen decorations before the xdg ack.
+        toplevel.finishSizeAnimation();
+        _ = toplevel.requestSize(forced.width, forced.height);
+        toplevel.setPosition(forced.x, forced.y);
+    } else {
+        _ = toplevel.requestSizeAnimated(forced.width, forced.height);
+        toplevel.setPositionAnimated(forced.x, forced.y);
+    }
     toplevel.pending_restore = null;
     return 0;
 }
@@ -3301,7 +3406,7 @@ fn scheduleForcedGeometry(toplevel: *Toplevel) void {
 // under it. The compositor owns the position as well as the requested client
 // size, so it also owns and restores both values on un-maximize.
 pub fn toggleMaximize(toplevel: *Toplevel) void {
-    toplevel.setMaximized(!toplevel.isMaximized());
+    toplevel.setMaximized(!toplevel.maximized);
 }
 
 pub fn currentIdentity(toplevel: *Toplevel) window_rules.WindowIdentity {
@@ -3350,6 +3455,7 @@ pub fn resolveTargetOutput(toplevel: *const Toplevel) ?*Output {
 /// layout). Used to decide which output's taskbar a fullscreen window
 /// should suppress.
 pub fn currentOutput(toplevel: *const Toplevel) ?*Output {
+    if (@import("workspaces.zig").outputFor(toplevel)) |output| return output;
     const center = toplevel.frameWorld(@floatFromInt(@divTrunc(toplevel.chrome_width, 2)), @floatFromInt(@divTrunc(toplevel.chrome_height, 2)));
     const layout_center = toplevel.server.world.toLayout(center.x, center.y);
     return Output.atLayout(toplevel.server, layout_center.x, layout_center.y) orelse toplevel.resolveTargetOutput();
@@ -3624,12 +3730,13 @@ pub fn setMaximized(toplevel: *Toplevel, maximizing: bool) void {
 pub fn layout(toplevel: *const Toplevel) tiling.Layout {
     if (toplevel.maximized) return .maximized;
     if (toplevel.tile) |tile| return .{ .tiled = tile };
+    if (toplevel.auto_target != null) return .automatic;
     return .floating;
 }
 
 /// The geometry to return to when leaving maximize or a tile.
 fn floatingGeometry(toplevel: *const Toplevel) RestoreGeometry {
-    return toplevel.tile_restore orelse toplevel.rememberGeometry();
+    return toplevel.tile_restore orelse toplevel.auto_restore orelse toplevel.rememberGeometry();
 }
 
 pub fn setTiled(toplevel: *Toplevel, tile: tiling.Tile) void {
@@ -3646,7 +3753,7 @@ pub fn setTiledOn(toplevel: *Toplevel, output: *Output, tile: tiling.Tile) void 
     const usable = output.usableBox();
     if (usable.width <= 0 or usable.height <= 0) return;
 
-    const rect = tiling.tileRect(usable, tile, toplevel.server.config.compositor.window_gap);
+    const rect = tiling.tileRect(usable, tile, toplevel.server.config.compositor.windowGap());
     // cornerRadius() still reads maximized until an xdg client acks leaving it.
     const footer = if (toplevel.hasServerDecorations()) chrome.footerHeight(chrome.frameRadius() * toplevel.chromeDensity()) else 0;
     const scale = toplevel.zoom();
@@ -3663,6 +3770,7 @@ pub fn setTiledOn(toplevel: *Toplevel, output: *Output, tile: tiling.Tile) void 
     } else if (toplevel.tile_restore == null) {
         toplevel.tile_restore = toplevel.rememberGeometry();
     }
+    @import("auto_tiling.zig").setFloating(toplevel, true);
     toplevel.tile = tile;
     toplevel.tile_target = .{ .x = wx, .y = wy, .width = width, .height = height };
     toplevel.sendTiled(tiling.tiledEdges(tile));
@@ -3672,8 +3780,61 @@ pub fn setTiledOn(toplevel: *Toplevel, output: *Output, tile: tiling.Tile) void 
     toplevel.notifyLayoutChanged();
 }
 
+/// Arbitrary automatic frame rectangle. Only changed targets configure a client;
+/// replies to an earlier configure never trigger another layout pass.
+pub fn setAutoTile(toplevel: *Toplevel, rect: wlr.Box) void {
+    if (!toplevel.in_world or toplevel.fullscreen or toplevel.maximized) return;
+    const footer = if (toplevel.hasServerDecorations()) chrome.footerHeight(chrome.frameRadius() * toplevel.chromeDensity()) else 0;
+    const target: RestoreGeometry = .{
+        .x = rect.x,
+        .y = rect.y,
+        .width = @max(1, rect.width - 2 * toplevel.borderWidth()),
+        .height = @max(1, rect.height - toplevel.titlebarHeight() - footer),
+    };
+    toplevel.finishSizeAnimation();
+    if (toplevel.auto_target) |previous| if (std.meta.eql(previous, target)) return;
+    if (toplevel.auto_restore == null) toplevel.auto_restore = toplevel.rememberGeometry();
+    const was_tiled = toplevel.auto_target != null;
+    toplevel.auto_target = target;
+    toplevel.pending_restore = null;
+    toplevel.clearZoomBoost();
+    if (!was_tiled) toplevel.sendTiled(.{ .top = true, .bottom = true, .left = true, .right = true });
+    const moved = toplevel.x != target.x or toplevel.y != target.y;
+    // X11 sends position and size together: commitPosition uses auto_target,
+    // never the old client buffer size, and already configures a moved window.
+    toplevel.setPosition(target.x, target.y);
+    if (toplevel.backend != .xwayland or !moved) _ = toplevel.requestSize(target.width, target.height);
+    toplevel.notifyLayoutChanged();
+}
+
+pub fn clearAutoTile(toplevel: *Toplevel, restore_floating: bool) void {
+    if (toplevel.auto_target == null) return;
+    const saved = toplevel.auto_restore;
+    toplevel.auto_target = null;
+    toplevel.auto_restore = null;
+    if (toplevel.tile == null) toplevel.sendTiled(.{});
+    if (restore_floating and !toplevel.fullscreen and !toplevel.maximized) {
+        if (saved) |geom| {
+            var floating = geom;
+            const constraints = toplevel.sizeConstraints();
+            floating.width = @max(floating.width, @max(1, constraints.min_width));
+            floating.height = @max(floating.height, @max(1, constraints.min_height));
+            if (constraints.max_width > 0) floating.width = @min(floating.width, constraints.max_width);
+            if (constraints.max_height > 0) floating.height = @min(floating.height, constraints.max_height);
+            toplevel.restoreGeometryNow(floating);
+        }
+    }
+    toplevel.notifyLayoutChanged();
+}
+
 /// Return a tiled window to its floating geometry.
 pub fn untile(toplevel: *Toplevel) void {
+    if (toplevel.auto_target != null) {
+        const saved = toplevel.auto_restore;
+        @import("auto_tiling.zig").setFloating(toplevel, true);
+        if (saved) |geom| toplevel.restoreGeometry(geom);
+        return;
+    }
     if (toplevel.tile == null) return;
     const saved = toplevel.tile_restore;
     toplevel.dropTile();
@@ -3684,6 +3845,7 @@ pub fn untile(toplevel: *Toplevel) void {
 /// Leave maximize or a tile without moving; the caller places the window
 /// (a drag carrying it off, an interactive resize, undo).
 pub fn leaveLayout(toplevel: *Toplevel) void {
+    @import("auto_tiling.zig").setFloating(toplevel, true);
     if (!toplevel.maximized and !toplevel.isMaximized() and toplevel.tile == null) return;
     toplevel.clearMaximized();
     toplevel.dropTile();
@@ -3697,6 +3859,11 @@ pub fn applyLayout(toplevel: *Toplevel, target: tiling.Layout) void {
         .floating => if (toplevel.maximized) toplevel.setMaximized(false) else toplevel.untile(),
         .maximized => toplevel.setMaximized(true),
         .tiled => |tile| toplevel.setTiled(tile),
+        .automatic => {
+            toplevel.clearMaximized();
+            toplevel.dropTile();
+            @import("auto_tiling.zig").setFloating(toplevel, false);
+        },
     }
 }
 
@@ -3751,13 +3918,14 @@ fn notifyLayoutChanged(toplevel: *Toplevel) void {
 }
 
 pub fn setFullscreen(toplevel: *Toplevel, fullscreen: bool) void {
-    if (toplevel.isFullscreen() != fullscreen) {
+    if (toplevel.fullscreen != fullscreen) {
         toplevel.toggleFullscreen();
     }
 }
 
 pub fn toggleFullscreen(toplevel: *Toplevel) void {
-    const next = !toplevel.isFullscreen();
+    // Use compositor intent: a second toggle may precede the client ack.
+    const next = !toplevel.fullscreen;
     if (!next) {
         toplevel.fullscreen = false;
         switch (toplevel.backend) {
@@ -3815,6 +3983,11 @@ pub fn handleIdentityChanged(toplevel: *Toplevel) void {
         toplevel.syncChrome(true, true, nowMs()) catch {};
     }
 
+    if (toplevel.in_world) if (toplevel.server.layout_autosave) |autosave| {
+        autosave.mapped(toplevel);
+        autosave.finishMapped(toplevel);
+    };
+    @import("auto_tiling.zig").observe(toplevel);
     toplevel.server.window_tabs.reconcile(toplevel);
     if (toplevel.tab_hidden) {
         if (@import("window_tabs.zig").active(toplevel.server, toplevel.tab_group)) |active_tab| active_tab.syncChrome(false, false, nowMs()) catch {};

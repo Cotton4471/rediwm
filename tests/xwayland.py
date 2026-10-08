@@ -265,7 +265,7 @@ def test_server_stop_cleanup():
                 )
                 # One read callback sees both requests before idle dispatch.
                 # They must coalesce rather than queue two frees of the wrapper.
-                sock.sendall((json.dumps({"StopXwayland": {}}) + "\n").encode() * 2)
+                sock.sendall((json.dumps({"version": 1, "command": "stop_xwayland"}) + "\n").encode() * 2)
                 for _ in range(2):
                     reply = json.loads(reader.readline())
                     assert "Ok" in reply, reply

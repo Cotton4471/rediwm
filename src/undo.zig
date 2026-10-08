@@ -1,9 +1,48 @@
 // Global undo state for spatial operations (Super + Z).
-// Pure logic over plain structs — no compositor dependency. See plan-undo.md.
+// Plain window state and owned split snapshots; no compositor dependency.
 const std = @import("std");
 const Layout = @import("snap.zig").Layout;
 
-pub const Kind = enum { move, resize, window_zoom, pan, camera_zoom, focus };
+pub const Kind = enum { move, resize, window_zoom, pan, camera_zoom, focus, workspace_layout };
+
+pub const Geometry = struct { x: i32, y: i32, width: i32, height: i32 };
+
+/// Owned, pointer-free window identities and independent copies of affected
+/// split trees. The compositor reconciles these with live membership on apply.
+pub const LayoutSnapshot = struct {
+    allocator: std.mem.Allocator,
+    generation: u64,
+    focus: ?u64 = null,
+    workspaces: std.ArrayList(Workspace) = .empty,
+    windows: std.ArrayList(Window) = .empty,
+
+    pub const Workspace = struct {
+        id: u8,
+        automatic: bool,
+        tree: @import("auto_layout.zig").Tree,
+    };
+    pub const Window = struct {
+        id: u64,
+        order: u64,
+        key: @import("auto_layout.zig").Key,
+        workspace: u8,
+        floating: bool,
+        floating_override: ?bool,
+        geometry: Geometry,
+        layout: Layout,
+        auto_restore: ?Geometry,
+        tile_restore: ?Geometry,
+        reinsert: ?@import("auto_layout.zig").Placement,
+    };
+
+    pub fn destroy(self: *LayoutSnapshot) void {
+        const allocator = self.allocator;
+        for (self.workspaces.items) |*workspace| workspace.tree.deinit(allocator);
+        self.workspaces.deinit(allocator);
+        self.windows.deinit(allocator);
+        allocator.destroy(self);
+    }
+};
 
 pub const WindowState = struct {
     id: u64,
@@ -36,6 +75,11 @@ pub const Change = struct {
     focus: ?u64 = null, // window id that held keyboard focus before this change
     window: ?WindowState = null,
     camera: ?CameraState = null,
+    snapshot: ?*LayoutSnapshot = null,
+
+    pub fn deinit(change: Change) void {
+        if (change.snapshot) |snapshot| snapshot.destroy();
+    }
 };
 
 pub const Undo = struct {
@@ -56,11 +100,13 @@ pub const Undo = struct {
     /// folds into one undo entry. `pending` is never clobbered when already
     /// set (a focus change inside an active gesture cannot displace it).
     pub fn begin(undo: *Undo, change: Change) void {
-        if (undo.applying) return;
-        if (undo.pending != null) return; // gesture already in flight
+        if (undo.applying or undo.pending != null) {
+            change.deinit();
+            return;
+        }
         var c = change;
         if (undo.slot) |prev| {
-            if (prev.press_seq == change.press_seq) {
+            if (change.snapshot == null and prev.press_seq == change.press_seq) {
                 // Same press: inherit the previously recorded focus id so the
                 // drag and the focus change it caused form one undo entry.
                 c.focus = prev.focus;
@@ -128,11 +174,14 @@ pub const Undo = struct {
 
     /// Discrete operations (focus, zoom steps) begin and commit in one call.
     pub fn record(undo: *Undo, change: Change, now_ms: i64) void {
-        if (undo.applying) return;
+        if (undo.applying) {
+            change.deinit();
+            return;
+        }
         if (change.kind == .focus and change.focus == null) return;
         var c = change;
         if (undo.slot) |prev| {
-            if (prev.press_seq == change.press_seq) {
+            if (change.snapshot == null and prev.press_seq == change.press_seq) {
                 c.focus = prev.focus;
             }
         }
@@ -141,6 +190,7 @@ pub const Undo = struct {
 
     /// Drop the in-flight gesture without recording it (e.g. cancelResize).
     pub fn drop(undo: *Undo) void {
+        if (undo.pending) |pending| pending.deinit();
         undo.pending = null;
     }
 
@@ -160,12 +210,14 @@ pub const Undo = struct {
                 const same_camera = prev.camera != null and change.camera != null and prev.window == null and change.window == null;
                 if (same_window or same_camera) {
                     prev.at_ms = now_ms;
+                    change.deinit();
                     return;
                 }
             }
         }
         var c = change;
         c.at_ms = now_ms;
+        if (undo.slot) |previous| previous.deinit();
         undo.slot = c;
     }
 
@@ -175,8 +227,9 @@ pub const Undo = struct {
 
     /// Clear the slot and pending gesture (e.g. on lock / unlock).
     pub fn clear(undo: *Undo) void {
+        if (undo.slot) |slot| slot.deinit();
         undo.slot = null;
-        undo.pending = null;
+        undo.drop();
     }
 };
 
@@ -305,4 +358,38 @@ test "commitPending commits an in-flight gesture" {
     u.commitPending(100, .{ .camera = .{ .offset_x = 50, .offset_y = 10, .zoom_index = 0 } });
     try std.testing.expect(u.pending == null);
     try std.testing.expect(u.slot != null);
+}
+
+test "owned layout snapshots are freed on replacement, cancel, clear and suppression" {
+    const Case = struct {
+        fn snapshot(allocator: std.mem.Allocator) !*LayoutSnapshot {
+            const value = try allocator.create(LayoutSnapshot);
+            value.* = .{ .allocator = allocator, .generation = 1 };
+            errdefer value.destroy();
+            var tree: @import("auto_layout.zig").Tree = .{};
+            errdefer tree.deinit(allocator);
+            try tree.insert(allocator, .{ .key = .{ .id = 1 } }, null, .horizontal);
+            try tree.insert(allocator, .{ .key = .{ .id = 2 } }, null, .vertical);
+            try value.workspaces.append(allocator, .{ .id = 1, .automatic = true, .tree = tree });
+            return value;
+        }
+        fn run(allocator: std.mem.Allocator) !void {
+            var u: Undo = .{};
+            defer u.clear();
+            u.record(.{ .kind = .workspace_layout, .press_seq = 1, .at_ms = 0, .snapshot = try snapshot(allocator) }, 0);
+            u.record(.{ .kind = .workspace_layout, .press_seq = 1, .at_ms = 1, .snapshot = try snapshot(allocator) }, 1);
+            u.record(.{ .kind = .focus, .press_seq = 2, .at_ms = 2, .focus = 3 }, 2);
+            try std.testing.expect(u.slot.?.snapshot == null);
+            u.begin(.{ .kind = .workspace_layout, .press_seq = 3, .at_ms = 3, .snapshot = try snapshot(allocator) });
+            // A second begin is consumed even though a gesture is in flight.
+            u.begin(.{ .kind = .workspace_layout, .press_seq = 4, .at_ms = 4, .snapshot = try snapshot(allocator) });
+            u.drop();
+            u.applying = true;
+            u.record(.{ .kind = .workspace_layout, .press_seq = 5, .at_ms = 5, .snapshot = try snapshot(allocator) }, 5);
+            u.applying = false;
+            u.record(.{ .kind = .workspace_layout, .press_seq = 6, .at_ms = 6, .snapshot = try snapshot(allocator) }, 6);
+            u.clear();
+        }
+    };
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, Case.run, .{});
 }

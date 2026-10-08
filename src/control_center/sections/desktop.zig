@@ -27,6 +27,8 @@ pub const Section = struct {
     arena: std.heap.ArenaAllocator = .init(gpa),
     root: W = undefined,
     message: []const u8 = "",
+    selected_workspace: u8 = 0,
+    floating_choices: []const []const u8 = &.{},
 };
 
 fn text(value: []const u8, size: f32, dim: bool) W {
@@ -102,7 +104,10 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
         }
         row.* = .{ .kind = .container, .direction = .row, .justify = .center, .gap = gap, .width = .{ .percent = 1 }, .height = .{ .fixed = cell_size }, .children = cells };
     }
-    const grid: W = .{ .kind = .container, .direction = .column, .justify = .center, .gap = gap, .width = .{ .percent = 1 }, .height = .{ .fixed = 220 }, .children = grid_rows };
+    // The grid is exactly as tall as its rows: a single row stays one strip
+    // instead of floating in a padded box.
+    const grid_height = cell_size * @as(f32, @floatFromInt(rows)) + gap * @as(f32, @floatFromInt(rows -| 1));
+    const grid: W = .{ .kind = .container, .direction = .column, .justify = .center, .gap = gap, .width = .{ .percent = 1 }, .height = .{ .fixed = grid_height }, .children = grid_rows };
     const preview = try card(a, &.{ text("Canvas Preview", 16, false), text("Your desktop panning area.", 12, true), grid, text("Highlighted: bottom-left screen", 12, true) });
     const controls = try card(a, &.{
         text("Canvas Size", 16, false),
@@ -146,7 +151,14 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
     });
     fixed_row.justify = .space_between;
     fixed_row.@"align" = .center;
+    const mode_card = try card(a, &.{
+        text("Desktop mode", 14, false),
+        .{ .name = "desktop_mode", .kind = .{ .segmented = .{ .labels = &.{ "Canvas", "Workspaces" }, .selected = @intFromEnum(cfg.desktop_mode), .owner = cc, .on_change = modeChanged } }, .width = .{ .percent = 1 } },
+        text(if (cfg.desktop_mode == .workspaces) "Automatic tiles with a fixed view and Hyprland-style shortcuts. Drag tiles to rearrange; Super+V toggles floating." else "Pan and zoom the canvas. Switching back restores your canvas positions and zoom.", 12, true),
+    });
+    if (cfg.desktop_mode == .workspaces) return workspaceTree(s, cc, a, mode_card);
     var root = try container(a, .column, &.{
+        mode_card,
         body,
         switching,
         mini_map,
@@ -248,4 +260,109 @@ fn change(owner: ?*anyopaque, id: usize) void {
     cc.server.config.compositor.canvas_rows = rows;
     @import("../../Output.zig").recomputeWorldBounds(cc.server);
     cc.refresh();
+}
+
+fn modeChanged(owner: ?*anyopaque, _: usize, index: usize) void {
+    const cc: *panel.ControlCenter = @ptrCast(@alignCast(owner orelse return));
+    if (index > 1) return;
+    const mode: @import("config").loader.DesktopMode = @enumFromInt(index);
+    @import("../../config_runtime/workspace_controls.zig").mode(cc.server, mode, true) catch {
+        cc.desktop.message = "Could not save desktop mode.";
+        cc.refresh();
+    };
+}
+
+const gaps = [_]u32{ 0, 4, 8, 12, 16, 24, 32 };
+const gap_labels = [_][]const u8{ "0 px", "4 px", "8 px", "12 px", "16 px", "24 px", "32 px" };
+fn workspaceTree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator, mode_card: W) !W {
+    const manager = &cc.server.world.workspaces;
+    const id = if (s.selected_workspace > 0) s.selected_workspace else if (cc.server.getDefaultOutput()) |out| @max(1, out.workspace_id) else 1;
+    s.selected_workspace = id;
+    const labels = try a.alloc([]const u8, 32);
+    for (labels, 0..) |*label, i| label.* = try std.fmt.allocPrint(a, "Workspace {d}", .{i + 1});
+    const slot = manager.slots[id - 1];
+    const workspace_card = try card(a, &.{
+        text("Workspace layout", 16, false),
+        try mapSelect(cc, a, "Workspace", "workspace_select", labels, id - 1, false, workspaceSelected),
+        try mapSelect(cc, a, "Placement", "workspace_layout", &.{ "Automatic tiling", "Floating" }, if (slot.automatic) 0 else 1, false, layoutChanged),
+        text(if (slot.output) |out| try std.fmt.allocPrint(a, "Output: {s}", .{std.mem.span(out.wlr_output.name)}) else "Assigned to the current output when first used.", 12, true),
+        text("Layouts and split sizes are saved for your next session.", 12, true),
+    });
+    var gap_index: usize = 0;
+    const value = cc.server.config.compositor.windowGap();
+    for (gaps, 0..) |candidate, i| if (@abs(@as(i64, candidate) - value) < @abs(@as(i64, gaps[gap_index]) - value)) {
+        gap_index = i;
+    };
+    const spacing = try card(a, &.{
+        text("Window spacing", 16, false),
+        try mapSelect(cc, a, try std.fmt.allocPrint(a, "Gap ({d} px)", .{value}), "workspace_gap", &gap_labels, gap_index, false, gapChanged),
+        text("Applies to output edges and the space between automatic tiles.", 12, true),
+    });
+    var choices: std.ArrayList([]const u8) = .empty;
+    for (cc.server.config.compositor.floating_apps) |app| try choices.append(a, try a.dupe(u8, app));
+    cc.server.window_tabs.loadKnown(cc.server);
+    var it = cc.server.world.toplevels.iterator(.forward);
+    while (it.next()) |top| _ = cc.server.window_tabs.remember(top.appId());
+    for (cc.server.window_tabs.known.items) |app| {
+        var found = false;
+        for (choices.items) |existing| if (std.mem.eql(u8, app, existing)) {
+            found = true;
+            break;
+        };
+        if (!found) try choices.append(a, try a.dupe(u8, app));
+    }
+    s.floating_choices = choices.items;
+    const list = ui.widgets.checkbox_list;
+    const items = try a.alloc(list.Item, choices.items.len);
+    for (choices.items, items, 0..) |app, *item, i| {
+        var checked = false;
+        for (cc.server.config.compositor.floating_apps) |enabled| if (std.mem.eql(u8, enabled, app)) {
+            checked = true;
+            break;
+        };
+        item.* = .{ .id = i, .name = try std.fmt.allocPrint(a, "floating_app:{s}", .{app}), .label = app, .checked = checked };
+    }
+    const rules = try card(a, &.{
+        text("Floating apps", 16, false),
+        text("Checked apps open floating. Super+V can override placement for a window. Dialogs and fixed-size windows float automatically.", 12, true),
+        try list.build(a, items, cc, floatingChanged, .{}),
+        text("Open an app to add it here. Advanced title, backend and glob matches use [[window_rules]] floating in your config.", 12, true),
+    });
+    return container(a, .column, &.{ mode_card, workspace_card, spacing, rules, text(s.message, 12, true) });
+}
+fn workspaceSelected(owner: ?*anyopaque, _: usize, index: usize) void {
+    const cc: *panel.ControlCenter = @ptrCast(@alignCast(owner orelse return));
+    if (index >= 32) return;
+    cc.desktop.selected_workspace = @intCast(index + 1);
+    cc.refresh();
+}
+fn layoutChanged(owner: ?*anyopaque, _: usize, index: usize) void {
+    const cc: *panel.ControlCenter = @ptrCast(@alignCast(owner orelse return));
+    if (index > 1) return;
+    @import("../../config_runtime/workspace_controls.zig").automatic(cc.server, cc.desktop.selected_workspace, index == 0);
+}
+fn gapChanged(owner: ?*anyopaque, _: usize, index: usize) void {
+    const cc: *panel.ControlCenter = @ptrCast(@alignCast(owner orelse return));
+    if (index >= gaps.len) return;
+    @import("../../config_runtime/workspace_controls.zig").gap(cc.server, gaps[index], true) catch {
+        cc.desktop.message = "Could not save window spacing.";
+        cc.refresh();
+    };
+}
+fn floatingChanged(owner: ?*anyopaque, index: usize, checked: bool) void {
+    const cc: *panel.ControlCenter = @ptrCast(@alignCast(owner orelse return));
+    if (index >= cc.desktop.floating_choices.len) return;
+    const selected = cc.desktop.floating_choices[index];
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var apps: std.ArrayList([]const u8) = .empty;
+    for (cc.server.config.compositor.floating_apps) |app| if (!std.mem.eql(u8, selected, app)) {
+        apps.append(a, app) catch return;
+    };
+    if (checked) apps.append(a, selected) catch return;
+    @import("../../config_runtime/workspace_controls.zig").floatingApps(cc.server, apps.items, true) catch {
+        cc.desktop.message = "Could not save floating apps.";
+        cc.refresh();
+    };
 }

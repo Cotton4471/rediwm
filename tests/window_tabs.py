@@ -38,6 +38,8 @@ def run():
                   '[desktop]\nenabled = false\n[animations]\nenabled = false\n'
                   '[theme]\nchrome_round_buttons = false\n'
                   'window_bg = "#101215"\nshadow = "#00000000"\n')
+        if os.getenv("REDIWM_TEST_WORKSPACES") == "1":
+            config = config.replace('[compositor]\n', '[compositor]\ndesktop_mode = "workspaces"\n', 1)
         process, log = spawn_compositor(tmp, config_content=config,
             scale=os.environ.get("REDIWM_TEST_SCALE", "1"),
             renderer=os.environ.get("REDIWM_TEST_RENDERER", "pixman"),
@@ -62,7 +64,7 @@ def run():
 
                 def spawn(title):
                     f = (tmp / f"{title}.log").open("w")
-                    child = subprocess.Popen([str(tmp / "client"), "--app-id", "tab-fixture", "--title", title], env=dict(env, **({"REDIWM_TEST_CLOSE_MARKER": str(marker)} if title == "First" else {})), stdout=f, stderr=f)
+                    child = subprocess.Popen([str(tmp / "client"), "--app-id", "tab-fixture", "--title", title], env=dict(env, REDIWM_TEST_COMMANDS="1", **({"REDIWM_TEST_CLOSE_MARKER": str(marker)} if title == "First" else {})), stdin=subprocess.PIPE, text=True, stdout=f, stderr=f)
                     f.close()
                     clients.append(child)
                     return wait_for(lambda: next((w for w in windows() if w["title"] == title), None), title)["id"]
@@ -182,6 +184,28 @@ def run():
                 # External activation selects an inactive member.
                 ipc.focus_window(second)
                 wait_for(lambda: active(group)["id"] == second, "external activation")
+                if os.getenv("REDIWM_TEST_WORKSPACES") == "1":
+                    def geometry(wid):
+                        return tuple(window(wid)[key] for key in ("x", "y", "width", "height"))
+                    grouped = geometry(second)
+                    neighbors = {wid: geometry(wid) for wid in (separate, independent_tab)}
+                    ipc.action("tiling_action", {"action": "toggle_floating", "id": second})
+                    wait_for(lambda: geometry(second) != grouped, "floating group before undo")
+                    ipc.action("undo")
+                    wait_for(lambda: geometry(second) == grouped, "group undo restores active tile")
+                    ipc.focus_window(first)
+                    wait_for(lambda: geometry(first) == grouped, "group undo restores inactive tile")
+                    assert all(geometry(wid) == rect for wid, rect in neighbors.items())
+                    ipc.focus_window(second)
+                    before_remap = (window(second)["x"], window(second)["y"], window(second)["width"], window(second)["height"])
+                    for phase in ("inactive", "active"):
+                        clients[0].stdin.write("unmap\n"); clients[0].stdin.flush()
+                        wait_for(lambda: window(first) is None, "withdraw tab")
+                        assert window(second)["tab_group"] == group
+                        clients[0].stdin.write("remap\n"); clients[0].stdin.flush()
+                        wait_for(lambda: window(first) is not None and window(first).get("tab_group") == group, "remap rejoins tab group")
+                        wait_for(lambda: (window(first)["x"], window(first)["y"], window(first)["width"], window(first)["height"]) == before_remap, "remapped group keeps one tile")
+                    ipc.focus_window(second)
                 # Geometry belongs to the group across a switch.
                 ipc.action("move_window_to", {"id": second, "x": 150, "y": 120})
                 click(second, f"tab/{first}")
@@ -212,9 +236,21 @@ def run():
                 click(fourth, "tab_previous")
                 wait_for(lambda: active(group)["id"] != fourth, "overflow navigation")
                 current = active(group)["id"]
+                before_close = None
+                if os.getenv("REDIWM_TEST_WORKSPACES") == "1":
+                    ipc.action("tiling_action", {"action": "toggle_floating", "id": current})
+                    ipc.wait_for_frame()
+                    before_close = geometry(current)
+                    close_neighbors = {wid: geometry(wid) for wid in (separate, independent_tab)}
+                    ipc.action("tiling_action", {"action": "toggle_split", "id": current})
+                    wait_for(lambda: geometry(current) != before_close, "group rearrangement before close")
                 click(current, f"tab/{current}/close")
                 wait_for(lambda: window(current) is None, "close active tab")
                 assert active(group) is not None
+                if before_close is not None:
+                    ipc.action("undo")
+                    wait_for(lambda: geometry(active(group)["id"]) == before_close, "undo survives selected tab closure")
+                    assert all(geometry(wid) == rect for wid, rect in close_neighbors.items())
                 ipc.screenshot(os.environ.get("REDIWM_TABS_PREVIEW", str(tmp / "tabs.png")))
                 # Outer close closes this group only.
                 click(active(group)["id"], "close")

@@ -158,6 +158,13 @@ the one for the directory you work in: `src/files`, `src/editor`,
   `files/settings.zig` before the first frame (PDF: before its sandbox).
 * Secrets live in `secret_input.Input` over caller-owned mlocked storage;
   hand-laid secret fields draw the caret with `CaretOverlay`.
+* **Dead keys:** `xkb_state_key_get_utf8` returns nothing for them, so any
+  code turning xkb presses into text feeds `ui.compose.Compose` first (shared
+  lazy table from the user's language: ´+c is ç in `pt_BR`, ć elsewhere):
+  `Keyboard.composeShell` for compositor fields, `deliverKey` in app clients.
+  Reset on focus loss or Ctrl/Alt, no repeat for a consumed key
+  (`willConsume`/`consumed`), `compose.preload` before a sandbox closes the
+  filesystem (PDF). `tests/dead_keys.py`.
 
 ## Build and platform
 

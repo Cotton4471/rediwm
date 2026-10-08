@@ -154,6 +154,11 @@ def run():
                 code, result = finish(request)
                 assert code == 0 and result["uris"] == [(docs / "new file.txt").as_uri()], result
                 assert not (docs / "new file.txt").exists()
+                request = start("SaveFile", {"current_name": GLib.Variant("s", "photo.tar.gz")})
+                key(44)  # typing replaces only the name, not the extension
+                key(28)
+                code, result = finish(request)
+                assert code == 0 and result["uris"] == [(docs / "z.tar.gz").as_uri()], result
                 request = start("SaveFile", {"current_name": GLib.Variant("s", "alpha.txt")})
                 key(28)
                 assert request[1].is_alive() and windows(), "overwrite was not confirmed"

@@ -137,6 +137,7 @@ pub const Lock = struct {
         if (server.polkit) |agent| agent.pauseForLock();
         // Clear undo state on lock: restoring spatial state across a screen
         // lock session would be confusing (different user context).
+        if (server.input.tiling_grab != null) server.input.finishTilingGrab(false);
         server.undo.clear();
         var keyboards = server.input.keyboards.iterator(.forward);
         while (keyboards.next()) |keyboard| keyboard.cancelHardware();
@@ -1196,6 +1197,7 @@ test "lock authentication failure stays locked and success releases lock state" 
         .suspended = true,
     };
     server.polkit = &agent;
+    server.undo = .{};
     server.wl_server = display;
     server.outputs.init();
     server.world.toplevels.init();

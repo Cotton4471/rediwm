@@ -3,6 +3,8 @@
 #include "xdg-shell-client-protocol.h"
 #include "xdg-decoration-client-protocol.h"
 #include <assert.h>
+#include <poll.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,6 +24,8 @@ static struct xdg_toplevel *toplevel;
 static struct zxdg_decoration_manager_v1 *decoration_manager;
 static struct zxdg_toplevel_decoration_v1 *decoration;
 static int width = 400, height = 260, frames;
+static int test_min_w, test_min_h, test_max_w, test_max_h;
+static int test_unmapped;
 static void released(void *data, struct wl_buffer *buffer) {
   (void)data;
   wl_buffer_destroy(buffer);
@@ -191,6 +195,7 @@ static const struct wl_surface_listener surface_listener = {.enter = entered,
                                                             .leave = left};
 static void configured(void *data, struct xdg_surface *xs, uint32_t serial) {
   (void)data;
+  if (xs == xdg && test_unmapped) return;
   xdg_surface_ack_configure(xs, serial);
   if (xs == popup_xdg) {
     paint(popup_surface, 100, 60, 0xffffff00);
@@ -228,6 +233,10 @@ static void top_configure(void *data, struct xdg_toplevel *t, int32_t w,
     width = w;
   if (h > 0)
     height = h;
+  if (width < test_min_w) width = test_min_w;
+  if (height < test_min_h) height = test_min_h;
+  if (test_max_w && width > test_max_w) width = test_max_w;
+  if (test_max_h && height > test_max_h) height = test_max_h;
 }
 // A close-confirmation transient used by the window-group regression. The
 // marker lets the harness cancel once, then allow the ordinary close path.
@@ -420,6 +429,24 @@ static void key_leave(void *d, struct wl_keyboard *k, uint32_t serial,
   (void)serial;
   (void)s;
 }
+/* Noninstalled fixture: update real xdg size hints, including zero resets. */
+static void update_constraints(void) {
+  const char *path = getenv("REDIWM_TEST_CONSTRAINTS");
+  if (!path) return;
+  FILE *file = fopen(path, "r");
+  if (!file) return;
+  int min_w, min_h, max_w, max_h;
+  if (fscanf(file, "%d %d %d %d", &min_w, &min_h, &max_w, &max_h) == 4) {
+    test_min_w = min_w; test_min_h = min_h;
+    test_max_w = max_w; test_max_h = max_h;
+    if (min_w > 0 && min_w == max_w) width = min_w;
+    if (min_h > 0 && min_h == max_h) height = min_h;
+    xdg_toplevel_set_min_size(toplevel, min_w, min_h);
+    xdg_toplevel_set_max_size(toplevel, max_w, max_h);
+  }
+  fclose(file);
+}
+
 static void key(void *d, struct wl_keyboard *k, uint32_t serial, uint32_t time,
                 uint32_t code, uint32_t state) {
   (void)d;
@@ -428,6 +455,10 @@ static void key(void *d, struct wl_keyboard *k, uint32_t serial, uint32_t time,
   (void)time;
   printf("key %u %u\n", code, state);
   if (!state) return;
+  if (code == 87 && getenv("REDIWM_TEST_CONSTRAINTS")) {
+    update_constraints();
+    wl_surface_commit(surface);
+  }
   if (decoration && code == 63)
     zxdg_toplevel_decoration_v1_set_mode(decoration, ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE);
   if (decoration && code == 64)
@@ -570,6 +601,7 @@ int main(int argc, char *argv[]) {
   xdg_toplevel_add_listener(toplevel, &top_listener, NULL);
   if (title) xdg_toplevel_set_title(toplevel, title);
   if (!late_app_id && app_id) xdg_toplevel_set_app_id(toplevel, app_id);
+  update_constraints();
   const char *initial_state = getenv("REDIWM_TEST_INITIAL_STATE");
   if (initial_state && !strcmp(initial_state, "maximized"))
     xdg_toplevel_set_maximized(toplevel);
@@ -584,7 +616,36 @@ int main(int argc, char *argv[]) {
           mode && !strcmp(mode, "client") ? ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE : ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
   }
   wl_surface_commit(surface);
-  while (wl_display_dispatch(display) >= 0) {
+  if (getenv("REDIWM_TEST_COMMANDS")) {
+    for (;;) {
+      if (wl_display_dispatch_pending(display) < 0) break;
+      wl_display_flush(display);
+      struct pollfd fds[] = {{wl_display_get_fd(display), POLLIN, 0}, {STDIN_FILENO, POLLIN, 0}};
+      if (poll(fds, 2, -1) < 0) { if (errno == EINTR) continue; break; }
+      if (fds[0].revents && wl_display_dispatch(display) < 0) break;
+      if (fds[1].revents) {
+        char command[32];
+        if (!fgets(command, sizeof(command), stdin)) break;
+        if (!strcmp(command, "unmap\n")) {
+          test_unmapped = 1;
+          wl_surface_attach(surface, NULL, 0, 0);
+        }
+        if (!strcmp(command, "remap\n")) {
+          test_unmapped = 0;
+          update_constraints();
+          /* xdg-shell resets role properties when the surface is unmapped. */
+          if (app_id) xdg_toplevel_set_app_id(toplevel, app_id);
+          if (title) xdg_toplevel_set_title(toplevel, title);
+          if (decoration) zxdg_toplevel_decoration_v1_set_mode(decoration,
+              mode && !strcmp(mode, "client") ? ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE : ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
+        }
+        /* An empty commit after unmap requests a fresh initial configure. */
+        if (!strcmp(command, "unmap\n") || !strcmp(command, "remap\n")) wl_surface_commit(surface);
+        if (test_unmapped && wl_display_roundtrip(display) < 0) break;
+      }
+    }
+  } else {
+    while (wl_display_dispatch(display) >= 0) {}
   }
   return 0;
 }

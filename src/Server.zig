@@ -845,6 +845,8 @@ pub fn getSystemd(server: *Server) !*@import("systemd.zig").Client {
 }
 
 pub fn deinit(server: *Server) void {
+    server.undo.clear();
+    server.undo.applying = true;
     // terminate saved the layout before leaving the event loop. Only paths
     // such as restart_shell, which stop the display directly, need to save it
     // here. In both cases save before tearing down Xwayland or native clients.
@@ -1229,7 +1231,7 @@ fn updateTaskbarFullscreenVisibility(server: *Server) void {
     // write keeps the bar in lockstep with the resize instead of flashing
     // on top for a frame.
     const fullscreen_output: ?*Output = if (focused) |t|
-        (if (t.fullscreen) t.currentOutput() else null)
+        (if (t.fullscreen and @import("workspaces.zig").visible(t)) t.currentOutput() else null)
     else
         null;
 

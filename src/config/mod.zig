@@ -16,6 +16,7 @@ pub const setting_save = @import("setting_save.zig");
 pub const shortcut_save = @import("shortcut_save.zig");
 pub const taskbar_items = @import("taskbar_items.zig");
 pub const types = @import("types.zig");
+pub const workspace_layout = @import("workspace_layout.zig");
 pub const window_rules = @import("window_rules.zig");
 
 test {

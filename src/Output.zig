@@ -111,6 +111,7 @@ link: wl.list.Link = undefined,
 
 frame: wl.Listener(*wlr.Output) = .init(handleFrame),
 request_state: wl.Listener(*wlr.Output.event.RequestState) = .init(handleRequestState),
+workspace_id: u8 = 0,
 destroy: wl.Listener(*wlr.Output) = .init(handleDestroy),
 
 pub fn isLogicallyEnabled(self: *const Output) bool {
@@ -541,6 +542,8 @@ pub fn syncLayout(server: *Server) void {
         if (!out.idle_blanked and !out.user_disabled) layer.arrange();
     }
     recomputeWorldBounds(server);
+    server.world.workspaces.setMode(server, server.config.compositor.desktop_mode == .workspaces);
+    server.world.workspaces.syncOutputs(server);
     if (server.desktop) |desktop| desktop.syncLayout();
     if (server.output_management) |om| om.publish();
     server.input.touch.remap();
@@ -1496,6 +1499,7 @@ fn handleDestroy(listener: *wl.Listener(*wlr.Output), _: *wlr.Output) void {
     // fromWlr/atLayout cannot hand out a freed Output.
     output.wlr_output.data = null;
     if (server.desktop) |desktop| desktop.outputRemoved(output);
+    server.world.workspaces.forgetOutput(output);
     gpa.destroy(output);
     server.input.refreshOutputScales();
     syncLayout(server);

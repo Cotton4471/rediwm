@@ -15,6 +15,7 @@ const log = std.log.scoped(.keyboard);
 const keybinds = @import("config").keybinds;
 const ControlCenter = @import("control_center/panel.zig").ControlCenter;
 const StartMenu = @import("start_menu/panel.zig").StartMenu;
+const ui_compose = @import("ui").compose;
 
 server: *Server,
 link: wl.list.Link = undefined,
@@ -32,12 +33,17 @@ switcher_timer: ?*wl.EventSource = null,
 switcher_code: ?u32 = null,
 shortcut_consumed: [768]bool = @splat(false),
 hardware_consumed: [768]bool = @splat(false),
+mode_consumed: [768]bool = @splat(false),
 repeat_timer: ?*wl.EventSource = null,
 repeat_code: ?u32 = null,
 /// Key repeat for compositor-drawn UI, which has no client to repeat keys
 /// itself: the held key and the shell target that took its press.
 shell_timer: ?*wl.EventSource = null,
 shell_repeat: ?ShellRepeat = null,
+/// Dead keys and Compose sequences for compositor-drawn fields (clients
+/// compose their own), and the shell target a half-typed one belongs to.
+compose: ui_compose.Compose = .{},
+compose_target: ?ShellTarget = null,
 caps: bool = false,
 client_pressed: [768]bool = @splat(false),
 grab_pressed: [768]u64 = @splat(0),
@@ -196,6 +202,16 @@ pub fn enter(server: *Server, surface: *wlr.Surface) void {
 }
 
 pub fn processKey(keyboard: *Keyboard, time_msec: u32, event_keycode: u32, state: wl.Keyboard.KeyState) void {
+    if (event_keycode < keyboard.mode_consumed.len and keyboard.mode_consumed[event_keycode]) {
+        if (state == .pressed) return;
+        keyboard.mode_consumed[event_keycode] = false;
+        if (!keyboard.client_pressed[event_keycode]) {
+            keyboard.shortcut_consumed[event_keycode] = false;
+            keyboard.switcher_consumed[event_keycode] = false;
+            keyboard.hardware_consumed[event_keycode] = false;
+            return;
+        }
+    }
     keyboard.noteShellKey(event_keycode, state);
     if (keyboard.server.locker != null and @import("input/text_input.zig").isVirtual(keyboard.device)) return;
     @import("startup.zig").markFirstInput();
@@ -665,6 +681,7 @@ fn handleDestroy(listener: *wl.Listener(*wlr.InputDevice), _: *wlr.InputDevice) 
         }
     }
 
+    keyboard.compose.deinit();
     gpa.destroy(keyboard);
 }
 
@@ -751,7 +768,46 @@ const ShellTarget = union(enum) {
             else => std.meta.activeTag(a) == std.meta.activeTag(b),
         };
     }
+
+    /// Whether this target is the freeable panel at `panel`'s address.
+    fn isPanel(target: ShellTarget, panel: anytype) bool {
+        return switch (target) {
+            .control_center => |cc| @intFromPtr(cc) == @intFromPtr(panel),
+            .start_menu => |sm| @intFromPtr(sm) == @intFromPtr(panel),
+            .wifi => |popup| @intFromPtr(popup) == @intFromPtr(panel),
+            else => false,
+        };
+    }
 };
+
+/// What a shell press types once dead keys and Compose sequences resolve.
+/// `sym` is the key's own, or none for composed text.
+const Typed = struct { sym: xkb.Keysym, utf8: []const u8, composed: bool };
+
+fn composeLocale(server: *Server) []const u8 {
+    // The setting reaches only the apps we launch; the compositor reads it
+    // itself, and falls back to the session's own environment.
+    if (server.config.region.language.len != 0) return server.config.region.language;
+    return ui_compose.localeFromEnviron(server.environ);
+}
+
+/// Null when the press only advanced a sequence (a dead key, or a key that
+/// cancelled one) and types nothing. Composed text lands in `out`, which the
+/// caller scrubs like the other key scratch: lock and polkit keys are
+/// secrets. A shortcut modifier abandons a half-typed sequence, and so does
+/// a press for another target: a sequence belongs to the panel it began in.
+fn composeShell(keyboard: *Keyboard, target: ShellTarget, sym: xkb.Keysym, mods: wlr.Keyboard.ModifierMask, utf8: []const u8, out: *[64]u8) ?Typed {
+    const plain: Typed = .{ .sym = sym, .utf8 = utf8, .composed = false };
+    if (mods.ctrl or mods.alt or mods.logo) {
+        keyboard.compose.reset();
+        return plain;
+    }
+    if (keyboard.compose_target) |owner| if (!owner.eql(target)) keyboard.compose.reset();
+    keyboard.compose_target = target;
+    const text = keyboard.compose.feed(composeLocale(keyboard.server), @intFromEnum(sym), out) orelse return plain;
+    if (text.len == 0) return null;
+    return .{ .sym = @enumFromInt(0), .utf8 = text, .composed = true };
+}
 
 const ShellRepeat = struct { code: u32, target: ShellTarget };
 
@@ -801,6 +857,9 @@ fn shellKeyRepeats(keyboard: *Keyboard, event_keycode: u32, target: ShellTarget)
     const mods = wlr_keyboard.getModifiers();
     if (mods.ctrl or mods.alt or mods.logo) return false;
     const sym = xkb_state.keyGetOneSym(keycode);
+    // A dead key types nothing, and the key that completes a sequence types
+    // its letter once, not a stream of the bare letter.
+    if (keyboard.compose.willConsume(@intFromEnum(sym))) return false;
     // Lock and polkit keys are secrets: scrub the scratch either way.
     var buf: [64]u8 = @splat(0);
     defer @import("session/lock.zig").clearKeyScratch(&buf);
@@ -833,8 +892,14 @@ fn deliverShell(keyboard: *Keyboard, target: ShellTarget, event_keycode: u32) vo
     var buf: [64]u8 = @splat(0);
     defer @import("session/lock.zig").clearKeyScratch(&buf);
     const n = xkb_state.keyGetUtf8(keycode, &buf);
-    const utf8 = if (n > 0 and n < buf.len) buf[0..@intCast(n)] else "";
-    const syms = xkb_state.keyGetSyms(keycode);
+    const raw = if (n > 0 and n < buf.len) buf[0..@intCast(n)] else "";
+    var composed: [64]u8 = @splat(0);
+    defer @import("session/lock.zig").clearKeyScratch(&composed);
+    // The start menu composes in `deliverStartMenu`.
+    const typed = if (target == .start_menu) Typed{ .sym = xkb_state.keyGetOneSym(keycode), .utf8 = raw, .composed = false } else keyboard.composeShell(target, xkb_state.keyGetOneSym(keycode), mods, raw, &composed) orelse return;
+    const utf8 = typed.utf8;
+    const composed_syms = [_]xkb.Keysym{typed.sym};
+    const syms: []const xkb.Keysym = if (typed.composed) &composed_syms else xkb_state.keyGetSyms(keycode);
     switch (target) {
         .polkit => if (server.polkit_dialog) |dialog| if (syms.len > 0) dialog.key(syms[0], utf8, mods),
         .lock => if (server.locker) |lock| if (syms.len > 0) lock.key(syms[0], utf8, mods),
@@ -859,7 +924,7 @@ fn deliverShell(keyboard: *Keyboard, target: ShellTarget, event_keycode: u32) vo
         },
         .wifi => |popup| if (syms.len > 0) popup.key(syms[0], utf8, mods),
         .start_menu => |sm| _ = keyboard.deliverStartMenu(sm, event_keycode, .pressed),
-        .desktop => if (server.desktop) |desktop| desktop.key(@intFromEnum(xkb_state.keyGetOneSym(keycode)), utf8),
+        .desktop => if (server.desktop) |desktop| desktop.key(@intFromEnum(typed.sym), utf8),
     }
 }
 
@@ -872,8 +937,13 @@ fn deliverStartMenu(keyboard: *Keyboard, sm: *StartMenu, event_keycode: u32, sta
     if (syms.len == 0) return false;
     var utf8_buf: [64]u8 = undefined;
     const utf8_len = xkb_state.keyGetUtf8(keycode, &utf8_buf);
-    const utf8: ?[]const u8 = if (utf8_len > 0 and utf8_len < utf8_buf.len) utf8_buf[0..@intCast(utf8_len)] else null;
-    return sm.handleKey(syms[0], state, utf8, wlr_keyboard.getModifiers());
+    const raw: []const u8 = if (utf8_len > 0 and utf8_len < utf8_buf.len) utf8_buf[0..@intCast(utf8_len)] else "";
+    const mods = wlr_keyboard.getModifiers();
+    // Only presses compose. A key that merely advanced a sequence is ours:
+    // returning false would hand the dead key to the keys behind the menu.
+    var composed: [64]u8 = undefined;
+    const typed = if (state == .pressed) keyboard.composeShell(.{ .start_menu = sm }, syms[0], mods, raw, &composed) orelse return true else Typed{ .sym = syms[0], .utf8 = raw, .composed = false };
+    return sm.handleKey(typed.sym, state, if (typed.utf8.len > 0) typed.utf8 else null, mods);
 }
 
 fn armShellRepeat(keyboard: *Keyboard, event_keycode: u32, target: ShellTarget) void {
@@ -892,14 +962,12 @@ fn armShellRepeat(keyboard: *Keyboard, event_keycode: u32, target: ShellTarget) 
 pub fn forgetShellTarget(server: *Server, panel: anytype) void {
     var it = server.input.keyboards.iterator(.forward);
     while (it.next()) |keyboard| {
-        const held = keyboard.shell_repeat orelse continue;
-        const same = switch (held.target) {
-            .control_center => |cc| @intFromPtr(cc) == @intFromPtr(panel),
-            .start_menu => |sm| @intFromPtr(sm) == @intFromPtr(panel),
-            .wifi => |popup| @intFromPtr(popup) == @intFromPtr(panel),
-            else => false,
+        if (keyboard.compose_target) |owner| if (owner.isPanel(panel)) {
+            keyboard.compose.reset();
+            keyboard.compose_target = null;
         };
-        if (same) keyboard.stopShellRepeat();
+        const held = keyboard.shell_repeat orelse continue;
+        if (held.target.isPanel(panel)) keyboard.stopShellRepeat();
     }
 }
 
@@ -936,4 +1004,15 @@ fn repeatShell(keyboard: *Keyboard) c_int {
     const rate = keyboard.server.config.input.key_repeat_rate;
     keyboard.shell_timer.?.timerUpdate(@intCast(@max(1, @divTrunc(1000, @max(1, rate))))) catch keyboard.stopShellRepeat();
     return 0;
+}
+
+/// End repeats without losing consumed releases when changing desktop modes.
+pub fn cancelModeRepeats(keyboard: *Keyboard) void {
+    const kb = keyboard.device.toKeyboard();
+    for (kb.keycodes[0..kb.num_keycodes]) |code| {
+        if (code < keyboard.mode_consumed.len) keyboard.mode_consumed[code] = true;
+    }
+    keyboard.stopRepeat();
+    keyboard.stopSwitcherRepeat();
+    keyboard.stopShellRepeat();
 }

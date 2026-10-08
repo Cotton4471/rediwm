@@ -59,17 +59,17 @@ pub const Section = struct {
             else => {},
         }
         const index = s.editing orelse return;
-        if (index >= cc.server.config.keybinds.len) {
+        if (index >= cc.server.config.activeKeybinds().len) {
             s.cancel();
             return;
         }
         s.held_keycode = keycode;
         s.held_sym = sym;
         s.held_mods = @bitCast(keys.relevantMods(mods));
-        const candidate: keys.Keybind = .{ .sym = keys.normalizeSym(sym), .modifiers = keys.relevantMods(mods), .action = cc.server.config.keybinds[index].action };
+        const candidate: keys.Keybind = .{ .sym = keys.normalizeSym(sym), .modifiers = keys.relevantMods(mods), .action = cc.server.config.activeKeybinds()[index].action };
         s.message = "";
         s.candidate = candidate;
-        for (cc.server.config.keybinds, 0..) |bind, i| {
+        for (cc.server.config.activeKeybinds(), 0..) |bind, i| {
             if (i != index and bind.action != .noop and keys.pack(bind.modifiers, bind.sym) == keys.pack(candidate.modifiers, candidate.sym)) {
                 s.candidate = null;
                 s.message = "Shortcut already in use. Try another.";
@@ -84,7 +84,7 @@ pub const Section = struct {
         s.pending_save = false;
         const candidate = s.candidate orelse return;
         const index = s.editing orelse return;
-        saving.save(gpa, cc.server.io, cc.server.config.path, cc.server.config.keybinds, index, candidate) catch {
+        saving.saveMode(gpa, cc.server.io, cc.server.config.path, cc.server.config.activeKeybinds(), index, candidate, cc.server.config.compositor.desktop_mode) catch {
             s.message = "Could not save. Check the configuration file and try again.";
             cc.refresh();
             return;
@@ -97,7 +97,7 @@ pub const Section = struct {
 
 fn group(action: keys.Action) usize {
     return switch (action) {
-        .close_window, .toggle_fullscreen, .toggle_maximize, .tile_left, .tile_right, .tile_up, .tile_down => 0,
+        .toggle_floating, .toggle_split, .toggle_workspace_tiling, .swap_left, .swap_right, .swap_up, .swap_down, .resize_split_left, .resize_split_right, .resize_split_up, .resize_split_down, .close_window, .toggle_fullscreen, .toggle_maximize, .tile_left, .tile_right, .tile_up, .tile_down => 0,
         .set_depth, .zoom_in, .zoom_out, .zoom_reset, .camera_zoom_in, .camera_zoom_out, .camera_zoom_reset, .pan_left, .pan_right, .pan_up, .pan_down, .focus_next, .focus_prev, .focus_left, .focus_right, .focus_up, .focus_down, .save_layout, .restore_layout, .undo => 1,
         .spawn, .toggle_start_menu => 2,
         .screenshot_region, .screenshot_output => 3,
@@ -130,11 +130,15 @@ fn buildGroups(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !voi
     // Config reloads can replace string payloads and reorder bindings. Retain
     // only the key identity; cancel if that row no longer denotes the same key.
     if (s.editing) |i| {
-        if (i >= cc.server.config.keybinds.len or keys.pack(cc.server.config.keybinds[i].modifiers, cc.server.config.keybinds[i].sym) != keys.pack(s.original.?.modifiers, s.original.?.sym)) s.cancel();
-        if (s.candidate) |*c| c.action = cc.server.config.keybinds[i].action;
+        if (i >= cc.server.config.activeKeybinds().len or keys.pack(cc.server.config.activeKeybinds()[i].modifiers, cc.server.config.activeKeybinds()[i].sym) != keys.pack(s.original.?.modifiers, s.original.?.sym)) s.cancel();
+        if (s.candidate) |*c| c.action = cc.server.config.activeKeybinds()[i].action;
     }
     for (&s.groups, 0..) |*card, g| {
         var rows: std.ArrayList(W) = .empty;
+        if (g == 0) {
+            try rows.append(a, text(if (cc.server.world.workspaces.active) "Workspaces · Hyprland-style preset" else "Canvas · RediWM preset", false));
+            if (cc.server.world.workspaces.active) try rows.append(a, text("Super+Q opens Terminal; Super+M opens Power. Arrows focus; numbers switch workspaces.", true));
+        }
         try rows.append(a, .{ .kind = .{ .row = .{ .owner = cc, .id = g, .on_click = collapse } }, .height = .{ .fixed = 40 }, .width = .{ .percent = 1 }, .padding = ui.layout.Edges.xy(12, 0), .gap = 12, .@"align" = .center, .children = try children(a, &.{
             .{ .kind = .{ .icon = .{ .id = icons[g], .color = t.window_fg } }, .width = .{ .fixed = 20 }, .height = .{ .fixed = 20 } },
             blk: {
@@ -144,8 +148,8 @@ fn buildGroups(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !voi
             },
             .{ .kind = .{ .icon = .{ .id = if (s.collapsed[g]) .chevron_up else .chevron_down, .color = t.window_dim } }, .width = .{ .fixed = 16 }, .height = .{ .fixed = 16 } },
         }) });
-        if (!s.collapsed[g]) for (cc.server.config.keybinds, 0..) |bind, i| {
-            if (bind.action == .noop or group(bind.action) != g) continue;
+        if (!s.collapsed[g]) for (cc.server.config.activeKeybinds(), 0..) |bind, i| {
+            if (group(bind.action) != g) continue;
             const editing = s.editing == i;
             const raw = @tagName(bind.action);
             const title = try a.dupe(u8, if (bind.action == .toggle_start_menu) "Toggle Launcher" else raw);
@@ -191,6 +195,11 @@ fn buildGroups(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !voi
                 var edit_btn = button(cc, i, "Edit shortcut", .edit, edit);
                 edit_btn.name = "edit";
                 try controls.append(a, edit_btn);
+                if (bind.action != .noop) {
+                    var disable = button(cc, i, "Disable shortcut", .close, disableClicked);
+                    disable.name = "disable";
+                    try controls.append(a, disable);
+                }
             }
             try rows.append(a, .{ .kind = .{ .rect = .{ .color = t.window_divider } }, .height = .{ .fixed = 1 }, .width = .{ .percent = 1 } });
             try rows.append(a, .{ .kind = .container, .direction = .row, .height = .{ .fixed = 60 }, .width = .{ .percent = 1 }, .padding = ui.layout.Edges.xy(12, 0), .gap = 8, .@"align" = .center, .children = controls.items });
@@ -205,7 +214,7 @@ fn edit(p: ?*anyopaque, i: usize) void {
     const cc = owner(p);
     cc.shortcuts.cancel();
     cc.shortcuts.editing = i;
-    cc.shortcuts.original = cc.server.config.keybinds[i];
+    cc.shortcuts.original = cc.server.config.activeKeybinds()[i];
     cc.refresh();
 }
 fn collapse(p: ?*anyopaque, i: usize) void {
@@ -225,6 +234,23 @@ fn confirmClicked(p: ?*anyopaque, _: usize) void {
 
 fn descriptionFor(action: keys.Action, buf: []u8) []const u8 {
     return switch (action) {
+        .toggle_floating => "Toggle the focused window between floating and automatic tiling.",
+        .toggle_split => "Rotate the nearest tiled split.",
+        .toggle_workspace_tiling => "Toggle automatic tiling for the current workspace.",
+        .swap_left => "Swap the focused tile left.",
+        .swap_right => "Swap the focused tile right.",
+        .swap_up => "Swap the focused tile up.",
+        .swap_down => "Swap the focused tile down.",
+        .resize_split_left => "Move the relevant split divider left.",
+        .resize_split_right => "Move the relevant split divider right.",
+        .resize_split_up => "Move the relevant split divider up.",
+        .resize_split_down => "Move the relevant split divider down.",
+        .workspace => |n| std.fmt.bufPrint(buf, "Switch to workspace {d}.", .{n}) catch "Switch workspace.",
+        .move_to_workspace => |n| std.fmt.bufPrint(buf, "Move the window to workspace {d} and follow it.", .{n}) catch "Move to workspace.",
+        .workspace_next => "Cycle to the next existing workspace.",
+        .workspace_prev => "Cycle to the previous existing workspace.",
+        .toggle_power_menu => "Open the session and power menu.",
+        .noop => "Disabled shortcut.",
         .toggle_fullscreen => "Enter or leave fullscreen.",
         .toggle_maximize => "Maximize or restore the focused window.",
         .tile_left => "Snap the focused window to the left half.",
@@ -266,4 +292,13 @@ fn descriptionFor(action: keys.Action, buf: []u8) []const u8 {
         .restart_shell => "Restart the desktop shell.",
         else => "",
     };
+}
+
+fn disableClicked(p: ?*anyopaque, i: usize) void {
+    const cc = owner(p);
+    const bind = cc.server.config.activeKeybinds()[i];
+    cc.shortcuts.editing = i;
+    cc.shortcuts.original = bind;
+    cc.shortcuts.candidate = .{ .sym = bind.sym, .modifiers = bind.modifiers, .action = .noop };
+    cc.shortcuts.pending_save = true;
 }

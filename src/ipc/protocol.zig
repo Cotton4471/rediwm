@@ -73,6 +73,9 @@ pub const WindowData = struct {
     is_minimized: bool,
     is_maximized: bool,
     workspace_id: ?u64 = null,
+    workspace_order: u64 = 0,
+    placement: []const u8 = "floating",
+    floating_override: ?bool = null,
     x: i32,
     y: i32,
     width: i32,
@@ -107,6 +110,12 @@ pub const WindowData = struct {
         try jws.write(self.is_minimized);
         try jws.objectField("is_maximized");
         try jws.write(self.is_maximized);
+        try jws.objectField("workspace_order");
+        try jws.write(self.workspace_order);
+        try jws.objectField("placement");
+        try jws.write(self.placement);
+        try jws.objectField("floating_override");
+        try jws.write(self.floating_override);
         try jws.objectField("workspace_id");
         try jws.write(self.workspace_id);
         try jws.objectField("x");
@@ -166,6 +175,11 @@ pub const OutputData = struct {
 };
 
 pub const WorkspaceData = struct {
+    is_visible: bool = true,
+    output: ?[]const u8 = null,
+    automatic: bool = false,
+    window_gap: u32 = 0,
+    nodes: []const @import("config").workspace_layout.Node = &.{},
     id: u64,
     name: ?[]const u8 = null,
     is_focused: bool = false,
@@ -365,6 +379,7 @@ pub const OpenRulesData = struct {
 };
 
 pub const LiveRulesData = struct {
+    floating: ?bool = null,
     opacity: ?f32 = null,
     effective_opacity: ?f32 = null,
     decorations: ?[]const u8 = null,
@@ -1033,6 +1048,13 @@ pub const Action = union(enum) {
     advance_idle_time: struct { seconds: u32 },
 
     // Phase 4 targeted actions
+    set_desktop_mode: struct { mode: @import("config").loader.DesktopMode, persist: bool = true },
+    set_workspace_layout: struct { workspace: u8, automatic: bool },
+    switch_workspace: struct { workspace: u8 },
+    move_to_workspace: struct { id: u64, workspace: u8 },
+    set_window_gap: struct { gap: u32, persist: bool = true },
+    set_floating_apps: struct { apps: []const []const u8, persist: bool = true },
+    tiling_action: struct { action: @import("config").keybinds.TilingAction, id: ?u64 = null },
     maximize_window: struct { id: u64 },
     minimize_window: struct { id: u64 },
     restore_window: struct { id: u64 },
@@ -2305,6 +2327,50 @@ fn parseActionParams(allocator: std.mem.Allocator, command_tag: commands.RouteTa
             }
             return .{ .set_night_light_clock = .{ .unix_seconds = sec } };
         },
+        .set_desktop_mode => {
+            const p = params orelse return error.InvalidRequest;
+            const mode = p.get("mode") orelse return error.InvalidRequest;
+            if (mode != .string) return error.InvalidRequest;
+            return .{ .set_desktop_mode = .{ .mode = std.meta.stringToEnum(@import("config").loader.DesktopMode, mode.string) orelse return error.InvalidRequest, .persist = try persistParam(p) } };
+        },
+        .switch_workspace, .move_to_workspace, .set_workspace_layout => {
+            const p = params orelse return error.InvalidRequest;
+            const id = try parseU32(p.get("workspace") orelse return error.InvalidRequest);
+            if (id == 0 or id > 32) return error.InvalidRequest;
+            switch (command_tag) {
+                .switch_workspace => return .{ .switch_workspace = .{ .workspace = @intCast(id) } },
+                .move_to_workspace => return .{ .move_to_workspace = .{ .id = try parseU64(p.get("id") orelse return error.InvalidRequest), .workspace = @intCast(id) } },
+                else => {
+                    const automatic = p.get("automatic") orelse return error.InvalidRequest;
+                    if (automatic != .bool) return error.InvalidRequest;
+                    return .{ .set_workspace_layout = .{ .workspace = @intCast(id), .automatic = automatic.bool } };
+                },
+            }
+        },
+        .set_window_gap => {
+            const p = params orelse return error.InvalidRequest;
+            const gap = try parseU32(p.get("gap") orelse return error.InvalidRequest);
+            if (gap > 512) return error.InvalidRequest;
+            return .{ .set_window_gap = .{ .gap = gap, .persist = try persistParam(p) } };
+        },
+        .set_floating_apps => {
+            const p = params orelse return error.InvalidRequest;
+            const values = p.get("apps") orelse return error.InvalidRequest;
+            if (values != .array or values.array.items.len > 256) return error.InvalidRequest;
+            const apps = try allocator.alloc([]const u8, values.array.items.len);
+            for (values.array.items, apps) |value, *dest| {
+                if (value != .string or value.string.len == 0 or value.string.len > 512) return error.InvalidRequest;
+                dest.* = try allocator.dupe(u8, value.string);
+            }
+            return .{ .set_floating_apps = .{ .apps = apps, .persist = try persistParam(p) } };
+        },
+        .tiling_action => {
+            const p = params orelse return error.InvalidRequest;
+            const action = p.get("action") orelse return error.InvalidRequest;
+            if (action != .string) return error.InvalidRequest;
+            const tag = std.meta.stringToEnum(@import("config").keybinds.TilingAction, action.string) orelse return error.InvalidRequest;
+            return .{ .tiling_action = .{ .action = tag, .id = if (p.get("id")) |id| try parseOptU64(id) else null } };
+        },
         .maximize_window => {
             const p = params orelse return error.InvalidRequest;
             const id_v = p.get("id") orelse p.get("window_id") orelse return error.InvalidRequest;
@@ -2858,6 +2924,8 @@ fn stringifyLiveRules(live: LiveRulesData, writer: anytype) !void {
     if (live.effective_opacity) |eo| try writer.print("{d}", .{eo}) else try writer.writeAll("null");
     try writer.writeAll(",\"decorations\":");
     if (live.decorations) |d| try writer.print("{f}", .{std.json.fmt(d, .{})}) else try writer.writeAll("null");
+    try writer.writeAll(",\"floating\":");
+    if (live.floating) |value| try writer.print("{}", .{value}) else try writer.writeAll("null");
     try writer.writeAll(",\"skip_taskbar\":");
     if (live.skip_taskbar) |st| try writer.print("{}", .{st}) else try writer.writeAll("null");
     try writer.writeByte('}');

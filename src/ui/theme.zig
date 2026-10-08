@@ -42,6 +42,8 @@ pub const Theme = struct {
     window_dim: [4]f32 = .{ 214.0 / 255.0, 214.0 / 255.0, 214.0 / 255.0, 1 }, // #d6d6d6
     window_border: [4]f32 = .{ 1, 1, 1, 0.09 },
     window_border_hover: [4]f32 = .{ 1, 1, 1, 0.13 },
+    /// Active window outline in opt-in workspace mode (#ed1b2e).
+    workspace_active_border: [4]f32 = .{ 237.0 / 255.0, 27.0 / 255.0, 46.0 / 255.0, 1 },
     window_divider: [4]f32 = .{ 1, 1, 1, 0.045 },
     window_close_hover: [4]f32 = .{ 237.0 / 255.0, 27.0 / 255.0, 46.0 / 255.0, 1 },
     // App windows (Files, Images, PDF). All their text is `window_fg`

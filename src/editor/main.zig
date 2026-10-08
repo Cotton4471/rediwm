@@ -72,7 +72,9 @@ pub const Client = struct {
     caret_state: ?app_mod.App.CaretState = null,
     clipboard: @import("clipboard.zig").Clipboard = undefined,
     ime: @import("ime.zig").Ime = undefined,
-    compose: @import("compose.zig").Compose = .{},
+    compose: @import("ui").compose.Compose = .{},
+    /// LC_CTYPE of the session; picks the Compose table (´+c is ç in pt_BR).
+    locale: []const u8 = "",
 
     pub fn registryEvent(registry: *wl.Registry, event: wl.Registry.Event, self: *Client) void {
         switch (event) {
@@ -465,7 +467,7 @@ pub const Client = struct {
         const n = c.xkb_state_key_get_utf8(state, key + 8, &buf, buf.len);
         if (!self.app.ctrl and !self.app.alt and !self.app.menu_open) {
             var composed: [128]u8 = undefined;
-            if (self.compose.feed(sym, &composed)) |value| {
+            if (self.compose.feed(self.locale, sym, &composed)) |value| {
                 if (value.len > 0) self.app.pasteText(value);
                 return;
             }
@@ -474,6 +476,7 @@ pub const Client = struct {
     }
 
     fn appRepeats(self: *Client, key: u32) bool {
+        if (self.compose.consumed) return false;
         const state = self.xkb_state orelse return false;
         var buf: [64]u8 = undefined;
         const n = c.xkb_state_key_get_utf8(state, key + 8, &buf, buf.len);
@@ -785,7 +788,7 @@ pub fn run(init: std.process.Init, paths: []const [:0]const u8, instance: *@impo
     for (paths) |path| self.app.open(path);
     self.ime = .{ .app = &self.app };
     defer self.ime.deinit();
-    self.compose = @import("compose.zig").Compose.init(init.minimal.environ);
+    self.locale = @import("ui").compose.localeFromEnviron(init.minimal.environ);
     defer self.compose.deinit();
     self.clipboard = .{ .app = &self.app };
     defer self.clipboard.deinit();

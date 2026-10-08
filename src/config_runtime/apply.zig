@@ -23,7 +23,9 @@ const themeEql = loader.themeEql;
 const wheelAccel = loader.wheelAccel;
 pub const applyInactiveOpacity = applyWindowOpacity;
 pub fn applyDiff(server: *Server, old: Config, new: Config) void {
+    server.world.workspaces.setMode(server, new.compositor.desktop_mode == .workspaces);
     server.window_tabs.reconfigure(server);
+    if (old.compositor.window_gap != new.compositor.window_gap) server.world.workspaces.tiler.schedule(server);
     if (!std.meta.eql(old.region, new.region)) applyRegion(server);
     if (!std.mem.eql(u8, old.compositor.default_file_manager, new.compositor.default_file_manager) or
         !std.mem.eql(u8, old.compositor.default_terminal, new.compositor.default_terminal))
@@ -100,6 +102,7 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
         server.scheduleFrames();
         if (server.input.open_control_center) |cc| cc.refresh();
     }
+    server.world.workspaces.tiler.schedule(server);
     var any_taskbar_changed = false;
     var it = server.world.toplevels.iterator(.forward);
     while (it.next()) |toplevel| {
@@ -108,6 +111,7 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
         const resolved = window_rules.resolve(new.window_rules, toplevel.currentIdentity());
         toplevel.live_rules = window_rules.LiveRules.fromResolved(resolved);
         toplevel.matched_rules = resolved.matched_rules;
+        @import("../auto_tiling.zig").observe(toplevel);
 
         if (toplevel.live_rules.decorations != prev_rules.decorations) {
             if (toplevel.decoration) |d| d.applyMode();

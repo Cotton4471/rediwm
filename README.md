@@ -85,7 +85,107 @@ RediWM); it refuses to parse a document if isolation cannot be established.
 | Super+Z | undo the last window move or resize |
 | Super+Shift+E | quit |
 
-All bindings live in `[keybinds]`; `"noop"` disables one.
+Canvas bindings live in `[keybinds]`; `"noop"` disables one.
+
+**Optional automatically tiled workspaces:** select **Settings → Desktop → Workspaces**, or
+set `[compositor] desktop_mode = "workspaces"`. Each output shows one workspace;
+selecting a workspace on another output focuses that output. Switching back to
+Canvas restores surviving windows' canvas positions, sizes and zoom.
+
+Workspace mode uses a separate, stable Hyprland-style preset: Super+Q opens the
+configured terminal, C closes, E opens Files, R opens the launcher, M opens the
+power menu, and arrows focus. Super+1…9/0 selects workspace 1…10; adding Shift
+moves the focused window (including its tabs and dialogs) there and follows it.
+Super+wheel cycles existing workspaces. Super+left-drag inserts a tile beside
+another tile with a preview; Super+right-drag adjusts its split dividers.
+Floating windows keep ordinary move/resize behavior. Escape cancels an
+insertion or restores the split sizes from before a resize.
+Fullscreen, lock, Alt+Tab, screenshots and undo remain
+available. Canvas panning and window zoom are inactive in workspace mode.
+
+Override the preset in `[keybinds.workspace]`, including `"noop"` to disable a
+binding, or edit the active preset in Settings → Keyboard Shortcuts. Mode
+changes never rewrite `[keybinds]`. Configurable actions are `workspace N`,
+`move_to_workspace N`, `workspace_next`, `workspace_prev` and
+`toggle_power_menu` (workspace IDs 1–32).
+
+| Workspace tiling shortcut | Action |
+| --- | --- |
+| Super+V | Toggle the focused window between floating and automatic tiling |
+| Super+J | Rotate the nearest active split |
+| Super+Shift+arrows | Swap with a tile in that direction |
+| Super+Ctrl+arrows | Move the relevant split divider by 32 logical pixels |
+| Super+Shift+Space | Toggle automatic tiling for the current workspace |
+
+The last three are RediWM extensions. All are editable in Keyboard Shortcuts
+and `[keybinds.workspace]`. Their action names are `toggle_floating`,
+`toggle_split`, `toggle_workspace_tiling`, `swap_left/right/up/down`, and
+`resize_split_left/right/up/down` (choose one direction, e.g. `swap_left`).
+IPC uses the same actions: `tiling_action` takes an `action` string and an
+optional window `id`; without `id`, it uses the focused window/current workspace.
+
+New workspace windows use a recursive split layout, with an 8 px gap around
+and between frames by default. Set `[compositor] window_gap` to override it,
+including `0` for no gap; Canvas keeps its default gap of 0 px. Existing explicit
+gap settings are preserved. The active workspace window has a 1 px red outline,
+including floating windows and clients that draw their own decorations;
+fullscreen windows have no outline. The colour is configurable through
+`[theme] workspace_active_border` (default `"#ed1b2e"`).
+Focus never changes tile order. Dialogs and fixed-size
+clients float; each tab group occupies one tile. A window that cannot fit its
+minimum size floats until space becomes available. Earlier workspace members
+keep priority when an output shrinks. Maximum sizes leave unused tile space.
+Manual snapping or explicit IPC placement/size requests remove a window from
+automatic arrangement; the remaining tiles reflow. Minimize, maximize and
+fullscreen temporarily suspend a tile and restore its split afterwards.
+
+Floating toggles and remapped clients remember a nearby split for reinsertion;
+if its neighbor has closed, stable member order supplies a fallback. Tab groups
+and launch placeholders keep one tile. Cross-output drops and workspace
+transfers reflow both layouts.
+
+Super+Z (or IPC `undo`) restores the last layout operation across all affected
+windows: swaps, split direction/size changes, floating and automatic-layout
+toggles, manual snaps, moves/resizes, and workspace transfers. Cross-output
+operations restore both layouts. Closed windows stay closed; surviving tiles
+are reconciled with current client limits and outputs. Escape cancels a tiled
+gesture; canceled and no-op layout changes do not add an undo entry.
+
+Settings → Desktop exposes each workspace's automatic/floating placement, window
+spacing, and a checklist of floating apps. The checklist saves app ID patterns in
+`[compositor] floating_apps`; advanced exceptions use the existing rule matchers:
+
+```toml
+[[window_rules]]
+app_id = "utility*"
+floating = true
+
+[[window_rules]]
+app_id = "utility-editor"
+title = "Main*"
+floating = false
+```
+
+The last matching `floating` rule overrides the checklist default. Super+V and
+manual placement override the default for that window or tab group. Rule/config
+reloads update windows without replacing an explicit window override. Dialogs
+and fixed-size clients continue to float.
+
+Workspace mode saves a version 2 JSON snapshot to
+`$XDG_STATE_HOME/rediwm/workspace-layout.json` (normally
+`~/.local/state/rediwm/workspace-layout.json`), leaving the canvas autosave separate.
+Membership, output ownership, layout choices, split structure/ratios, floating
+restore geometry, tab groups and saved canvas state survive restarts. Existing
+apps must reopen themselves; snapshots do not launch apps. Each window matches
+once by app/backend, preferring its title and X11 instance, with saved occurrence
+order as a fallback. Missing members are pruned and missing outputs use a surviving
+output. Periodic writes wait for pending startup matches, up to 37 seconds; user layout edits protect
+that workspace from later split restoration.
+
+`save_layout NAME` and `restore_layout NAME` support workspace snapshots too.
+Named files retain their historical `layouts/NAME.toml` path; workspace snapshots
+inside them use versioned JSON. Older canvas TOML remains readable. Restoring an
+older canvas save while in workspace mode updates the saved return-to-canvas state.
 
 - **Mouse:** Alt+drag moves windows, Alt+right-drag resizes. Super+Alt+drag (or middle-drag) pans the desktop, Super+Alt+scroll zooms it, and Alt+scroll zooms a single window.
 - **Zoom on window switch:** `[compositor] focus_zoom` (also in Settings → Appearance) controls what Alt+Tab, directional focus and taskbar activation do. `"boost"` (default) shows the window at 100% until you switch away, `"keep"` only pans, and `"camera"` zooms the desktop to the window's depth.
@@ -110,7 +210,7 @@ Beyond xdg-shell, layer-shell and Xwayland:
 | Remote input | `virtual-pointer-v1`, `virtual-keyboard-v1` | wayvnc, KDE Connect, wtype |
 | Clipboard | `wlr-data-control-v1`, `ext-data-control-v1`, primary selection | wl-clipboard |
 | Input | `text-input-v3`, `input-method-v2`, `relative-pointer-v1`, `pointer-constraints-v1`, `keyboard-shortcuts-inhibit-v1`, `pointer-gestures-v1`, `cursor-shape-v1` | fcitx5, IBus, games, virt-manager |
-| Workspace | `ext-workspace-v1` | one active Canvas workspace shared by all outputs |
+| Workspace | `ext-workspace-v1` | Canvas, or per-output workspaces with activation |
 | Window metadata | `xdg-toplevel-tag-v1`, `content-type-v1`, `xdg-activation-v1` | window rules, content hints, authorized activation |
 | Colour | `color-management-v1`, `color-representation-v1` | renderer-supported colour spaces and pixel representations |
 | Presentation | `tearing-control-v1`, `drm-lease-v1` | opt-in fullscreen tearing, DRM-connected VR headsets |
@@ -159,10 +259,19 @@ uses this envelope (command names are case-sensitive snake_case):
 {"version":1,"id":2,"command":"move_cursor","params":{"x":100,"y":200}}
 ```
 
-Settings and desktop inspection also work without opening Settings:
+Settings and desktop inspection also work without opening Settings.
+`set_desktop_mode`, `set_window_gap` and `set_floating_apps` persist by default;
+`persist: false` makes a temporary change until config reload:
 
 | Query/action | Parameters and behavior |
 | --- | --- |
+| `workspaces` | Output, visibility, automatic/floating placement, gap, and a preorder split tree (`nodes`). Leaf `id` is a window's `workspace_order`, or `tab_group` when `group` is true. `windows` reports placement and explicit floating overrides. |
+| `set_desktop_mode` | `mode`: `canvas` or `workspaces`. |
+| `set_workspace_layout` | `workspace`: 1–32, `automatic`: boolean. Saved in workspace state; participates in layout undo. |
+| `switch_workspace` | `workspace`: 1–32. |
+| `move_to_workspace` | Window `id`, `workspace`: 1–32; moves dialogs/tab members together and follows. |
+| `set_window_gap` | `gap`: 0–512 logical pixels. |
+| `set_floating_apps` | `apps`: app ID glob strings; replaces the checklist defaults. |
 | `get_services` | System services, raw systemd state, activation times (`activation_us`) and total `boot_us`. First requests may report `loading`/`analyzing`; unavailable times are null. |
 | `set_service_mode` | `service`, `mode`: `on`, `disabled`, or `on-demand`. Changes boot policy without starting/stopping the unit. `on-demand` requires an existing activation trigger and disables boot enablement; it does not create or enable a socket/timer. `deferred` returns `UnsupportedServiceMode`. Static/masked units are read-only. |
 | `get_sounds` | Configured theme and registered events, including enabled/available flags and resolved files. |

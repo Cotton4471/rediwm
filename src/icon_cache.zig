@@ -44,6 +44,7 @@ extern fn g_error_free(err: *GError) void;
 // `pub`: icon_service.zig frees rasters it evicts with this same allocator,
 // since that's what actually produced the pixel buffers below.
 pub const gpa = std.heap.c_allocator;
+const ui = @import("ui");
 const png = @import("png.zig");
 const icon_theme = @import("icon_theme.zig");
 
@@ -88,7 +89,7 @@ pub fn get(cfg: icon_theme.Config, io: Io, icon_name: []const u8, size_px: i32) 
 // dangling pointer the moment icon_service frees an evicted raster.
 pub fn lookup(cfg: icon_theme.Config, io: Io, icon_name: []const u8, size_px: i32) !?Entry {
     if (std.mem.eql(u8, icon_name, "builtin:redi-logo")) {
-        const bytes = @embedFile("assets/redi-logo.svg");
+        const bytes = ui.shell_icons.redi_logo;
         var err: ?*GError = null;
         const handle = rsvg_handle_new_from_data(bytes.ptr, bytes.len, &err) orelse {
             if (err) |e| g_error_free(e);

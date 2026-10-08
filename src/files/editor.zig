@@ -25,6 +25,20 @@ pub const Editor = struct {
             self.select_all = false;
         }
     }
+    /// Length of `name` without its extension (`.tar.gz` counts as one), so
+    /// typing over the selection renames the file and keeps its type. A
+    /// dotfile or a name without an extension is all stem.
+    pub fn stemLength(name: []const u8) usize {
+        var end = name.len - std.fs.path.extension(name).len;
+        if (end > 4 and std.ascii.eqlIgnoreCase(name[end - 4 .. end], ".tar")) end -= 4;
+        return end;
+    }
+    /// Selects the stem of the text.
+    pub fn selectStem(self: *Editor) void {
+        self.select_all = false;
+        self.anchor = 0;
+        self.cursor = stemLength(self.text.items);
+    }
     pub fn set(self: *Editor, a: std.mem.Allocator, value: []const u8) !void {
         try self.text.ensureTotalCapacity(a, value.len);
         self.text.clearRetainingCapacity();
@@ -116,4 +130,14 @@ test "UTF-8 selection, words, deletion and shortcut isolation" {
     try std.testing.expectEqualStrings("α", e.text.items[e.selection()[0]..e.selection()[1]]);
     e.key(a, c.XKB_KEY_c, "c", true, false, false);
     try std.testing.expectEqualStrings("αβ", e.text.items);
+}
+
+test "stem selection keeps the extension" {
+    try std.testing.expectEqual(@as(usize, 5), Editor.stemLength("photo.png"));
+    try std.testing.expectEqual(@as(usize, 7), Editor.stemLength("archive.tar.gz"));
+    try std.testing.expectEqual(@as(usize, 7), Editor.stemLength("archive.TAR"));
+    try std.testing.expectEqual(@as(usize, 7), Editor.stemLength(".bashrc"));
+    try std.testing.expectEqual(@as(usize, 4), Editor.stemLength("name"));
+    try std.testing.expectEqual(@as(usize, 0), Editor.stemLength(""));
+    try std.testing.expectEqual(@as(usize, 4), Editor.stemLength(".tar"));
 }

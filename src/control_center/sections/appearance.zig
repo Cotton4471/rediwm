@@ -584,7 +584,7 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
     out.inactive_opacity_group_children = .{ inactive_opacity_header, inactive_opacity_slider };
     const inactive_opacity_row: Widget = .{ .kind = .container, .direction = .column, .gap = 8, .children = &out.inactive_opacity_group_children };
 
-    const gap_val: f32 = @floatFromInt(@min(out.cc.server.config.compositor.window_gap, max_window_gap));
+    const gap_val: f32 = @floatFromInt(@min(out.cc.server.config.compositor.windowGap(), max_window_gap));
     const window_gap_row = pxGroup(out, px_window_gap, "Snapped window gap", gap_val, 0, max_window_gap, 1, &onWindowGapChanged);
 
     out.taskbar_position_children = .{
@@ -1301,7 +1301,7 @@ fn onWindowGapChanged(owner: ?*anyopaque, _: usize, value: f32) void {
     const s = section(owner);
     const server = section(owner).cc.server;
     const gap: u32 = @intFromFloat(std.math.clamp(@round(value), 0.0, max_window_gap));
-    if (gap == server.config.compositor.window_gap) return;
+    if (gap == server.config.compositor.windowGap()) return;
     server.config.compositor.window_gap = gap;
     const formatted = std.fmt.bufPrint(&s.px[px_window_gap].value_buf, "{d}px", .{gap}) catch "?";
     s.px[px_window_gap].header_children[1].kind.text.content = formatted;
@@ -1318,6 +1318,7 @@ fn onWindowGapChanged(owner: ?*anyopaque, _: usize, value: f32) void {
     setting_save.saveCompositor(main.gpa, server.io, server.config.path, "window_gap", gap) catch |err| {
         std.log.warn("could not save window_gap: {}", .{err});
     };
+    server.world.workspaces.tiler.schedule(server);
 }
 
 fn onTaskbarPositionChanged(owner: ?*anyopaque, _: usize, index: usize) void {

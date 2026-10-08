@@ -114,7 +114,7 @@ copy/cut/paste, IME, or widget-tree exposure for responses.
 Tab/Shift+Tab navigate input, Cancel, Authenticate and action id. Enter submits,
 Escape cancels, arrows/Home/End move within the response, and Ctrl+U clears it.
 Selecting the action id and pressing Ctrl+C copies only that public identifier.
-The identity is resolved through NSS and the lock icon comes from `icons/lock.svg`.
+The identity is resolved through NSS and the lock icon comes from `assets/icons/lock.svg`.
 Helper info/errors remain visible across the following prompt. The UI displays
 Attempt N of 3 and clears the field before each retry.
 

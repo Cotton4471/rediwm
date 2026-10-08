@@ -17,8 +17,26 @@ const xkb = @import("xkbcommon");
 
 const log = std.log.scoped(.config);
 
+pub const TilingAction = enum { toggle_floating, toggle_split, toggle_workspace_tiling, swap_left, swap_right, swap_up, swap_down, resize_split_left, resize_split_right, resize_split_up, resize_split_down };
+
 pub const Action = union(enum) {
+    toggle_floating,
+    toggle_split,
+    toggle_workspace_tiling,
+    swap_left,
+    swap_right,
+    swap_up,
+    swap_down,
+    resize_split_left,
+    resize_split_right,
+    resize_split_up,
+    resize_split_down,
     noop,
+    workspace: u8,
+    move_to_workspace: u8,
+    workspace_next,
+    workspace_prev,
+    toggle_power_menu,
     volume_up,
     volume_down,
     volume_mute,

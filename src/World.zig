@@ -24,6 +24,7 @@ projection: *Projection,
 toplevels: wl.list.Head(Toplevel, .link) = undefined,
 /// Unmapped windows whose close animation still owns a scene tree.
 closing: wl.list.Head(Toplevel, .closing_link) = undefined,
+workspaces: @import("workspaces.zig") = .{},
 camera: camera_mod.Camera = .{},
 bounds: camera_mod.Bounds = .{},
 mini_map: @import("mini_map.zig") = .{},
@@ -91,6 +92,9 @@ pub fn focusSurface(world: *World, toplevel: *Toplevel, surface: ?*wlr.Surface) 
     if (world.server.locker != null or world.server.polkit_dialog != null) return;
     // Only windows in the stack can be raised; the reorder below needs the link.
     if (!toplevel.in_world) return;
+    world.workspaces.reveal(toplevel);
+    if (!@import("workspaces.zig").visible(toplevel)) return;
+    world.workspaces.rememberFocus(toplevel);
     world.server.window_tabs.focusMember(toplevel);
     var boosted = world.toplevels.iterator(.forward);
     while (boosted.next()) |previous| {
@@ -184,7 +188,7 @@ pub fn focusSurface(world: *World, toplevel: *Toplevel, surface: ?*wlr.Surface) 
 fn raiseTransientChildren(world: *World, owner: *Toplevel) void {
     var it = world.toplevels.iterator(.forward);
     while (it.next()) |candidate| {
-        if (candidate.in_world and !candidate.minimized and candidate.owner() == owner) {
+        if (candidate.in_world and @import("workspaces.zig").visible(candidate) and !candidate.minimized and candidate.owner() == owner) {
             candidate.raise();
         }
     }
@@ -194,7 +198,7 @@ pub fn cycleFocus(world: *World) void {
     if (world.toplevels.length() < 2) return;
     var it = world.toplevels.iterator(.reverse);
     const toplevel = while (it.next()) |candidate| {
-        if (!candidate.tab_hidden) break candidate;
+        if (!candidate.tab_hidden and @import("workspaces.zig").visible(candidate)) break candidate;
     } else return;
     if (toplevel == world.toplevels.first()) return;
     if (toplevel.minimized) {
@@ -212,7 +216,7 @@ pub fn cycleFocusPrev(world: *World) void {
     const current = world.toplevels.first() orelse return;
     var it = world.toplevels.iterator(.forward);
     const toplevel = while (it.next()) |candidate| {
-        if (candidate != current and !candidate.tab_hidden) break candidate;
+        if (candidate != current and !candidate.tab_hidden and @import("workspaces.zig").visible(candidate)) break candidate;
     } else return;
     current.link.remove();
     world.toplevels.append(current);
@@ -230,6 +234,7 @@ pub fn cycleFocusPrev(world: *World) void {
 /// after leaving the taskbar. Also called from input events so a quick release
 /// and re-press between frames cannot retain the previous preview.
 pub fn peekTarget(world: *World) ?*Toplevel {
+    if (world.workspaces.active) return null;
     const input = &world.server.input;
     var held = false;
     var keyboards = input.keyboards.iterator(.forward);
@@ -327,6 +332,7 @@ pub fn initBounds(world: *World, layout_x: i32, layout_y: i32, layout_w: i32, la
 
 /// Project the world without changing source nodes or client geometry.
 pub fn applyCamera(world: *World) void {
+    if (world.workspaces.active) world.camera = .{ .focus_zoom = 1 };
     if (!world.allowsOverscroll()) {
         world.camera.clamp(world.bounds);
     }
@@ -393,6 +399,8 @@ pub fn isWindowVisible(world: *World, toplevel: *Toplevel, output: *@import("Out
 
 /// Reveal `toplevel` on `output` if it is currently offscreen.
 pub fn revealIfOffscreen(world: *World, toplevel: *Toplevel, output: *@import("Output.zig")) void {
+    world.workspaces.reveal(toplevel);
+    if (world.workspaces.active) return;
     if (world.windowFocusOffset(toplevel, output, world.camera, toplevel.worldScale(), false)) |offset| {
         world.springPan(offset.x, offset.y, .camera_reveal);
     }
@@ -406,6 +414,8 @@ fn windowFocusOffset(world: *World, toplevel: *Toplevel, output: *@import("Outpu
 /// Explicit navigation (Alt+Tab, directional focus and taskbar activation).
 /// Plain pointer focus does not change the zoom beneath the pointer.
 pub fn navigateTo(world: *World, toplevel: *Toplevel, output: *@import("Output.zig")) void {
+    world.workspaces.reveal(toplevel);
+    if (world.workspaces.active) return;
     if (!toplevel.in_world or toplevel.minimized) return;
     const mode = world.server.config.compositor.focus_zoom;
     const floating = toplevel.layout() == .floating and !toplevel.isFullscreen();
@@ -441,6 +451,7 @@ pub fn refreshFocusZoom(world: *World) void {
 /// layout, so a cursor-based lookup can return a wrapper that has already been
 /// freed.
 pub fn ensureInBounds(world: *World, wx: i32, wy: i32, w: i32, h: i32) void {
+    if (world.workspaces.active) return;
     const ux: i32 = @intFromFloat(@round(world.bounds.origin_x));
     const uy: i32 = @intFromFloat(@round(world.bounds.origin_y));
     const uw: i32 = @intFromFloat(@round(world.bounds.width));
@@ -461,6 +472,7 @@ pub fn reveal(
 }
 
 pub fn deinit(world: *World) void {
+    world.workspaces.tiler.deinit();
     world.mini_map.deinit();
     Projection.destroy(world.projection);
 }
@@ -652,6 +664,7 @@ pub fn resetCamera(world: *World) void {
 }
 
 pub fn springPan(world: *World, x: f64, y: f64, target: anim.Target) void {
+    if (world.workspaces.active) return;
     world.pan_target = target;
     world.mini_map.show(world.server, world.server.input.cursor.x, world.server.input.cursor.y);
     if (world.pinching) world.endPinch(false);
@@ -678,6 +691,7 @@ pub fn springPan(world: *World, x: f64, y: f64, target: anim.Target) void {
 }
 
 pub fn beginPan(world: *World) void {
+    if (world.workspaces.active) return;
     world.mini_map.show(world.server, world.server.input.cursor.x, world.server.input.cursor.y);
     if (world.pinching) world.endPinch(false);
     world.zoom_keeps_anchor = false;
@@ -692,6 +706,7 @@ pub fn beginPan(world: *World) void {
 }
 
 pub fn panBy(world: *World, dx: f64, dy: f64) void {
+    if (world.workspaces.active) return;
     if (!world.panning) world.beginPan();
     _ = camera_mod.applyMotionRubber(&world.camera, dx, dy, world.bounds, &world.pan_raw_x, &world.pan_raw_y);
     world.applyCamera();

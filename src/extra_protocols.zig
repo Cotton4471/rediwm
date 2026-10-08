@@ -29,3 +29,19 @@ pub fn tag(surface: ?*wlr.Surface, description: bool) ?[]const u8 {
 pub fn content(server: *Server, surface: ?*wlr.Surface) ?[]const u8 {
     return if (rediwm_protocols_content(server.extra_protocols, surface)) |s| std.mem.span(s) else null;
 }
+
+extern fn rediwm_workspace_mode(?*Protocols, bool, *const fn (*Server, c_uint) callconv(.c) void) void;
+extern fn rediwm_workspace_update(?*Protocols, c_uint, [*:0]const u8, ?*wlr.Output, bool) void;
+fn activateWorkspace(server: *Server, id: c_uint) callconv(.c) void {
+    if (id <= @import("workspaces.zig").count) server.world.workspaces.switchTo(server, @intCast(id));
+}
+pub fn syncWorkspaces(server: *Server) void {
+    const manager = &server.world.workspaces;
+    rediwm_workspace_mode(server.extra_protocols, manager.active, activateWorkspace);
+    if (!manager.active) return;
+    for (manager.slots, 0..) |slot, index| {
+        if (!slot.exists) continue;
+        const output = slot.output;
+        rediwm_workspace_update(server.extra_protocols, @intCast(index + 1), @import("workspaces.zig").names[index], if (output) |o| o.wlr_output else null, if (output) |o| o.workspace_id == index + 1 else false);
+    }
+}

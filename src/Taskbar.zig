@@ -815,7 +815,7 @@ fn reconcile(bar: *Taskbar, now_ms: i64) bool {
     defer visible.deinit(gpa);
     var it = bar.server.world.toplevels.iterator(.forward);
     while (it.next()) |toplevel| {
-        if (toplevel.tab_hidden or (toplevel.live_rules.skip_taskbar orelse false)) continue;
+        if (!@import("workspaces.zig").visible(toplevel) or (bar.server.world.workspaces.active and toplevel.currentOutput() != Output.fromWlr(bar.wlr_output)) or toplevel.tab_hidden or (toplevel.live_rules.skip_taskbar orelse false)) continue;
         visible.append(gpa, toplevel) catch break;
     }
     std.mem.sort(*Toplevel, visible.items, {}, taskbarOrderLessThan);

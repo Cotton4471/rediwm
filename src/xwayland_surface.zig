@@ -450,7 +450,8 @@ fn handleRequestDemandsAttention(listener: *wl.Listener(void)) void {
 }
 
 fn handleSetSizeHints(listener: *wl.Listener(void)) void {
-    _ = listener;
+    const adapter: *Adapter = @fieldParentPtr("set_size_hints", listener);
+    @import("auto_tiling.zig").observe(adapter.window);
 }
 
 fn handleSetDecorations(listener: *wl.Listener(void)) void {

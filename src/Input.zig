@@ -166,6 +166,7 @@ grab_x: f64 = 0,
 grab_y: f64 = 0,
 grab_box: wlr.Box = undefined,
 move_snap: MoveSnap = .{},
+tiling_grab: ?@import("tiling_grab.zig") = null,
 /// The last titlebar press, for double-click-to-maximize.
 title_press: ?TitlePress = null,
 /// Pointer presses so far: a double-click is two presses in a row.
@@ -227,6 +228,7 @@ pub fn isSuperHeld(input: *Input) bool {
 
 /// The `.super_key` pan trigger: `[input] pan_modifier` held on any keyboards.
 pub fn isPanModifierHeld(input: *Input) bool {
+    if (input.server.world.workspaces.active) return false;
     return switch (input.server.config.input.pan_modifier) {
         .super => input.isSuperHeld(),
         .super_alt => input.isDesktopZoomHeld(),
@@ -577,6 +579,11 @@ pub fn setNamedCursor(input: *Input, name: [*:0]const u8) void {
 }
 
 pub fn deinit(input: *Input) void {
+    if (input.tiling_grab) |*grab| {
+        if (grab.snapshot) |*tree| tree.deinit(gpa);
+        if (grab.undo_snapshot) |snapshot| snapshot.destroy();
+    }
+    input.tiling_grab = null;
     input.window_menu.close();
     input.start_drag.link.remove();
     if (input.drag_icon_tree) |tree| tree.node.destroy();
@@ -638,9 +645,12 @@ const TitlePress = struct {
 };
 
 pub fn startMove(input: *Input, toplevel: *Toplevel) void {
+    if (!@import("workspaces.zig").visible(toplevel)) return;
     toplevel.finishZoomAnimation();
     toplevel.finishMoveAnimation();
     toplevel.finishSizeAnimation();
+    if (@import("tiling_grab.zig").begin(input, toplevel, null, 0x110)) return;
+    toplevel.pending_restore = null;
     const snapped = toplevel.layout() != .floating and !toplevel.isFullscreen();
     input.move_snap.preview.hide();
     input.move_snap = .{
@@ -665,7 +675,7 @@ pub fn startMove(input: *Input, toplevel: *Toplevel) void {
     // Snapshot current geometry for undo. Press folding: if a focus change
     // already fired on this press, begin() will inherit its focus id.
     const geom = toplevel.clientGeometry();
-    input.server.undo.begin(.{
+    if (!@import("layout_undo.zig").beginGesture(input.server, toplevel.workspace_id)) input.server.undo.begin(.{
         .kind = .move,
         .press_seq = input.server.undo.press_seq,
         .at_ms = 0,
@@ -690,9 +700,16 @@ fn endMove(input: *Input, apply_snap: bool) void {
         return;
     };
     input.grabbed_toplevel = null;
+    if (apply_snap and input.server.world.workspaces.active) {
+        const point = input.server.world.toLayout(@as(f64, @floatFromInt(toplevel.x)) + @as(f64, @floatFromInt(toplevel.chrome_width)) / 2, @as(f64, @floatFromInt(toplevel.y)) + @as(f64, @floatFromInt(toplevel.chrome_height)) / 2);
+        if (if (target != null) output else @import("Output.zig").atLayout(input.server, point.x, point.y)) |out| {
+            @import("layout_undo.zig").includeDestination(input.server, out.workspace_id);
+            input.server.world.workspaces.placed(toplevel, out);
+        }
+    }
     if (apply_snap) if (target) |t| if (output) |out| toplevel.snapTo(out, t, origin);
     const geom = toplevel.clientGeometry();
-    input.server.undo.commit(Server.undoNowMs(), .{
+    if (!@import("layout_undo.zig").commitGesture(input.server, null)) input.server.undo.commit(Server.undoNowMs(), .{
         .window = .{
             .id = toplevel.id,
             .x = toplevel.x,
@@ -709,7 +726,7 @@ fn endMove(input: *Input, apply_snap: bool) void {
 /// keeping the grab at the same fraction of the frame width so the titlebar
 /// stays under the pointer.
 fn floatGrabbed(input: *Input, toplevel: *Toplevel) void {
-    const restore = toplevel.tile_restore orelse toplevel.maximize_restore;
+    const restore = toplevel.tile_restore orelse toplevel.auto_restore orelse toplevel.maximize_restore;
     const ws = toplevel.worldScale();
     const old_w = @as(f64, @floatFromInt(@max(1, toplevel.chrome_width))) * ws;
     const fraction = std.math.clamp(input.grab_x / old_w, 0, 1);
@@ -730,7 +747,7 @@ fn updateSnapTarget(input: *Input, toplevel: *Toplevel) void {
     input.move_snap.target = target;
     input.move_snap.output = output;
     if (found) |f| {
-        const rect = snap.targetRect(f.output.usableBox(), f.target, input.server.config.compositor.window_gap);
+        const rect = snap.targetRect(f.output.usableBox(), f.target, input.server.config.compositor.windowGap());
         input.move_snap.preview.show(input.server.overlay_tree, rect);
     } else {
         input.move_snap.preview.hide();
@@ -791,6 +808,8 @@ pub fn startResize(
     initiating_device: ?*wlr.InputDevice,
     initiating_button: u32,
 ) void {
+    if (!@import("workspaces.zig").visible(toplevel)) return;
+    if (@import("tiling_grab.zig").begin(input, toplevel, wlr_edges, initiating_button)) return;
     const edges = resize.Edges.fromWlr(wlr_edges);
     if (edges.isNone()) return;
 
@@ -808,6 +827,7 @@ pub fn startResize(
 
     // Resizing a tile makes it an ordinary window of the tile's geometry.
     const layout_before = toplevel.layout();
+    const layout_gesture = @import("layout_undo.zig").beginGesture(input.server, toplevel.workspace_id);
     toplevel.leaveLayout();
     input.server.world.focus(toplevel);
     toplevel.finishZoomAnimation();
@@ -868,7 +888,7 @@ pub fn startResize(
         sess.last_sent_height = client_h;
     }
     // Snapshot current geometry for undo at the start of the resize.
-    input.server.undo.begin(.{
+    if (!layout_gesture) input.server.undo.begin(.{
         .kind = .resize,
         .press_seq = input.server.undo.press_seq,
         .at_ms = 0,
@@ -891,7 +911,7 @@ pub fn finishResize(input: *Input) void {
     session.settling = true;
 
     // Commit the resize undo entry now that the final geometry is known.
-    input.server.undo.commit(Server.undoNowMs(), .{
+    if (!@import("layout_undo.zig").commitGesture(input.server, .{ .id = toplevel.id, .width = final_size.width, .height = final_size.height })) input.server.undo.commit(Server.undoNowMs(), .{
         .window = .{
             .id = toplevel.id,
             .x = toplevel.x,
@@ -964,6 +984,7 @@ pub fn finishSettlement(input: *Input, generation: u64) void {
 }
 
 pub fn clearGrab(input: *Input) void {
+    if (input.tiling_grab != null) input.finishTilingGrab(false);
     input.server.world.mini_map.hide();
     if (input.resize_session != null) {
         input.cancelResize();
@@ -980,6 +1001,7 @@ pub fn clearGrab(input: *Input) void {
 }
 
 pub fn startPan(input: *Input, trigger: PanTrigger, device: ?*wlr.InputDevice) void {
+    if (input.server.world.workspaces.active) return;
     if (input.server.world.mini_map.dragging) return;
     if (input.server.switcher.active()) return;
     // Don't start a new pan if this trigger is currently inhibited
@@ -1075,6 +1097,7 @@ fn beginMiddlePanAfterThreshold(session: *PanSession, x: f64, y: f64) bool {
 }
 
 pub fn detachOutput(input: *Input, output: *Output) void {
+    if (input.tiling_grab != null) input.finishTilingGrab(false);
     if (input.move_snap.output == output) {
         input.move_snap.target = null;
         input.move_snap.output = null;
@@ -1400,6 +1423,10 @@ pub fn processCursorMotion(input: *Input, time_msec: u32) void {
             input.seat.pointerClearFocus();
             return;
         }
+    }
+    if (input.tiling_grab != null) {
+        @import("tiling_grab.zig").motion(input);
+        return;
     }
     switch (input.cursor_mode) {
         .passthrough => input.passthroughMotion(time_msec),
@@ -1842,6 +1869,13 @@ pub fn processButton(
         if (input.active_buttons > 0) input.active_buttons -= 1;
     }
 
+    if (input.tiling_grab) |session| {
+        if (state == .released and button == session.button) {
+            input.finishTilingGrab(true);
+            input.processCursorMotion(time_msec);
+        }
+        return;
+    }
     if (input.cursor_mode == .resize) {
         if (state == .released) {
             if (input.resize_session) |session| {
@@ -1856,7 +1890,7 @@ pub fn processButton(
     }
 
     // Middle button: start/end pan
-    if (button == btn_middle and input.server.config.input.middle_button_pan) {
+    if (button == btn_middle and !input.server.world.workspaces.active and input.server.config.input.middle_button_pan) {
         if (state == .pressed) {
             if (input.cursor_mode == .passthrough and input.resize_session == null and input.grabbed_toplevel == null) {
                 const inhibited = if (input.pan_session) |sess|
@@ -2073,7 +2107,7 @@ fn processClientButton(
             const toplevel = res.cc.toplevel;
             input.server.world.focus(toplevel);
             // Alt+drag moves and Alt+right-drag resizes, as over a client.
-            const alt = if (input.seat.getKeyboard()) |keyboard| keyboard.getModifiers().alt else false;
+            const alt = if (input.server.world.workspaces.active) input.isSuperHeld() else input.isAltHeld();
             if (alt and button == btn_left) {
                 toplevel.beginMove();
             } else if (alt and button == btn_right) {
@@ -2116,6 +2150,16 @@ fn processClientButton(
     // clients, nothing Xwayland-specific). Clicking an unfocused window to
     // start a drag from it is a completely ordinary gesture, so this isn't a
     // narrow edge case.
+    if (input.server.world.workspaces.active and input.isSuperHeld() and hit == .surface and (button == btn_left or button == btn_right)) {
+        const top = hit.surface.toplevel;
+        input.server.world.focus(top);
+        if (button == btn_left) top.beginMove() else {
+            const local = top.frameLocal(input.cursor.x, input.cursor.y);
+            const edges = resize.selectEdgesFromQuadrant(local.x, local.y, 0, 0, top.chrome_width, top.chrome_height);
+            input.startResize(top, edges.toWlr(), device, button);
+        }
+        return;
+    }
     if (hit == .surface) input.server.world.focusSurface(hit.surface.toplevel, hit.surface.surface);
     _ = input.seat.pointerNotifyButton(time_msec, button, state);
     switch (hit) {
@@ -2123,7 +2167,7 @@ fn processClientButton(
             const ws = res.toplevel.worldScale() / res.toplevel.surfaceScale();
             input.rememberPointerGrab(res.sx, res.sy, ws);
             if (input.seat.getKeyboard()) |keyboard| {
-                if (keyboard.getModifiers().alt) {
+                if (!input.server.world.workspaces.active and keyboard.getModifiers().alt) {
                     if (button == btn_left) {
                         res.toplevel.beginMove();
                     } else if (button == btn_right) {
@@ -2147,7 +2191,7 @@ fn processClientButton(
     }
 }
 
-fn setHover(input: *Input, toplevel: ?*Toplevel, control: ?chrome.ControlKind) void {
+pub fn setHover(input: *Input, toplevel: ?*Toplevel, control: ?chrome.ControlKind) void {
     if (input.hovered_toplevel) |previous| {
         if (previous != toplevel) previous.applyHover(false, null);
     }
@@ -2216,6 +2260,13 @@ pub fn processAxis(
             return;
         }
     }
+    if (input.server.world.workspaces.active and input.isSuperHeld()) {
+        if (orientation == .vertical_scroll) {
+            const steps = input.zoom_scroll.feed(delta_discrete, delta, @intCast(@intFromEnum(source)));
+            if (steps != 0) input.server.world.workspaces.cycle(input.server, steps > 0);
+        }
+        return;
+    }
     const scroll_hit = scene_data.hitTest(input.server, input.cursor.x, input.cursor.y);
     if (scroll_hit == .taskbar) {
         const hit = scroll_hit.taskbar;
@@ -2232,7 +2283,7 @@ pub fn processAxis(
         }
     }
     const desktop_zoom = input.isDesktopZoomHeld();
-    const target: ?*Toplevel = if (desktop_zoom) null else switch (scroll_hit) {
+    const target: ?*Toplevel = if (input.server.world.workspaces.active or desktop_zoom) null else switch (scroll_hit) {
         .surface => |res| if (input.isAltHeld()) res.toplevel else null,
         .chrome => |res| if (input.isAltHeld() or (res.sy >= 0 and res.sy < res.toplevel.titlebarHeight())) res.toplevel else null,
         else => null,
@@ -2240,7 +2291,7 @@ pub fn processAxis(
     const target_id = if (target) |window| window.id else 0;
     if (input.zoom_target_id != target_id) input.zoom_scroll.reset();
     input.zoom_target_id = target_id;
-    if (target != null or input.isAltHeld()) {
+    if (!input.server.world.workspaces.active and (target != null or input.isAltHeld())) {
         if (orientation != .vertical_scroll) return;
         if (!input.canZoom()) {
             input.zoom_scroll.reset();
@@ -2269,7 +2320,7 @@ pub fn processAxis(
     if (input.cursor_mode == .resize or input.cursor_mode == .pan) return;
     // Two-finger touchpad motion over empty desktop is a camera pan, matching
     // the middle-drag rubber-band/fling model. Mouse wheels stay no-ops here.
-    const desktop_finger = source == .finger and (scroll_hit == .none or input.finger_pan);
+    const desktop_finger = !input.server.world.workspaces.active and source == .finger and (scroll_hit == .none or input.finger_pan);
     if (desktop_finger and input.cursor_mode == .passthrough and input.resize_session == null) {
         if (raw_delta == 0 and raw_delta_discrete == 0) {
             if (input.finger_pan) {
@@ -2375,6 +2426,7 @@ fn cursorHoldEnd(listener: *wl.Listener(*wlr.Pointer.event.HoldEnd), event: *wlr
 
 /// Camera changes cannot invalidate an in-flight client or compositor grab.
 pub fn canZoom(input: *Input) bool {
+    if (input.server.world.workspaces.active) return false;
     if (input.server.world.mini_map.dragging) return false;
     if (input.active_buttons != 0 or input.resize_session != null or input.seat.pointerHasGrab()) return false;
     if (input.server.world.pinching) return false;
@@ -2390,12 +2442,14 @@ fn clientSurfaceHit(hit: scene_data.Hit) bool {
 }
 
 fn compositorOwnsPinch(input: *Input) bool {
+    if (input.server.world.workspaces.active) return false;
     if (input.server.locker != null or input.server.polkit_dialog != null or input.server.switcher.active()) return false;
     if (input.cursor_mode == .move or input.cursor_mode == .resize or input.resize_session != null) return false;
     return !clientSurfaceHit(scene_data.hitTest(input.server, input.cursor.x, input.cursor.y));
 }
 
 fn compositorOwnsSwipe(input: *Input, fingers: u32) bool {
+    if (input.server.world.workspaces.active) return false;
     if (fingers != 2) return false;
     if (input.server.locker != null or input.server.polkit_dialog != null or input.server.switcher.active()) return false;
     if (input.cursor_mode != .passthrough or input.resize_session != null) return false;
@@ -2505,7 +2559,16 @@ fn startDrag(listener: *wl.Listener(*wlr.Drag), drag: *wlr.Drag) void {
 /// drag was cancelled, and ending the grab then leaves the target, hides the
 /// icon and forgets the drag. The button is still held; its release reaches
 /// the client under the pointer like any other, so nothing is dropped.
+pub fn finishTilingGrab(input: *Input, commit: bool) void {
+    @import("tiling_grab.zig").finish(input, commit);
+}
+
 pub fn cancelDrag(input: *Input) bool {
+    if (input.tiling_grab != null) {
+        input.finishTilingGrab(false);
+        input.processCursorMotion(0);
+        return true;
+    }
     const drag = input.seat.drag orelse return false;
     if (drag.grab_type != .keyboard_pointer) return false;
     if (drag.source) |source| source.destroy();

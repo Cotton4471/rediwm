@@ -67,6 +67,9 @@ pub const Client = struct {
     xkb_context: ?*c.api.xkb_context = null,
     xkb_state: ?*c.api.xkb_state = null,
     key_repeat: key_repeat.KeyRepeat = .{},
+    compose: @import("ui").compose.Compose = .{},
+    /// LC_CTYPE of the session; picks the Compose table (´+c is ç in pt_BR).
+    locale: []const u8 = "",
     /// Socket to the unsandboxed print helper, or -1 without one.
     print_fd: c_int = -1,
     app: app_mod.App,
@@ -402,10 +405,20 @@ pub const Client = struct {
         const sym = c.api.xkb_state_key_get_one_sym(state, key + 8);
         var buf: [64]u8 = undefined;
         const n = c.api.xkb_state_key_get_utf8(state, key + 8, &buf, buf.len);
+        // Dead keys have no text of their own: sequences resolve here, and a
+        // shortcut modifier abandons a half-typed one.
+        if (!self.app.ctrl and !self.app.alt) {
+            var composed: [64]u8 = undefined;
+            if (self.compose.feed(self.locale, sym, &composed)) |text| {
+                if (text.len > 0) self.app.handleKey(0, text);
+                return;
+            }
+        } else self.compose.reset();
         self.app.handleKey(sym, buf[0..@intCast(std.math.clamp(n, 0, 63))]);
     }
 
     fn appRepeats(self: *Client, key: u32) bool {
+        if (self.compose.consumed) return false;
         const state = self.xkb_state orelse return false;
         var buf: [64]u8 = undefined;
         const n = c.api.xkb_state_key_get_utf8(state, key + 8, &buf, buf.len);
@@ -422,6 +435,7 @@ pub const Client = struct {
         switch (event) {
             .leave => {
                 self.key_repeat.stop();
+                self.compose.reset();
                 self.app.cancelDrag();
                 self.app.ctrl = false;
                 self.app.shift = false;
@@ -799,6 +813,11 @@ pub fn run(init: std.process.Init.Minimal) !void {
         shell_text.warmGlyphs(font, shell_ui.textSize(), 1, "") catch {};
     }
 
+    // The Compose table for dead keys is a file read; the first dead key
+    // would come after the sandbox closed the filesystem.
+    const locale = @import("ui").compose.localeFromEnviron(init.environ);
+    @import("ui").compose.preload(locale);
+
     const display = try @import("connection.zig").connect();
     defer display.disconnect();
     if (c.rediwm_pdf_sandbox_enter(document_fd, display.getFd(), print_fd) != 0) {
@@ -810,7 +829,9 @@ pub fn run(init: std.process.Init.Minimal) !void {
         .display = display,
         .print_fd = print_fd,
         .app = try app_mod.App.init(initial_path, document_fd),
+        .locale = locale,
     };
+    defer self.compose.deinit();
     defer self.closePrint();
     defer self.app.deinit();
     defer for (self.buffers) |slot| {

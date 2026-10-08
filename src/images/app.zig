@@ -38,6 +38,8 @@ pub const App = struct {
     w: i32 = 1080,
     h: i32 = 720,
     scale: i32 = 1,
+    /// Fractional device pixels per logical pixel; `scale` is its ceiling.
+    density: f64 = 1,
     dirty: bool = true,
     title_changed: bool = true,
     title: [1024:0]u8 = @splat(0),
@@ -365,7 +367,7 @@ pub const App = struct {
             },
             .actual => {
                 self.view.fitting = false;
-                self.view.zoom = 1 / @as(f64, @floatFromInt(self.scale));
+                self.view.zoom = 1 / self.density;
                 self.clamp();
             },
         }
@@ -1123,7 +1125,7 @@ pub const App = struct {
         }
         if (self.stripBar()) |bar| shell_ui.drawScrollbar(cr, scrollbar.look(bar, self.strip_appearance, ui_theme.global.scrollbar_width, ui_theme.shellPalette()));
         var status: [160]u8 = undefined;
-        const text = if (self.image) |im| std.fmt.bufPrint(&status, "{d} × {d}   ·   {d:.0}%   ·   {d} / {d}", .{ im.w, im.h, self.view.scale(box, @floatFromInt(im.w), @floatFromInt(im.h)) * @as(f64, @floatFromInt(self.scale)) * 100, self.position() + 1, self.count() }) catch "" else "Space / Esc to close  ·  Arrow keys to browse";
+        const text = if (self.image) |im| std.fmt.bufPrint(&status, "{d} × {d}   ·   {d:.0}%   ·   {d} / {d}", .{ im.w, im.h, self.view.scale(box, @floatFromInt(im.w), @floatFromInt(im.h)) * self.density * 100, self.position() + 1, self.count() }) catch "" else "Space / Esc to close  ·  Arrow keys to browse";
         setSource(cr, t.window_fg);
         drawText(cr, text, (@as(f64, @floatFromInt(self.w)) - measureText(cr, text, shell_ui.statusSize(), false)) / 2, @floatFromInt(self.h - 3), shell_ui.statusSize(), false);
         if (self.dialog != .none) self.drawDialog(cr);

@@ -4,6 +4,7 @@
 #define WLR_PRIVATE private
 #include "extra_protocols.h"
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 #include <wlr/backend/drm.h>
 #include <wlr/render/wlr_renderer.h>
@@ -25,6 +26,11 @@ struct rediwm_protocols {
   struct wlr_tearing_control_manager_v1 *tearing;
   struct wlr_drm_lease_v1_manager *lease;
   struct wlr_ext_workspace_group_handle_v1 *group;
+  struct wlr_ext_workspace_manager_v1 *workspaces;
+  struct wlr_ext_workspace_handle_v1 *canvas, *workspace[32];
+  struct wl_listener workspace_commit;
+  void (*activate_workspace)(void *, unsigned);
+  bool workspace_mode;
   struct wl_listener tag, description, lease_request, layout_add;
   struct wl_list outputs;
   struct wlr_scene *scene; // set once the scene follows the color manager
@@ -86,11 +92,13 @@ struct workspace_output {
   struct wl_listener destroy;
   struct rediwm_protocols *protocols;
   struct wlr_output *output;
+  struct wlr_ext_workspace_group_handle_v1 *group;
 };
 static void output_removed(struct wl_listener *listener, void *data) {
   (void)data;
   struct workspace_output *o = wl_container_of(listener, o, destroy);
-  wlr_ext_workspace_group_handle_v1_output_leave(o->protocols->group, o->output);
+  if (o->group) wlr_ext_workspace_group_handle_v1_destroy(o->group);
+  if (o->protocols->group) wlr_ext_workspace_group_handle_v1_output_leave(o->protocols->group, o->output);
   wl_list_remove(&o->destroy.link); wl_list_remove(&o->link); free(o);
 }
 static void output_added(struct wl_listener *listener, void *data) {
@@ -102,7 +110,73 @@ static void output_added(struct wl_listener *listener, void *data) {
   o->destroy.notify = output_removed;
   wl_signal_add(&lo->events.destroy, &o->destroy);
   wl_list_insert(&p->outputs, &o->link);
-  wlr_ext_workspace_group_handle_v1_output_enter(p->group, lo->output);
+  if (!p->workspace_mode && p->group) wlr_ext_workspace_group_handle_v1_output_enter(p->group, lo->output);
+}
+static void workspace_commit(struct wl_listener *listener, void *data) {
+  struct rediwm_protocols *p = wl_container_of(listener, p, workspace_commit);
+  if (p->blocked(p->data) || !p->activate_workspace) return;
+  struct wlr_ext_workspace_v1_commit_event *event = data;
+  struct wlr_ext_workspace_v1_request *request;
+  wl_list_for_each(request, event->requests, link) {
+    if (request->type != WLR_EXT_WORKSPACE_V1_REQUEST_ACTIVATE || !request->activate.workspace) continue;
+    for (unsigned i = 0; i < 32; i++) if (request->activate.workspace == p->workspace[i]) {
+      p->activate_workspace(p->data, i + 1);
+      break;
+    }
+  }
+}
+void rediwm_workspace_mode(struct rediwm_protocols *p, bool enabled, void (*activate)(void *, unsigned)) {
+  if (!p) return;
+  p->activate_workspace = activate;
+  if (p->workspace_mode == enabled) return;
+  p->workspace_mode = enabled;
+  struct workspace_output *o;
+  if (enabled) {
+    if (p->canvas) wlr_ext_workspace_handle_v1_destroy(p->canvas);
+    p->canvas = NULL;
+    if (p->group) wlr_ext_workspace_group_handle_v1_destroy(p->group);
+    p->group = NULL;
+  } else {
+    p->group = wlr_ext_workspace_group_handle_v1_create(p->workspaces, 0);
+    for (unsigned i = 0; i < 32; i++) {
+      if (p->workspace[i]) wlr_ext_workspace_handle_v1_destroy(p->workspace[i]);
+      p->workspace[i] = NULL;
+    }
+    wl_list_for_each(o, &p->outputs, link) {
+      if (o->group) wlr_ext_workspace_group_handle_v1_destroy(o->group);
+      o->group = NULL;
+      if (p->group) wlr_ext_workspace_group_handle_v1_output_enter(p->group, o->output);
+    }
+    p->canvas = wlr_ext_workspace_handle_v1_create(p->workspaces, "rediwm-canvas", 0);
+    if (p->canvas) {
+      wlr_ext_workspace_handle_v1_set_group(p->canvas, p->group);
+      wlr_ext_workspace_handle_v1_set_name(p->canvas, "Canvas");
+      wlr_ext_workspace_handle_v1_set_active(p->canvas, true);
+    }
+  }
+}
+void rediwm_workspace_update(struct rediwm_protocols *p, unsigned id, const char *name, struct wlr_output *output, bool active) {
+  if (!p || id == 0 || id > 32 || !p->workspace_mode) return;
+  struct wlr_ext_workspace_handle_v1 **slot = &p->workspace[id - 1];
+  if (!*slot) {
+    char identifier[40];
+    snprintf(identifier, sizeof(identifier), "rediwm-workspace-%u", id);
+    *slot = wlr_ext_workspace_handle_v1_create(p->workspaces, identifier, EXT_WORKSPACE_HANDLE_V1_WORKSPACE_CAPABILITIES_ACTIVATE);
+    if (!*slot) return;
+    wlr_ext_workspace_handle_v1_set_name(*slot, name);
+  }
+  struct wlr_ext_workspace_group_handle_v1 *group = NULL;
+  struct workspace_output *o;
+  wl_list_for_each(o, &p->outputs, link) if (o->output == output) {
+    if (!o->group) {
+      o->group = wlr_ext_workspace_group_handle_v1_create(p->workspaces, 0);
+      if (o->group) wlr_ext_workspace_group_handle_v1_output_enter(o->group, output);
+    }
+    group = o->group;
+    break;
+  }
+  wlr_ext_workspace_handle_v1_set_group(*slot, group);
+  wlr_ext_workspace_handle_v1_set_active(*slot, active);
 }
 static void lease_requested(struct wl_listener *listener, void *data) {
   struct rediwm_protocols *p = wl_container_of(listener, p, lease_request);
@@ -161,6 +235,7 @@ void rediwm_protocols_destroy(struct rediwm_protocols *p) {
     wl_list_init(&p->scene->private.color_manager_v1_destroy.link);
     p->scene->color_manager_v1 = NULL;
   }
+  wl_list_remove(&p->workspace_commit.link);
   free(p);
 }
 struct rediwm_protocols *rediwm_protocols_create(struct wl_display *display,
@@ -170,6 +245,7 @@ struct rediwm_protocols *rediwm_protocols_create(struct wl_display *display,
   struct rediwm_protocols *p = calloc(1, sizeof(*p));
   if (!p) return NULL;
   p->data = data; p->blocked = blocked; p->changed = changed;
+  wl_list_init(&p->workspace_commit.link);
   wl_list_init(&p->outputs); wl_list_init(&p->tag.link); wl_list_init(&p->description.link);
   wl_list_init(&p->lease_request.link); wl_list_init(&p->layout_add.link);
   p->content = wlr_content_type_manager_v1_create(display, 1);
@@ -194,9 +270,13 @@ struct rediwm_protocols *rediwm_protocols_create(struct wl_display *display,
   p->scene = scene;
   struct wlr_ext_workspace_manager_v1 *workspaces = wlr_ext_workspace_manager_v1_create(display, 1);
   if (!workspaces) goto fail;
+  p->workspaces = workspaces;
+  p->workspace_commit.notify = workspace_commit;
+  wl_signal_add(&workspaces->events.commit, &p->workspace_commit);
   p->group = wlr_ext_workspace_group_handle_v1_create(workspaces, 0);
   struct wlr_ext_workspace_handle_v1 *canvas = wlr_ext_workspace_handle_v1_create(workspaces, "rediwm-canvas", 0);
   if (!p->group || !canvas) goto fail;
+  p->canvas = canvas;
   wlr_ext_workspace_handle_v1_set_group(canvas, p->group);
   wlr_ext_workspace_handle_v1_set_name(canvas, "Canvas");
   wlr_ext_workspace_handle_v1_set_active(canvas, true);

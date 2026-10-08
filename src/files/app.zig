@@ -1753,7 +1753,7 @@ pub const App = struct {
         }
         self.h = @max(self.h, self.footerHeight() + 300);
         self.focus = if (options.mode == .save) .filename else .file_view;
-        self.filename.select_all = true;
+        self.filename.selectStem();
         self.updateTitle();
     }
 
@@ -1853,7 +1853,7 @@ pub const App = struct {
             index = (index + (if (self.shift) order.len - 1 else 1)) % order.len;
             self.focus = order[index];
             if (self.focus == .chooser_choice) self.chooser_choice_index = index - 4;
-            if (self.focus == .filename) self.filename.select_all = true;
+            if (self.focus == .filename) self.filename.selectStem();
             if (self.focus == .location_bar and self.search_visible) {
                 self.search_visible = false;
                 self.search.text.clearRetainingCapacity();

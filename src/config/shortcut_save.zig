@@ -13,7 +13,13 @@ pub fn format(a: std.mem.Allocator, bind: keys.Keybind) ![]const u8 {
 }
 
 pub fn patch(a: std.mem.Allocator, original: []const u8, binds: []const keys.Keybind, index: usize, replacement: keys.Keybind) ![]u8 {
+    return patchMode(a, original, binds, index, replacement, .canvas);
+}
+
+pub fn patchMode(a: std.mem.Allocator, original: []const u8, binds: []const keys.Keybind, index: usize, replacement: keys.Keybind, mode: loader.DesktopMode) ![]u8 {
+    const section = if (mode == .workspaces) "[keybinds.workspace]" else "[keybinds]";
     var defaults = try loader.parse(a, "[keybinds]\n", "shortcut-defaults");
+    defaults.compositor.desktop_mode = mode;
     defer defaults.deinit();
     var out: std.Io.Writer.Allocating = .init(a);
     errdefer out.deinit();
@@ -22,7 +28,7 @@ pub fn patch(a: std.mem.Allocator, original: []const u8, binds: []const keys.Key
     while (lines.next()) |line| {
         const trimmed = std.mem.trim(u8, line, " \t\r");
         if (std.mem.startsWith(u8, trimmed, "[")) {
-            in_section = std.mem.eql(u8, @import("ui").theme.stripComment(trimmed), "[keybinds]");
+            in_section = std.mem.eql(u8, @import("ui").theme.stripComment(trimmed), section);
             if (in_section) continue;
         }
         if (in_section and trimmed.len > 0 and trimmed[0] != '#') {
@@ -34,11 +40,11 @@ pub fn patch(a: std.mem.Allocator, original: []const u8, binds: []const keys.Key
         }
         try out.writer.print("{s}\n", .{line});
     }
-    try out.writer.writeAll("\n[keybinds]\n");
+    try out.writer.print("\n{s}\n", .{section});
     for (binds, 0..) |old, i| {
         if (i != index and keys.pack(old.modifiers, old.sym) == keys.pack(replacement.modifiers, replacement.sym)) continue;
         const bind = if (i == index) replacement else old;
-        if (bind.action == .noop and !isInherited(defaults.keybinds, bind)) continue;
+        if (mode == .canvas and bind.action == .noop and !isInherited(defaults.activeKeybinds(), bind)) continue;
         const key = try format(a, bind);
         defer a.free(key);
         // Match the loader: quoted action contents are literal, without unescaping.
@@ -52,7 +58,7 @@ pub fn patch(a: std.mem.Allocator, original: []const u8, binds: []const keys.Key
         try out.writer.print("\"{s}\" = \"{s}\"\n", .{ key, keys.describeAction(bind.action, action_buf) });
     }
     const old = binds[index];
-    if (isInherited(defaults.keybinds, old) and keys.pack(old.modifiers, old.sym) != keys.pack(replacement.modifiers, replacement.sym)) {
+    if (isInherited(defaults.activeKeybinds(), old) and keys.pack(old.modifiers, old.sym) != keys.pack(replacement.modifiers, replacement.sym)) {
         const key = try format(a, old);
         defer a.free(key);
         try out.writer.print("\"{s}\" = \"noop\"\n", .{key});
@@ -68,16 +74,21 @@ fn isInherited(defaults: []const keys.Keybind, bind: keys.Keybind) bool {
 }
 
 pub fn save(a: std.mem.Allocator, io: std.Io, path: []const u8, binds: []const keys.Keybind, index: usize, replacement: keys.Keybind) !void {
+    return saveMode(a, io, path, binds, index, replacement, .canvas);
+}
+
+pub fn saveMode(a: std.mem.Allocator, io: std.Io, path: []const u8, binds: []const keys.Keybind, index: usize, replacement: keys.Keybind, mode: loader.DesktopMode) !void {
     if (path.len == 0) return error.NoConfigPath;
     const original = try std.Io.Dir.cwd().readFileAlloc(io, path, a, .limited(1 << 20));
     defer a.free(original);
     var old = try loader.parse(a, original, path);
     defer old.deinit();
-    if (old.keybinds.len != binds.len) return error.ConfigChanged;
-    for (old.keybinds, binds) |x, y| {
+    old.compositor.desktop_mode = mode;
+    if (old.activeKeybinds().len != binds.len) return error.ConfigChanged;
+    for (old.activeKeybinds(), binds) |x, y| {
         if (keys.pack(x.modifiers, x.sym) != keys.pack(y.modifiers, y.sym) or !keys.actionEql(x.action, y.action)) return error.ConfigChanged;
     }
-    const result = try patch(a, original, binds, index, replacement);
+    const result = try patchMode(a, original, binds, index, replacement, mode);
     defer a.free(result);
     var checked = try loader.parse(a, result, path);
     defer checked.deinit();
@@ -137,4 +148,21 @@ test "moving Files restores ordinary keys and removes obsolete non-inherited noo
     const plain = try keys.parseKeybind("e");
     try std.testing.expectEqual(@as(?keys.Action, null), parsed.lookupKeybind(plain.modifiers, plain.sym));
     try std.testing.expectEqual(@as(?keys.Action, null), parsed.lookupKeybind(cfg.keybinds[0].modifiers, cfg.keybinds[0].sym));
+}
+
+test "editing workspace defaults preserves canvas bindings and masks the previous key" {
+    const a = std.testing.allocator;
+    const original = "[compositor]\ndesktop_mode = \"workspaces\"\n[keybinds]\n\"Super+q\" = \"close_window\"\n";
+    var cfg = try loader.parse(a, original, "test");
+    defer cfg.deinit();
+    const binds = cfg.activeKeybinds();
+    const key = try keys.parseKeybind("Super+F12");
+    const updated = try patchMode(a, original, binds, 0, .{ .sym = key.sym, .modifiers = key.modifiers, .action = binds[0].action }, .workspaces);
+    defer a.free(updated);
+    var parsed = try loader.parse(a, updated, "test");
+    defer parsed.deinit();
+    try std.testing.expectEqual(keys.Action.noop, parsed.lookupKeybind(binds[0].modifiers, binds[0].sym).?);
+    try std.testing.expectEqualStrings("default-terminal", parsed.lookupKeybind(key.modifiers, key.sym).?.spawn);
+    parsed.compositor.desktop_mode = .canvas;
+    try std.testing.expectEqual(keys.Action.close_window, parsed.lookupKeybind(binds[0].modifiers, binds[0].sym).?);
 }

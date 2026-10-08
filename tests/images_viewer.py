@@ -112,6 +112,12 @@ def run(scale):
                 assert ImageChops.difference(baseline, rotated).getbbox(), "rotation did not change pixels"
                 key(13)  # +
                 key(2)   # 100%
+                actual = capture("actual")
+                # 100% is one image pixel per device pixel at any output scale: the
+                # rotated red quadrant is 100 px wide.
+                r, g, b = actual.split()
+                red = ImageChops.multiply(ImageChops.multiply(r.point(lambda v: 255 if v > 200 else 0), g.point(lambda v: 255 if v < 70 else 0)), b.point(lambda v: 255 if v < 70 else 0)).getbbox()
+                assert red and abs(red[2] - red[0] - 100) <= 3, f"100% is not one device pixel per image pixel: {red}"
                 key(33)  # Fit
                 key(44, ctrl=True)  # Rotation is now an edit; undo before browsing.
                 key(106)

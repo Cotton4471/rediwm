@@ -46,6 +46,19 @@ pub const CommandSpec = struct {
 
 // Canonical v1 names and internal parameter-parser routes.
 pub const specs = [_]CommandSpec{
+    .{ .id = .set_desktop_mode, .kind = .action, .description = "Set Canvas or Workspaces mode", .params_schema = "{\"mode\":\"canvas\" | \"workspaces\", \"persist\"?:boolean}", .description_order = 101 },
+    .{ .id = .set_workspace_layout, .kind = .action, .description = "Set a workspace to automatic tiling or floating", .params_schema = "{\"workspace\":number, \"automatic\":boolean}", .description_order = 102 },
+    .{ .id = .switch_workspace, .kind = .action, .description = "Activate a workspace", .params_schema = "{\"workspace\":number}", .description_order = 103 },
+    .{ .id = .move_to_workspace, .kind = .action, .description = "Move a window and its dialogs or tabs to a workspace and follow", .params_schema = "{\"id\":number, \"workspace\":number}", .description_order = 104 },
+    .{ .id = .set_window_gap, .kind = .action, .description = "Set the gap at workspace edges and between tiles", .params_schema = "{\"gap\":number, \"persist\"?:boolean}", .description_order = 105 },
+    .{ .id = .set_floating_apps, .kind = .action, .description = "Set app ID glob patterns that float by default", .params_schema = "{\"apps\":string[], \"persist\"?:boolean}", .description_order = 106 },
+    .{
+        .id = .tiling_action,
+        .kind = .action,
+        .description = "Toggle floating/workspace tiling, rotate, swap or resize an automatic split",
+        .params_schema = "{\"action\": \"toggle_floating\" | \"toggle_workspace_tiling\" | \"toggle_split\" | \"swap_left\" | \"swap_right\" | \"swap_up\" | \"swap_down\" | \"resize_split_left\" | \"resize_split_right\" | \"resize_split_up\" | \"resize_split_down\", \"id\"?: number}",
+        .description_order = 100,
+    },
     .{
         .id = .version,
         .kind = .query,

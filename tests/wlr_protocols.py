@@ -270,7 +270,9 @@ def extra_protocols(tmp):
         rules = s.ipc.request(query="get_window_rules", params={"id": window["id"]})
         assert rules["live"]["opacity"] == 0.75, rules
         workspaces = s.ipc.request(query="workspaces")
-        assert workspaces == [{"id": 1, "name": "Canvas", "is_focused": True}], workspaces
+        assert workspaces == [{"id": 1, "name": "Canvas", "is_focused": True,
+                               "is_visible": True, "output": None, "automatic": False,
+                               "window_gap": 0, "nodes": []}], workspaces
         child.stdin.write("update\n"); child.stdin.flush()
         expect_line(child, "extras-updated")
         wait_for(lambda: s.window("rediwm.protocol-extras")["content_type"] == "game", "content hint did not update")

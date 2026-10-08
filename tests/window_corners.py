@@ -66,6 +66,123 @@ def settings_resize(scale):
             log.close()
 
 
+def workspace_focus(scale):
+    """Focus colours both border paths, CSD input survives, and gaps have mode defaults."""
+    with tempfile.TemporaryDirectory(prefix="rediwm-workspace-borders-") as directory:
+        tmp = Path(directory)
+        build_client(tmp)
+        wallpaper = tmp / "wallpaper.png"
+        Image.new("RGB", (64, 64), (48, 50, 56)).save(wallpaper)
+        live = tmp / "live"
+        live.write_text("ff101215\n")  # Colour only; configure replies still own size.
+        config = (f'[compositor]\nxwayland = false\nwallpaper = "{wallpaper}"\n'
+                  '[desktop]\nenabled = false\n[animations]\nenabled = false\n'
+                  '[theme]\nwindow_bg = "#101215"\nshadow = "#00000000"\n')
+        process, log = spawn_compositor(tmp, scale=str(scale), config_content=config,
+            renderer=os.environ.get("REDIWM_TEST_RENDERER", "pixman"),
+            env_extra={"DBUS_SESSION_BUS_ADDRESS": "", "REDIWM_THEME": str(tmp / "rediwm-config.toml")})
+        clients = []
+        try:
+            with IPCClient(tmp) as ipc:
+                ipc.wait_for("wallpaper_presented", timeout_ms=10000)
+                display = next(p.name for p in tmp.glob("wayland-*") if not p.name.endswith(".lock"))
+                ids, paths = [], []
+                for mode in ("server", "client"):
+                    path = tmp / f"{mode}.log"
+                    with path.open("w") as stream:
+                        clients.append(subprocess.Popen([str(tmp / "client"), "--app-id", "border-" + mode],
+                            env=dict(os.environ, XDG_RUNTIME_DIR=str(tmp), WAYLAND_DISPLAY=display,
+                                     REDIWM_TEST_DECORATION=mode, REDIWM_TEST_LIVE_FILE=str(live)), stdout=stream, stderr=stream))
+                    ids.append(wait_for(lambda: next((w["id"] for w in ipc.get_windows()
+                        if w["app_id"] == "border-" + mode), None), "map " + mode))
+                    paths.append(path)
+                ipc.action("set_desktop_mode", {"mode": "workspaces", "persist": False})
+                wait_for(lambda: all(w["placement"] == "automatic" for w in ipc.get_windows()), "default tiles")
+                assert ipc.get_workspaces()[0]["window_gap"] == 8
+                def tiled_frames():
+                    boxes = [ipc.get_window_debug(id)["chrome_box"] for id in ids]
+                    return boxes if boxes[1]["x"] - boxes[0]["x"] - boxes[0]["width"] == 8 else None
+                frames = wait_for(tiled_frames, "client split configure replies")
+                assert frames[0]["x"] == 8 and frames[0]["y"] == 8, frames
+                assert frames[1]["x"] - frames[0]["x"] - frames[0]["width"] == 8, frames
+
+                def red(pixel):
+                    return pixel[0] > pixel[1] + 60 and pixel[0] > pixel[2] + 60
+
+                def screenshot():
+                    ipc.wait_for_frame()
+                    path = tmp / "focus.png"
+                    path.unlink(missing_ok=True)
+                    ipc.screenshot(path=str(path))
+                    with Image.open(path) as image:
+                        return image.convert("RGB")
+
+                def edges(id):
+                    debug = ipc.get_window_debug(id)
+                    box = debug["chrome_box"]
+                    x, y, w, h = (box[k] for k in ("x", "y", "width", "height"))
+                    outside = debug["decoration_mode"] != "server"
+                    return [(x + w / 2, y - 1 if outside else y),
+                            (x - 1 if outside else x, y + h / 2),
+                            (x + w if outside else x + w - 1, y + h / 2),
+                            (x + w / 2, y + h if outside else y + h - 1)]
+
+                for active in ids:
+                    ipc.focus_window(active)
+                    image = screenshot()
+                    for id in ids:
+                        for x, y in edges(id):
+                            # Rect edges round on the device grid; inspect the
+                            # whole logical pixel at fractional scales.
+                            pixels = [image.getpixel((px, py))
+                                      for px in range(math.floor(x * scale), math.ceil((x + 1) * scale))
+                                      for py in range(math.floor(y * scale), math.ceil((y + 1) * scale))]
+                            assert any(red(pixel) for pixel in pixels) == (id == active), ("focus border", scale, active, id, x, y, pixels)
+                    if active == ids[0]:
+                        box = ipc.get_window_debug(active)["chrome_box"]
+                        for y in (box["y"], box["y"] + box["height"] - 10):
+                            corner = image.crop((round(box["x"] * scale), round(y * scale),
+                                                 round((box["x"] + 10) * scale), round((y + 10) * scale)))
+                            assert any(red(corner.getpixel((cx, cy))) for cy in range(corner.height)
+                                       for cx in range(corner.width)), ("focus corner", scale, y)
+                # A CSD outline must not steal even the first pixel of client input.
+                box = ipc.get_window_debug(ids[1])["client_box"]
+                before = paths[1].read_text().count("button 272 1")
+                ipc.click_at(box["x"], box["y"] + 20)
+                wait_for(lambda: paths[1].read_text().count("button 272 1") == before + 1, "CSD edge click")
+                ipc.fullscreen(ids[1])
+                wait_for(lambda: ipc.get_window_debug(ids[1])["fullscreen"], "fullscreen")
+                wait_for(lambda: ipc.get_window_debug(ids[1])["client_box"]["width"] == ipc.get_outputs()[0]["logical_width"], "fullscreen client configure reply")
+                image = screenshot()
+                # Configure initially paints the fixture pure red. Only the
+                # compositor's distinct #ed1b2e stroke is a fullscreen failure.
+                focus_pixels = [x for x in range(image.width) if image.getpixel((x, 0)) == (237, 27, 46)]
+                assert not focus_pixels, ("fullscreen focus border", scale, focus_pixels[:8])
+                ipc.fullscreen(ids[1])
+                ipc.action("set_window_gap", {"gap": 0, "persist": False})
+                wait_for(lambda: ipc.get_window_debug(ids[0])["chrome_box"]["x"] == 0, "explicit gap zero")
+                assert ipc.get_workspaces()[0]["window_gap"] == 0
+                ipc.focus_window(ids[0])
+                ipc.action("set_desktop_mode", {"mode": "canvas", "persist": False})
+                wait_for(lambda: ipc.get_workspaces()[0]["name"] == "Canvas", "canvas mode")
+                wait_for(lambda: ipc.get_window_debug(ids[1])["client_box"]["width"] == 400, "canvas client configure reply")
+                ipc.action("move_window_to", {"id": ids[0], "x": 80, "y": 80})
+                ipc.action("move_window_to", {"id": ids[1], "x": 650, "y": 80})
+                image = screenshot()
+                for id in ids:
+                    for x, y in edges(id):
+                        pixel = image.getpixel((math.floor((x + .25) * scale), math.floor((y + .25) * scale)))
+                        assert not red(pixel), ("canvas kept focus outline", scale, id, x, y, pixel, ipc.get_window_debug(id))
+            print(f"PASS scale {scale}: workspace focus edges/corners, CSD input, fullscreen, mode defaults and zero gap")
+        except Exception:
+            print((tmp / "compositor.log").read_text()[-4000:])
+            raise
+        finally:
+            for client in clients: stop_process(client)
+            stop_process(process)
+            log.close()
+
+
 def run(scale, background=(48, 50, 56), chrome_alpha=0.98):
     with tempfile.TemporaryDirectory(prefix="rediwm-corners-") as directory:
         tmp = Path(directory)
@@ -159,6 +276,7 @@ def run(scale, background=(48, 50, 56), chrome_alpha=0.98):
 
 if __name__ == "__main__":
     for scale in (1, 1.25, 1.5, 2):
+        workspace_focus(scale)
         settings_resize(scale)
         run(scale)
         run(scale, (224, 225, 232))

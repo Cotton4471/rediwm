@@ -202,7 +202,7 @@ fn handleMap(listener: *wl.Listener(void)) void {
 
 fn mapRole(self: *Unmanaged) void {
     self.syncPosition();
-    self.tree.node.setEnabled(true);
+    self.syncWorkspaceVisibility();
     self.tree.node.raiseToTop();
     self.server.scheduleFrames();
     // A toolkit menu/combo/tooltip opens from a click on its parent, never on
@@ -229,6 +229,7 @@ fn handleUnmap(listener: *wl.Listener(void)) void {
 }
 
 fn grabKeyboard(self: *Unmanaged) void {
+    if (parentToplevel(self)) |parent| if (!@import("workspaces.zig").visible(parent)) return;
     if (self.server.locker != null or self.server.polkit_dialog != null) return;
     const surface = self.xsurface.surface orelse return;
     @import("Keyboard.zig").enter(self.server, surface);
@@ -244,7 +245,7 @@ fn restoreFocus(self: *Unmanaged) void {
     const focused = seat.keyboard_state.focused_surface orelse return;
     if (focused != own_surface) return;
     const parent_toplevel = parentToplevel(self) orelse self.server.world.toplevels.first();
-    const target = if (parent_toplevel) |t| t.surface() else null;
+    const target = if (parent_toplevel) |t| (if (@import("workspaces.zig").visible(t)) t.surface() else null) else null;
     if (target) |surface| {
         @import("Keyboard.zig").enter(self.server, surface);
     } else {
@@ -254,4 +255,13 @@ fn restoreFocus(self: *Unmanaged) void {
 
 pub fn wantsKeyboard(self: *const Unmanaged) bool {
     return self.xsurface.overrideRedirectWantsFocus();
+}
+
+pub fn syncWorkspaceVisibility(self: *Unmanaged) void {
+    const mapped = if (self.xsurface.surface) |surface| surface.mapped else false;
+    const shown = if (parentToplevel(self)) |parent| @import("workspaces.zig").visible(parent) else true;
+    self.tree.node.setEnabled(mapped and shown);
+    if (!shown) if (self.xsurface.surface) |surface| {
+        if (self.server.input.seat.keyboard_state.focused_surface == surface) self.server.input.seat.keyboardNotifyClearFocus();
+    };
 }

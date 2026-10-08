@@ -211,6 +211,10 @@ fn copyGeometry(from: *Top, to: *Top) void {
     to.maximized = from.maximized;
     to.maximize_restore = from.maximize_restore;
     to.maximize_target = from.maximize_target;
+    to.auto_float = from.auto_float;
+    to.auto_float_override = from.auto_float_override;
+    to.auto_restore = from.auto_restore;
+    to.auto_target = from.auto_target;
     to.tile = from.tile;
     to.tile_target = from.tile_target;
     to.tile_restore = from.tile_restore;
@@ -227,7 +231,7 @@ fn copyGeometry(from: *Top, to: *Top) void {
         },
         else => {},
     }
-    to.sendTiled(if (from.tile) |tile| @import("snap.zig").tiledEdges(tile) else .{});
+    to.sendTiled(if (from.tile) |tile| @import("snap.zig").tiledEdges(tile) else if (from.auto_target != null) .{ .top = true, .bottom = true, .left = true, .right = true } else .{});
     const geom = from.forcedGeometry() orelse from.rememberGeometry();
     to.setPosition(geom.x, geom.y);
     _ = to.requestSize(geom.width, geom.height);
@@ -237,7 +241,7 @@ pub fn visible(top: *Top) bool {
     var next: ?*Top = top;
     var depth: usize = 0;
     while (next) |t| : (depth += 1) {
-        if (depth == 32 or t.tab_hidden or t.minimized) return false;
+        if (depth == 32 or t.tab_hidden or t.minimized or !@import("workspaces.zig").visible(t)) return false;
         next = t.parentWindow();
     }
     return true;
@@ -401,6 +405,7 @@ fn attach(self: *Self, index: usize, top: *Top) bool {
     top.tab_restore = top.rememberGeometry();
     top.tab_identity = source.tab_identity;
     top.tab_group = p.group;
+    top.workspace_id = source.workspace_id;
     top.tab_hidden = true;
     self.select(top);
     self.finish(index, true);
@@ -408,7 +413,32 @@ fn attach(self: *Self, index: usize, top: *Top) bool {
     return true;
 }
 
+/// Unmap is reversible. Keep only a group ID; no client or scene pointer may
+/// survive the group's other members closing while this window is withdrawn.
+pub fn rememberUnmap(top: *Top) void {
+    top.tab_resume_group = top.tab_group;
+    top.tab_resume_restore = top.tab_restore;
+}
+
+fn resumeMember(self: *Self, top: *Top) void {
+    const group = top.tab_resume_group;
+    const floating = top.tab_resume_restore;
+    top.tab_resume_group = 0;
+    top.tab_resume_restore = null;
+    if (group == 0 or !eligible(top) or !enabled(top.server, top.appId())) return;
+    const source = active(top.server, group) orelse return;
+    if (!std.mem.eql(u8, identity(top.appId()), identity(source.appId()))) return;
+    top.tab_group = group;
+    top.tab_identity = source.tab_identity;
+    top.tab_restore = floating;
+    top.workspace_id = source.workspace_id;
+    top.tab_hidden = true;
+    if (top.server.world.toplevels.first() == top) self.select(top) else copyGeometry(source, top);
+    publish(top);
+}
+
 pub fn mapped(self: *Self, top: *Top) void {
+    self.resumeMember(top);
     self.reconcile(top);
     const pid = top.clientPid() orelse return;
     for (self.pending.items, 0..) |p, i| {

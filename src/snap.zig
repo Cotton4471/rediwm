@@ -22,6 +22,7 @@ pub const Layout = union(enum) {
     floating,
     maximized,
     tiled: Tile,
+    automatic,
 
     pub fn eql(a: Layout, b: Layout) bool {
         return std.meta.eql(a, b);
@@ -140,7 +141,7 @@ pub const Direction = enum { left, right, up, down };
 /// join quarters back into halves.
 pub fn step(layout: Layout, dir: Direction) Layout {
     return switch (layout) {
-        .floating => switch (dir) {
+        .floating, .automatic => switch (dir) {
             .left => .{ .tiled = .left },
             .right => .{ .tiled = .right },
             .up => .maximized,
