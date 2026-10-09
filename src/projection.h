@@ -3,8 +3,20 @@
 struct wlr_scene_node;
 struct wlr_scene_tree;
 struct wlr_scene;
+struct wlr_scene_buffer;
 struct wlr_surface_state;
 struct rediwm_projection;
+struct rediwm_item;
+// Synchronous traversal of the whole displayed graph (bottom-to-top unless
+// reverse is true). World
+// geometry comes from resolved items, never the view tree. `transport` owns
+// buffer resources and surface feedback until the legacy adapter is removed.
+// Callbacks must not mutate the scene; pointers are borrowed for this call.
+typedef bool (*rediwm_item_iterator)(const struct rediwm_item *,
+                                    struct wlr_scene_node *transport, void *);
+bool rediwm_projection_for_each_item(struct rediwm_projection *, bool reverse, rediwm_item_iterator, void *);
+// Glass publishes its current raster against the resolved target geometry.
+void rediwm_projection_effect_updated(struct wlr_scene_buffer *, struct wlr_scene_buffer *);
 // Whether a commit changed how buffer pixels map onto the surface, so damage
 // from before it cannot be combined with damage after it.
 bool rediwm_surface_state_remapped(const struct wlr_surface_state *);

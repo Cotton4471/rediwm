@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 import socket
 import subprocess
@@ -17,6 +18,22 @@ import time
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def scene_renderer_config(text: str) -> str:
+    """Fixture-only selector: production reads the ordinary config key."""
+    renderer = os.environ.get("REDIWM_TEST_SCENE_RENDERER")
+    if renderer is None:
+        return text
+    if renderer not in ("legacy", "owned"):
+        raise ValueError("REDIWM_TEST_SCENE_RENDERER must be legacy or owned")
+    if re.search(r"(?m)^\s*scene_renderer\s*=", text):
+        return text  # explicit test configuration wins
+    section = re.search(r"(?m)^\[compositor\][ \t]*(?:#.*)?$", text)
+    setting = f'\nscene_renderer = "{renderer}"\n'
+    if section:
+        return text[:section.end()] + setting + text[section.end():]
+    return text + '\n[compositor]' + setting
 
 # Synthetic input, screenshots and pixel reads are off unless [ipc] automation
 # is set. Tests drive the compositor through them, so every compositor started
@@ -510,7 +527,7 @@ def spawn_compositor(
     scale: str = "1",
     outputs: str = "1",
     config_content: str = "",
-    renderer: str = "pixman",
+    renderer: Optional[str] = None,
     env_extra: Optional[Dict[str, str]] = None,
     binary: Optional[Union[str, Path]] = None,
 ) -> Tuple[subprocess.Popen, Any]:
@@ -520,7 +537,7 @@ def spawn_compositor(
         XDG_RUNTIME_DIR=str(tmp_dir),
         WLR_BACKENDS="headless",
         WLR_HEADLESS_OUTPUTS=str(outputs),
-        WLR_RENDERER=renderer,
+        WLR_RENDERER=renderer or os.environ.get("REDIWM_TEST_RENDERER", "pixman"),
         REDIWM_SCALE=str(scale),
         # Opening the power menu queries CanPowerOff/CanReboot/CanSuspend
         # (session/power.zig's Manager.probeCapabilities()). Without this,
@@ -537,7 +554,7 @@ def spawn_compositor(
         XDG_STATE_HOME=str(tmp_dir / "state"),
     )
     config_path = tmp_dir / "rediwm-config.toml"
-    config_path.write_text(config_content)
+    config_path.write_text(scene_renderer_config(config_content))
     env["REDIWM_CONFIG"] = str(config_path)
     env.pop("WAYLAND_DISPLAY", None)
     env.pop("REDIWM_SOCKET", None)

@@ -15,7 +15,7 @@ import time
 from PIL import Image, ImageChops
 
 from desktop_zoom import ROOT, build_client, wait_for
-from ipc_client import IPCClient, spawn_compositor, stop_process
+from ipc_client import IPCClient, spawn_compositor, stop_process, scene_renderer_config
 
 SCALE = 1.5
 TITLEBAR_HEIGHT = 55  # chrome.titlebar_height
@@ -25,7 +25,7 @@ START, GRAB, DROP = (100, 60), (300, 80), (700, 330)
 def session(tmp, window_bg, drag, holds=False):
     """Drag from START to DROP, or place the window where a drag ended."""
     config = tmp / "config.toml"
-    config.write_text(f'[theme]\nwindow_bg = "{window_bg}"\n' if window_bg else "")
+    config.write_text(scene_renderer_config(f'[theme]\nwindow_bg = "{window_bg}"\n' if window_bg else ""))
     runtime = Path(tempfile.mkdtemp(prefix="runtime-", dir=tmp))
     env = dict(os.environ, XDG_RUNTIME_DIR=str(runtime), XDG_CONFIG_HOME=str(runtime / "config"),
                XDG_CACHE_HOME=str(runtime / "cache"), XDG_DATA_HOME=str(runtime / "data"),

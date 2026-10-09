@@ -1,0 +1,362 @@
+// Owned output assembly, wlroots 0.20 ABI. Geometry is resolved by projection;
+// scene nodes below are resource/feedback transports, never world geometry.
+#define WLR_USE_UNSTABLE
+#define WLR_PRIVATE private
+#include "scene_output.h"
+#include "scene_pass.h"
+#include "scene_graph.h"
+#include "projection.h"
+#include <stdlib.h>
+#include <wlr/render/drm_syncobj.h>
+#include <wlr/render/swapchain.h>
+#include <wlr/render/wlr_texture.h>
+#include <wlr/types/wlr_buffer.h>
+#include <wlr/types/wlr_compositor.h>
+#include <wlr/types/wlr_output.h>
+#include <wlr/types/wlr_scene.h>
+#include <wlr/util/log.h>
+#include <wlr/util/region.h>
+#include <wlr/util/transform.h>
+
+struct entry {
+    struct rediwm_item item;
+    struct wlr_scene_node *transport;
+    struct wlr_box box; // snap of item edges in layout space
+    pixman_region32_t visible, opaque;
+    bool sampled;
+};
+struct rediwm_output_renderer {
+    struct rediwm_scene_renderer *pass;
+    struct wl_array entries; // reusable scratch; no retained resource references
+};
+struct output_view {
+    struct wlr_box logical;
+    int width, height, trans_width, trans_height;
+    float scale;
+    enum wl_output_transform transform;
+};
+struct rediwm_output_renderer *rediwm_output_renderer_create(struct wlr_renderer *renderer) {
+    struct rediwm_output_renderer *r = calloc(1, sizeof(*r));
+    if (!r) return NULL;
+    r->pass = rediwm_scene_renderer_create(renderer);
+    if (!r->pass) { free(r); return NULL; }
+    wl_array_init(&r->entries);
+    return r;
+}
+void rediwm_output_renderer_destroy(struct rediwm_output_renderer *r) {
+    if (!r) return;
+    rediwm_scene_renderer_destroy(r->pass);
+    wl_array_release(&r->entries);
+    free(r);
+}
+struct wlr_render_pass *rediwm_output_begin_pass(struct rediwm_output_renderer *r,
+        struct wlr_buffer *buffer, const struct wlr_buffer_pass_options *options) {
+    return rediwm_scene_pass_begin(r->pass, buffer, options);
+}
+void rediwm_scene_output_damage_whole(struct wlr_scene_output *out) {
+    wlr_damage_ring_add_whole(&out->damage_ring);
+    pixman_region32_union_rect(&out->private.pending_commit_damage,
+        &out->private.pending_commit_damage, 0, 0, out->output->width, out->output->height);
+    wlr_output_schedule_frame(out->output);
+}
+// Stage 3 parity deliberately retains the legacy layout snap, then snaps
+// output-scaled edges. Removing that first snap is a geometry change, not a
+// renderer switch. No view node position/size is consulted here.
+static struct wlr_box device_box(struct wlr_box box, const struct output_view *v) {
+    box.x -= v->logical.x;
+    box.y -= v->logical.y;
+    int x2 = round((box.x + box.width) * v->scale);
+    int y2 = round((box.y + box.height) * v->scale);
+    box.x = round(box.x * v->scale);
+    box.y = round(box.y * v->scale);
+    box.width = x2 - box.x;
+    box.height = y2 - box.y;
+    wlr_box_transform(&box, &box, wlr_output_transform_invert(v->transform),
+        v->trans_width, v->trans_height);
+    return box;
+}
+static void device_region(pixman_region32_t *region, const struct output_view *v, bool expand) {
+    pixman_region32_translate(region, -v->logical.x, -v->logical.y);
+    wlr_region_scale(region, region, v->scale);
+    if (expand && floor(v->scale) != v->scale) wlr_region_expand(region, region, 1);
+    wlr_region_transform(region, region, wlr_output_transform_invert(v->transform),
+        v->trans_width, v->trans_height);
+}
+struct collector {
+    struct rediwm_output_renderer *renderer;
+    const struct output_view *view;
+    pixman_region32_t covered;
+};
+static bool collect(const struct rediwm_item *item, struct wlr_scene_node *transport, void *data) {
+    struct collector *collector = data;
+    struct rediwm_output_renderer *r = collector->renderer;
+    if (!item->enabled) return true;
+    struct rediwm_snap s = rediwm_edges_snap(item->edges);
+    if (s.width <= 0 || s.height <= 0) return true;
+    struct wlr_box box = {s.x, s.y, s.width, s.height}, intersection;
+    if (!wlr_box_intersection(&intersection, &box, &collector->view->logical)) return true;
+    if (item->kind == REDIWM_ITEM_RECT) {
+        if (item->content.color[3] == 0) return true;
+    } else {
+        struct wlr_scene_buffer *b = wlr_scene_buffer_from_node(transport);
+        if (item->content.opacity == 0 ||
+            (!b->buffer && !b->private.texture && !b->private.is_single_pixel_buffer)) return true;
+    }
+    // Visit top-to-bottom so fully occluded items never enter the render list
+    // and never allocate/copy content. The graph, not the view's visible region,
+    // supplies the bounds and paint order.
+    pixman_region32_t visible;
+    pixman_region32_init_rect(&visible, intersection.x, intersection.y, intersection.width, intersection.height);
+    pixman_region32_subtract(&visible, &visible, &collector->covered);
+    if (!pixman_region32_not_empty(&visible)) { pixman_region32_fini(&visible); return true; }
+    struct entry *e = wl_array_add(&r->entries, sizeof(*e));
+    if (!e) { pixman_region32_fini(&visible); return false; }
+    *e = (struct entry){.item = *item, .transport = transport,
+        .box = box, .visible = visible};
+    pixman_region32_init(&e->opaque);
+    bool full = item->kind == REDIWM_ITEM_RECT && item->content.color[3] == 1;
+    if (item->kind != REDIWM_ITEM_RECT) {
+        struct wlr_scene_buffer *b = wlr_scene_buffer_from_node(transport);
+        // Match the surface adapter's opacity policy. A cached raster whose
+        // buffer was released must not suddenly hide previously visible peers.
+        if (b->buffer && item->content.opacity == 1) {
+            full = b->private.buffer_is_opaque;
+            if (!full) {
+                pixman_region32_intersect_rect(&e->opaque, &b->opaque_region, 0, 0, s.width, s.height);
+                pixman_region32_translate(&e->opaque, s.x, s.y);
+            }
+        }
+    }
+    if (full) pixman_region32_union_rect(&e->opaque, &e->opaque, s.x, s.y, s.width, s.height);
+    pixman_region32_union(&collector->covered, &collector->covered, &e->opaque);
+    return true;
+}
+static void clear_entries(struct rediwm_output_renderer *r) {
+    struct entry *e;
+    wl_array_for_each(e, &r->entries) {
+        pixman_region32_fini(&e->visible);
+        pixman_region32_fini(&e->opaque);
+    }
+    r->entries.size = 0;
+}
+// Share the adapter's texture cache with glass/capture and the legacy path.
+// Buffer replacement and scene destruction already clear it in wlroots. Do
+// not keep an extra buffer lock: shm clients must still update in place.
+static void texture_renderer_destroy(struct wl_listener *listener, void *data) {
+    (void)data;
+    struct wlr_scene_buffer *b = wl_container_of(listener, b, private.renderer_destroy);
+    wl_list_remove(&b->private.renderer_destroy.link);
+    wl_list_init(&b->private.renderer_destroy.link);
+    wlr_texture_destroy(b->private.texture);
+    b->private.texture = NULL;
+}
+static struct wlr_texture *buffer_texture(struct wlr_scene_buffer *b, struct wlr_renderer *renderer) {
+    if (!b->buffer || b->private.texture) return b->private.texture;
+    struct wlr_client_buffer *client = wlr_client_buffer_get(b->buffer);
+    if (client) return client->texture;
+    struct wlr_texture *texture = wlr_texture_from_buffer(renderer, b->buffer);
+    if (!texture) return NULL;
+    if (b->private.own_buffer) {
+        b->private.own_buffer = false;
+        wlr_buffer_unlock(b->buffer);
+    }
+    b->private.texture = texture;
+    wl_list_remove(&b->private.renderer_destroy.link);
+    b->private.renderer_destroy.notify = texture_renderer_destroy;
+    wl_signal_add(&renderer->events.destroy, &b->private.renderer_destroy);
+    return texture;
+}
+static void sample(struct entry *e, struct wlr_scene_output *out, bool scanout) {
+    if (e->item.kind == REDIWM_ITEM_RECT) return;
+    struct wlr_scene_buffer *b = wlr_scene_buffer_from_node(e->transport);
+    struct wlr_scene_output_sample_event event = {
+        .output = out, .direct_scanout = scanout,
+        .release_timeline = scanout ? out->private.out_timeline : out->private.in_timeline,
+        .release_point = scanout ? out->private.out_point : out->private.in_point,
+    };
+    wl_signal_emit_mutable(&b->events.output_sample, &event);
+}
+static bool try_scanout(struct entry *e, struct wlr_scene_output *out,
+        struct wlr_output_state *state, const struct output_view *v) {
+    if (e->item.kind != REDIWM_ITEM_SURFACE || !out->scene->private.direct_scanout ||
+        (state->committed & (WLR_OUTPUT_STATE_MODE | WLR_OUTPUT_STATE_ENABLED | WLR_OUTPUT_STATE_RENDER_FORMAT)) ||
+        !wlr_output_is_direct_scanout_allowed(out->output)) return false;
+    struct wlr_scene_buffer *b = wlr_scene_buffer_from_node(e->transport);
+    const struct rediwm_content *c = &e->item.content;
+    if (!b->buffer || c->transform != v->transform || c->opacity != 1) return false;
+    const struct wlr_output_image_description *desc = state->committed & WLR_OUTPUT_STATE_IMAGE_DESCRIPTION ?
+        state->image_description : out->output->image_description;
+    if (desc) {
+        if (c->transfer_function != desc->transfer_function || c->primaries != desc->primaries) return false;
+    } else if (!((c->transfer_function == 0 && c->primaries == 0) ||
+        (c->transfer_function == WLR_COLOR_TRANSFER_FUNCTION_GAMMA22 &&
+         c->primaries == WLR_COLOR_NAMED_PRIMARIES_SRGB))) return false;
+    if (!((c->color_encoding == WLR_COLOR_ENCODING_NONE && c->color_range == WLR_COLOR_RANGE_NONE) ||
+        (c->color_encoding == WLR_COLOR_ENCODING_IDENTITY && c->color_range == WLR_COLOR_RANGE_FULL))) return false;
+    struct wlr_box dst = device_box(e->box, v);
+    // Keep the guaranteed fullscreen case. Partial coverage never bypasses
+    // the black/background draw, even if it was the only visible entry.
+    if (dst.x != 0 || dst.y != 0 || dst.width != v->width || dst.height != v->height) return false;
+    if (pixman_region32_contains_rectangle(&e->opaque, &(pixman_box32_t){
+        v->logical.x, v->logical.y, v->logical.x + v->logical.width,
+        v->logical.y + v->logical.height}) != PIXMAN_REGION_IN) return false;
+    struct wlr_output_state pending;
+    wlr_output_state_init(&pending);
+    if (!wlr_output_state_copy(&pending, state)) { wlr_output_state_finish(&pending); return false; }
+    struct wlr_buffer *buffer = b->buffer;
+    struct wlr_client_buffer *client = wlr_client_buffer_get(buffer);
+    if (client && client->source && client->source->n_locks > 0) buffer = client->source;
+    wlr_output_state_set_buffer(&pending, buffer);
+    pending.buffer_src_box = c->src_box;
+    pending.buffer_dst_box = dst;
+    if (b->private.wait_timeline)
+        wlr_output_state_set_wait_timeline(&pending, b->private.wait_timeline, b->private.wait_point);
+    if (out->private.out_timeline)
+        wlr_output_state_set_signal_timeline(&pending, out->private.out_timeline, ++out->private.out_point);
+    bool ok = wlr_output_test_state(out->output, &pending) && wlr_output_state_copy(state, &pending);
+    wlr_output_state_finish(&pending);
+    if (ok) sample(e, out, true);
+    return ok;
+}
+// Most entries lie outside a small repaint, and the region arithmetic below
+// (scale, expand, transform) is what costs at fractional scale. Reject from the
+// device box first. A clip is a subregion of the entry's box rounded outward by
+// wlr_region_scale and then expanded by one pixel, so two pixels of margin
+// around the rounded box can never reject an entry that would have drawn.
+static bool misses_damage(const struct wlr_box *dst, pixman_region32_t *damage) {
+    const pixman_box32_t *extents = pixman_region32_extents(damage);
+    return dst->x - 2 >= extents->x2 || dst->x + dst->width + 2 <= extents->x1 ||
+        dst->y - 2 >= extents->y2 || dst->y + dst->height + 2 <= extents->y1;
+}
+static bool render_entry(struct entry *e, struct wlr_scene_output *out,
+        struct wlr_render_pass *pass, const struct output_view *v, pixman_region32_t *damage) {
+    struct wlr_box dst = device_box(e->box, v);
+    if (misses_damage(&dst, damage)) return true;
+    pixman_region32_t clip, blend;
+    pixman_region32_init(&clip);
+    pixman_region32_init(&blend);
+    pixman_region32_copy(&clip, &e->visible);
+    device_region(&clip, v, true);
+    pixman_region32_intersect(&clip, &clip, damage);
+    bool ok = true;
+    if (!pixman_region32_not_empty(&clip)) goto done;
+    const struct rediwm_content *c = &e->item.content;
+    if (e->item.kind == REDIWM_ITEM_RECT) {
+        wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options){.box = dst, .clip = &clip,
+            .color = {c->color[0], c->color[1], c->color[2], c->color[3]}});
+    } else {
+        struct wlr_scene_buffer *b = wlr_scene_buffer_from_node(e->transport);
+        if (b->private.is_single_pixel_buffer) {
+            const uint32_t *color = b->private.single_pixel_buffer_color;
+            // Match wlroots' single-pixel path during parity, including its
+            // treatment of opacity (only alpha is multiplied there).
+            wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options){.box = dst, .clip = &clip,
+                .color = {(float)color[0] / (float)UINT32_MAX, (float)color[1] / (float)UINT32_MAX,
+                    (float)color[2] / (float)UINT32_MAX, (float)color[3] / (float)UINT32_MAX * c->opacity}});
+        } else {
+            struct wlr_texture *texture = buffer_texture(b, out->output->renderer);
+            if (!texture) { ok = false; goto done; }
+            pixman_region32_copy(&blend, &e->opaque);
+            device_region(&blend, v, false);
+            pixman_region32_subtract(&blend, &clip, &blend);
+            wlr_render_pass_add_texture(pass, &(struct wlr_render_texture_options){
+                .texture = texture, .dst_box = dst, .src_box = c->src_box,
+                .transform = wlr_output_transform_compose(wlr_output_transform_invert(c->transform), v->transform),
+                .clip = &clip, .alpha = &c->opacity, .filter_mode = c->filter_mode,
+                .blend_mode = pixman_region32_not_empty(&blend) ? WLR_RENDER_BLEND_MODE_PREMULTIPLIED : WLR_RENDER_BLEND_MODE_NONE,
+                .wait_timeline = b->private.wait_timeline, .wait_point = b->private.wait_point,
+            });
+        }
+        e->sampled = true;
+    }
+done:
+    pixman_region32_fini(&clip);
+    pixman_region32_fini(&blend);
+    return ok;
+}
+bool rediwm_scene_output_build_state(struct rediwm_output_renderer *r,
+        struct rediwm_projection *projection, struct wlr_scene_output *out, struct wlr_output_state *state) {
+    if ((state->committed & WLR_OUTPUT_STATE_ENABLED) && !state->enabled) return true;
+    struct wlr_output *output = out->output;
+    // These scene services are not installed by RediWM. KMS colour state is
+    // applied later by Output.commitFrameState, for either presenter.
+    if (out->scene->gamma_control_manager_v1 || out->private.combined_color_transform) return false;
+    struct output_view v = {.width = output->width, .height = output->height,
+        .scale = state->committed & WLR_OUTPUT_STATE_SCALE ? state->scale : output->scale,
+        .transform = state->committed & WLR_OUTPUT_STATE_TRANSFORM ? state->transform : output->transform,
+        .logical = {.x = out->x, .y = out->y}};
+    if (state->committed & WLR_OUTPUT_STATE_MODE) {
+        v.width = state->mode_type == WLR_OUTPUT_STATE_MODE_FIXED ? state->mode->width : state->custom_mode.width;
+        v.height = state->mode_type == WLR_OUTPUT_STATE_MODE_FIXED ? state->mode->height : state->custom_mode.height;
+    }
+    v.trans_width = v.width;
+    v.trans_height = v.height;
+    wlr_output_transform_coords(v.transform, &v.trans_width, &v.trans_height);
+    v.logical.width = v.trans_width / v.scale;
+    v.logical.height = v.trans_height / v.scale;
+    if (v.scale != output->scale || v.transform != output->transform ||
+        v.width != output->width || v.height != output->height)
+        rediwm_scene_output_damage_whole(out);
+    struct collector collector = {.renderer = r, .view = &v};
+    pixman_region32_init(&collector.covered);
+    if (!rediwm_projection_for_each_item(projection, true, collect, &collector)) {
+        pixman_region32_fini(&collector.covered);
+        clear_entries(r);
+        return false;
+    }
+    struct entry *entries = r->entries.data;
+    size_t len = r->entries.size / sizeof(*entries);
+    wlr_output_state_set_damage(state, &out->private.pending_commit_damage);
+    bool scanout = len == 1 && try_scanout(&entries[0], out, state, &v);
+    if (out->private.prev_scanout != scanout) {
+        out->private.prev_scanout = scanout;
+        wlr_log(WLR_DEBUG, "Direct scan-out %s", scanout ? "enabled" : "disabled");
+    }
+    bool ok = scanout;
+    struct wlr_buffer *buffer = NULL;
+    if (scanout) goto done;
+    if (!wlr_output_configure_primary_swapchain(output, state, &output->swapchain)) goto done;
+    buffer = wlr_swapchain_acquire(output->swapchain);
+    if (!buffer) goto done;
+    struct wlr_render_pass *pass = rediwm_scene_pass_begin(r->pass, buffer,
+        &(struct wlr_buffer_pass_options){.signal_timeline = out->private.in_timeline,
+            .signal_point = ++out->private.in_point});
+    if (!pass) goto done;
+    pixman_region32_t damage, background;
+    pixman_region32_init(&damage);
+    pixman_region32_init(&background);
+    wlr_damage_ring_rotate_buffer(&out->damage_ring, buffer, &damage);
+    pixman_region32_intersect_rect(&damage, &damage, 0, 0, v.width, v.height);
+    device_region(&collector.covered, &v, false);
+    pixman_region32_subtract(&background, &damage, &collector.covered);
+    if (floor(v.scale) != v.scale) {
+        wlr_region_expand(&background, &background, 1);
+        pixman_region32_intersect(&background, &background, &damage);
+    }
+    wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options){
+        .box = {0, 0, buffer->width, buffer->height}, .color = {0, 0, 0, 1}, .clip = &background});
+    ok = true;
+    for (size_t i = len; i > 0; i--)
+        if (!render_entry(&entries[i - 1], out, pass, &v, &damage)) ok = false;
+    wlr_output_add_software_cursors_to_render_pass(output, pass, &damage);
+    bool submitted = wlr_render_pass_submit(pass);
+    // Successful reads still need release points when another item failed to
+    // import. No sample event is sent for a failed GPU submission.
+    if (submitted) for (size_t i = 0; i < len; i++) if (entries[i].sampled) sample(&entries[i], out, false);
+    ok = ok && submitted;
+    pixman_region32_fini(&background);
+    pixman_region32_fini(&damage);
+    if (ok) {
+        wlr_output_state_set_buffer(state, buffer);
+        if (out->private.in_timeline) {
+            wlr_output_state_set_wait_timeline(state, out->private.in_timeline, out->private.in_point);
+            wlr_output_state_set_signal_timeline(state, out->private.out_timeline, ++out->private.out_point);
+        }
+    }
+done:
+    if (buffer) wlr_buffer_unlock(buffer);
+    if (!ok) rediwm_scene_output_damage_whole(out);
+    pixman_region32_fini(&collector.covered);
+    clear_entries(r);
+    return ok;
+}

@@ -1065,6 +1065,10 @@ pub fn commitFrameState(output: *Output, state: *wlr.Output.State) bool {
             }
         }
     }
+    if (!success and state.committed.buffer) {
+        if (output.server.scene.getSceneOutput(output.wlr_output)) |scene_output|
+            @import("scene_output.zig").damageWhole(scene_output);
+    }
     return success;
 }
 
@@ -1308,7 +1312,7 @@ fn runFrame(output: *Output) void {
         var committed = true;
         if (should_commit) {
             if (output.server.capture_mgr) |cm| cm.guardScreencopy(output.wlr_output);
-            if (scene_output.buildState(&state, null)) {
+            if (output.server.buildOutputState(scene_output, &state)) {
                 committed = output.commitFrameState(&state);
             } else {
                 committed = false;

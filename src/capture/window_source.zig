@@ -192,7 +192,7 @@ pub const WindowCaptureSource = struct {
         // explicit-sync buffers this pass reads; it signals its own release.
         var pass_options: wlr.Renderer.BufferPassOptions = .{};
         explicit_sync.ReadFence.begin(server.read_fence, &pass_options);
-        const pass = server.renderer.beginBufferPass(buffer, &pass_options) catch |err| {
+        const pass = server.beginRenderPass(buffer, &pass_options) catch |err| {
             explicit_sync.ReadFence.end(server.read_fence, false);
             buffer.unlock();
             return err;

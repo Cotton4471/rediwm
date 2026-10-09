@@ -22,9 +22,23 @@ from ipc_client import IPCClient, spawn_compositor, stop_process
 SHM_FORMAT_ARGB8888 = 0
 SHM_FORMAT_XRGB8888 = 1
 
-# DRM fourcc codes ("AR24"/"XR24"), used only by the dmabuf path's ready line.
+# DRM fourcc codes: dmabuf formats, and the non-legacy wl_shm formats GLES2
+# can advertise. Decode the advertised channel order instead of assuming BGRA.
 DRM_FORMAT_ARGB8888 = 0x34325241
 DRM_FORMAT_XRGB8888 = 0x34325258
+DRM_FORMAT_ABGR8888 = 0x34324241
+DRM_FORMAT_XBGR8888 = 0x34324258
+CAPTURE_FORMATS = (SHM_FORMAT_ARGB8888, SHM_FORMAT_XRGB8888,
+                   DRM_FORMAT_ARGB8888, DRM_FORMAT_XRGB8888,
+                   DRM_FORMAT_ABGR8888, DRM_FORMAT_XBGR8888)
+
+
+def rgba(fmt, b0, b1, b2, b3):
+    """Decode the advertised format: GLES2 can choose RGBA byte order."""
+    assert fmt in CAPTURE_FORMATS, fmt
+    if fmt in (DRM_FORMAT_ABGR8888, DRM_FORMAT_XBGR8888):
+        return int(b0), int(b1), int(b2), int(b3)
+    return int(b2), int(b1), int(b0), int(b3)
 
 
 def build_client(tmp):
@@ -60,7 +74,7 @@ def run_case(client_binary, renderer, command, valid_formats, argb_format, label
         tmp = Path(directory)
         compositor, log = spawn_compositor(
             tmp, scale="1", outputs="1", renderer=renderer,
-            config_content="[compositor]\nxwayland = false\n",
+            config_content="[compositor]\nxwayland = false\n[animations]\nenabled = false\n",
             env_extra={"XDG_CACHE_HOME": str(tmp / "cache"), "WLR_RENDERER_ALLOW_SOFTWARE": "1"})
         client = None
         client_log = tmp / "client.log"
@@ -127,15 +141,15 @@ def run_case(client_binary, renderer, command, valid_formats, argb_format, label
                     send(f"sample {x} {y}")
                     _, sx, sy, b0, b1, b2, b3 = wait_line("pixel").split()
                     assert (int(sx), int(sy)) == (x, y)
-                    # Premultiplied native-endian 0xAARRGGBB -> little-endian bytes B,G,R,A.
-                    return (int(b2), int(b1), int(b0), int(b3))
+                    # The format determines whether these are RGBA or BGRA bytes.
+                    return rgba(fmt, b0, b1, b2, b3)
 
                 # (50, 50) sits inside the 200x150 fixture window, which was
                 # pinned to content-origin (0, 0) with no camera pan/zoom, so
                 # it maps directly onto that buffer coordinate.
                 r, g, b, a = sample(50, 50)
                 assert (r, g, b) == (255, 0, 0), (r, g, b, a)
-                if fmt == argb_format:
+                if fmt in (argb_format, SHM_FORMAT_ARGB8888, DRM_FORMAT_ARGB8888, DRM_FORMAT_ABGR8888):
                     assert a == 255, a
 
                 print(f"capture: {label} monitor session returned real pixels ({buf_w}x{buf_h}, fmt={fmt:#x})")
@@ -180,8 +194,8 @@ def run_window_capture_case(client_binary):
     with tempfile.TemporaryDirectory(prefix="rediwm-window-capture-") as directory:
         tmp = Path(directory)
         compositor, log = spawn_compositor(
-            tmp, scale="1", outputs="1", renderer="pixman",
-            config_content="[compositor]\nxwayland = false\n",
+            tmp, scale="1", outputs="1", renderer=os.environ.get("REDIWM_TEST_RENDERER", "pixman"),
+            config_content="[compositor]\nxwayland = false\n[animations]\nenabled = false\n",
             env_extra={"XDG_CACHE_HOME": str(tmp / "cache"), "WLR_RENDERER_ALLOW_SOFTWARE": "1"})
         client = None
         client_log = tmp / "client.log"
@@ -229,17 +243,17 @@ def run_window_capture_case(client_binary):
                 # The session must report the *window's* own content size, not
                 # a monitor-sized buffer or a crop of one.
                 assert (buf_w, buf_h) == (200, 150), (ready, win)
-                assert fmt in (SHM_FORMAT_ARGB8888, SHM_FORMAT_XRGB8888), ready
+                assert fmt in CAPTURE_FORMATS, ready
 
                 def sample(x, y):
                     send(f"sample {x} {y}")
                     _, sx, sy, b0, b1, b2, b3 = wait_line("pixel").split()
                     assert (int(sx), int(sy)) == (x, y)
-                    return (int(b2), int(b1), int(b0), int(b3))
+                    return rgba(fmt, b0, b1, b2, b3)
 
                 r, g, b, a = sample(50, 50)
                 assert (r, g, b) == (255, 0, 0), (r, g, b, a)
-                if fmt == SHM_FORMAT_ARGB8888:
+                if fmt in (SHM_FORMAT_ARGB8888, DRM_FORMAT_ARGB8888, DRM_FORMAT_ABGR8888):
                     assert a == 255, a
 
                 print(f"capture: window session returned real pixels at its own {buf_w}x{buf_h} "
@@ -285,8 +299,8 @@ def run_window_occlusion_case(client_binary):
     with tempfile.TemporaryDirectory(prefix="rediwm-window-occlusion-") as directory:
         tmp = Path(directory)
         compositor, log = spawn_compositor(
-            tmp, scale="1", outputs="1", renderer="pixman",
-            config_content="[compositor]\nxwayland = false\n",
+            tmp, scale="1", outputs="1", renderer=os.environ.get("REDIWM_TEST_RENDERER", "pixman"),
+            config_content="[compositor]\nxwayland = false\n[animations]\nenabled = false\n",
             env_extra={"XDG_CACHE_HOME": str(tmp / "cache"), "WLR_RENDERER_ALLOW_SOFTWARE": "1"})
         bottom = top = None
         bottom_log = tmp / "bottom.log"
@@ -355,7 +369,7 @@ def run_window_occlusion_case(client_binary):
 
                 send("sample 50 50")
                 _, sx, sy, b0, b1, b2, b3 = wait_line("pixel").split()
-                r, g, b = int(b2), int(b1), int(b0)
+                r, g, b = rgba(int(ready[3]), b0, b1, b2, b3)[:3]
                 # (50, 50) local to the bottom window falls inside the region
                 # the top (green) window visually covers on the real display.
                 # A window source must still return the bottom window's own
@@ -408,8 +422,8 @@ def run_window_camera_case(client_binary):
     with tempfile.TemporaryDirectory(prefix="rediwm-window-camera-") as directory:
         tmp = Path(directory)
         compositor, log = spawn_compositor(
-            tmp, scale="1", outputs="1", renderer="pixman",
-            config_content="[compositor]\nxwayland = false\n",
+            tmp, scale="1", outputs="1", renderer=os.environ.get("REDIWM_TEST_RENDERER", "pixman"),
+            config_content="[compositor]\nxwayland = false\n[animations]\nenabled = false\n",
             env_extra={"XDG_CACHE_HOME": str(tmp / "cache"), "WLR_RENDERER_ALLOW_SOFTWARE": "1"})
         client = None
         client_log = tmp / "client.log"
@@ -466,7 +480,7 @@ def run_window_camera_case(client_binary):
 
                 send("sample 50 50")
                 _, sx, sy, b0, b1, b2, b3 = wait_line("pixel").split()
-                r, g, b = int(b2), int(b1), int(b0)
+                r, g, b = rgba(int(ready[3]), b0, b1, b2, b3)[:3]
                 assert (r, g, b) == (255, 0, 0), (r, g, b)
 
                 print("capture: window capture unaffected by moving the window off-output and panning the camera")
@@ -506,8 +520,8 @@ def run_window_minimize_case(client_binary):
     with tempfile.TemporaryDirectory(prefix="rediwm-window-minimize-") as directory:
         tmp = Path(directory)
         compositor, log = spawn_compositor(
-            tmp, scale="1", outputs="1", renderer="pixman",
-            config_content="[compositor]\nxwayland = false\n",
+            tmp, scale="1", outputs="1", renderer=os.environ.get("REDIWM_TEST_RENDERER", "pixman"),
+            config_content="[compositor]\nxwayland = false\n[animations]\nenabled = false\n",
             env_extra={"XDG_CACHE_HOME": str(tmp / "cache"), "WLR_RENDERER_ALLOW_SOFTWARE": "1"})
         client = None
         client_log = tmp / "client.log"
@@ -594,8 +608,8 @@ def run_window_resize_case(client_binary):
     with tempfile.TemporaryDirectory(prefix="rediwm-window-resize-") as directory:
         tmp = Path(directory)
         compositor, log = spawn_compositor(
-            tmp, scale="1", outputs="1", renderer="pixman",
-            config_content="[compositor]\nxwayland = false\n",
+            tmp, scale="1", outputs="1", renderer=os.environ.get("REDIWM_TEST_RENDERER", "pixman"),
+            config_content="[compositor]\nxwayland = false\n[animations]\nenabled = false\n",
             env_extra={"XDG_CACHE_HOME": str(tmp / "cache"), "WLR_RENDERER_ALLOW_SOFTWARE": "1"})
         client = None
         client_log = tmp / "client.log"
@@ -647,11 +661,12 @@ def run_window_resize_case(client_binary):
 
                 send("window_capture")
                 ready2 = wait_line("ready").split()
+                ready = ready2
                 assert (int(ready2[1]), int(ready2[2])) == (320, 240), ready2
 
                 send("sample 50 50")
                 _, sx, sy, b0, b1, b2, b3 = wait_line("pixel").split()
-                r, g, b = int(b2), int(b1), int(b0)
+                r, g, b = rgba(int(ready[3]), b0, b1, b2, b3)[:3]
                 assert (r, g, b) == (255, 0, 0), (r, g, b)
 
                 print("capture: window resize reflected in a fresh capture request (200x150 -> 320x240)")
@@ -693,8 +708,8 @@ def run_window_destroy_case(client_binary):
     with tempfile.TemporaryDirectory(prefix="rediwm-window-destroy-") as directory:
         tmp = Path(directory)
         compositor, log = spawn_compositor(
-            tmp, scale="1", outputs="1", renderer="pixman",
-            config_content="[compositor]\nxwayland = false\n",
+            tmp, scale="1", outputs="1", renderer=os.environ.get("REDIWM_TEST_RENDERER", "pixman"),
+            config_content="[compositor]\nxwayland = false\n[animations]\nenabled = false\n",
             env_extra={"XDG_CACHE_HOME": str(tmp / "cache"), "WLR_RENDERER_ALLOW_SOFTWARE": "1"})
         owner = watcher = None
         owner_log = tmp / "owner.log"
@@ -800,7 +815,7 @@ def run_stop_all_case(client_binary):
         tmp = Path(directory)
         compositor, log = spawn_compositor(
             tmp, scale="1", outputs="1",
-            config_content="[compositor]\nxwayland = false\n",
+            config_content="[compositor]\nxwayland = false\n[animations]\nenabled = false\n",
             env_extra={"XDG_CACHE_HOME": str(tmp / "cache")})
         client = None
         client_log = tmp / "client.log"
@@ -884,7 +899,7 @@ def run_capture_state_case(client_binary):
         tmp = Path(directory)
         compositor, log = spawn_compositor(
             tmp, scale="1", outputs="1",
-            config_content="[compositor]\nxwayland = false\n",
+            config_content="[compositor]\nxwayland = false\n[animations]\nenabled = false\n",
             env_extra={"XDG_CACHE_HOME": str(tmp / "cache")})
         client = None
         client_log = tmp / "client.log"
@@ -967,7 +982,7 @@ def run_idle_blank_case(client_binary):
         tmp = Path(directory)
         compositor, log = spawn_compositor(
             tmp, scale="1", outputs="1",
-            config_content="[compositor]\nxwayland = false\n",
+            config_content="[compositor]\nxwayland = false\n[animations]\nenabled = false\n",
             env_extra={"XDG_CACHE_HOME": str(tmp / "cache")})
         client = None
         second_client = None
@@ -1077,7 +1092,7 @@ def run_output_destroy_case(client_binary):
         trigger = tmp / "unplug"
         compositor, log = spawn_compositor(
             tmp, scale="1", outputs="1",
-            config_content="[compositor]\nxwayland = false\n",
+            config_content="[compositor]\nxwayland = false\n[animations]\nenabled = false\n",
             env_extra={"XDG_CACHE_HOME": str(tmp / "cache"),
                        "LD_PRELOAD": str(hook), "REDIWM_TEST_UNPLUG": str(trigger)})
         client = None
@@ -1146,7 +1161,7 @@ def run_screenshot_coexistence_case(client_binary):
         tmp = Path(directory)
         compositor, log = spawn_compositor(
             tmp, scale="1", outputs="1",
-            config_content="[compositor]\nxwayland = false\n",
+            config_content="[compositor]\nxwayland = false\n[animations]\nenabled = false\n",
             env_extra={"XDG_CACHE_HOME": str(tmp / "cache")})
         client = None
         client_log = tmp / "client.log"
@@ -1178,10 +1193,11 @@ def run_screenshot_coexistence_case(client_binary):
                     line = wait_for(lambda: next((l for l in client_log.read_text()[len(before):].splitlines()
                                                   if l.startswith("pixel")), None),
                                     "no pixel sample reply")
+                    ready = next(l for l in client_log.read_text()[len(before):].splitlines() if l.startswith("ready")).split()
                     before = client_log.read_text()
                     _, sx, sy, b0, b1, b2, b3 = line.split()
                     assert (int(sx), int(sy)) == (x, y)
-                    return (int(b2), int(b1), int(b0))  # premultiplied BGRA -> RGB
+                    return rgba(int(ready[3]), b0, b1, b2, b3)[:3]
 
                 # Baseline: the real protocol sees the known red fixture pixel
                 # before any screenshot is involved.
@@ -1232,8 +1248,8 @@ def run():
         build_client(build_tmp)
         client_binary = build_tmp / "client"
 
-        run_case(client_binary, "pixman", "capture",
-                 (SHM_FORMAT_ARGB8888, SHM_FORMAT_XRGB8888), SHM_FORMAT_ARGB8888, "ext-image-copy-capture-v1 shm")
+        run_case(client_binary, os.environ.get("REDIWM_TEST_RENDERER", "pixman"), "capture",
+                 CAPTURE_FORMATS, SHM_FORMAT_ARGB8888, "ext-image-copy-capture-v1 shm")
 
         run_window_capture_case(client_binary)
         run_window_occlusion_case(client_binary)
@@ -1249,7 +1265,8 @@ def run():
 
         if any(Path("/dev/dri").glob("renderD*")):
             run_case(client_binary, "gles2", "capture_dmabuf",
-                     (DRM_FORMAT_ARGB8888, DRM_FORMAT_XRGB8888), DRM_FORMAT_ARGB8888, "ext-image-copy-capture-v1 dmabuf")
+                     (DRM_FORMAT_ARGB8888, DRM_FORMAT_XRGB8888, DRM_FORMAT_ABGR8888, DRM_FORMAT_XBGR8888),
+                     DRM_FORMAT_ARGB8888, "ext-image-copy-capture-v1 dmabuf")
         else:
             print("capture: dmabuf path skipped, no /dev/dri render node on this machine (untested, not failing)")
 

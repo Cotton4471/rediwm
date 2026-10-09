@@ -13,9 +13,10 @@ debugging on the host, see AGENTS.md, "Rendering".
 
 | Command | What it checks |
 | --- | --- |
-| `zig build test` | In-process unit tests: rasterizers vs. full rasters, UI, config, IPC parser/serializer fixtures, glass damage, projection damage, lifecycle/allocation failures, Files/desktop logic. No compositor or bus. |
+| `zig build test` | In-process unit tests: rasterizers vs. full rasters, UI, config, IPC parser/serializer fixtures, glass damage, projection damage and its typed graph (paint order, unrounded edges, list lifetime), lifecycle/allocation failures, Files/desktop logic. No compositor or bus. |
 | `zig build test-glass` | Real GLES2 pixels on a headless backend (needs a DRM render node). |
 | `zig build test-pass-spike` | The owned-pass spike of `docs/plans/scene-graph-stage1.md`: rounded clip, border, shadow, external-OES texture, backdrop blur, buffer-age damage and cost on headless GLES2 (needs a render node; `-Doptimize=ReleaseSafe` for cost). |
+| `zig build test-scene-pass` | Stage 3's owned GLES2 drawing backend against wlroots: transforms, crops, filters, premultiplied alpha, damage, external-OES (an RGB EGLImage and a linear NV12 dmabuf; needs gbm), GL/EGL state and acquire/release timelines. Needs a compatible render node (`WLR_RENDER_DRM_DEVICE` on multi-GPU machines); also run with `-Doptimize=ReleaseSafe`. The unavailable-acquire test intentionally logs `drmSyncobjTransfer failed`. |
 | `zig build test-lock` | Lock/greeter painter, password editing, PAM transitions (PAM is replaced at link time in test binaries only), greeter↔rediwm-dm conversation. |
 | `zig build test-dm` | rediwm-dm relay state machine and framing. |
 | `zig build test-dbus`, `test-polkit`, `test-polkit-ui`, `test-notifications`, `test-settings-portal`, `test-power`, `test-power-profiles`, `test-tray`, `test-app-activation`, `test-rediwm-session`, `test-layout-autosave`, `test-files`, `test-images` | Subsystem suites; the D-Bus ones re-exec under `dbus-run-session`. |
@@ -46,6 +47,18 @@ compiler, `wayland-scanner` and wayland-protocols; D-Bus suites need PyGObject,
   pixman and GLES2 runs compare output screenshots instead.
 - `REDIWM_TEST_SCALE=1.5` (or a `1.5` / `--scale 1.5` argument, per script):
   fractional scale. `REDIWM_TEST_OUTPUTS=2`: two outputs.
+- `REDIWM_TEST_SCENE_RENDERER=owned` with `REDIWM_TEST_RENDERER=gles2`: select
+  stage 3's owned output/capture path. Python fixtures write the temporary
+  `[compositor] scene_renderer` config key; production reads no test variable.
+  Use `legacy` for the comparison. Details and gate results:
+  `docs/plans/scene-graph-stage3.md`.
+- `python3 tests/scene_baseline.py --modes paired --configs scale1,scale1.5,mixed --out /tmp/scene-cost.json`:
+  run owned/legacy/legacy/owned in the same binary, with small repaints clear of
+  and under glass. Records instructions per committed frame, frame timers, RSS
+  and power conditions. Use a ReleaseSafe build and a render node; keep other
+  builds/tests stopped. Both counters and timers are enabled, so compare these
+  runs with each other, not the harness's `clean` mode. Read the saved results
+  with `--report /tmp/scene-cost.json`.
 - `REDIWM_*_PREVIEW=/tmp/...` (lock, greeter, OSD, settings, switcher, tray,
   notification): keep the compositor's own screenshots.
 - GLES2 at a fractional scale can differ by one level depending on render

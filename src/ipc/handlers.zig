@@ -1204,7 +1204,7 @@ fn handleAction(
             const scene_output = server.scene.getSceneOutput(target_out.wlr_output) orelse return .{ .err = "NoSceneOutput" };
             var state = wlr.Output.State.init();
             defer state.finish();
-            if (!scene_output.buildState(&state, null)) return .{ .err = "CaptureFailed: scene render failed" };
+            if (!server.buildOutputState(scene_output, &state)) return .{ .err = "CaptureFailed: scene render failed" };
             const buffer = state.buffer orelse return .{ .err = "CaptureFailed: missing frame buffer" };
             const texture = wlr.Texture.fromBuffer(server.renderer, buffer) orelse return .{ .err = "CaptureFailed: texture creation failed" };
             defer texture.destroy();

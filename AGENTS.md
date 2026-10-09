@@ -57,6 +57,11 @@ the one for the directory you work in: `src/files`, `src/editor`,
   `wlr_output_commit_state`. `commitIsRedundant` skips commits with no damage,
   colour change, attach-render lock or cursor change; register anything new
   there. Skipped frames get callbacks from `vblank_timer`, never immediately.
+  Build output state through `Server.buildOutputState`, including capture: it
+  selects the legacy or owned presenter and keeps one swapchain damage history.
+  The temporary `[compositor] scene_renderer = "owned"` requires GLES2 and a
+  restart. The owned pass reads graph geometry; scene nodes remain resource and
+  feedback transports until stage 6 (`docs/plans/scene-graph-stage3.md`).
 * **Idle makes no wakeups:** timers only for real deadlines, workers signal an
   eventfd, `text.applySize` instead of re-sizing faces, title changes repaint
   only their span and taskbar chip. Measure with per-thread context switches.
@@ -68,6 +73,15 @@ the one for the directory you work in: `src/files`, `src/editor`,
   (`Projection.damageBuffer` after `setBuffer`, or `presentOwned`). Cache keys
   include visual state, text, geometry and Cairo transform; round globally
   before subtracting projection group origins.
+* **Projection is resolve, then present** (`projection.c`, `scene_graph.h`).
+  `resolve` turns the source tree into typed items (kind, unrounded
+  layout-space edges, composed scale, content) listed in paint order per group
+  and moves no view; `present` rounds once (`rediwm_edges_snap`, edges not
+  origin+size) and applies. Geometry is derived only in `resolve`: a new rule
+  (clip, opacity, fractional placement) is a field on the item, not a
+  computation in `present_leaf`. A leaf or group leaves its `paint` list before
+  the head is freed (`detach`, `finish_group`). Buffer identity, wait points and
+  opaque regions are still read from the source node by `present`.
 * **Client buffers:** `wlr_client_buffer_apply_damage` works in place only
   without extra locks, so mark long-held locks ignorable. v4
   `attach(buffer, 0, 0)` still sets OFFSET; only nonzero dx/dy remaps. Don't

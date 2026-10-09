@@ -55,7 +55,8 @@ def run_case(disabled):
                     # vkcube sets no app id; it is the only client.
                     win = wait_for(lambda: next(iter(ipc.get_windows()), None), "vkcube did not map")
                     output = next(iter(ipc.get_outputs()), None)
-                    bottom = (output or {}).get("height") or 1080
+                    assert output is not None
+                    bottom = output["y"] + output["logical_height"]
                     ipc.action("move_window_to", {"id": win["id"], "x": 40, "y": bottom - win["height"] // 2})
                 # Every image comes back only through a release point.
                 client.wait(timeout=60)

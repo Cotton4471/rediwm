@@ -37,7 +37,7 @@ def run():
         build_client(tmp)
         compositor, log = spawn_compositor(
             tmp, scale=str(scale), renderer=renderer,
-            config_content="[compositor]\nxwayland = false\n",
+            config_content="[compositor]\nxwayland = false\n[animations]\nenabled = false\n",
             env_extra={"XDG_CACHE_HOME": str(tmp / "cache"), "WLR_RENDERER_ALLOW_SOFTWARE": "1"})
         client = None
         client_log = tmp / "client.log"
@@ -82,9 +82,12 @@ def run():
                 def expect(image, x, y, rgb):
                     window = next(w for w in ipc.get_windows() if w["id"] == win["id"])
                     camera = ipc.action("get_camera")
-                    zoom = window["zoom_percent"] / 100
-                    px = ((window["x"] - camera["x"]) * camera["zoom_percent"] / 100 + x * zoom) * scale
-                    py = ((window["y"] - camera["y"]) * camera["zoom_percent"] / 100 + y * zoom) * scale
+                    debug = ipc.get_window_debug(win["id"])
+                    zoom = debug["effective_zoom"]
+                    camera_zoom = camera["zoom_percent"] / 100
+                    client = debug["client_box"]
+                    px = ((window["x"] - camera["x"]) * camera_zoom + (client["x"] - window["x"] + x) * zoom) * scale
+                    py = ((window["y"] - camera["y"]) * camera_zoom + (client["y"] - window["y"] + y) * zoom) * scale
                     actual = image.getpixel((round(px), round(py)))
                     assert all(abs(a - b) <= 1 for a, b in zip(actual, rgb)), (x, y, actual, rgb)
 

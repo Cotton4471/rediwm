@@ -17,6 +17,7 @@ const geometry = @import("geometry.zig");
 const icon_theme = @import("icon_theme.zig");
 const icon_service_mod = @import("icon_service.zig");
 const glass = @import("glass.zig");
+const scene_output_mod = @import("scene_output.zig");
 const explicit_sync = @import("explicit_sync.zig");
 const ipc_server = @import("ipc/server.zig");
 const screenshot = @import("screenshot/capture.zig");
@@ -98,6 +99,7 @@ gpu_timer_used_ns: u64 = 0,
 allocator: *wlr.Allocator,
 scene: *wlr.Scene,
 glass_engine: ?*glass.Engine = null,
+output_renderer: ?*scene_output_mod.Renderer = null,
 // Set when wp_linux_drm_syncobj_v1 is advertised: release points for client
 // buffers the glass and window capture passes read (see explicit_sync.c).
 read_fence: ?*explicit_sync.ReadFence = null,
@@ -456,6 +458,11 @@ pub fn init(server: *Server, scale: ?f32, icon_theme_cfg: icon_theme.Config, io:
     // measurements; every glass call already accepts a null engine.
     server.glass_engine = if (environ.getPosix("REDIWM_NO_GLASS") != null) null else glass.Engine.create(renderer, wlr_allocator, scene, server.read_fence);
     errdefer glass.Engine.destroy(server.glass_engine);
+    if (loaded.compositor.scene_renderer == .owned) {
+        server.output_renderer = scene_output_mod.Renderer.create(renderer) orelse return error.RendererInitFailed;
+        log.info("scene renderer: owned GLES2 output pass", .{});
+    }
+    errdefer scene_output_mod.Renderer.destroy(server.output_renderer);
     server.outputs.init();
     server.layer_surfaces.init();
     try server.world.init(server, world_tree, world_view);
@@ -1019,6 +1026,7 @@ pub fn deinit(server: *Server) void {
     server.world.deinit();
     server.start_menu_catalog.deinit();
     glass.Engine.destroy(server.glass_engine);
+    scene_output_mod.Renderer.destroy(server.output_renderer);
     explicit_sync.ReadFence.destroy(server.read_fence);
     server.scene.tree.node.destroy();
     server.output_layout.destroy();
@@ -1029,6 +1037,20 @@ pub fn deinit(server: *Server) void {
     server.config.deinit();
     server.wl_server.destroy();
     log.info("compositor session teardown complete", .{});
+}
+
+/// All output builds, including capture between frames, use the selected
+/// presenter and the same swapchain/damage history. Commits stay on Output.
+pub fn buildOutputState(server: *Server, output: *wlr.SceneOutput, state: *wlr.Output.State) bool {
+    if (server.output_renderer) |renderer|
+        return renderer.buildState(server.world.projection, output, state);
+    return output.buildState(state, null);
+}
+
+pub fn beginRenderPass(server: *Server, buffer: *wlr.Buffer, options: ?*const wlr.Renderer.BufferPassOptions) !*wlr.RenderPass {
+    if (server.output_renderer) |renderer|
+        return renderer.beginPass(buffer, options) orelse error.RenderPassFailed;
+    return server.renderer.beginBufferPass(buffer, options);
 }
 
 pub fn maxOutputScale(server: *Server) f32 {

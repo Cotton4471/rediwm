@@ -1006,6 +1006,7 @@ static void update_effect(struct glass_effect *effect, float scale) {
         effect->radius *= effect->zoom;
     }
     update_effect_inner(effect, scale);
+    rediwm_projection_effect_updated(effect->node, effect->target);
     effect->node = node; effect->target = target; effect->radius = radius;
 }
 bool rediwm_glass_is_effect_node(struct wlr_scene_node *node) {

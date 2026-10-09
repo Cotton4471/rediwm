@@ -328,9 +328,11 @@ pub const Manager = struct {
         var state = wlr.Output.State.init();
         defer state.finish();
 
-        if (!scene_output.buildState(&state, null)) {
+        if (is_isolated) mgr.server.world.syncPresentation();
+        if (!mgr.server.buildOutputState(scene_output, &state)) {
             if (is_isolated) {
                 for (disabled_nodes.items) |node| node.setEnabled(true);
+                mgr.server.world.syncPresentation();
             }
             log.err("processPendingJob: buildState failed for {s}", .{job.output_name});
             failJob(job, "CaptureFailed: scene render failed");
@@ -340,6 +342,7 @@ pub const Manager = struct {
         const buffer = state.buffer orelse {
             if (is_isolated) {
                 for (disabled_nodes.items) |node| node.setEnabled(true);
+                mgr.server.world.syncPresentation();
             }
             log.err("processPendingJob: output state has no buffer for {s}", .{job.output_name});
             failJob(job, "CaptureFailed: missing frame buffer");
@@ -349,6 +352,7 @@ pub const Manager = struct {
         const texture = wlr.Texture.fromBuffer(mgr.server.renderer, buffer) orelse {
             if (is_isolated) {
                 for (disabled_nodes.items) |node| node.setEnabled(true);
+                mgr.server.world.syncPresentation();
             }
             log.err("processPendingJob: failed to create texture from buffer for {s}", .{job.output_name});
             failJob(job, "CaptureFailed: texture creation failed");
@@ -391,6 +395,7 @@ pub const Manager = struct {
         if (dev_w == 0 or dev_h == 0) {
             if (is_isolated) {
                 for (disabled_nodes.items) |node| node.setEnabled(true);
+                mgr.server.world.syncPresentation();
             }
             failJob(job, "CaptureFailed: zero-size crop box");
             return;
@@ -400,6 +405,7 @@ pub const Manager = struct {
         if (total_pixels > 32_000_000) {
             if (is_isolated) {
                 for (disabled_nodes.items) |node| node.setEnabled(true);
+                mgr.server.world.syncPresentation();
             }
             failJob(job, "CaptureFailed: image exceeds 32M pixel limit");
             return;
@@ -408,6 +414,7 @@ pub const Manager = struct {
         const pixels = mgr.allocator.alloc(u32, dev_w * dev_h) catch {
             if (is_isolated) {
                 for (disabled_nodes.items) |node| node.setEnabled(true);
+                mgr.server.world.syncPresentation();
             }
             failJob(job, "OutOfMemory");
             return;
@@ -432,6 +439,7 @@ pub const Manager = struct {
             mgr.allocator.free(pixels);
             if (is_isolated) {
                 for (disabled_nodes.items) |node| node.setEnabled(true);
+                mgr.server.world.syncPresentation();
             }
             failJob(job, "CaptureFailed: readPixels failed");
             return;
@@ -439,10 +447,11 @@ pub const Manager = struct {
 
         if (is_isolated) {
             for (disabled_nodes.items) |node| node.setEnabled(true);
+            mgr.server.world.syncPresentation();
             // Render full normal scene cleanly
             var state_normal = wlr.Output.State.init();
             defer state_normal.finish();
-            if (scene_output.buildState(&state_normal, null)) {
+            if (mgr.server.buildOutputState(scene_output, &state_normal)) {
                 if (!job.output.commitFrameState(&state_normal)) {
                     log.err("processPendingJob: scene commit failed for {s}", .{job.output_name});
                 }

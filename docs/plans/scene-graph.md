@@ -1,7 +1,7 @@
 # Plan: compositor-owned scene graph and render pass
 
-Status: decided, not started. Updated 2026-10-08. Replaces the September 2026
-proposal.
+Status: decided; stages 0–2 done, stage 3 in progress. Updated 2026-10-09.
+Replaces the September 2026 proposal.
 
 Decision (2026-10-08): clipped, rounded client corners are a hard requirement,
 and the way to get them is an owned render pass. Doing it properly matters more
@@ -125,13 +125,31 @@ environment variable: no test hooks in production), removed in stage 6.
    criteria), correct premultiplied edges, measured cost within the stage 0
    baseline, buffer-age damage correct under an effect. Failing the gate is a
    result: revise the design before stage 2.
-2. **Typed node model behind the existing presenter.** `projection.c`'s
-   view sync consumes the typed graph (float coordinates, clip, opacity) and
-   rounds for `wlr_scene`. No visible change; existing tests pass unchanged.
-3. **Owned output pass at parity (radius 0).** Everything in the stage 0
+2. **Typed node model behind the existing presenter.** *Done 2026-10-09: 16 of 16
+   goldens bit-identical, instructions/s and RSS flat, +13 % on a steady-state
+   sync; clip and tree opacity are left for stage 4, which is their first
+   producer. Details in [scene-graph-stage2.md](scene-graph-stage2.md).*
+   `projection.c`'s view sync consumes the typed graph (float coordinates, clip,
+   opacity) and rounds for `wlr_scene`. No visible change; existing tests pass
+   unchanged.
+3. **Owned output pass at parity (radius 0).** *Done 2026-10-09 except hardware
+   qualification (a real KMS plane, out-timeline release and hotplug, which need
+   a session of their own). Behind `[compositor] scene_renderer = "owned"`, legacy
+   still the default; 16/16 goldens bit-identical, NV12 external textures covered.
+   Cost passes the stage 3 tolerance below: build CPU at most +4.4 %, GPU at most
+   +2.7 %, memory +0.44 MiB. See [scene-graph-stage3.md](scene-graph-stage3.md).*
+   Everything in the stage 0
    inventory, plus capture, screenshots, lock coverage and hotplug through the
    new path. Exit: pixel-equivalent to the legacy presenter within tolerance
-   and cost at or below baseline, including scanout where it applied.
+   and cost within the stage 3 tolerance, including scanout where it applied.
+   **Stage 3 tolerance (decided 2026-10-09; this stage only):** while two
+   backends coexist, "at or below baseline" is relaxed to, measured by the
+   in-process frame-block A/B on ReleaseSafe against the legacy presenter in every
+   cell (clear and under glass; scale 1, 1.5 and mixed): output-build CPU within
+   +5 %, GPU elapsed within +5 %, instructions per committed frame within ±3 %,
+   anonymous memory at most +0.5 MiB at startup and no growth under sustained
+   damage. Stages 4–6 are judged against the stage 0 baseline, and the final state
+   (stage 6) must again be at or below it.
 4. **Clipping and primitives.** Clip groups on frames, analytic borders and
    shadows, shape-aware hit testing; delete the skirt, `probeClientEdge`,
    `side_fills`, the dual border path and `edge_sampling.py`; shrink the footer.
@@ -160,7 +178,7 @@ numbers.
 | Chrome CPU on resize/move | Lower if arcs, borders and shadows stop being CPU rasters; title text still is. |
 | GPU | A mask multiply per client pixel is negligible; the backdrop copy is the real cost. Check `gpu_elapsed`. |
 | Scanout | Preserved for opaque fullscreen clients. |
-| RAM | Not above baseline: per-effect capture/output/intermediate buffers shrink, shadow/skirt buffers go; shader programs and damage rings are tiny. |
+| RAM | Not above baseline: per-effect capture/output/intermediate buffers shrink, shadow/skirt buffers go; shader programs and damage rings are tiny. Stage 3 alone may exceed it by 0.5 MiB (a second set of programs) until stage 6 deletes the legacy path. |
 
 ## Acceptance requirements
 

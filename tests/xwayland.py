@@ -27,13 +27,14 @@ def wait_for(check, message, timeout=15):
 
 
 def start_compositor(tmp, config_text, env_overrides=None):
-    (tmp / "config.toml").write_text(config_text)
+    from ipc_client import scene_renderer_config
+    (tmp / "config.toml").write_text(scene_renderer_config(config_text))
     env = dict(
         os.environ,
         XDG_RUNTIME_DIR=str(tmp),
         WLR_BACKENDS="headless",
         WLR_HEADLESS_OUTPUTS="1",
-        WLR_RENDERER="pixman",
+        WLR_RENDERER=os.environ.get("REDIWM_TEST_RENDERER", "pixman"),
         REDIWM_SCALE="1",
         REDIWM_CONFIG=str(tmp / "config.toml"),
         REDIWM_IPC_AUTOMATION="1",

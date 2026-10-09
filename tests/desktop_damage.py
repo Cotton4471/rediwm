@@ -16,7 +16,7 @@ import time
 
 from PIL import Image, ImageChops
 
-from ipc_client import IPCClient, ROOT
+from ipc_client import IPCClient, ROOT, scene_renderer_config
 
 
 def run(args):
@@ -29,8 +29,8 @@ def run(args):
             (desktop_dir / name).write_text("desktop damage fixture")
         config = tmp / "config.toml"
         def configure_scale(scale, desktop=True):
-            config.write_text(f'[compositor]\nxwayland = false\n[desktop]\nenabled = {str(desktop).lower()}\n'
-                              f'[[outputs]]\nname = "HEADLESS-1"\nscale = {scale}\n')
+            config.write_text(scene_renderer_config(f'[compositor]\nxwayland = false\n[desktop]\nenabled = {str(desktop).lower()}\n'
+                              f'[[outputs]]\nname = "HEADLESS-1"\nscale = {scale}\n'))
 
         configure_scale(args.scale)
         env = dict(os.environ, XDG_RUNTIME_DIR=directory,

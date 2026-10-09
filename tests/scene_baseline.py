@@ -13,6 +13,12 @@ never calls the performance IPC, and the compositor's own frame timers
     python3 tests/scene_baseline.py --out baseline.json --capture golden/
     python3 tests/scene_baseline.py --binary other/rediwm --out new.json --compare golden/
     python3 tests/scene_baseline.py --report new.json --against baseline.json
+    python3 tests/scene_baseline.py --modes paired --configs scale1,scale1.5,mixed --out cost.json
+
+"paired" runs owned/legacy/legacy/owned with small repaints clear of and under
+glass. Both instruction counts and frame timers are enabled in every run; these
+figures must not be compared with the ordinary "clean" sessions. Instructions
+are normalized per committed frame. Run without concurrent builds or tests.
 
 Needs a render node (pick one with WLR_RENDER_DRM_DEVICE on multi-GPU machines),
 `perf` for instruction counts (optional) and Pillow. Never touches the host session.
@@ -495,6 +501,71 @@ def machine_info(args):
             "date": time.strftime("%Y-%m-%d %H:%M:%S")}
 
 
+def run_cost_pairs(args):
+    """Interleave presenters in the same binary, preserving the raw measurements."""
+    order = ("owned", "legacy", "legacy", "owned")
+    data = {"mode": "paired", "meta": machine_info(args), "order": order, "runs": []}
+    previous = os.environ.get("REDIWM_TEST_SCENE_RENDERER")
+    try:
+        for config in args.configs.split(","):
+            for presenter in order:
+                os.environ["REDIWM_TEST_SCENE_RENDERER"] = presenter
+                with tempfile.TemporaryDirectory(prefix="rediwm-scene-cost-") as directory:
+                    tmp = Path(directory)
+                    build_client(tmp)
+                    session = Session(tmp, config, args.binary, args.renderer, True, not args.no_perf, args.seconds)
+                    power_before = power_state()
+                    try:
+                        for key in ("a", "b", "c"):
+                            session.start_client(key)
+                        session.raise_b()
+                        session.settle(1)
+                        glass, clear = session.spinner_rects()
+                        for name, rect in (("clear", clear), ("glass", glass)):
+                            session.start_client("c", "damage", rect)
+                            session.raise_b()
+                            session.settle(1)
+                            print(f"[{config}/{presenter}/{name}]", flush=True)
+                            result = session.measure(name)
+                            commits = result["stats"]["output_commits"]
+                            assert commits > 0, "damage client stopped committing"
+                            if "instructions_per_s" in result:
+                                result["instructions_per_commit"] = result["instructions_per_s"] * result["seconds"] / commits
+                            data["runs"].append({"config": config, "presenter": presenter,
+                                                 "scenario": name, "result": result,
+                                                 "power_before": power_before, "power_after": power_state()})
+                    finally:
+                        session.close()
+                    assert power_before == power_state(), "power conditions changed; discard this session"
+                if args.out:
+                    args.out.write_text(json.dumps(data, indent=1) + "\n")
+    finally:
+        if previous is None:
+            os.environ.pop("REDIWM_TEST_SCENE_RENDERER", None)
+        else:
+            os.environ["REDIWM_TEST_SCENE_RENDERER"] = previous
+    print_cost_report(data)
+
+
+def print_cost_report(data):
+    print("\nPaired cost (instructions owned/legacy; output CPU legacy -> owned; anonymous RSS delta)")
+    groups = {}
+    for row in data["runs"]:
+        groups.setdefault((row["config"], row["scenario"]), {}).setdefault(row["presenter"], []).append(row["result"])
+    for (config, scenario), presenters in groups.items():
+        if any(len(presenters.get(presenter, [])) != 2 for presenter in ("owned", "legacy")):
+            print(f"  {config:16s} {scenario:6s} incomplete pair; no comparison")
+            continue
+        def mean(presenter, field):
+            return sum(field(r) for r in presenters[presenter]) / len(presenters[presenter])
+        have_instructions = all("instructions_per_commit" in r for rows in presenters.values() for r in rows)
+        ratio = (f"{mean('owned', lambda r: r['instructions_per_commit']) / mean('legacy', lambda r: r['instructions_per_commit']):.3f}"
+                 if have_instructions else "unavailable")
+        cpu = [mean(p, lambda r: r["stats"]["scene_commit_cpu_avg_ms"]) for p in ("legacy", "owned")]
+        rss = mean("owned", lambda r: r["rss_anon_kb"]) - mean("legacy", lambda r: r["rss_anon_kb"])
+        print(f"  {config:16s} {scenario:6s} {ratio:>11s}  {cpu[0]:.3f} -> {cpu[1]:.3f} ms  {rss:+.0f} KiB")
+
+
 # -- golden comparison -------------------------------------------------------
 
 def compare_images(new_bytes, new_meta, golden_dir, key, tolerance):
@@ -569,7 +640,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--binary", type=Path, help="compositor to run (default zig-out/bin/rediwm)")
     parser.add_argument("--configs", default=",".join(CONFIGS), help=f"comma list of {', '.join(CONFIGS)}")
-    parser.add_argument("--modes", default="clean,stats", help="clean (process cost), stats (frame timers)")
+    parser.add_argument("--modes", default="clean,stats", help="clean (process cost), stats (frame timers), or paired (presenter cost)")
     parser.add_argument("--seconds", type=float, default=DEFAULT_SECONDS, help="per scenario (idle runs at least 5)")
     parser.add_argument("--renderer", default=os.environ.get("REDIWM_TEST_RENDERER", "gles2"))
     parser.add_argument("--cpus", default="auto", help="'auto' (P-cores), 'none' or a list like 2-9")
@@ -585,8 +656,19 @@ def main():
 
     against = json.loads(args.against.read_text()) if args.against else None
     if args.report:
-        print_report(json.loads(args.report.read_text()), against)
+        data = json.loads(args.report.read_text())
+        if data.get("mode") == "paired":
+            print_cost_report(data)
+        else:
+            print_report(data, against)
         return
+    modes = args.modes.split(",")
+    if any(mode not in ("clean", "stats", "paired") for mode in modes):
+        parser.error("modes must be clean, stats, or paired")
+    if "paired" in modes and (modes != ["paired"] or args.capture or args.compare or args.against):
+        parser.error("paired runs separately from clean/stats and golden capture/comparison")
+    if args.seconds <= 0:
+        parser.error("seconds must be positive")
     if args.cpus != "none":
         cpus = p_core_cpus() if args.cpus == "auto" else set(
             c for part in args.cpus.split(",") for c in range(int(part.partition("-")[0]), int(part.rpartition("-")[2]) + 1))
@@ -601,6 +683,9 @@ def main():
     unknown = [c for c in args.configs.split(",") if c not in CONFIGS]
     if unknown:
         parser.error(f"unknown config {unknown}")
+    if modes == ["paired"]:
+        run_cost_pairs(args)
+        return
     results, shots = {}, {}
     for config in args.configs.split(","):
         for mode in args.modes.split(","):

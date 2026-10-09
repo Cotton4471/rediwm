@@ -702,6 +702,17 @@ pub fn build(b: *std.Build) void {
     const run_pass_spike_tests = b.addRunArtifact(pass_spike_tests);
     run_pass_spike_tests.setEnvironmentVariable("WLR_RENDERER", "gles2");
     b.step("test-pass-spike", "Run the owned-pass spike's pixel gates on a headless GLES2 renderer").dependOn(&run_pass_spike_tests.step);
+    const scene_pass_tests = b.addExecutable(.{
+        .name = "scene-pass-tests",
+        .root_module = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true }),
+    });
+    scene_pass_tests.root_module.addCSourceFile(.{ .file = b.path("src/scene_pass_test.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    inline for (.{ "wlroots-0.20", "wayland-server", "pixman-1", "egl", "glesv2", "gbm" }) |lib| {
+        scene_pass_tests.root_module.linkSystemLibrary(lib, .{});
+    }
+    const run_scene_pass_tests = b.addRunArtifact(scene_pass_tests);
+    run_scene_pass_tests.setEnvironmentVariable("WLR_RENDERER", "gles2");
+    b.step("test-scene-pass", "Compare the owned GLES2 pass with wlroots on a headless renderer").dependOn(&run_scene_pass_tests.step);
     const run_glass_damage_tests = b.addRunArtifact(glass_tests);
     run_glass_damage_tests.addArg("--damage-only");
     b.step("test-glass-damage", "Test backdrop invalidation without a GPU").dependOn(&run_glass_damage_tests.step);
@@ -762,6 +773,8 @@ fn addGlass(b: *std.Build, module: *std.Build.Module) void {
     module.linkSystemLibrary("egl", .{});
     module.linkSystemLibrary("glesv2", .{});
     module.addCSourceFile(.{ .file = b.path("src/projection.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra" } });
+    module.addCSourceFile(.{ .file = b.path("src/scene_pass.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    module.addCSourceFile(.{ .file = b.path("src/scene_output.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     module.addCSourceFile(.{ .file = b.path("src/glass.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra" } });
     module.addCSourceFile(.{ .file = b.path("src/explicit_sync.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     module.addCSourceFile(.{ .file = b.path("src/extra_protocols.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
