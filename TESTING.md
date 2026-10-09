@@ -115,7 +115,7 @@ GLES requires a render node; `--persistence-only` runs the restart/control check
 maximize/fullscreen placement, restore, window rules and depth), `taskbar_peek.py`,
 `taskbar_title_repaint.py`, `window_urgency.py`, `start_menu.py`,
 `power_menu.py` (only ever activates Log Out), `control_center.py`,
-`control_center.py --services-only` (private systemd and polkit fixture: availability, in-table loading, unlock/lock and prompt cancellation, startup settings, Notify service types and isolated drop-in edits, runtime actions, authorization refusal, analysis, live updates and lifetime),
+`control_center.py --services-only` (private systemd and polkit fixture: availability, in-table loading, unlock/lock and prompt cancellation, startup settings, Notify service types and isolated drop-in edits, runtime actions, authorization refusal, analysis, in-place state updates and coalesced reloads, signal-flood resistance, nothing read until the page is shown or while it is hidden, no RefUnit or unloaded-unit reads, the IPC lease, and lifetime),
 `calendar_popup.py`, `bluetooth.py` (private BlueZ service; Settings device search,
 radio, discovery cleanup, battery updates, PIN/passkey/confirmation pairing,
 connect/disconnect, trust, removal, permissions and service restarts), `wifi_popup.py` (private NetworkManager service; popup and

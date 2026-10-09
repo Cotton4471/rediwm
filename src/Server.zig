@@ -847,7 +847,6 @@ pub fn getSystemd(server: *Server) !*@import("systemd.zig").Client {
     if (server.systemd_client) |client| return client;
     const client = try @import("systemd.zig").Client.create(server);
     server.systemd_client = client;
-    client.watching = true;
     return client;
 }
 

@@ -131,7 +131,7 @@ pub fn build(s: *Section, cc: *panel.ControlCenter) void {
     };
 }
 fn tree(s: *Section, cc: *panel.ControlCenter, client: *systemd.Client, a: std.mem.Allocator, saved: ?ui.layout.TextInputData) !W {
-    client.open();
+    client.show();
     const units = client.snapshot.units.items;
     const narrow = cc.panel_box.width < 1040;
     const gutter = ui.widgets.scrollbar.gutter(ui.theme.global.scrollbar_width);

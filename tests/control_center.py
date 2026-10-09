@@ -426,7 +426,7 @@ UNIT = NAME + ".Unit"
 SERVICE = NAME + ".Service"
 conn = Gio.bus_get_sync(Gio.BusType.SESSION)
 xml = """<node><interface name='org.freedesktop.systemd1.Manager'>
-<method name='Subscribe'/><method name='Reload'/>
+<method name='Subscribe'/><method name='Unsubscribe'/><method name='Reload'/>
 <method name='LoadUnit'><arg type='s' direction='in'/><arg type='o' direction='out'/></method>
 <method name='RefUnit'><arg type='s' direction='in'/></method>
 <method name='ListUnits'><arg type='a(ssssssouso)' direction='out'/></method>
@@ -445,6 +445,10 @@ unit_xml = """<node><interface name='org.freedesktop.systemd1.Unit'>
 <property name='ActiveEnterTimestampMonotonic' type='t' access='read'/>
 <property name='TriggeredBy' type='as' access='read'/>
 <property name='LoadState' type='s' access='read'/>
+<property name='Description' type='s' access='read'/>
+<property name='ActiveState' type='s' access='read'/>
+<property name='SubState' type='s' access='read'/>
+<property name='Transient' type='b' access='read'/>
 </interface></node>"""
 service_xml = """<node><interface name='org.freedesktop.systemd1.Service'>
 <property name='Type' type='s' access='read'/>
@@ -469,23 +473,39 @@ types.update({'alpha.service': 'notify', 'beta.service': 'exec', 'slow.service':
 types.update({'worker-00.service': 'idle', 'worker-01.service': 'notify-reload'})
 log = open(os.environ['SYSTEMD_TEST_LOG'], 'a', buffering=1)
 delay_next = False
+subscribed = False
+no_file = set()
+unloaded = set()
 def record(method, args=None, flags=0):
  log.write(json.dumps({'method': method, 'args': args, 'flags': flags}) + '\n')
+# Signals go out whether or not anyone subscribed: a client that is not meant to
+# be listening has to have dropped its own matches.
 def emit(member, signature='()', values=()):
  conn.emit_signal(None, PATH, IFACE, member, GLib.Variant(signature, values))
+def changed(key, **values):
+ conn.emit_signal(None, paths[key], 'org.freedesktop.DBus.Properties', 'PropertiesChanged', GLib.Variant('(sa{sv}as)', (UNIT, {k: GLib.Variant('s', v) for k, v in values.items()}, [])))
 def method(c, sender, object_path, iface, member, params, invocation):
- global delay_next
+ global delay_next, subscribed
  args = params.unpack()
  record(member, args, int(invocation.get_message().get_flags()))
- if member == 'ListUnits':
-  rows = [(key, v[0], 'loaded', v[1], v[2], '', paths[key], 0, '', '/') for key,v in units.items()]
+ if member == 'Subscribe':
+  if subscribed:
+   invocation.return_dbus_error('org.freedesktop.systemd1.AlreadySubscribed', 'Client is already subscribed.')
+  else:
+   subscribed = True
+   invocation.return_value(GLib.Variant('()', ()))
+ elif member == 'Unsubscribe':
+  subscribed = False
+  invocation.return_value(GLib.Variant('()', ()))
+ elif member == 'ListUnits':
+  rows = [(key, v[0], 'loaded', v[1], v[2], '', paths[key], 0, '', '/') for key,v in units.items() if key not in unloaded]
   if delay_next:
    delay_next = False
    GLib.timeout_add(1000, lambda: (invocation.return_value(GLib.Variant('(a(ssssssouso))', (rows,))), False)[1])
   else:
    invocation.return_value(GLib.Variant('(a(ssssssouso))', (rows,)))
  elif member == 'ListUnitFiles':
-  rows = [('/usr/lib/systemd/system/' + key, v[3]) for key,v in units.items()]
+  rows = [('/usr/lib/systemd/system/' + key, v[3]) for key,v in units.items() if key not in no_file]
   rows.append(('/usr/lib/systemd/system/unloaded.service', 'disabled'))
   invocation.return_value(GLib.Variant('(a(ss))', (rows,)))
  elif member == 'LoadUnit':
@@ -508,6 +528,7 @@ def method(c, sender, object_path, iface, member, params, invocation):
   units[key][1:3] = ['inactive', 'dead'] if member == 'StopUnit' else ['active', 'running']
   job = PATH + '/job/1'
   invocation.return_value(GLib.Variant('(o)', (job,)))
+  changed(key, ActiveState=units[key][1], SubState=units[key][2])
   GLib.timeout_add(30, lambda: (emit('JobRemoved', '(uoss)', (1, job, key, 'done')), False)[1])
  else:
   invocation.return_value(GLib.Variant('()', ()))
@@ -528,19 +549,26 @@ def authority(c, sender, object_path, iface, member, params, invocation):
    pending_check = None
   invocation.return_value(GLib.Variant('()', ()))
 def prop(c, sender, object_path, iface, key):
- record('Property:' + key)
+ record('Property:' + key, object_path)
  if key == 'FinishTimestampMonotonic': return GLib.Variant('t', 3500000)
  unit = next(k for k,v in paths.items() if v == object_path)
  if key == 'Type': return GLib.Variant('s', types[unit])
  if key == 'LoadState': return GLib.Variant('s', 'loaded')
+ if key == 'Transient': return GLib.Variant('b', False)
+ row = units.get(unit, ['Not loaded', 'inactive', 'dead', 'disabled', 0])
+ if key == 'Description': return GLib.Variant('s', row[0])
+ if key == 'ActiveState': return GLib.Variant('s', row[1])
+ if key == 'SubState': return GLib.Variant('s', row[2])
  if key == 'TriggeredBy': return GLib.Variant('as', ['alpha.socket'] if unit == 'alpha.service' else [])
  duration = units[unit][4] if unit in units else 0
  return GLib.Variant('t', 1000000 if key.startswith('Inactive') else 1000000 + duration)
 conn.register_object('/org/freedesktop/PolicyKit1/Authority', Gio.DBusNodeInfo.new_for_xml(polkit_xml).interfaces[0], authority, None, None)
 conn.register_object(PATH, Gio.DBusNodeInfo.new_for_xml(xml).interfaces[0], method, prop, None)
-for object_path in paths.values():
+def register(object_path):
  conn.register_object(object_path, Gio.DBusNodeInfo.new_for_xml(unit_xml).interfaces[0], None, prop, None)
  conn.register_object(object_path, Gio.DBusNodeInfo.new_for_xml(service_xml).interfaces[0], None, prop, None)
+for object_path in paths.values():
+ register(object_path)
 def stdin_ready(*_):
  global delay_next
  cmd = sys.stdin.readline().strip()
@@ -548,8 +576,33 @@ def stdin_ready(*_):
   delay_next = True
   record('delay_ready')
  elif cmd == 'change':
+  # Names only, as systemd does for properties it does not push the value of.
   units['alpha.service'][1:3] = ['failed', 'failed']
-  conn.emit_signal(None, paths['alpha.service'], 'org.freedesktop.DBus.Properties', 'PropertiesChanged', GLib.Variant('(sa{sv}as)', (UNIT, {}, ['ActiveState'])))
+  conn.emit_signal(None, paths['alpha.service'], 'org.freedesktop.DBus.Properties', 'PropertiesChanged', GLib.Variant('(sa{sv}as)', (UNIT, {}, ['ActiveState', 'SubState'])))
+ elif cmd == 'flood':
+  # What systemd does while something loads units in bulk: thousands of signals
+  # a second, mostly for mounts and targets, many of them names only.
+  for i in range(1000):
+   emit('UnitNew', '(so)', ('var.mount', PATH + '/unit/var_2emount'))
+   emit('UnitRemoved', '(so)', ('var.mount', PATH + '/unit/var_2emount'))
+   conn.emit_signal(None, paths['alpha.service'], 'org.freedesktop.DBus.Properties', 'PropertiesChanged', GLib.Variant('(sa{sv}as)', (UNIT, {}, ['Description', 'Conditions', 'ActiveState'])))
+  for i in range(300):
+   emit('UnitNew', '(so)', ('worker-05.service', paths['worker-05.service']))
+  record('flood_done')
+ elif cmd == 'new':
+  key = 'fresh.service'
+  units[key] = ['Fresh worker', 'active', 'running', 'static', 0]
+  no_file.add(key)
+  paths[key] = PATH + '/unit/fresh'
+  types[key] = 'simple'
+  register(paths[key])
+  emit('UnitNew', '(so)', (key, paths[key]))
+ elif cmd == 'gone':
+  del units['fresh.service']
+  emit('UnitRemoved', '(so)', ('fresh.service', paths['fresh.service']))
+ elif cmd == 'unload':
+  unloaded.add('beta.service')
+  emit('UnitRemoved', '(so)', ('beta.service', paths['beta.service']))
  elif cmd == 'type':
   types['alpha.service'] = 'dbus'
   conn.emit_signal(None, paths['alpha.service'], 'org.freedesktop.DBus.Properties', 'PropertiesChanged', GLib.Variant('(sa{sv}as)', (SERVICE, {}, ['Type'])))
@@ -660,6 +713,9 @@ def systemd_services(scale):
                         except ValueError: pass  # a writer is mid-append
                     return result
                 def checks(): return [r for r in records() if r['method'] == 'CheckAuthorization']
+                def count(method): return len([r for r in records() if r['method'] == method])
+                def reads(): return [r for r in records() if r['method'].startswith('Property:')]
+                unloaded_path = '/org/freedesktop/systemd1/unit/unloaded'
                 def scroll_service_into_view(name):
                     for _ in range(40):
                         widget = ui.find(name)
@@ -684,6 +740,9 @@ def systemd_services(scale):
                     wait(lambda: not ui.find(name)['is_disabled'], 'control ready: ' + name)
                     ui.click(scroll_service_into_view(name), panel='control_center', fraction=fraction)
                     ui.wait_settled('control_center')
+                # Nothing is asked of systemd until the Services page is on screen.
+                time.sleep(.5)
+                assert not [r for r in records() if r['method'] in ('Subscribe', 'ListUnits', 'ListUnitFiles') or r['method'].startswith('Property:')], records()
                 # While the first list is on its way, its placeholder is a row
                 # inside the table, not a line above it.
                 fake.stdin.write('delay\n'); fake.stdin.flush()
@@ -715,12 +774,26 @@ def systemd_services(scale):
 
                 assert any(w['name'] == 'unloaded.service' for w in ui.widgets())
                 assert not any('Property:FinishTimestampMonotonic' == r['method'] for r in records())
+                # One Subscribe and one of each list. RefUnit is never used (systemd
+                # asks polkit about every call, and refreshing hundreds of unloaded
+                # units that way pinned PID 1 and polkitd), nothing is asked of a
+                # unit systemd has not loaded, and details are read once for each
+                # of the 45 loaded ones.
+                assert count('Subscribe') == 1 and count('ListUnits') == 1 and count('ListUnitFiles') == 1, records()
+                assert count('RefUnit') == 0 and count('LoadUnit') == 0
+                assert not [r for r in reads() if r['args'] == unloaded_path], reads()
+                for key in ('Type', 'Transient', 'TriggeredBy'):
+                    assert count('Property:' + key) == 45, (key, count('Property:' + key))
+                time.sleep(1.2)
+                assert count('ListUnits') == 1 and len(reads()) == 135, 'an idle list must not poll'
                 assert ui.find('services_optimize')['is_disabled'] is True
                 assert ui.find('startup:masked.service')['is_disabled'] is True
                 assert ui.find('startup:slow.service')['is_disabled'] is True
                 assert ui.find('notify:alpha.service')['selected_index'] == 4
                 assert ui.find('notify:beta.service')['selected_index'] == 0
-                assert ui.find('notify:unloaded.service')['selected_index'] == 3
+                # Not loaded, so its Type is unknown and read-only.
+                assert ui.find('notify:unloaded.service')['selected_index'] == 8
+                assert ui.find('notify:unloaded.service')['is_disabled'] is True
                 assert ui.find('notify:masked.service')['is_disabled'] is True
                 assert any(w['name'] == 'Notify' for w in ui.widgets())
                 assert ui.find('notify:worker-00.service')['selected_index'] == 6
@@ -755,13 +828,11 @@ def systemd_services(scale):
                 assert not ui.find('notify:slow.service')['is_disabled']
                 click('Notify')
                 rows = [w['name'] for w in ui.widgets() if w['role'] == 'row' and (w['name'] or '').endswith('.service')]
-                assert rows[0] == 'beta.service', rows
+                # A service systemd has not loaded has no Type to sort by and none to edit.
+                assert rows[:2] == ['unloaded.service', 'beta.service'], rows
                 click('Service')
-                click('notify:unloaded.service')
-                ipc.key_press('Down')
-                ipc.key_press('Return')
-                wait(lambda: ui.find('notify:unloaded.service')['selected_index'] == 4, 'edit initially unloaded service')
-                assert (root / 'etc/systemd/system/unloaded.service.d/zz-rediwm-notify.conf').read_text() == '[Service]\nType=notify\n'
+                assert ui.find('notify:unloaded.service')['is_disabled'] is True
+                assert not (root / 'etc/systemd/system/unloaded.service.d').exists()
                 assert not any(label == '125 ms' for label in labels())
                 if dest := os.environ.get('REDIWM_SETTINGS_PREVIEW'):
                     scroll_service_into_view('services_columns')
@@ -813,11 +884,13 @@ def systemd_services(scale):
                 click('services_unlock')
                 wait(lambda: 'Service changes are unlocked for this session.' in labels(), 'unlocked again')
                 assert len(checks()) == 3, checks()
+                lists = count('ListUnits')
                 click('services_stop')
                 wait(lambda: any(r['method'] == 'StopUnit' for r in records()), 'stop requested')
                 wait(lambda: 'inactive' in labels(), 'stop status')
                 click('services_start')
                 wait(lambda: 'active' in labels(), 'start status')
+                assert count('ListUnits') == lists, 'a state change arrives as a signal, not a new list'
                 click('startup:alpha.service')
                 ipc.key_press('Down')
                 ipc.key_press('Return')
@@ -852,13 +925,57 @@ def systemd_services(scale):
                 fake.stdin.write('spoof\n'); fake.stdin.flush()
                 time.sleep(.25)
                 assert len(records()) == before
+                lists, files, types, nreads = count('ListUnits'), count('ListUnitFiles'), count('Property:Type'), len(reads())
                 fake.stdin.write('change\n'); fake.stdin.flush()
                 wait(lambda: 'failed' in labels(), 'live state update')
                 assert ui.find('services_search')['text_length'] == 5
+                assert count('ListUnits') == lists + 1 and count('ListUnitFiles') == files + 1 and len(reads()) == nreads, \
+                    'a change signalled by name is one coalesced reload, and details already read are not read again'
                 fake.stdin.write('type\n'); fake.stdin.flush()
                 wait(lambda: ui.find('notify:alpha.service')['selected_index'] == 1, 'live type update')
+                assert count('ListUnits') == lists + 2 and count('Property:Type') == types + 1, 'only the unit whose Type changed is read again'
                 fake.stdin.write('reload-type\n'); fake.stdin.flush()
                 wait(lambda: ui.find('notify:alpha.service')['selected_index'] == 2, 'type update after external daemon reload')
+                assert count('ListUnits') == lists + 3 and count('Property:Type') == types + 1 + 45, 'a daemon reload re-reads the list and every detail'
+                # Leaving the page lets go: matches dropped, Unsubscribe sent, later
+                # signals unheard, and coming back loads afresh.
+                subscribes, lists, before = count('Subscribe'), count('ListUnits'), count('Unsubscribe')
+                click('general')
+                wait(lambda: count('Unsubscribe') == before + 1, 'unsubscribed after leaving the page')
+                reads_before = len(reads())
+                fake.stdin.write('change\n'); fake.stdin.flush()
+                time.sleep(.6)
+                assert len(reads()) == reads_before and count('ListUnits') == lists, 'a hidden page must not hear signals'
+                click('services')
+                wait(lambda: any('46 services' in label for label in labels()), 'list after returning to the page')
+                assert count('Subscribe') == subscribes + 1 and count('ListUnits') == lists + 1
+                # systemd broadcasts thousands of UnitNew/UnitRemoved a second while anything
+                # loads units in bulk. No signal may cost a call of its own: the burst below
+                # (3,300 signals) may cause a reload or two, and no detail is read again.
+                lists, nreads = count('ListUnits'), len(reads())
+                fake.stdin.write('flood\n'); fake.stdin.flush()
+                wait(lambda: any(r['method'] == 'flood_done' for r in records()), 'flood sent')
+                time.sleep(2.0)
+                assert count('ListUnits') - lists <= 3, count('ListUnits') - lists
+                assert len(reads()) == nreads, len(reads()) - nreads
+                time.sleep(1.2)
+                lists = count('ListUnits')
+                time.sleep(1.2)
+                assert count('ListUnits') == lists, 'the list settles when the signals stop'
+                # A unit that loads or unloads while the page is open changes one row. The IPC
+                # query below leases the list for a while; Settings closing ends that too.
+                lists = count('ListUnits')
+                fake.stdin.write('new\n'); fake.stdin.flush()
+                wait(lambda: any('47 services' in label for label in labels()), 'new unit appears')
+                fake.stdin.write('gone\n'); fake.stdin.flush()
+                wait(lambda: any('46 services' in label for label in labels()), 'unit without a file disappears')
+                fake.stdin.write('unload\n'); fake.stdin.flush()
+                def service(unit): return next(s for s in ipc.query('get_services')['services'] if s['name'] == unit)
+                wait(lambda: not ipc.query('get_services')['analyzing'], 'analysis settled')
+                wait(lambda: service('beta.service')['description'] == 'Not loaded', 'unloaded unit keeps its row')
+                assert any('46 services' in label for label in labels())
+                assert service('beta.service')['startup'] == 'disabled'
+                assert count('ListUnits') == lists + 1, 'a new unit is one reload; a removed one needs none'
                 for r in records():
                     if r['method'] in ('StartUnit', 'StopUnit', 'DisableUnitFiles', 'Reload'):
                         assert r['flags'] & 4, r
@@ -866,6 +983,10 @@ def systemd_services(scale):
                     Path(dest).mkdir(parents=True, exist_ok=True)
                     (Path(dest) / ('services-' + scale + '.png')).unlink(missing_ok=True)
                     ipc.screenshot(str(Path(dest) / ('services-' + scale + '.png')))
+                # While the page is live exactly one subscription is open. The daemon that
+                # is about to die cannot be unsubscribed from, so it stays counted.
+                dangling = count('Subscribe') - count('Unsubscribe')
+                assert dangling == 1, (count('Subscribe'), count('Unsubscribe'))
                 stop_process(fake); fake = None
                 wait(lambda: not any(w['name'] == 'services' for w in ui.widgets()), 'systemd disappears')
                 assert ipc.get_shell_state()['control_center']['category'] == 'general'
@@ -940,7 +1061,20 @@ def systemd_services(scale):
                 ipc.close_window(window['id'])
                 ui.wait_absent('control_center')
                 assert process.poll() is None
-                print('PASS: systemd discovery, in-table loading, unlock/lock, services, Notify reads/edits/sorting, isolated drop-ins, timing, search, actions, authorization refusal, live updates, owner loss and close')
+                # A closed Settings window holds nothing: no matches, no subscription.
+                wait(lambda: count('Subscribe') - count('Unsubscribe') == dangling, 'nothing watches after Settings closes', timeout=20)
+                # An IPC query is not a page: it keeps the list live for its lease
+                # (renewed by each query), then lets go.
+                subscribes, unsubscribes = count('Subscribe'), count('Unsubscribe')
+                assert ipc.query('get_services')['loading'] is True
+                wait(lambda: count('Subscribe') == subscribes + 1, 'IPC query goes live')
+                wait(lambda: not ipc.query('get_services')['loading'], 'IPC list loaded')
+                time.sleep(1.2)
+                assert count('Unsubscribe') == unsubscribes and count('ListUnits') >= 1
+                wait(lambda: count('Unsubscribe') == unsubscribes + 1, 'lease ends and the list is let go', timeout=25)
+                assert not [r for r in reads() if r['args'] == unloaded_path] and count('RefUnit') == 0 and count('LoadUnit') == 0
+                assert process.poll() is None
+                print('PASS: systemd discovery, in-table loading, unlock/lock, services, Notify reads/edits/sorting, isolated drop-ins, timing, search, actions, authorization refusal, live and in-place updates, nothing read until the page is shown or while it is hidden, no RefUnit or unloaded-unit reads, IPC lease, owner loss and close')
         except Exception:
             log.flush()
             print((tmp / 'compositor.log').read_text()[-4000:])

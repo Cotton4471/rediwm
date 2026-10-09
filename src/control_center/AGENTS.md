@@ -13,5 +13,23 @@ Settings is an ordinary window with a compositor-drawn body (`Backend.shell`).
 * `close()` frees the content and `Toplevel.destroy`s the window (which may
   animate from a snapshot): clear `backend.shell.control_center` and the
   node's scene data first, and never close from inside a widget callback.
+* **The Services client (`systemd.zig`) is live only while its page is on screen**
+  (`show` from `services.build`, `hide` from `selectPage`/`detachSettings`) or
+  while an IPC query holds a 15 s `lease`. Live means the signal matches,
+  `Subscribe` and a load; dark means `Unsubscribe`, matches removed and the data
+  dropped. Never `RefUnit` or `LoadUnit`: systemd loads the unit *and its whole
+  dependency closure*, then asks polkit on every call (about 49 ms of PID 1 plus
+  polkitd each, denied when non-interactive, so nothing is ever pinned), and the
+  load/collect churn is broadcast to every subscriber and fed back into the
+  refresh. An unloaded unit is only its unit-file state; nothing is asked of it.
+  A load is ListUnits (its state fields are the rows), ListUnitFiles, then `Get`
+  of Transient, TriggeredBy and Type for each *loaded* unit, once (cached;
+  `refresh`/daemon reload re-read). Signals apply the values they carry; anything
+  else only sets `dirty`, and one reload runs after `settle_ms`. systemd
+  broadcasts thousands of UnitNew/UnitRemoved a second under bulk loads, so no
+  signal may cost a call of its own and none may restart a load. The fake in
+  `control_center.py` emits no such floods; a pass-through proxy that decodes bus
+  messages shows the real traffic without root (`BecomeMonitor` and
+  `Debug.Stats` need it).
 * Saving a theme slider rebuilds the page on release: `panel.rebuildTree`
   carries named sliders' state across (`src/ui/AGENTS.md`, "Sliders").

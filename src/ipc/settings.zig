@@ -9,7 +9,7 @@ const gpa = @import("../main.zig").gpa;
 
 pub fn services(server: *Server, a: std.mem.Allocator) !protocol.Response {
     const client = server.getSystemd() catch return .{ .err = "ServicesUnavailable" };
-    client.open();
+    client.lease();
     if (!client.busy() and !client.awaitingList() and !client.analyzed) client.analyze();
     const units = client.snapshot.units.items;
     const result = try a.alloc(protocol.ServiceData, units.len);

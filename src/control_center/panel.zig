@@ -640,6 +640,8 @@ pub const ControlCenter = struct {
 
     pub fn selectPage(cc: *ControlCenter, page: Page) void {
         cc.shortcuts.cancel();
+        // The service list is only kept live while its page is on screen.
+        if (cc.page == .services and page != .services) if (cc.systemd_client) |client| client.hide();
         if (cc.page == .network and page != .network) cc.network.clearForm();
         if (cc.page == .bluetooth and page != .bluetooth) {
             if (cc.server.bluetooth) |m| m.closed();
