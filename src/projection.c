@@ -4,6 +4,7 @@
 #define WLR_PRIVATE private
 #include "projection.h"
 #include "scene_graph.h"
+#include "scene_damage.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -121,6 +122,10 @@ struct tree_props {
   bool has_zoom, has_scale, has_clip, unclipped;
   double zoom, scale;
   struct rediwm_clip_spec clip;
+  // The clip as the last resolve() saw it in layout space, to tell a changed
+  // shape (to be damaged) from a moved window (whose views damage themselves).
+  struct rediwm_clip applied;
+  bool has_applied;
 };
 static void destroy_tree_props(struct wlr_addon *addon) {
   struct tree_props *props = wl_container_of(addon, props, addon);
@@ -167,7 +172,7 @@ bool rediwm_projection_set_tree_clip(struct wlr_scene_node *node,
   }
   if (spec->width <= 0 || spec->height <= 0 || !finite_at_least_zero(spec->border)) return false;
   for (int i = 0; i < 4; i++)
-    if (!finite_at_least_zero(spec->radii[i])) return false;
+    if (!finite_at_least_zero(spec->radii[i]) || !isfinite(spec->border_color[i])) return false;
   struct tree_props *props = tree_props_get(node);
   if (!props) return false;
   props->clip = *spec;
@@ -400,6 +405,16 @@ static bool accepts(struct wlr_scene_buffer *buffer, double *x, double *y) {
     return false;
   *x *= (double)l->item.width / buffer->dst_width;
   *y *= (double)l->item.height / buffer->dst_height;
+  // A window's rounded corners are transparent: a point the shape cuts away goes
+  // to whatever is below, which wlroots finds by asking the next node. The point
+  // is now in source units; the shape is in layout space.
+  if (l->item.clip && l->item.width > 0 && l->item.height > 0) {
+    const struct rediwm_edges *e = &l->item.edges;
+    const double px = e->x1 + *x * (e->x2 - e->x1) / l->item.width;
+    const double py = e->y1 + *y * (e->y2 - e->y1) / l->item.height;
+    if (rediwm_clip_distance(l->item.clip, px, py) > 0)
+      return false;
+  }
   struct wlr_scene_buffer *source = wlr_scene_buffer_from_node(l->source);
   return !source->point_accepts_input ||
          source->point_accepts_input(source, x, y);
@@ -503,6 +518,46 @@ static uint64_t mirror_opaque(pixman_region32_t *out, const pixman_region32_t *s
 // Glass writes its own projected buffers after this synchronization pass.
 extern bool rediwm_glass_is_effect_node(struct wlr_scene_node *node);
 
+// A clip's size, radii, border or colour changed: its views did not move, so
+// nothing else tells wlroots that the corner arcs and the ring need repainting.
+// The zone is the frame's rim, as wide as the largest radius plus the border and
+// a margin; where the frame is thinner than twice that it is the whole box.
+static bool clip_same_shape(const struct rediwm_clip *a, const struct rediwm_clip *b) {
+  if (a->edges.x2 - a->edges.x1 != b->edges.x2 - b->edges.x1 ||
+      a->edges.y2 - a->edges.y1 != b->edges.y2 - b->edges.y1 || a->border != b->border)
+    return false;
+  for (int i = 0; i < 4; i++)
+    if (a->radii[i] != b->radii[i] || a->border_color[i] != b->border_color[i]) return false;
+  return true;
+}
+static void clip_rim(pixman_region32_t *out, const struct rediwm_clip *c) {
+  const struct rediwm_snap f = rediwm_edges_snap(c->edges);
+  if (f.width <= 0 || f.height <= 0) return;
+  double radius = 0;
+  for (int i = 0; i < 4; i++)
+    if (c->radii[i] > radius) radius = c->radii[i];
+  const int inset = (int)ceil(radius) + (int)ceil(c->border) + 2;
+  pixman_region32_t rim;
+  pixman_region32_init_rect(&rim, f.x, f.y, f.width, f.height);
+  if (f.width > 2 * inset && f.height > 2 * inset) {
+    pixman_region32_t inner;
+    pixman_region32_init_rect(&inner, f.x + inset, f.y + inset, f.width - 2 * inset,
+                              f.height - 2 * inset);
+    pixman_region32_subtract(&rim, &rim, &inner);
+    pixman_region32_fini(&inner);
+  }
+  pixman_region32_union(out, out, &rim);
+  pixman_region32_fini(&rim);
+}
+static void damage_clip_change(struct rediwm_projection *p, const struct rediwm_clip *before,
+                               const struct rediwm_clip *after) {
+  pixman_region32_t region;
+  pixman_region32_init(&region);
+  if (before) clip_rim(&region, before);
+  if (after) clip_rim(&region, after);
+  if (pixman_region32_not_empty(&region)) rediwm_scene_damage_layout(p->scene, &region);
+  pixman_region32_fini(&region);
+}
 // resolve(): source tree -> graph. Writes items, group origins, `seen` flags and
 // the paint-order lists; creates adapters for nodes it meets the first time, but
 // moves, sizes and shows nothing in the view tree.
@@ -515,7 +570,7 @@ static void resolve_node(struct rediwm_projection *p, struct group *g,
   enabled = enabled && node->enabled;
   if (node->type == WLR_SCENE_NODE_TREE) {
     struct rediwm_clip here;
-    const struct tree_props *props = tree_props_find(node);
+    struct tree_props *props = tree_props_find(node);
     if (props) {
       // Window zoom composes with the camera, around the frame origin.
       if (props->has_zoom) t = rediwm_xform_scale_about(t, props->zoom, x, y);
@@ -524,6 +579,14 @@ static void resolve_node(struct rediwm_projection *p, struct group *g,
       if (props->has_clip) {
         here = rediwm_clip_resolve(t, x, y, &props->clip);
         clip = &here;
+        // A hidden window damages nothing; showing it will.
+        if (enabled && (!props->has_applied || !clip_same_shape(&props->applied, &here)))
+          damage_clip_change(p, props->has_applied ? &props->applied : NULL, &here);
+        props->applied = here;
+        props->has_applied = true;
+      } else if (props->has_applied) {
+        if (enabled) damage_clip_change(p, &props->applied, NULL);
+        props->has_applied = false;
       }
     }
     struct wlr_scene_node *child;

@@ -43,6 +43,9 @@ pub fn create(server: *Server, xdg_popup: *wlr.XdgPopup) !void {
         return err;
     };
     errdefer scene_tree.node.destroy(); // gpa.create below must not leak the node
+    // The popup hangs under its parent's tree, which a window's rounded shape
+    // clips; a menu is no part of that window's shape and may leave it.
+    _ = @import("projection.zig").setTreeUnclipped(&scene_tree.node, true);
 
     const popup = gpa.create(Popup) catch |err| {
         log.err("Popup.create: could not allocate popup: {}", .{err});

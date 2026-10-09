@@ -33,8 +33,21 @@ const Toplevel = @import("../Toplevel.zig");
 const gpa = @import("../main.zig").gpa;
 
 const log = std.log.scoped(.capture);
+const chrome = @import("../chrome.zig");
 
 const DRM_FORMAT_ARGB8888: u32 = 0x34325241;
+
+/// The window's rounded shape in capture pixels (see `chrome.analytic_frames`
+/// and scene_pass.h). The capture is of the client alone, so the shape only
+/// matters where it cuts the client: its two bottom corners, which stay
+/// transparent here as they are on screen.
+const PassShape = extern struct {
+    box: wlr.Box,
+    radii: [4]f32,
+    border: f32 = 0,
+    border_color: [4]f32 = @splat(0),
+};
+extern fn rediwm_scene_pass_add_texture_shaped(pass: *wlr.RenderPass, options: *const wlr.RenderPass.TextureOptions, shape: *const PassShape) void;
 
 // Not bound in the pinned zig-wlroots package; declared directly the same
 // way every other binding file in that package declares its extern fns.
@@ -155,6 +168,24 @@ pub const WindowCaptureSource = struct {
         };
     }
 
+    /// The frame's shape relative to the capture: the frame's origin lies up and
+    /// left of the content by the content's own offset in it.
+    fn frameShape(self: *WindowCaptureSource, off_x: i32, off_y: i32) ?PassShape {
+        if (!chrome.analytic_frames) return null;
+        const toplevel = self.manager.server.findToplevelById(self.window_id) orelse return null;
+        const radius = toplevel.cornerRadius();
+        if (!toplevel.hasServerDecorations() or radius <= 0 or toplevel.chrome_width <= 0 or toplevel.chrome_height <= 0) return null;
+        return .{
+            .box = .{
+                .x = -self.content_node.x - off_x,
+                .y = -self.content_node.y - off_y,
+                .width = toplevel.chrome_width,
+                .height = toplevel.chrome_height,
+            },
+            .radii = @splat(radius),
+        };
+    }
+
     const RenderCtx = struct {
         pass: *wlr.RenderPass,
         renderer: *wlr.Renderer,
@@ -162,6 +193,7 @@ pub const WindowCaptureSource = struct {
         primaries: *const wlr.color.Primaries,
         off_x: i32,
         off_y: i32,
+        shape: ?PassShape,
     };
 
     fn renderFrame(self: *WindowCaptureSource) !void {
@@ -217,6 +249,7 @@ pub const WindowCaptureSource = struct {
             .primaries = &primaries,
             .off_x = geom.x,
             .off_y = geom.y,
+            .shape = self.frameShape(geom.x, geom.y),
         };
         self.content_node.forEachBuffer(*RenderCtx, renderNodeBuffer, &ctx);
 
@@ -254,7 +287,7 @@ pub const WindowCaptureSource = struct {
 
         var alpha = scene_buffer.opacity;
         var luminance_multiplier: f32 = 1.0;
-        ctx.pass.addTexture(&.{
+        const options: wlr.RenderPass.TextureOptions = .{
             .texture = texture,
             .src_box = scene_buffer.src_box,
             .dst_box = .{
@@ -275,7 +308,12 @@ pub const WindowCaptureSource = struct {
             .luminance_multiplier = &luminance_multiplier,
             .wait_timeline = scene_buffer.private.wait_timeline,
             .wait_point = scene_buffer.private.wait_point,
-        });
+        };
+        if (ctx.shape) |*shape| {
+            rediwm_scene_pass_add_texture_shaped(ctx.pass, &options, shape);
+        } else {
+            ctx.pass.addTexture(&options);
+        }
     }
 
     fn copyFrame(

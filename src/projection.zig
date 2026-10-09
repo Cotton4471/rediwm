@@ -26,3 +26,26 @@ extern fn rediwm_projection_set_tree_zoom(node: *wlr.SceneNode, scale: f64) bool
 pub const setTreeZoom = rediwm_projection_set_tree_zoom;
 extern fn rediwm_projection_set_tree_scale(node: *wlr.SceneNode, factor: f64) bool;
 pub const setTreeScale = rediwm_projection_set_tree_scale;
+
+/// One rounded-rectangle shape for every leaf under a tree (see scene_graph.h):
+/// source units, anchored at the tree's origin. `border_color` is premultiplied,
+/// with the window's opacity applied.
+pub const ClipSpec = extern struct {
+    width: c_int,
+    height: c_int,
+    /// Top-left, top-right, bottom-right, bottom-left.
+    radii: [4]f64,
+    border: f64,
+    border_color: [4]f32,
+};
+extern fn rediwm_projection_set_tree_clip(node: *wlr.SceneNode, spec: ?*const ClipSpec) bool;
+/// A null spec removes the clip. False for a size that is not positive or a
+/// radius, border or colour that is negative or not finite.
+pub fn setTreeClip(node: *wlr.SceneNode, spec: ?ClipSpec) bool {
+    if (spec) |value| return rediwm_projection_set_tree_clip(node, &value);
+    return rediwm_projection_set_tree_clip(node, null);
+}
+/// Ends the clip inherited from an ancestor for this subtree: an xdg popup or a
+/// window's shadow hangs under the window's tree but is no part of its shape.
+extern fn rediwm_projection_set_tree_unclipped(node: *wlr.SceneNode, unclipped: bool) bool;
+pub const setTreeUnclipped = rediwm_projection_set_tree_unclipped;

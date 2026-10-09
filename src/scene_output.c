@@ -3,15 +3,18 @@
 #define WLR_USE_UNSTABLE
 #define WLR_PRIVATE private
 #include "scene_output.h"
+#include "scene_view.h"
 #include "scene_pass.h"
 #include "scene_graph.h"
 #include "projection.h"
+#include <math.h>
 #include <stdlib.h>
 #include <wlr/render/drm_syncobj.h>
 #include <wlr/render/swapchain.h>
 #include <wlr/render/wlr_texture.h>
 #include <wlr/types/wlr_buffer.h>
 #include <wlr/types/wlr_compositor.h>
+#include <wlr/types/wlr_damage_ring.h>
 #include <wlr/types/wlr_output.h>
 #include <wlr/types/wlr_scene.h>
 #include <wlr/util/log.h>
@@ -29,12 +32,6 @@ struct rediwm_output_renderer {
     struct rediwm_scene_renderer *pass;
     struct wl_array entries; // reusable scratch; no retained resource references
 };
-struct output_view {
-    struct wlr_box logical;
-    int width, height, trans_width, trans_height;
-    float scale;
-    enum wl_output_transform transform;
-};
 struct rediwm_output_renderer *rediwm_output_renderer_create(struct wlr_renderer *renderer) {
     struct rediwm_output_renderer *r = calloc(1, sizeof(*r));
     if (!r) return NULL;
@@ -42,6 +39,9 @@ struct rediwm_output_renderer *rediwm_output_renderer_create(struct wlr_renderer
     if (!r->pass) { free(r); return NULL; }
     wl_array_init(&r->entries);
     return r;
+}
+bool rediwm_output_renderer_enable_shapes(struct rediwm_output_renderer *r) {
+    return rediwm_scene_renderer_enable_shapes(r->pass);
 }
 void rediwm_output_renderer_destroy(struct rediwm_output_renderer *r) {
     if (!r) return;
@@ -76,17 +76,68 @@ static struct wlr_box device_box(struct wlr_box box, const struct output_view *v
     return box;
 }
 static void device_region(pixman_region32_t *region, const struct output_view *v, bool expand) {
-    pixman_region32_translate(region, -v->logical.x, -v->logical.y);
-    wlr_region_scale(region, region, v->scale);
-    if (expand && floor(v->scale) != v->scale) wlr_region_expand(region, region, 1);
-    wlr_region_transform(region, region, wlr_output_transform_invert(v->transform),
-        v->trans_width, v->trans_height);
+    output_view_region(region, v, expand);
+}
+// Which device corner each logical corner (tl, tr, br, bl) lands on, found by
+// moving a one-pixel box in each corner of a small frame through the same
+// transform device_box applies, so the two cannot disagree.
+static void device_radii(float out[4], const float in[4], enum wl_output_transform transform) {
+    enum { W = 3, H = 5 };
+    const struct wlr_box corners[4] = {{0, 0, 1, 1}, {W - 1, 0, 1, 1}, {W - 1, H - 1, 1, 1}, {0, H - 1, 1, 1}};
+    const int w = (transform & 1) ? H : W, h = (transform & 1) ? W : H;
+    for (int i = 0; i < 4; i++) {
+        struct wlr_box b;
+        wlr_box_transform(&b, &corners[i], wlr_output_transform_invert(transform), W, H);
+        out[b.x < w / 2 ? (b.y < h / 2 ? 0 : 3) : (b.y < h / 2 ? 1 : 2)] = in[i];
+    }
+}
+// The pass's shape for a clip: the clip's box snapped in layout space like any
+// item's, then taken to device pixels by the same function as the pieces that
+// tile it, so the shape and the quads agree on every pixel column. A ring is
+// whole device pixels, never thinner than one.
+static void shape_for(struct rediwm_pass_shape *s, const struct rediwm_clip *c, const struct output_view *v) {
+    const struct rediwm_snap f = rediwm_edges_snap(c->edges);
+    s->box = device_box((struct wlr_box){f.x, f.y, f.width, f.height}, v);
+    float radii[4];
+    for (int i = 0; i < 4; i++) radii[i] = (float)(c->radii[i] * v->scale);
+    device_radii(s->radii, radii, v->transform);
+    s->border = c->border > 0 ? fmaxf(1.f, roundf((float)(c->border * v->scale))) : 0.f;
+    for (int i = 0; i < 4; i++) s->border_color[i] = c->border_color[i];
+}
+// What of a clipped item may be drawn without the shape and without blending: the
+// model's opaque cover, minus a margin around the edge where the ring is drawn.
+// Layout space, like the item's own opaque region.
+static void clip_cover(pixman_region32_t *out, const struct rediwm_clip *c, double scale) {
+    pixman_region32_init(out);
+    struct rediwm_snap parts[3];
+    const int n = rediwm_clip_opaque(c, parts);
+    for (int i = 0; i < n; i++)
+        pixman_region32_union_rect(out, out, parts[i].x, parts[i].y, parts[i].width, parts[i].height);
+    if (c->border > 0) {
+        const struct rediwm_snap f = rediwm_edges_snap(c->edges);
+        const int ring = (int)ceil(fmax(c->border, 1.0 / scale)) + 1;
+        if (f.width > 2 * ring && f.height > 2 * ring)
+            pixman_region32_intersect_rect(out, out, f.x + ring, f.y + ring, f.width - 2 * ring, f.height - 2 * ring);
+        else
+            pixman_region32_clear(out);
+    }
 }
 struct collector {
     struct rediwm_output_renderer *renderer;
     const struct output_view *view;
     pixman_region32_t covered;
+    // A window's items are contiguous and share one clip, so its cover is built
+    // once for the run rather than for each of its six or so items.
+    struct rediwm_clip cover_of;
+    pixman_region32_t cover;
+    bool has_cover;
 };
+static bool same_clip(const struct rediwm_clip *a, const struct rediwm_clip *b) {
+    if (a->edges.x1 != b->edges.x1 || a->edges.y1 != b->edges.y1 || a->edges.x2 != b->edges.x2 ||
+        a->edges.y2 != b->edges.y2 || a->border != b->border) return false;
+    for (int i = 0; i < 4; i++) if (a->radii[i] != b->radii[i]) return false;
+    return true;
+}
 static bool collect(const struct rediwm_item *item, struct wlr_scene_node *transport, void *data) {
     struct collector *collector = data;
     struct rediwm_output_renderer *r = collector->renderer;
@@ -128,6 +179,17 @@ static bool collect(const struct rediwm_item *item, struct wlr_scene_node *trans
         }
     }
     if (full) pixman_region32_union_rect(&e->opaque, &e->opaque, s.x, s.y, s.width, s.height);
+    if (item->clip) {
+        // The corners are transparent and the ring is drawn by the shape: only
+        // the interior may hide what is below or skip blending.
+        if (!collector->has_cover || !same_clip(&collector->cover_of, item->clip)) {
+            if (collector->has_cover) pixman_region32_fini(&collector->cover);
+            clip_cover(&collector->cover, item->clip, collector->view->scale);
+            collector->cover_of = *item->clip;
+            collector->has_cover = true;
+        }
+        pixman_region32_intersect(&e->opaque, &e->opaque, &collector->cover);
+    }
     pixman_region32_union(&collector->covered, &collector->covered, &e->opaque);
     return true;
 }
@@ -178,7 +240,7 @@ static void sample(struct entry *e, struct wlr_scene_output *out, bool scanout) 
 }
 static bool try_scanout(struct entry *e, struct wlr_scene_output *out,
         struct wlr_output_state *state, const struct output_view *v) {
-    if (e->item.kind != REDIWM_ITEM_SURFACE || !out->scene->private.direct_scanout ||
+    if (e->item.clip || e->item.kind != REDIWM_ITEM_SURFACE || !out->scene->private.direct_scanout ||
         (state->committed & (WLR_OUTPUT_STATE_MODE | WLR_OUTPUT_STATE_ENABLED | WLR_OUTPUT_STATE_RENDER_FORMAT)) ||
         !wlr_output_is_direct_scanout_allowed(out->output)) return false;
     struct wlr_scene_buffer *b = wlr_scene_buffer_from_node(e->transport);
@@ -232,46 +294,97 @@ static bool render_entry(struct entry *e, struct wlr_scene_output *out,
         struct wlr_render_pass *pass, const struct output_view *v, pixman_region32_t *damage) {
     struct wlr_box dst = device_box(e->box, v);
     if (misses_damage(&dst, damage)) return true;
-    pixman_region32_t clip, blend;
+    pixman_region32_t clip, blend, core;
     pixman_region32_init(&clip);
     pixman_region32_init(&blend);
+    pixman_region32_init(&core);
     pixman_region32_copy(&clip, &e->visible);
     device_region(&clip, v, true);
     pixman_region32_intersect(&clip, &clip, damage);
     bool ok = true;
     if (!pixman_region32_not_empty(&clip)) goto done;
+    // A clipped item is drawn in two parts: `core` (its interior, which the model
+    // proves fully covered and opaque) as before, without the shape, and the rest
+    // (corners, ring, anything translucent) through the shape.
+    struct rediwm_pass_shape shape;
+    const bool shaped = e->item.clip != NULL;
+    if (shaped) {
+        shape_for(&shape, e->item.clip, v);
+        pixman_region32_copy(&core, &e->opaque);
+        device_region(&core, v, false);
+        // One rectangle, deeper than the corner arcs and the ring. The model's cover
+        // is a cross of up to three, which leaves about twelve scissored draws per
+        // window for what a rim of a few shaded pixels costs far less than: draws
+        // dominated the output build in a drag.
+        float depth = fmaxf(fmaxf(shape.radii[0], shape.radii[1]), fmaxf(shape.radii[2], shape.radii[3]));
+        const int inset = (int)ceilf(fmaxf(depth, shape.border)) + REDIWM_CLIP_OPAQUE_MARGIN;
+        if (shape.box.width > 2 * inset && shape.box.height > 2 * inset)
+            pixman_region32_intersect_rect(&core, &core, shape.box.x + inset, shape.box.y + inset,
+                shape.box.width - 2 * inset, shape.box.height - 2 * inset);
+        else
+            pixman_region32_clear(&core);
+        pixman_region32_intersect(&core, &core, &clip);
+        pixman_region32_subtract(&clip, &clip, &core);
+    }
     const struct rediwm_content *c = &e->item.content;
     if (e->item.kind == REDIWM_ITEM_RECT) {
-        wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options){.box = dst, .clip = &clip,
-            .color = {c->color[0], c->color[1], c->color[2], c->color[3]}});
+        struct wlr_render_rect_options rect = {.box = dst,
+            .color = {c->color[0], c->color[1], c->color[2], c->color[3]}};
+        if (pixman_region32_not_empty(&core)) {
+            rect.clip = &core;
+            wlr_render_pass_add_rect(pass, &rect);
+        }
+        rect.clip = &clip;
+        if (!shaped) wlr_render_pass_add_rect(pass, &rect);
+        else if (pixman_region32_not_empty(&clip)) rediwm_scene_pass_add_rect_shaped(pass, &rect, &shape);
     } else {
         struct wlr_scene_buffer *b = wlr_scene_buffer_from_node(e->transport);
         if (b->private.is_single_pixel_buffer) {
             const uint32_t *color = b->private.single_pixel_buffer_color;
             // Match wlroots' single-pixel path during parity, including its
             // treatment of opacity (only alpha is multiplied there).
-            wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options){.box = dst, .clip = &clip,
+            struct wlr_render_rect_options rect = {.box = dst,
                 .color = {(float)color[0] / (float)UINT32_MAX, (float)color[1] / (float)UINT32_MAX,
-                    (float)color[2] / (float)UINT32_MAX, (float)color[3] / (float)UINT32_MAX * c->opacity}});
+                    (float)color[2] / (float)UINT32_MAX, (float)color[3] / (float)UINT32_MAX * c->opacity}};
+            if (pixman_region32_not_empty(&core)) {
+                rect.clip = &core;
+                wlr_render_pass_add_rect(pass, &rect);
+            }
+            rect.clip = &clip;
+            if (!shaped) wlr_render_pass_add_rect(pass, &rect);
+            else if (pixman_region32_not_empty(&clip)) rediwm_scene_pass_add_rect_shaped(pass, &rect, &shape);
         } else {
             struct wlr_texture *texture = buffer_texture(b, out->output->renderer);
             if (!texture) { ok = false; goto done; }
-            pixman_region32_copy(&blend, &e->opaque);
-            device_region(&blend, v, false);
-            pixman_region32_subtract(&blend, &clip, &blend);
-            wlr_render_pass_add_texture(pass, &(struct wlr_render_texture_options){
+            struct wlr_render_texture_options t = {
                 .texture = texture, .dst_box = dst, .src_box = c->src_box,
                 .transform = wlr_output_transform_compose(wlr_output_transform_invert(c->transform), v->transform),
-                .clip = &clip, .alpha = &c->opacity, .filter_mode = c->filter_mode,
-                .blend_mode = pixman_region32_not_empty(&blend) ? WLR_RENDER_BLEND_MODE_PREMULTIPLIED : WLR_RENDER_BLEND_MODE_NONE,
+                .alpha = &c->opacity, .filter_mode = c->filter_mode,
                 .wait_timeline = b->private.wait_timeline, .wait_point = b->private.wait_point,
-            });
+            };
+            if (pixman_region32_not_empty(&core)) {
+                t.clip = &core;
+                t.blend_mode = WLR_RENDER_BLEND_MODE_NONE;
+                wlr_render_pass_add_texture(pass, &t);
+            }
+            t.clip = &clip;
+            if (shaped) {
+                t.blend_mode = WLR_RENDER_BLEND_MODE_PREMULTIPLIED;
+                if (pixman_region32_not_empty(&clip)) rediwm_scene_pass_add_texture_shaped(pass, &t, &shape);
+            } else {
+                pixman_region32_copy(&blend, &e->opaque);
+                device_region(&blend, v, false);
+                pixman_region32_subtract(&blend, &clip, &blend);
+                t.blend_mode = pixman_region32_not_empty(&blend) ? WLR_RENDER_BLEND_MODE_PREMULTIPLIED : WLR_RENDER_BLEND_MODE_NONE;
+                wlr_render_pass_add_texture(pass, &t);
+            }
         }
         e->sampled = true;
     }
 done:
     pixman_region32_fini(&clip);
     pixman_region32_fini(&blend);
+    pixman_region32_fini(&core);
     return ok;
 }
 bool rediwm_scene_output_build_state(struct rediwm_output_renderer *r,
@@ -299,7 +412,9 @@ bool rediwm_scene_output_build_state(struct rediwm_output_renderer *r,
         rediwm_scene_output_damage_whole(out);
     struct collector collector = {.renderer = r, .view = &v};
     pixman_region32_init(&collector.covered);
-    if (!rediwm_projection_for_each_item(projection, true, collect, &collector)) {
+    bool collected = rediwm_projection_for_each_item(projection, true, collect, &collector);
+    if (collector.has_cover) pixman_region32_fini(&collector.cover);
+    if (!collected) {
         pixman_region32_fini(&collector.covered);
         clear_entries(r);
         return false;

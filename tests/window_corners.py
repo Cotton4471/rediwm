@@ -14,6 +14,12 @@ from ipc_client import IPCClient, spawn_compositor, stop_process
 from ui_driver import UIDriver
 
 
+# The owned presenter clips the whole window with one shape (stage 4 of
+# docs/plans/scene-graph.md): the client's corners are transparent and the frame
+# has no skirt, its footer is the border. Select it with REDIWM_TEST_SCENE_RENDERER.
+OWNED = os.environ.get("REDIWM_TEST_SCENE_RENDERER") == "owned"
+
+
 def settings_resize(scale):
     """The opaque body joins its skirt, and shadows follow shell resizes."""
     with tempfile.TemporaryDirectory(prefix="rediwm-settings-corners-") as directory:
@@ -53,7 +59,15 @@ def settings_resize(scale):
                         image = image.convert("RGB")
                     x = round((box["x"] + box["width"] / 2) * scale)
                     join = round((box["y"] + box["height"]) * scale)
-                    for y in range(join - 3, join + 3):
+                    # Below the body the frame continues it for `footer` rows, the last
+                    # of which is the border: a skirt of 10 on the legacy presenter, the
+                    # border alone (1) when a shape clips the window.
+                    footer = frame["y"] + frame["height"] - (box["y"] + box["height"])
+                    assert footer == (1 if OWNED else 10), ("footer height", footer)
+                    # The ring is max(1, round(border * scale)) device pixels at the bottom
+                    # of the frame, so the body colour is certain only above it.
+                    ring = max(1, round(scale))
+                    for y in range(join - 3, join - ring + 1 if OWNED else join + 3):
                         pixel = image.getpixel((x, y))
                         assert pixel == (16, 18, 21), ("body/skirt seam", scale, width, height, y, pixel)
                     for sx, sy in ((frame["x"] + frame["width"] + 5, box["y"] + box["height"] / 2),
@@ -183,6 +197,104 @@ def workspace_focus(scale):
             log.close()
 
 
+def frame_screenshot(scale, presenter):
+    """One opaque window on a plain wallpaper, with a shadow, under one presenter."""
+    # The harness reads the presenter from the environment when it writes the config.
+    previous = os.environ.get("REDIWM_TEST_SCENE_RENDERER")
+    os.environ["REDIWM_TEST_SCENE_RENDERER"] = presenter
+    try:
+        return _frame_screenshot(scale)
+    finally:
+        if previous is None:
+            os.environ.pop("REDIWM_TEST_SCENE_RENDERER", None)
+        else:
+            os.environ["REDIWM_TEST_SCENE_RENDERER"] = previous
+
+
+def _frame_screenshot(scale):
+    with tempfile.TemporaryDirectory(prefix="rediwm-frame-parity-") as directory:
+        tmp = Path(directory)
+        build_client(tmp)
+        wallpaper = tmp / "wallpaper.png"
+        Image.new("RGB", (64, 64), (48, 50, 56)).save(wallpaper)
+        config = (
+            f'[compositor]\nxwayland = false\nwallpaper = "{wallpaper}"\n'
+            '[desktop]\nenabled = false\n[animations]\nreduced_motion = "on"\n'
+            '[theme]\nshadow = "#00000060"\nshadow_size = 16\nradius_lg = 10\n'
+            'window_bg = "rgba(16,18,21,0.8)"\n'
+        )
+        process, log = spawn_compositor(
+            tmp, scale=str(scale), config_content=config,
+            renderer=os.environ.get("REDIWM_TEST_RENDERER", "pixman"),
+            env_extra={"HOME": str(tmp), "DBUS_SESSION_BUS_ADDRESS": "", "REDIWM_NO_GLASS": "1",
+                       "REDIWM_THEME": str(tmp / "rediwm-config.toml")},
+        )
+        client = None
+        try:
+            with IPCClient(tmp) as ipc:
+                ipc.wait_for("wallpaper_presented", timeout_ms=10000)
+                display = next(p.name for p in tmp.glob("wayland-*") if not p.name.endswith(".lock"))
+                live = tmp / "live"
+                live.write_text("ff203040 400 260 Frame parity")
+                with (tmp / "client.log").open("w") as client_log:
+                    client = subprocess.Popen(
+                        [str(tmp / "client")], stdout=client_log, stderr=client_log,
+                        env=dict(os.environ, XDG_RUNTIME_DIR=str(tmp), WAYLAND_DISPLAY=display,
+                                 REDIWM_TEST_LIVE_FILE=str(live)))
+                window = wait_for(lambda: next(iter(ipc.get_windows()), None), "window did not map")
+                ipc.action("set_camera", {"x": 0, "y": 0})
+                ipc.action("move_window_to", {"id": window["id"], "x": 80, "y": 80})
+                ipc.move_cursor(20, 20)
+                time.sleep(0.4)
+                ipc.wait_for_frame()
+                window = ipc.get_windows()[0]
+                path = tmp / "frame.png"
+                ipc.screenshot(path=str(path))
+                with Image.open(path) as image:
+                    return image.convert("RGB"), window, ipc.get_window_debug(window["id"])
+        finally:
+            if client is not None:
+                stop_process(client)
+            stop_process(process)
+            log.close()
+
+
+def frame_parity(scale):
+    """A shape changes the corners and the bottom band and nothing else: the
+    titlebar, the side borders, the client and the shadow match the legacy frame
+    pixel for pixel, at every scale."""
+    from PIL import ImageChops
+    legacy, lwin, ldbg = frame_screenshot(scale, "legacy")
+    owned, owin, odbg = frame_screenshot(scale, "owned")
+    assert (lwin["x"], lwin["y"], lwin["width"]) == (owin["x"], owin["y"], owin["width"]), (lwin, owin)
+    assert lwin["height"] - owin["height"] == 9, ("the frame is the radius shorter", lwin, owin)
+    assert ldbg["client_box"] == odbg["client_box"], (ldbg["client_box"], odbg["client_box"])
+    x, y, w, h = owin["x"], owin["y"], owin["width"], owin["height"]
+    titlebar = odbg["titlebar_height"]
+    arc = math.ceil(10 * scale) + 2
+    def device(*box):
+        return tuple(round(v * scale) for v in box)
+    regions = {
+        "titlebar band": (device(x, y, x + w, y + titlebar)[0] + arc, round(y * scale),
+                          device(x, y, x + w, y + titlebar)[2] - arc, round((y + titlebar) * scale)),
+        "left titlebar edge below the arc": (round(x * scale), round(y * scale) + arc, round(x * scale) + 2, round((y + titlebar) * scale)),
+        # The legacy border is a snapped rect whose width depends on where the edge falls on
+        # the device grid (at 1.25 the right one is two pixels, the left one one); a shape's
+        # ring is one uniform max(1, round(border * scale)). They agree on integer scales.
+        "left and right side columns": (round(x * scale), round((y + titlebar) * scale),
+                                        round((x + w) * scale) - (0 if scale == int(scale) else math.ceil(scale)),
+                                        round((y + h) * scale) - arc),
+        "shadow left of the window": (round((x - 14) * scale), round((y + 20) * scale),
+                                      round(x * scale), round((y + h) * scale) - arc),
+        "shadow above the window": (round((x + 20) * scale), round((y - 14) * scale),
+                                    round((x + w - 20) * scale), round(y * scale)),
+    }
+    for name, box in regions.items():
+        diff = ImageChops.difference(legacy.crop(box), owned.crop(box))
+        assert diff.getbbox() is None, (name, scale, box, diff.getbbox(), diff.getextrema())
+    print(f"PASS scale {scale}: titlebar, sides, client and shadow identical to the legacy frame")
+
+
 def run(scale, background=(48, 50, 56), chrome_alpha=0.98):
     with tempfile.TemporaryDirectory(prefix="rediwm-corners-") as directory:
         tmp = Path(directory)
@@ -245,6 +357,23 @@ def run(scale, background=(48, 50, 56), chrome_alpha=0.98):
                                 pixel = image.getpixel((column, row))
                                 assert all(abs(a - b) <= 2 for a, b in zip(pixel, expected)), (
                                     "side border fill", scale, hovered, column, row, pixel, expected)
+                    if OWNED:
+                        # One shape clips the client too: its bottom corners are
+                        # transparent, so the wallpaper shows there (no shadow here),
+                        # and a click on one reaches what is below. Interior
+                        # pixels next to the arc keep the client's colour.
+                        for cx, cy in ((x, y + h - 1), (x + w - 1, y + h - 1)):
+                            pixel = image.getpixel((round(cx * scale) if cx == x else round((cx + 1) * scale) - 1,
+                                                    round((cy + 1) * scale) - 1))
+                            assert all(abs(a - b) <= 3 for a, b in zip(pixel, background)), (
+                                "client corner is not transparent", scale, hovered, cx, cy, pixel)
+                            inward = 1 if cx == x else -1
+                            pixel = image.getpixel((round((cx + inward * 14) * scale), round((cy - 14) * scale)))
+                            assert pixel == (16, 18, 21), ("client interior near the corner", scale, pixel)
+                            hit = ipc.hit_test(cx + inward, cy - 1)
+                            assert hit["target_type"] == "none", ("click on a clipped corner stayed on the window", scale, hit)
+                            hit = ipc.hit_test(cx + inward * 30, cy - 30)
+                            assert hit["target_type"] == "window", ("client interior is not the window's", scale, hit)
                     # Straight borders and the surrounding wallpaper
                     # bound every colour in an antialiased corner. The old
                     # straight-alpha interpolation overshot this by ~40 levels.
@@ -276,6 +405,8 @@ def run(scale, background=(48, 50, 56), chrome_alpha=0.98):
 
 if __name__ == "__main__":
     for scale in (1, 1.25, 1.5, 2):
+        if OWNED:
+            frame_parity(scale)
         workspace_focus(scale)
         settings_resize(scale)
         run(scale)

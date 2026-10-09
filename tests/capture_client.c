@@ -13,6 +13,7 @@
 #include "linux-dmabuf-v1-client-protocol.h"
 #include "single-pixel-buffer-client-protocol.h"
 #include "viewporter-client-protocol.h"
+#include "xdg-decoration-client-protocol.h"
 #include "xdg-shell-client-protocol.h"
 #include <assert.h>
 #include <drm/drm_fourcc.h>
@@ -35,6 +36,7 @@ static struct wl_display *display;
 static struct wl_compositor *compositor;
 static struct wl_shm *shm;
 static struct xdg_wm_base *wm;
+static struct zxdg_decoration_manager_v1 *decoration_manager;
 static struct wp_viewporter *viewporter;
 static struct wp_single_pixel_buffer_manager_v1 *pixel_mgr;
 static struct wl_output *output;
@@ -150,6 +152,8 @@ static void global(void *data, struct wl_registry *registry, uint32_t id, const 
   } else if (!strcmp(interface, "xdg_wm_base")) {
     wm = wl_registry_bind(registry, id, &xdg_wm_base_interface, 1);
     xdg_wm_base_add_listener(wm, &wm_listener, NULL);
+  } else if (!strcmp(interface, "zxdg_decoration_manager_v1")) {
+    decoration_manager = wl_registry_bind(registry, id, &zxdg_decoration_manager_v1_interface, 1);
   } else if (!strcmp(interface, "wp_viewporter")) {
     viewporter = wl_registry_bind(registry, id, &wp_viewporter_interface, 1);
   } else if (!strcmp(interface, "wp_single_pixel_buffer_manager_v1")) {
@@ -469,6 +473,13 @@ int main(void) {
   struct xdg_toplevel *top = xdg_surface_get_toplevel(xdg);
   xdg_toplevel_add_listener(top, &top_listener, NULL);
   xdg_toplevel_set_app_id(top, fixture_app_id);
+  // CAPTURE_DECORATE asks for server-side decorations, as an ordinary client would:
+  // a captured window's rounded bottom corners belong to a decorated window.
+  if (getenv("CAPTURE_DECORATE") && decoration_manager) {
+    struct zxdg_toplevel_decoration_v1 *deco =
+        zxdg_decoration_manager_v1_get_toplevel_decoration(decoration_manager, top);
+    zxdg_toplevel_decoration_v1_set_mode(deco, ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
+  }
   wl_surface_commit(surface);
 
   // Poll both fds, not a blocking fgets: the initial xdg_surface.configure

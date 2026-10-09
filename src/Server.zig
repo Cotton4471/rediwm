@@ -461,6 +461,15 @@ pub fn init(server: *Server, scale: ?f32, icon_theme_cfg: icon_theme.Config, io:
     if (loaded.compositor.scene_renderer == .owned) {
         server.output_renderer = scene_output_mod.Renderer.create(renderer) orelse return error.RendererInitFailed;
         log.info("scene renderer: owned GLES2 output pass", .{});
+        // Rounded shapes are what lets the frame drop its CPU corners, skirt and
+        // border rects. Decided here, before any window exists: the height of
+        // every frame depends on it.
+        if (server.output_renderer.?.enableShapes()) {
+            @import("chrome.zig").analytic_frames = true;
+            log.info("window frames: rounded shapes drawn by the output pass", .{});
+        } else {
+            log.warn("window frames: shaped programs unavailable, keeping CPU corners", .{});
+        }
     }
     errdefer scene_output_mod.Renderer.destroy(server.output_renderer);
     server.outputs.init();

@@ -528,7 +528,8 @@ def test_native_scaling_managed_window(factor=2):
                 # Surface pixels map back to logical client dimensions.
                 dbg = request(sock, reader, {"version": 1, "command": 'get_window_debug', "params": {"id": wid}})["WindowDebug"]
                 cbox = dbg["client_box"]
-                assert dbg["titlebar_height"] == 41, dbg
+                # Native-scaled X11 chrome is drawn at density 0.75 of the default 46 px titlebar.
+                assert dbg["titlebar_height"] == 35, dbg  # 46 * 0.75 = 34.5, rounded half up
                 assert cbox["width"] == math.ceil(400 / factor) and cbox["height"] == math.ceil(300 / factor), f"Unexpected client geometry at factor {factor}: {cbox}"
 
                 # Focus window

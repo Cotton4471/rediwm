@@ -22,13 +22,24 @@ the one for the directory you work in: `src/files`, `src/editor`,
   `col.Straight`. Create/recolour rects only via `col.createRect`/`setRect`,
   pack pixels with `Straight.argb()`/`Premul.argb()`. Symptom of a mix-up:
   white border edges.
-* **Borders have two paths; change both:** `chrome.ChromeBuffer` draws curved
-  corners, `Toplevel.syncBorders` straight `SceneRect`s inset by
-  `ceil(frame_radius)`, with `side_fills` behind them. Chrome is a title band
-  plus a footer skirt under the client (wlroots 0.20 can't mask clients):
-  check `frame.band`, not `py`; `footerHeight()` keeps the skirt ≥
-  `ceil(frame_radius)`.
-* **Skirt colour** comes from `probeClientEdge` (median of the last buffer
+* **Borders have three paths until stage 4e; change all that apply.** Legacy:
+  `chrome.ChromeBuffer` draws curved corners, `Toplevel.syncBorders` straight
+  `SceneRect`s inset by `ceil(frame_radius)`, `side_fills` behind them, and a
+  footer skirt under the client (wlroots 0.20 can't mask clients): check
+  `frame.band`, not `py`; `footerHeight()` keeps the skirt ≥ `ceil(frame_radius)`.
+  Owned (`chrome.analytic_frames`, set in `Server.init` once `enable_shapes`
+  worked): `Toplevel.applyShape` gives `frame_tree` one rounded clip carrying the
+  ring colour (× window opacity), the shader composites the ring over the body,
+  the chrome buffers are plain bands (`ChromeState.radius` 0), the footer is
+  `frame_border`, border rects are off, and `shadow_tree`, the resize-grab tree
+  and every xdg popup carry `setTreeUnclipped` (a new node that hangs outside the
+  window needs it too). CSD windows have no shape and keep their rect outline.
+  A changed clip damages its rim itself (`projection.c`); a point the shape cuts
+  away is declined in `accepts()`, so the pick falls to what is below. Window
+  capture draws the client alone and is handed the shape explicitly.
+  The ring is one `max(1, round(border * scale))`, not the legacy snapped rect
+  width, so the two differ by a pixel on a fractional-scale edge.
+* **Skirt colour** (legacy frames only) comes from `probeClientEdge` (median of the last buffer
   row; shm is premultiplied). Resample only on damage to that row or a
   mapping change; pointer reuse proves nothing. `readFormat` stays memoized
   per texture (it binds GL).
@@ -67,8 +78,10 @@ the one for the directory you work in: `src/files`, `src/editor`,
   the caller. The programs cost the driver about 430 KiB (a GL program costs
   130-150 KiB whatever its size), so `enable_shapes` builds them on request, never
   with the renderer; before it a shaped draw fails the pass. Blend NONE is only
-  valid inside `rediwm_clip_opaque`. The distance ramp is not area coverage (up
-  to 18 of 208 levels at one pixel of a curved edge): that is expected.
+  valid inside `rediwm_clip_opaque`, minus the ring (`scene_output.c` draws a
+  clipped item's ring-free core plain and the rest through the shape). The
+  distance ramp is not area coverage (up to 18 of 208 levels at one pixel of a
+  curved edge): that is expected.
 * **Idle makes no wakeups:** timers only for real deadlines, workers signal an
   eventfd, `text.applySize` instead of re-sizing faces, title changes repaint
   only their span and taskbar chip. Measure with per-thread context switches.

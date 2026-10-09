@@ -35,9 +35,18 @@ const title_inset = window_chrome.title_inset;
 pub const title_icon_size = window_chrome.title_icon_size;
 const title_icon_gap = window_chrome.title_icon_gap;
 
-// The client's surface has square corners of its own, so the frame reserves a
-// band of chrome below it deep enough to hold the bottom corner arcs.
+/// Set once at startup, before any window exists, when the owned output pass can
+/// draw rounded shapes (stage 4c of docs/plans/scene-graph-stage4.md). Then the
+/// compositor gives every decorated window a shape that clips the titlebar, the
+/// client and its subsurfaces together, draws the corners and the border in the
+/// shader, and the frame needs no band of chrome below the client: the footer is
+/// the border. Otherwise the legacy frame is drawn: CPU arcs, a skirt, border rects.
+pub var analytic_frames: bool = false;
+
+// Without a shape the client's surface has square corners of its own, so the
+// frame reserves a band of chrome below it deep enough to hold the bottom arcs.
 pub fn footerHeight(radius: f32) i32 {
+    if (analytic_frames) return frame_border;
     return @max(frame_border, @as(i32, @intFromFloat(@ceil(radius))));
 }
 
@@ -577,7 +586,8 @@ pub const ChromeBuffer = struct {
         frame.state = state;
         frame.base.init(&impl, frame.width, frame.height);
         const corners: i32 = @min(frame.logical_width, @as(i32, @intFromFloat(@ceil(state.radius))) + 1);
-        const border_changed = previous.state.hover != state.hover or previous.state.workspace_focus != state.workspace_focus;
+        // The border is the shader's with a shape: nothing in the raster changes.
+        const border_changed = !analytic_frames and (previous.state.hover != state.hover or previous.state.workspace_focus != state.workspace_focus);
         if (state.tabs.tabs.len > 0 and frame.band == .titlebar) {
             const tabs = @import("chrome_tabs.zig");
             if (!border_changed and previous.tabs_layout_hash == tabs.layoutHash(state.tabs) and
@@ -713,7 +723,9 @@ pub const ChromeBuffer = struct {
         // Away from the corners and the side antialiasing ramp, every pixel
         // in a row has the same fill and outer coverage. Pack that colour once
         // instead of repeating four rounded float conversions across the bar.
-        const flat_inset = @max(radius, 1 / scale);
+        // With a shape the buffer is plain: the shader gives it its corners, edge
+        // and border, so no pixel is shaped (or anti-aliased) here a second time.
+        const flat_inset = if (analytic_frames) 0 else @max(radius, 1 / scale);
         const stride: usize = @intCast(frame.width);
 
         const x0: usize = if (clip) |box| @intCast(@min(frame.width, @max(0, @as(i32, @intFromFloat(@round(@as(f32, @floatFromInt(box.x)) * scale)))))) else 0;
@@ -726,7 +738,7 @@ pub const ChromeBuffer = struct {
             const row = device_y * stride;
             var row_color = base;
             if (frame.band == .titlebar and yi == m.titlebarHeight() - 1) row_color = Color.divider().over(row_color);
-            const flat_color = row_color.scaled(edgeCoverage(sdRoundedBox(fw / 2, py, 0, 0, fw, fh, radius), scale)).argb();
+            const flat_color = row_color.scaled(if (analytic_frames) 1 else edgeCoverage(sdRoundedBox(fw / 2, py, 0, 0, fw, fh, radius), scale)).argb();
             const control_row = frame.band == .titlebar and py >= control_top and py <= control_bottom;
             const icon_row = frame.band == .titlebar and frame.state.tabs.tabs.len == 0 and frame.state.icon != null and
                 py >= icon_top and py < icon_top + @as(f32, @floatFromInt(m.iconSize()));
@@ -739,7 +751,7 @@ pub const ChromeBuffer = struct {
                     continue;
                 }
 
-                const outer_cov = edgeCoverage(sdRoundedBox(px, py, 0, 0, fw, fh, radius), scale);
+                const outer_cov = if (analytic_frames) 1 else edgeCoverage(sdRoundedBox(px, py, 0, 0, fw, fh, radius), scale);
                 if (outer_cov == 0) {
                     frame.pixels[row + x] = 0;
                     continue;

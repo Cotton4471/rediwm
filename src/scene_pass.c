@@ -171,10 +171,13 @@ static const char shaped_vertex[] =
     "vec2 d=abs(q)-(size*.5-vec2(rad));" \
     "return length(max(d,0.))+min(max(d.x,d.y),0.)-rad; }" \
     "float cov(float d){ return clamp(.5-d,0.,1.); }"
-// A border is part of the same pass as its body: the body keeps the inside of the
-// inset shape and the ring the rest, both evaluated at this fragment, so their
-// coverages add up to the shape's. As two draws they would multiply, and a seam
-// would show where each is partly covered.
+// A border is part of the same pass as its body. The ring is composited OVER the
+// body inside the shape and the result is scaled by the shape's coverage, which
+// is what the border rects of the legacy path do (a translucent border, as the
+// default theme has, tints the fill beneath it instead of replacing it). For an
+// opaque ring this equals splitting the pixel into body and ring coverage that
+// add up to the shape's, the spike's model. As two draws the coverages would
+// multiply, and a seam would show where each is partly covered.
 //
 // `mode` 0 draws the texture, 1 the solid colour, 2 the shape's shadow: a
 // Gaussian-blurred copy of the shape, offset, approximated through its distance
@@ -192,9 +195,8 @@ static const char shaped_fragment[] = SHAPED_HEAD
     "if(hide>.5)s*=1.-cov(sdf(local,radii)); gl_FragColor=color*s; return; }"
     "vec4 c=color; if(mode<.5){ c=texture2D(tex,uv); if(opaque>.5)c.a=1.; c*=alpha; }"
     "float d=sdf(local,radii);"
-    "float inner=border>0.?cov(d+border):cov(d);"
-    "float ring=border>0.?cov(d)-cov(d+border):0.;"
-    "gl_FragColor=c*inner+bcolor*ring; }";
+    "float w=border>0.?1.-cov(d+border):0.;"
+    "gl_FragColor=(c*(1.-bcolor.a*w)+bcolor*w)*cov(d); }";
 
 static GLuint shader(GLenum type, const char *prefix, const char *source) {
     GLuint id = glCreateShader(type);

@@ -543,7 +543,7 @@ struct window {
 static struct wlr_box box_of(struct rediwm_snap s) { return (struct wlr_box){s.x, s.y, s.width, s.height}; }
 static struct window make_window(float scale, float zoom, float radius, double border) {
     const struct rediwm_xform xf = {(double)scale * zoom, 8, 8};
-    const struct rediwm_clip_spec spec = {200, 140, {radius, radius, radius, radius}, border};
+    const struct rediwm_clip_spec spec = {.width = 200, .height = 140, .radii = {radius, radius, radius, radius}, .border = border};
     struct window w = {.clip = rediwm_clip_resolve(xf, 30, 24, &spec)};
     w.shape.box = box_of(rediwm_edges_snap(w.clip.edges));
     for (int i = 0; i < 4; i++) w.shape.radii[i] = w.clip.radii[i];
@@ -670,6 +670,18 @@ static void gate_border_partition(struct rediwm_scene_renderer *r, struct wlr_bu
             "row inside the border is not the body at scale %.2f zoom %.2f", SCALES[si], ZOOMS[zi]);
         check(at(img, ringed.box.x, ringed.box.y + ringed.box.height / 2)[0] >= 254,
             "left edge is not the border colour at scale %.2f zoom %.2f", SCALES[si], ZOOMS[zi]);
+        // A translucent ring (the default theme's is 9% white) is composited over the
+        // body, not in place of it: ring + body * (1 - alpha), per channel.
+        const float faint[4] = {.09f, .09f, .09f, .09f};
+        memcpy(ringed.border_color, faint, sizeof(faint));
+        pass = begin_fill(r, buf, BG, NULL);
+        piece(pass, &ringed, ringed.box, BODY, NULL);
+        finish(pass);
+        read_image(r, buf, img);
+        for (int ch = 0; ch < 3; ch++)
+            check(diff(at(img, cx, ringed.box.y)[ch], (int)lround(255 * (.09 + BODY[ch] * .91))) <= 1,
+                "translucent ring is not over the body at scale %.2f zoom %.2f: channel %d is %d",
+                SCALES[si], ZOOMS[zi], ch, at(img, cx, ringed.box.y)[ch]);
     }
     check(worst <= 2, "border + body differ from one shape by %d levels", worst);
     printf("PASS: border ring and body, in one pass, add up to exactly the shape's coverage (max diff %d)\n", worst);

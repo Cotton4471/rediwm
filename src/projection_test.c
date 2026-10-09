@@ -395,8 +395,8 @@ static void test_clip_opaque(void) {
   // pill keeps the full-height column between its two semicircles.
   struct rediwm_snap one[3];
   const struct rediwm_xform identity = {1, 0, 0};
-  assert(rediwm_clip_opaque(&(struct rediwm_clip){rediwm_xform_rect(identity, 0, 0, 8, 8), {4, 4, 4, 4}, 0}, one) == 0);
-  assert(rediwm_clip_opaque(&(struct rediwm_clip){rediwm_xform_rect(identity, 5, 7, 120, 80), {40, 40, 40, 40}, 0}, one) == 1);
+  assert(rediwm_clip_opaque(&(struct rediwm_clip){rediwm_xform_rect(identity, 0, 0, 8, 8), {4, 4, 4, 4}, 0, {0}}, one) == 0);
+  assert(rediwm_clip_opaque(&(struct rediwm_clip){rediwm_xform_rect(identity, 5, 7, 120, 80), {40, 40, 40, 40}, 0, {0}}, one) == 1);
   assert(one[0].x == 5 + 42 && one[0].y == 7 && one[0].width == 120 - 84 && one[0].height == 80);
 }
 static void test_clip_projection(struct wlr_scene *scene) {
@@ -538,6 +538,106 @@ static void test_clip_projection(struct wlr_scene *scene) {
   wlr_buffer_drop(title_buffer);
   wlr_buffer_drop(popup_buffer);
   wlr_buffer_drop(sub_buffer);
+}
+// What a changed shape does to the output, and to the pointer. The views of a
+// window do not move when its border colour changes, so the rim is damaged by the
+// projection itself; and a point the shape cuts away goes to what is below.
+// Damage is in output pixels and the points below are in layout coordinates, at
+// whatever scale an earlier test left the output.
+static bool layout_damaged(struct wlr_scene_output *out, double x, double y) {
+  return damaged(out, (int)(x * out->output->scale), (int)(y * out->output->scale));
+}
+static void test_clip_output(struct wlr_scene *scene, struct wlr_scene_output *out) {
+  struct wlr_scene_tree *source = wlr_scene_tree_create(&scene->tree);
+  struct wlr_scene_tree *view = wlr_scene_tree_create(&scene->tree);
+  struct rediwm_projection *p = rediwm_projection_create(source, view, scene);
+  assert(p);
+  struct wlr_scene_tree *under_tree = wlr_scene_tree_create(source);
+  struct wlr_scene_tree *frame = wlr_scene_tree_create(source);
+  struct wlr_buffer *under_buffer = buffer_create(), *client_buffer = buffer_create();
+  struct wlr_scene_buffer *under = wlr_scene_buffer_create(under_tree, under_buffer);
+  struct wlr_scene_buffer *client = wlr_scene_buffer_create(frame, client_buffer);
+  assert(under_tree && frame && under && client);
+  wlr_scene_node_set_position(&under_tree->node, 300, 200);
+  wlr_scene_node_set_position(&frame->node, 300, 200);
+  wlr_scene_buffer_set_dest_size(under, 120, 80);
+  wlr_scene_buffer_set_dest_size(client, 120, 80);
+  struct rediwm_clip_spec spec = {.width = 120, .height = 80, .radii = {10, 10, 10, 10}, .border = 1,
+      .border_color = {.1f, .1f, .1f, .1f}};
+  assert(rediwm_projection_set_tree_clip(&frame->node, &spec));
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  struct leaf *client_leaf = get_leaf(p, &client->node), *under_leaf = get_leaf(p, &under->node);
+
+  // Points inside the window reach it; the corner pixel, which the arc cuts away,
+  // goes to the window below, and so does the one just outside the box.
+  double nx, ny;
+  struct wlr_scene_node *hit = wlr_scene_node_at(&view->node, 360, 240, &nx, &ny);
+  assert(hit == client_leaf->view);
+  hit = wlr_scene_node_at(&view->node, 300.5, 200.5, &nx, &ny);
+  assert(hit == under_leaf->view);
+  hit = wlr_scene_node_at(&view->node, 419.5, 279.5, &nx, &ny); // bottom-right corner
+  assert(hit == under_leaf->view);
+  hit = wlr_scene_node_at(&view->node, 310.5, 200.5, &nx, &ny); // on the straight edge
+  assert(hit == client_leaf->view);
+  // Without a shape the corner is the window's again.
+  assert(rediwm_projection_set_tree_clip(&frame->node, NULL));
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  assert(wlr_scene_node_at(&view->node, 300.5, 200.5, &nx, &ny) == client_leaf->view);
+  clear_damage(out);
+
+  // A shape appearing, a different border colour, and the shape going away each
+  // damage the rim and only the rim. Nothing else moved.
+  assert(rediwm_projection_set_tree_clip(&frame->node, &spec));
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  assert(layout_damaged(out, 301, 201) && layout_damaged(out, 419, 279) && layout_damaged(out, 360, 202));
+  assert(!layout_damaged(out, 360, 240));
+  clear_damage(out);
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0); // Nothing changed.
+  assert(!pixman_region32_not_empty(&out->damage_ring.current));
+  spec.border_color[0] = .3f;
+  assert(rediwm_projection_set_tree_clip(&frame->node, &spec));
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  assert(layout_damaged(out, 301, 201) && layout_damaged(out, 419, 279) && layout_damaged(out, 300, 240));
+  assert(!layout_damaged(out, 360, 240) && !layout_damaged(out, 100, 100));
+  assert(pixman_region32_not_empty(&out->private.pending_commit_damage));
+  clear_damage(out);
+  // Setting the same shape again damages nothing.
+  assert(rediwm_projection_set_tree_clip(&frame->node, &spec));
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  assert(!pixman_region32_not_empty(&out->damage_ring.current));
+  // The shape going away damages the rim, not the interior.
+  assert(rediwm_projection_set_tree_clip(&frame->node, NULL));
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  assert(layout_damaged(out, 301, 201) && layout_damaged(out, 419, 279) && !layout_damaged(out, 360, 240));
+  // Moving a window moves its views, which damage themselves; the shape follows
+  // without a second, rim-only report of its own.
+  assert(rediwm_projection_set_tree_clip(&frame->node, &spec));
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  clear_damage(out);
+  wlr_scene_node_set_position(&frame->node, 310, 200);
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  assert(layout_damaged(out, 370, 240)); // the views of the window moved
+  wlr_scene_node_set_position(&frame->node, 300, 200);
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  assert(rediwm_projection_set_tree_clip(&frame->node, NULL));
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  // A hidden window damages nothing for a shape change.
+  wlr_scene_node_set_enabled(&frame->node, false);
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  clear_damage(out);
+  assert(rediwm_projection_set_tree_clip(&frame->node, &spec));
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  assert(!pixman_region32_not_empty(&out->damage_ring.current));
+  spec.border_color[1] = .7f;
+  assert(rediwm_projection_set_tree_clip(&frame->node, &spec));
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  assert(!pixman_region32_not_empty(&out->damage_ring.current));
+
+  wlr_scene_node_destroy(&view->node);
+  rediwm_projection_destroy(p);
+  wlr_scene_node_destroy(&source->node);
+  wlr_buffer_drop(under_buffer);
+  wlr_buffer_drop(client_buffer);
 }
 // A client surface's opaque region has to reach its view, or nothing below the
 // window is ever culled. The buffers here reveal no format, like a
@@ -901,6 +1001,7 @@ int main(void) {
   test_clip_geometry();
   test_clip_opaque();
   test_clip_projection(scene);
+  test_clip_output(scene, out);
   test_opaque(scene);
   wlr_scene_node_destroy(&scene->tree.node);
   wlr_buffer_drop(a);

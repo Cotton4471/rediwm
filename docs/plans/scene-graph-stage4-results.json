@@ -1,0 +1,655 @@
+{
+ "note": "Stage 4c cost reference, 2026-10-10, i9-12900H, Intel render node, AC, performance profile, ReleaseSafe, headless GLES2 owned presenter.",
+ "ab_4b_before_4c": {
+  "what": "tests/scene_ab.py on the 4b commit (legacy vs owned presenter, frame blocks); mixed/glass reads 5.1% against the 5% limit, the cell that read 4.4% in stage 3",
+  "result": {
+   "scale1/clear": {
+    "cells": {
+     "build_cpu": {
+      "n": 3000,
+      "legacy": {
+       "mean": 209269,
+       "median": 205912,
+       "p10": 155159,
+       "p90": 262000
+      },
+      "owned": {
+       "mean": 206498,
+       "median": 204437,
+       "p10": 154025,
+       "p90": 257986
+      }
+     },
+     "build_wall": {
+      "n": 3000,
+      "legacy": {
+       "mean": 215768,
+       "median": 211907,
+       "p10": 158021,
+       "p90": 270573
+      },
+      "owned": {
+       "mean": 213073,
+       "median": 209359,
+       "p10": 157370,
+       "p90": 266536
+      }
+     },
+     "commit_wall": {
+      "n": 3000,
+      "legacy": {
+       "mean": 227770,
+       "median": 224552,
+       "p10": 166860,
+       "p90": 285451
+      },
+      "owned": {
+       "mean": 224902,
+       "median": 221633,
+       "p10": 165344,
+       "p90": 281540
+      }
+     },
+     "gpu": {
+      "n": 3000,
+      "legacy": {
+       "mean": 261441,
+       "median": 264844,
+       "p10": 154688,
+       "p90": 358958
+      },
+      "owned": {
+       "mean": 254685,
+       "median": 258073,
+       "p10": 149740,
+       "p90": 346875
+      }
+     }
+    },
+    "power_before": {
+     "ac_online": true,
+     "battery": "Charging",
+     "platform_profile": "performance",
+     "governor": "schedutil",
+     "epp": "performance",
+     "no_turbo": "0"
+    },
+    "power_after": {
+     "ac_online": true,
+     "battery": "Charging",
+     "platform_profile": "performance",
+     "governor": "schedutil",
+     "epp": "performance",
+     "no_turbo": "0"
+    }
+   },
+   "scale1/glass": {
+    "cells": {
+     "build_cpu": {
+      "n": 3000,
+      "legacy": {
+       "mean": 230454,
+       "median": 240136,
+       "p10": 168624,
+       "p90": 276840
+      },
+      "owned": {
+       "mean": 236672,
+       "median": 246681,
+       "p10": 173355,
+       "p90": 284656
+      }
+     },
+     "build_wall": {
+      "n": 3000,
+      "legacy": {
+       "mean": 236394,
+       "median": 243204,
+       "p10": 170697,
+       "p90": 288442
+      },
+      "owned": {
+       "mean": 243022,
+       "median": 249857,
+       "p10": 175778,
+       "p90": 296348
+      }
+     },
+     "commit_wall": {
+      "n": 3000,
+      "legacy": {
+       "mean": 248235,
+       "median": 254831,
+       "p10": 179186,
+       "p90": 302935
+      },
+      "owned": {
+       "mean": 254791,
+       "median": 261440,
+       "p10": 183976,
+       "p90": 310853
+      }
+     },
+     "gpu": {
+      "n": 3000,
+      "legacy": {
+       "mean": 678942,
+       "median": 694947,
+       "p10": 465834,
+       "p90": 854010
+      },
+      "owned": {
+       "mean": 681999,
+       "median": 697240,
+       "p10": 468281,
+       "p90": 852084
+      }
+     }
+    },
+    "power_before": {
+     "ac_online": true,
+     "battery": "Charging",
+     "platform_profile": "performance",
+     "governor": "schedutil",
+     "epp": "performance",
+     "no_turbo": "0"
+    },
+    "power_after": {
+     "ac_online": true,
+     "battery": "Charging",
+     "platform_profile": "performance",
+     "governor": "schedutil",
+     "epp": "performance",
+     "no_turbo": "0"
+    }
+   },
+   "scale1.5/clear": {
+    "cells": {
+     "build_cpu": {
+      "n": 3000,
+      "legacy": {
+       "mean": 223337,
+       "median": 218183,
+       "p10": 168229,
+       "p90": 272090
+      },
+      "owned": {
+       "mean": 209737,
+       "median": 205764,
+       "p10": 159362,
+       "p90": 258332
+      }
+     },
+     "build_wall": {
+      "n": 3000,
+      "legacy": {
+       "mean": 229792,
+       "median": 225240,
+       "p10": 171883,
+       "p90": 280317
+      },
+      "owned": {
+       "mean": 215783,
+       "median": 212877,
+       "p10": 162885,
+       "p90": 265899
+      }
+     },
+     "commit_wall": {
+      "n": 3000,
+      "legacy": {
+       "mean": 242233,
+       "median": 237897,
+       "p10": 180610,
+       "p90": 295995
+      },
+      "owned": {
+       "mean": 227853,
+       "median": 224951,
+       "p10": 171214,
+       "p90": 280831
+      }
+     },
+     "gpu": {
+      "n": 3000,
+      "legacy": {
+       "mean": 278516,
+       "median": 281875,
+       "p10": 169531,
+       "p90": 366563
+      },
+      "owned": {
+       "mean": 257885,
+       "median": 259062,
+       "p10": 158489,
+       "p90": 344844
+      }
+     }
+    },
+    "power_before": {
+     "ac_online": true,
+     "battery": "Charging",
+     "platform_profile": "performance",
+     "governor": "schedutil",
+     "epp": "performance",
+     "no_turbo": "0"
+    },
+    "power_after": {
+     "ac_online": true,
+     "battery": "Charging",
+     "platform_profile": "performance",
+     "governor": "schedutil",
+     "epp": "performance",
+     "no_turbo": "0"
+    }
+   },
+   "scale1.5/glass": {
+    "cells": {
+     "build_cpu": {
+      "n": 3000,
+      "legacy": {
+       "mean": 251443,
+       "median": 258123,
+       "p10": 183023,
+       "p90": 298023
+      },
+      "owned": {
+       "mean": 257174,
+       "median": 263531,
+       "p10": 190779,
+       "p90": 304293
+      }
+     },
+     "build_wall": {
+      "n": 3000,
+      "legacy": {
+       "mean": 257999,
+       "median": 261822,
+       "p10": 185652,
+       "p90": 309525
+      },
+      "owned": {
+       "mean": 263686,
+       "median": 268048,
+       "p10": 196184,
+       "p90": 315662
+      }
+     },
+     "commit_wall": {
+      "n": 3000,
+      "legacy": {
+       "mean": 270205,
+       "median": 274098,
+       "p10": 194814,
+       "p90": 323578
+      },
+      "owned": {
+       "mean": 275819,
+       "median": 280262,
+       "p10": 205394,
+       "p90": 329819
+      }
+     },
+     "gpu": {
+      "n": 3000,
+      "legacy": {
+       "mean": 728277,
+       "median": 737709,
+       "p10": 521875,
+       "p90": 887500
+      },
+      "owned": {
+       "mean": 730885,
+       "median": 737968,
+       "p10": 544114,
+       "p90": 886927
+      }
+     }
+    },
+    "power_before": {
+     "ac_online": true,
+     "battery": "Charging",
+     "platform_profile": "performance",
+     "governor": "schedutil",
+     "epp": "performance",
+     "no_turbo": "0"
+    },
+    "power_after": {
+     "ac_online": true,
+     "battery": "Charging",
+     "platform_profile": "performance",
+     "governor": "schedutil",
+     "epp": "performance",
+     "no_turbo": "0"
+    }
+   },
+   "mixed/clear": {
+    "cells": {
+     "build_cpu": {
+      "n": 3000,
+      "legacy": {
+       "mean": 205123,
+       "median": 200058,
+       "p10": 153695,
+       "p90": 255068
+      },
+      "owned": {
+       "mean": 204523,
+       "median": 202528,
+       "p10": 154176,
+       "p90": 253180
+      }
+     },
+     "build_wall": {
+      "n": 3000,
+      "legacy": {
+       "mean": 210965,
+       "median": 204116,
+       "p10": 156181,
+       "p90": 262051
+      },
+      "owned": {
+       "mean": 210343,
+       "median": 206528,
+       "p10": 157378,
+       "p90": 261705
+      }
+     },
+     "commit_wall": {
+      "n": 3000,
+      "legacy": {
+       "mean": 220876,
+       "median": 214265,
+       "p10": 163232,
+       "p90": 274809
+      },
+      "owned": {
+       "mean": 220098,
+       "median": 216515,
+       "p10": 164595,
+       "p90": 274359
+      }
+     },
+     "gpu": {
+      "n": 3000,
+      "legacy": {
+       "mean": 146915,
+       "median": 84427,
+       "p10": 10677,
+       "p90": 328854
+      },
+      "owned": {
+       "mean": 143605,
+       "median": 79844,
+       "p10": 10677,
+       "p90": 319583
+      }
+     }
+    },
+    "power_before": {
+     "ac_online": true,
+     "battery": "Charging",
+     "platform_profile": "performance",
+     "governor": "schedutil",
+     "epp": "performance",
+     "no_turbo": "0"
+    },
+    "power_after": {
+     "ac_online": true,
+     "battery": "Charging",
+     "platform_profile": "performance",
+     "governor": "schedutil",
+     "epp": "performance",
+     "no_turbo": "0"
+    }
+   },
+   "mixed/glass": {
+    "cells": {
+     "build_cpu": {
+      "n": 3000,
+      "legacy": {
+       "mean": 163277,
+       "median": 161290,
+       "p10": 115554,
+       "p90": 203699
+      },
+      "owned": {
+       "mean": 171615,
+       "median": 165154,
+       "p10": 121438,
+       "p90": 221156
+      }
+     },
+     "build_wall": {
+      "n": 3000,
+      "legacy": {
+       "mean": 167115,
+       "median": 165184,
+       "p10": 117212,
+       "p90": 208344
+      },
+      "owned": {
+       "mean": 175690,
+       "median": 168592,
+       "p10": 123640,
+       "p90": 227309
+      }
+     },
+     "commit_wall": {
+      "n": 3000,
+      "legacy": {
+       "mean": 173210,
+       "median": 169836,
+       "p10": 120313,
+       "p90": 219092
+      },
+      "owned": {
+       "mean": 182071,
+       "median": 175045,
+       "p10": 126937,
+       "p90": 238248
+      }
+     },
+     "gpu": {
+      "n": 3000,
+      "legacy": {
+       "mean": 435729,
+       "median": 351406,
+       "p10": 191094,
+       "p90": 731979
+      },
+      "owned": {
+       "mean": 448717,
+       "median": 358125,
+       "p10": 198593,
+       "p90": 757396
+      }
+     }
+    },
+    "power_before": {
+     "ac_online": true,
+     "battery": "Charging",
+     "platform_profile": "performance",
+     "governor": "schedutil",
+     "epp": "performance",
+     "no_turbo": "0"
+    },
+    "power_after": {
+     "ac_online": true,
+     "battery": "Charging",
+     "platform_profile": "performance",
+     "governor": "schedutil",
+     "epp": "performance",
+     "no_turbo": "0"
+    }
+   }
+  }
+ },
+ "analytic_on_vs_off_scale1": {
+  "what": "one binary, interleaved on/off/off/on sessions of scene_baseline --modes stats; per-frame microseconds, mean of two sessions each (pair spread 0.1-23%)",
+  "frame_work": {
+   "scene_commit_cpu": {
+    "spinner_clear": {
+     "off_us": 215.7,
+     "on_us": 225.6
+    },
+    "spinner_glass": {
+     "off_us": 263.6,
+     "on_us": 269.6
+    },
+    "damage_full": {
+     "off_us": 284.2,
+     "on_us": 325.5
+    },
+    "drag": {
+     "off_us": 416.4,
+     "on_us": 469.2
+    },
+    "resize": {
+     "off_us": 412.1,
+     "on_us": 414.7
+    },
+    "zoom_85": {
+     "off_us": 245.8,
+     "on_us": 272.6
+    },
+    "zoom_70": {
+     "off_us": 268.2,
+     "on_us": 275.9
+    },
+    "zoom_55": {
+     "off_us": 250.1,
+     "on_us": 267.2
+    },
+    "zoom_min_hold": {
+     "off_us": 241.9,
+     "on_us": 269.7
+    }
+   },
+   "gpu_elapsed": {
+    "spinner_clear": {
+     "off_us": 243.9,
+     "on_us": 260.8
+    },
+    "spinner_glass": {
+     "off_us": 703.2,
+     "on_us": 706.9
+    },
+    "damage_full": {
+     "off_us": 710.8,
+     "on_us": 796.5
+    },
+    "drag": {
+     "off_us": 1053.0,
+     "on_us": 1154.4
+    },
+    "resize": {
+     "off_us": 1521.5,
+     "on_us": 1502.8
+    },
+    "zoom_85": {
+     "off_us": 672.9,
+     "on_us": 713.5
+    },
+    "zoom_70": {
+     "off_us": 711.4,
+     "on_us": 723.2
+    },
+    "zoom_55": {
+     "off_us": 684.7,
+     "on_us": 698.6
+    },
+    "zoom_min_hold": {
+     "off_us": 246.5,
+     "on_us": 281.6
+    }
+   },
+   "cpu_frame": {
+    "spinner_clear": {
+     "off_us": 537.6,
+     "on_us": 555.1
+    },
+    "spinner_glass": {
+     "off_us": 992.1,
+     "on_us": 988.9
+    },
+    "damage_full": {
+     "off_us": 940.8,
+     "on_us": 1037.6
+    },
+    "drag": {
+     "off_us": 1401.5,
+     "on_us": 1537.6
+    },
+    "resize": {
+     "off_us": 2030.7,
+     "on_us": 1925.9
+    },
+    "zoom_85": {
+     "off_us": 965.2,
+     "on_us": 1021.6
+    },
+    "zoom_70": {
+     "off_us": 1005.9,
+     "on_us": 1020.5
+    },
+    "zoom_55": {
+     "off_us": 986.3,
+     "on_us": 996.6
+    },
+    "zoom_min_hold": {
+     "off_us": 554.3,
+     "on_us": 589.8
+    }
+   },
+   "projection_cpu": {
+    "spinner_clear": {
+     "off_us": 48.5,
+     "on_us": 51.8
+    },
+    "spinner_glass": {
+     "off_us": 52.5,
+     "on_us": 53.5
+    },
+    "damage_full": {
+     "off_us": 45.5,
+     "on_us": 52.4
+    },
+    "drag": {
+     "off_us": 143.6,
+     "on_us": 151.3
+    },
+    "resize": {
+     "off_us": 469.6,
+     "on_us": 387.4
+    },
+    "zoom_85": {
+     "off_us": 51.1,
+     "on_us": 58.0
+    },
+    "zoom_70": {
+     "off_us": 52.2,
+     "on_us": 56.4
+    },
+    "zoom_55": {
+     "off_us": 52.2,
+     "on_us": 54.9
+    },
+    "zoom_min_hold": {
+     "off_us": 48.6,
+     "on_us": 51.6
+    }
+   }
+  },
+  "idle_rss_anon_kb": {
+   "off": [
+    46324,
+    45612
+   ],
+   "on": [
+    45060,
+    46328
+   ]
+  }
+ }
+}

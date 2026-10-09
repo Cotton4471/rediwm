@@ -56,6 +56,7 @@ def build_client(tmp):
         # toplevel handle and request a per-window capture source through
         # ext-image-capture-source-v1's foreign-toplevel manager.
         ("ext-foreign-toplevel-list-v1", "staging/ext-foreign-toplevel-list/ext-foreign-toplevel-list-v1.xml"),
+        ("xdg-decoration", "unstable/xdg-decoration/xdg-decoration-unstable-v1.xml"),
     ):
         for mode, suffix in (("client-header", "client-protocol.h"), ("private-code", "protocol.c")):
             subprocess.run(["wayland-scanner", mode, str(protocols / path),
@@ -193,6 +194,7 @@ def run_window_capture_case(client_binary):
     """
     with tempfile.TemporaryDirectory(prefix="rediwm-window-capture-") as directory:
         tmp = Path(directory)
+        owned = os.environ.get("REDIWM_TEST_SCENE_RENDERER") == "owned"
         compositor, log = spawn_compositor(
             tmp, scale="1", outputs="1", renderer=os.environ.get("REDIWM_TEST_RENDERER", "pixman"),
             config_content="[compositor]\nxwayland = false\n[animations]\nenabled = false\n",
@@ -203,6 +205,8 @@ def run_window_capture_case(client_binary):
             socket_path = wait_for(lambda: next(tmp.glob("rediwm-*.sock"), None), "IPC unavailable")
             display = next(p.name for p in tmp.glob("wayland-*") if not p.name.endswith(".lock"))
             env = dict(os.environ, XDG_RUNTIME_DIR=str(tmp), WAYLAND_DISPLAY=display)
+            if owned:
+                env["CAPTURE_DECORATE"] = "1"
             with client_log.open("w") as output:
                 client = subprocess.Popen([str(client_binary)], stdin=subprocess.PIPE,
                                           stdout=output, stderr=output, text=True, env=env)
@@ -211,7 +215,11 @@ def run_window_capture_case(client_binary):
                 win = wait_for(lambda: next((w for w in ipc.get_windows()
                                              if w["app_id"] == "rediwm.capture-fixture"), None),
                                "capture-fixture toplevel did not map")
-                assert (win["width"], win["height"]) == (200, 150), win
+                if owned:
+                    box = ipc.get_window_debug(win["id"])["client_box"]
+                    assert (box["width"], box["height"]) == (200, 150), (win, box)
+                else:
+                    assert (win["width"], win["height"]) == (200, 150), win
                 wait_for(lambda: "presented\n" in client_log.read_text(), "first frame not presented")
 
                 before = client_log.read_text()
@@ -255,6 +263,17 @@ def run_window_capture_case(client_binary):
                 assert (r, g, b) == (255, 0, 0), (r, g, b, a)
                 if fmt in (SHM_FORMAT_ARGB8888, DRM_FORMAT_ARGB8888, DRM_FORMAT_ABGR8888):
                     assert a == 255, a
+
+                if owned:
+                    # The window's rounded shape clips the client, so a captured window keeps
+                    # transparent bottom corners (premultiplied: black) and an intact interior.
+                    for cx in (0, buf_w - 1):
+                        r, g, b, a = sample(cx, buf_h - 1)
+                        assert (r, g, b) == (0, 0, 0), ("window capture corner is not transparent", cx, (r, g, b, a))
+                        if fmt in (SHM_FORMAT_ARGB8888, DRM_FORMAT_ARGB8888, DRM_FORMAT_ABGR8888):
+                            assert a == 0, ("window capture corner has alpha", cx, a)
+                    r, g, b, a = sample(20, buf_h - 20)
+                    assert (r, g, b) == (255, 0, 0), ("window capture interior near the corner", (r, g, b, a))
 
                 print(f"capture: window session returned real pixels at its own {buf_w}x{buf_h} "
                       f"content size, not the monitor's (fmt={fmt:#x})")

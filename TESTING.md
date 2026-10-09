@@ -51,7 +51,10 @@ compiler, `wayland-scanner` and wayland-protocols; D-Bus suites need PyGObject,
   stage 3's owned output/capture path. Python fixtures write the temporary
   `[compositor] scene_renderer` config key; production reads no test variable.
   Use `legacy` for the comparison. Details and gate results:
-  `docs/plans/scene-graph-stage3.md`.
+  `docs/plans/scene-graph-stage3.md`. With `owned` the compositor also draws
+  rounded window frames (stage 4c, `docs/plans/scene-graph-stage4.md`): the frame
+  is 9 px shorter at the default radius, so a pinned frame height differs by
+  presenter. Run a test under both before calling a failure a regression.
 - `python3 tests/scene_baseline.py --modes paired --configs scale1,scale1.5,mixed --out /tmp/scene-cost.json`:
   run owned/legacy/legacy/owned in the same binary, with small repaints clear of
   and under glass. Records instructions per committed frame, frame timers, RSS
@@ -107,7 +110,11 @@ origin), `zoom_osd.py` (shared zoom OSD,
 100% camera cap, pixels, timeout and input), `decorations.py`, `kde_decorations.py`, `window_corners.py`
 (border antialiasing and filled side edges on dark/light backgrounds at
 integer/fractional scales, plus workspace focus outlines on server/client
-decorations, mode transitions, fullscreen and default/explicit gaps), `switcher.py`,
+decorations, mode transitions, fullscreen and default/explicit gaps; under
+`REDIWM_TEST_SCENE_RENDERER=owned` it also runs `frame_parity` (titlebar, sides,
+client and shadow bit-identical to the legacy frame at scales 1 to 2, the
+rightmost column excepted on fractional scales) and checks transparent client
+corners and that a click on a clipped corner reaches the window below), `switcher.py`,
 `switcher_live.py`, `workspaces.py` (floating rules, Settings/IPC layout controls,
 versioned restart/named-save restoration, duplicate app occurrences, restored tab groups,
 saved canvas state and multi-window layout undo, both sides of tiled/floating
@@ -189,7 +196,8 @@ saved positions, windows carried along, main display, hidden with one output),
 
 **Capture**: `capture.py` (ext-image-copy-capture for outputs and windows over
 shm and, with a render node, dmabuf; occlusion, camera, resize, destroy,
-minimize, idle blank, unplug, `get_capture_state`), `screencast.py` (portal
+minimize, idle blank, unplug, `get_capture_state`; under `owned` a captured
+server-decorated window has transparent bottom corners), `screencast.py` (portal
 config packaging, `rediwm-share-picker --xdpw-dmenu` contract, Stop sharing
 indicator), `screenshot_tool.py`, `screenshot_regressions.py` (save hook
 injects write failures).

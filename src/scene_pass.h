@@ -32,9 +32,11 @@ struct rediwm_pass_shape {
   // Top-left, top-right, bottom-right, bottom-left. A radius larger than half
   // the short side is capped to it.
   float radii[4];
-  // Width of the ring just inside the edge, drawn in `border_color` by the same
-  // fragment that draws the body, so the two add up to the shape's coverage
-  // exactly. 0 draws no ring.
+  // Width of the ring just inside the edge. The same fragment that draws the body
+  // composites the ring over it, then applies the shape's coverage, so a
+  // translucent border tints the fill beneath it, as the legacy border rects do,
+  // and an opaque one equals splitting the pixel between body and ring exactly.
+  // 0 draws no ring.
   float border;
   float border_color[4]; // premultiplied
 };

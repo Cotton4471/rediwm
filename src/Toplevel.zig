@@ -19,6 +19,7 @@ const icon_service = @import("icon_service.zig");
 const resize = @import("resize.zig");
 const tiling = @import("snap.zig");
 const scene_data = @import("scene_data.zig");
+const projection = @import("projection.zig");
 const theme = @import("ui").theme;
 const events = @import("ipc/events.zig");
 const stats = @import("ipc/stats.zig");
@@ -235,6 +236,9 @@ chip_pos: anim.Anim = .{},
 chip_alpha: anim.Anim = .{ .property = .opacity },
 last_painted_hover: f32 = 0,
 skirt_fill: ?[4]f32 = null,
+/// The window opacity the border colour of the shape was last given, so a
+/// hover or focus repaint keeps the ring as faded as the body.
+shape_opacity: f32 = 1,
 edge_kind: chrome.EdgeSampleKind = .uninitialized,
 edge_mapping: ?chrome.EdgeMapping = null,
 pending_edge_sample: bool = false,
@@ -325,11 +329,18 @@ fn createChromeNodes(server: *Server) !ChromeNodes {
     if (!@import("projection.zig").setTreeZoom(&frame_tree.node, 1)) return error.OutOfMemory;
 
     // Input only: no buffer, so never drawn. Gives the edges their reach past
-    // the frame without depending on the shadow (`shadow_size = 0`).
-    const resize_grab = try frame_tree.createSceneBuffer(null);
+    // the frame without depending on the shadow (`shadow_size = 0`). It sits in
+    // a tree of its own so that the window's shape, which cuts the corners off
+    // everything else under the frame, does not cut its reach: that must accept
+    // points the shape declines.
+    const reach_tree = try frame_tree.createSceneTree();
+    _ = @import("projection.zig").setTreeUnclipped(&reach_tree.node, true);
+    const resize_grab = try reach_tree.createSceneBuffer(null);
     resize_grab.point_accepts_input = chromeAcceptsInput;
 
     const shadow_tree = try frame_tree.createSceneTree();
+    // The shadow is outside the shape by definition.
+    _ = @import("projection.zig").setTreeUnclipped(&shadow_tree.node, true);
     var shadow_corners: [4]*wlr.SceneBuffer = undefined;
     for (&shadow_corners) |*buf| {
         buf.* = try shadow_tree.createSceneBuffer(null);
@@ -2838,7 +2849,10 @@ pub fn syncChrome(toplevel: *Toplevel, sample_edge: bool, rebuild_shadow: bool, 
     toplevel.titlebar_buffer.node.setEnabled(decorated);
     toplevel.footer_buffer.node.setEnabled(decorated);
     for (toplevel.side_fills) |rect| rect.node.setEnabled(decorated);
-    for (toplevel.border_rects) |rect| rect.node.setEnabled(decorated or toplevel.hasWorkspaceFocusBorder());
+    // With a shape the border is the shader's; the rects only outline windows
+    // that draw their own decorations.
+    const shaped = chrome.analytic_frames and decorated;
+    for (toplevel.border_rects) |rect| rect.node.setEnabled(!shaped and (decorated or toplevel.hasWorkspaceFocusBorder()));
     if (!decorated) {
         toplevel.resetEdgeSample();
         toplevel.releaseIcon();
@@ -2858,6 +2872,7 @@ pub fn syncChrome(toplevel: *Toplevel, sample_edge: bool, rebuild_shadow: bool, 
         toplevel.resetChip();
         toplevel.last_painted_hover = 0;
         toplevel.syncBorders(animated.w, animated.h);
+        toplevel.applyShape();
         return;
     }
 
@@ -2876,15 +2891,17 @@ pub fn syncChrome(toplevel: *Toplevel, sample_edge: bool, rebuild_shadow: bool, 
         .pending, .missing => null,
     };
     toplevel.updateHeldIcon(icon);
-    if (sample_edge) toplevel.applyEdgeSample();
+    // A shape clips the client itself, so there is no skirt to colour.
+    if (sample_edge and !chrome.analytic_frames) toplevel.applyEdgeSample();
     // The settings body is one opaque colour: the skirt continues it exactly.
-    if (toplevel.backend == .shell) toplevel.skirt_fill = @import("control_center/panel.zig").bodyColor();
+    if (toplevel.backend == .shell and !chrome.analytic_frames) toplevel.skirt_fill = @import("control_center/panel.zig").bodyColor();
     const hover = toplevel.hover_anim.value(now_ms);
     const chip_alpha = toplevel.chip_alpha.value(now_ms);
     var tab_storage: [@import("window_tabs.zig").max_tabs]@import("chrome_tabs.zig").Tab = undefined;
     const state: chrome.ChromeState = .{
         .tabs = toplevel.tabStrip(&tab_storage),
-        .radius = radius,
+        // The shader draws the corners and the border; the raster is a plain band.
+        .radius = if (chrome.analytic_frames) 0 else radius,
         .active = toplevel.activated,
         .workspace_focus = toplevel.hasWorkspaceFocusBorder(),
         .maximized = toplevel.isMaximized(),
@@ -2937,6 +2954,7 @@ pub fn syncChrome(toplevel: *Toplevel, sample_edge: bool, rebuild_shadow: bool, 
     toplevel.footer_buffer.setDestSize(width, footer);
 
     toplevel.syncBorders(width, height);
+    toplevel.applyShape();
     toplevel.syncResizeGrab(width, height);
     if (rebuild_shadow) try toplevel.syncShadow(width, height, radius);
 
@@ -3065,6 +3083,30 @@ fn syncResizeGrab(toplevel: *Toplevel, width: i32, height: i32) void {
     toplevel.resize_grab.setDestSize(width + 2 * reach, height + 2 * reach);
 }
 
+/// The shape that clips the whole window, titlebar, client and subsurfaces, in
+/// the output pass (see `chrome.analytic_frames`). Windows that draw their own
+/// decorations, and fullscreen ones, have none; a maximized one has a square one,
+/// for its border. Nothing changes if the shape is the one already set.
+fn applyShape(toplevel: *Toplevel) void {
+    if (!chrome.analytic_frames) return;
+    const node = &toplevel.frame_tree.node;
+    if (!toplevel.hasServerDecorations() or toplevel.chrome_width <= 0 or toplevel.chrome_height <= 0) {
+        _ = projection.setTreeClip(node, null);
+        return;
+    }
+    const radius: f64 = toplevel.cornerRadius();
+    const ring = toplevel.borderColor().scale(toplevel.shape_opacity);
+    if (!projection.setTreeClip(node, .{
+        .width = toplevel.chrome_width,
+        .height = toplevel.chrome_height,
+        .radii = .{ radius, radius, radius, radius },
+        .border = @floatFromInt(chrome.frame_border),
+        .border_color = ring.rgba,
+    })) {
+        log.warn("could not set the window shape ({d}x{d})", .{ toplevel.chrome_width, toplevel.chrome_height });
+    }
+}
+
 fn syncBorders(toplevel: *Toplevel, width: i32, height: i32) void {
     const color = toplevel.borderColor();
     for (toplevel.border_rects) |rect| col.setRect(rect, color);
@@ -3096,6 +3138,8 @@ fn syncBorders(toplevel: *Toplevel, width: i32, height: i32) void {
         rect.node.setPosition(if (i == 0) 0 else width - chrome.frame_border, body_top);
         rect.setSize(chrome.frame_border, body_height);
     }
+    // The ring over the fills, the titlebar and the client's edge is the shape's.
+    if (chrome.analytic_frames) return;
 
     // Every straight edge runs between two rasterized corner arcs, so all four
     // are inset at both ends.
@@ -3141,6 +3185,8 @@ pub fn applyOpacity(toplevel: *Toplevel, now_ms: i64) void {
     const color = toplevel.borderColor().scale(opacity);
     for (toplevel.border_rects) |rect| col.setRect(rect, color);
     for (toplevel.side_fills) |rect| col.setRect(rect, chrome.fillColor().scale(opacity));
+    toplevel.shape_opacity = opacity;
+    toplevel.applyShape();
     glass.Effect.configure(toplevel.glass_effect, toplevel.cornerRadius(), opacity);
     switch (toplevel.backend) {
         .placeholder => |*ph| col.setRect(ph.body_rect, col.Straight.fromRgba(theme.global.window_bg).premultiply().scale(opacity)),

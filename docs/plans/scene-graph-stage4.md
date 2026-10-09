@@ -1,6 +1,6 @@
 # Scene graph plan, stage 4: clipping and primitives
 
-Status: **4a and 4b done, 4c to 4e not started**, 2026-10-10. Stage 3 of
+Status: **4a to 4c done, 4d and 4e not started**, 2026-10-10. Stage 3 of
 [scene-graph.md](scene-graph.md) (the owned output pass, radius zero) is done
 apart from hardware qualification; this stage is why the plan exists: the user
 requires clipped client corners, and wlroots 0.20 cannot mask a client. The five
@@ -271,24 +271,112 @@ program with no shape is exactly the plain one, so 4e could replace the three
 plain programs by the two shaped ones and give back about 410 KiB, if the cost of
 the solid fill (every rectangle goes through it) is acceptable. It is not done here.
 
-**4c. Analytic frames, owned path only.** When the owned presenter is selected,
-`Toplevel` sets the group clip, the footer is `frame_border`, the titlebar raster
-has no arcs, and the footer buffer, skirt, probe, side fills and straight border
-rects are not created. `chrome.footerHeight` reads one process-wide flag, so every
-consumer follows without edits. The legacy path is untouched and keeps its own
-geometry. Hit tests become shape-aware. Gates:
+**4c. Analytic frames, owned path only. Done.** When the owned presenter starts
+and `enable_shapes` works, `Server.init` sets `chrome.analytic_frames` (before any
+window exists: every frame height depends on it) and the legacy path is untouched.
 
-* The frame is shorter, so goldens cannot match whole: the titlebar band, the side
-  borders and the client interior down to the legacy client's last row are
-  bit-identical to the legacy goldens (the same test clients draw both), and
-  the bottom band and all four corners are checked against the supersampled
-  reference instead.
-* No fringe or seam across the scale and zoom grid; a CSD window, a maximized
-  window and a `.shell` window unchanged or as specified.
-* `window_corners.py` extended with the corner-transparency check, and the
-  hit-test check at a clipped corner pixel (click reaches the window below).
-* Cost: stage 0 baseline and stage 3 figures. Expect lower resize/move CPU and no
-  `edge_sample_*` activity; any rise in build CPU or GPU is a finding.
+What a decorated window is then:
+
+* `Toplevel.applyShape` gives `frame_tree` one clip (frame size, the radius on all
+  four corners, `frame_border`, and the ring colour times the window opacity), from
+  `syncChrome` and `applyOpacity`. A maximized window has a square one, for its
+  border; CSD and fullscreen windows have none and keep the rect outline.
+* The footer is `frame_border`, so the frame is 9 px shorter at the default radius
+  and the client reaches the bottom. `chrome.footerHeight` reads the flag, so the
+  ~20 call sites followed without edits. Saved layouts store client geometry, so
+  they restore at the same client size.
+* Titlebar and footer are plain bands (`ChromeState.radius` 0, no outer
+  anti-aliasing: the shader gives them corners and edge); the footer buffer stays as
+  a one-row fill and is deleted in 4e. Border rects are off; side fills stay rects.
+  No edge probe runs (`applyEdgeSample`), so a commit no longer pays its GL
+  readback and acquire wait.
+* `shadow_tree`, a new tree holding only the invisible resize grab, and every xdg
+  popup carry `setTreeUnclipped`. Window capture, which draws the client alone in its
+  own loop, is handed the frame's shape (`PassShape`) so a captured window keeps
+  transparent bottom corners (D3).
+* **Hit tests** needed no post-filter after all: the view's `point_accepts_input`
+  (`accepts()` in `projection.c`) evaluates the shape, and `wlr_scene_node_at`
+  already goes on to the next node under a point that declines. Pointer constraints,
+  tablets and touch share it. A rect cannot decline, but the only rects under a
+  shape are the 1 px side fills, which are resize edges anyway.
+* **A changed clip damages its rim** (`damage_clip_change`, new `scene_damage.c`,
+  tested without a GPU): the border colour changes on hover with no view moving, so
+  nothing else would tell wlroots. The rim is as wide as the largest radius plus the
+  border and a margin.
+
+Deviations from the plan, each forced by something found on the way:
+
+* **The ring is composited over the body, not split from it.** The default
+  `window_border` is `rgba(1,1,1,0.09)`; the spike's partition (body keeps the inset
+  shape, the ring the rest) assumes an opaque ring and would draw a nearly invisible
+  one over a transparent window. The shader now computes
+  `(body * (1 - ring.a * w) + ring * w) * coverage`, which equals the partition for
+  an opaque ring and matches the legacy border rects for a translucent one (gate 3
+  has the case). This changed the 4b shader.
+* **The ring is uniform: `max(1, round(border * scale))`.** The legacy straight edge
+  is a snapped rect whose width follows the device grid (at 1.25 the right edge is two
+  pixels, the left one). The two agree on integer scales; `frame_parity` leaves the
+  rightmost column out on fractional scales.
+* **A clipped item is drawn in two parts** (`scene_output.c`): the ring-free interior
+  as before, one rectangle deeper than the corner arcs and the ring (a cross of three
+  rectangles cost about twelve scissored draws per window), and the rest through the
+  shape. Only that interior may block what is below or skip blending; the model's
+  cover is used for occlusion, minus a margin for the ring. A window's items share one
+  clip, so its cover is built once per run. Scanout refuses a clipped item.
+* Output transforms permute the radii (`device_radii`, derived from the same
+  function that places the boxes).
+
+Gates:
+
+* **Screenshots, legacy and owned side by side** (`frame_parity`, at 1, 1.25, 1.5 and
+  2): titlebar band, left and right side columns, the client interior and the shadow
+  are **bit-identical** (maximum difference 0); the frame is 9 px shorter and its
+  client box equal. The corner arcs differ by at most one level. The goldens cannot
+  match whole any more (the bottom band differs, and the shadow moves up with it),
+  and a recapture at scale 1 shows the client regions at the same positions.
+* **Corners and clicks** (`window_corners.py`, owned): the client's bottom corner
+  pixels are the wallpaper, the interior next to the arc keeps the client colour, a
+  hit test at a clipped corner reaches nothing (`none`) while the interior is the
+  window's. Unit tests in `projection_test.c`: the same point falls through to a
+  window below, and a changed border colour, a new shape and a removed one damage the
+  rim and only the rim, nothing for an unchanged one or a hidden window.
+* **Window capture** (`capture.py`, owned, server-decorated fixture): bottom corners
+  are transparent (premultiplied black, alpha 0), interior intact.
+* Skirt check of `window_corners.py` made footer-aware; the Xwayland titlebar pin
+  (41, stale since the default `chrome_height` became 46; the code gives
+  `round(46 * 0.75)` = 35) is corrected and `test_native_scaling_managed_window`
+  passes on both presenters.
+* Owned-path runs of `appearance_chrome`, `decorations`, `kde_decorations`,
+  `window_snapping`, `window_tabs`, `direct_scanout`, `explicit_sync`,
+  `desktop_damage`, `panel_damage`, `capture`, `screenshot_regressions`,
+  `output_scale`, `popup_constraint`, `focus_zoom`, `initial_window_state`,
+  `workspaces`, `output_destroy`, `pointer_constraints` and `mini_map_windows` pass.
+  Failures that also occur identically on legacy (`desktop_canvas`, `desktop_zoom`,
+  `mini_map`, `mini_map_canvas`, `files_decoration`, `glass_hold`, `wifi_popup`, and
+  `window_titles`, whose client sends an invalid UTF-8 title) are not this stage's.
+  `workspace_focus` in `window_corners.py` flaked on both presenters.
+
+Cost, measured on one binary with analytic frames on and off, interleaved on, off,
+off, on at scale 1 (`scene-graph-stage4-results.json`; pair spread 0.1 to 23 %, so
+read only the larger differences): resize is cheaper (`projection_cpu` -17 %,
+`cpu_frame` -5 %). Where a whole window repaints it is dearer: `damage_full` and
+drag read **+10 to +14 % output-build CPU and +10 to +12 % GPU** (about +40 to +90
+us a frame), the lighter scenarios 0 to +7 %. That is a finding against "no rise in
+build CPU or GPU": the shaded rim, program switches between the plain and the shaped
+program, and about five draws per window item instead of one. Memory: nothing from
+the frames themselves, but `enable_shapes` costs **about 1.3 MiB of anonymous
+memory** in the real compositor (the isolated link measured 430 KiB; the driver
+holds more once the programs exist), on top of the 0.44 MiB of stage 3. Both are
+expected to come back in 4e (footer buffers, the plain programs, the probe's state),
+and 4d removes the shadow patch cache if it passes.
+
+Consequence for input: with the client reaching the bottom edge, the resize grab
+inside the frame at the bottom shrinks from the 10 px footer to about 1 px (the 10 px
+reach outside is unchanged), like the left and right edges, and the south corner
+zones shrink with it. Revisit if it is felt.
+
+Leftover: the 4b A/B reference (legacy vs owned, before 4c) reads +5.1 % in
+mixed/glass, 0.1 point over its limit and the same cell that read +4.4 % in stage 3.
 
 **4d. Analytic shadows (owned path).** Replace the CPU patch set with the
 spike's analytic shadow. Gate: side-by-side against the CPU shadow, especially

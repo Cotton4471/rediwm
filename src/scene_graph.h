@@ -78,11 +78,15 @@ struct rediwm_clip_spec {
   // Top-left, top-right, bottom-right, bottom-left.
   double radii[4];
   double border;
+  // Premultiplied, with the window's opacity already applied: the ring is
+  // composited over the body, so a translucent border tints what is under it.
+  float border_color[4];
 };
 struct rediwm_clip {
   struct rediwm_edges edges;
   double radii[4];
   double border;
+  float border_color[4];
 };
 // Radii are capped at half the short side before scaling, as the CPU chrome
 // does, so a small window never asks for an impossible arc.
@@ -95,6 +99,7 @@ static inline struct rediwm_clip rediwm_clip_resolve(struct rediwm_xform t, doub
       .border = spec->border * t.scale};
   for (int i = 0; i < 4; i++)
     clip.radii[i] = (spec->radii[i] < cap ? spec->radii[i] : cap) * t.scale;
+  for (int i = 0; i < 4; i++) clip.border_color[i] = spec->border_color[i];
   return clip;
 }
 // Signed distance, negative inside, from (px, py) to the rounded rectangle
