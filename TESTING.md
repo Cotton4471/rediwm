@@ -59,6 +59,14 @@ compiler, `wayland-scanner` and wayland-protocols; D-Bus suites need PyGObject,
   builds/tests stopped. Both counters and timers are enabled, so compare these
   runs with each other, not the harness's `clean` mode. Read the saved results
   with `--report /tmp/scene-cost.json`.
+- `python3 tests/scene_ab.py --binary <measurement build>`: the stage 3 cost
+  gate. One compositor alternates the legacy and owned output presenters every
+  32 frames, so both share clocks and thermal state; it reports legacy → owned
+  build CPU, build + commit and GPU time per scale and repaint and exits 1 if any
+  cell exceeds the tolerance (`--tolerance`, default +5 %). Needs a build with
+  `tests/scene_ab.patch` applied to a throwaway copy of the tree (the hook must
+  never ship); the docstring has the exact steps. Use it instead of the paired
+  mode for differences under about 10 %. Keep AC power and stop other work.
 - `REDIWM_*_PREVIEW=/tmp/...` (lock, greeter, OSD, settings, switcher, tray,
   notification): keep the compositor's own screenshots.
 - GLES2 at a fractional scale can differ by one level depending on render

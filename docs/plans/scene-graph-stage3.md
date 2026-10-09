@@ -371,6 +371,21 @@ The CPU margin is thin (0.6 points; run-to-run noise on the ratio is about 1.5
 points), so repeat the frame-block A/B whenever the pass or the entry loop changes.
 Later stages are judged against the stage 0 baseline, not this tolerance.
 
+**Repeating the check.** `tests/scene_ab.patch` adds the alternation hook to a
+throwaway copy of the tree (it is a test hook, so it is never applied to the real
+one) and `tests/scene_ab.py` drives it and applies the tolerance:
+
+```sh
+mkdir /tmp/ab && git archive HEAD | tar -x -C /tmp/ab
+(cd /tmp/ab && git apply <repo>/tests/scene_ab.patch && zig build -Doptimize=ReleaseSafe)
+WLR_RENDER_DRM_DEVICE=/dev/dri/renderD128 python3 tests/scene_ab.py --binary /tmp/ab/zig-out/bin/rediwm
+```
+
+The procedure was checked on a fresh export of the committed tree: it builds
+without further setup, the runner refuses an unpatched binary, and a scale 1.5 /
+glass cell read build CPU +3.5 %, GPU +0.3 % (pass), in line with the figures
+above on a machine now in the balanced power profile.
+
 ## Remaining stage 3 work
 
 * Cost is settled by the **Gate decision** above. Batching clip rectangles into
@@ -378,8 +393,45 @@ Later stages are judged against the stage 0 baseline, not this tolerance.
   headroom.
 * Hardware qualification remains: an actual DRM plane and out-timeline release,
   and hotplug on that backend. A nested or headless session cannot show either,
-  and the live session holds DRM master. NV12 through the external program is
-  covered on this Intel node (see Verification); other drivers' YUV conversion
-  and tiled or compressed modifiers are not.
+  and the live session holds DRM master, so it has to be run from a spare VT
+  (checklist below). NV12 through the external program is covered on this Intel
+  node (see Verification); other drivers' YUV conversion and tiled or compressed
+  modifiers are not.
+* Per-surface dmabuf feedback tranches are still absent, exactly as in the legacy
+  presenter (stage 0 inventory); adding them is a feature, not parity, and waits
+  for stage 6.
+* Failures that also occur on HEAD stay out of this stage: the `window_corners`
+  focus-border flake, the lock protocol test, the Xwayland titlebar 41 vs 35,
+  desktop zoom's client coordinate, the screencast log message, `glass_hold`'s
+  drag/reference comparison and the ReleaseSafe D-Bus unit test. Stage 4 rewrites
+  the border and footer paths several of them test, so fix them there.
 * Keep the selector until the remaining migration stages have passed. Stage 4
   adds clip groups and primitives; stage 5 moves backdrop blur into this pass.
+
+## Hardware qualification checklist
+
+Not run: it needs DRM master. From a spare VT (Ctrl+Alt+F3), log in as the same
+user and start the compositor with a copy of the config that adds
+`scene_renderer = "owned"` under `[compositor]` (point `REDIWM_CONFIG` at the
+copy). Logs are at debug level, so everything below is in the compositor log.
+
+1. **Starts and draws.** The log says `scene renderer: owned GLES2 output pass`
+   and no `scene commit failed`; wallpaper, taskbar, a Files window and glass
+   render as on the legacy path.
+2. **Plane scanout.** Run a fullscreen opaque client (a video player or `vkcube`):
+   `Direct scan-out enabled` appears, and `disabled` again when a translucent
+   window or the cursor-over-UI case breaks the condition. Check the picture does
+   not tear or freeze across the switch.
+3. **Out-timeline release.** While scanning out, the client keeps its frame rate
+   (it would stall at two buffers if release points were lost); a 60 s run with
+   `vkcube` or a video should finish without the client blocking.
+4. **Hotplug.** Plug and unplug an external display, and change its mode and
+   scale from Settings: windows move, the other output keeps drawing, and
+   neither `scene commit failed` nor a crash appears.
+5. **Lock and suspend.** Lock, suspend and resume once; the lock covers every
+   output before anything else is shown.
+6. **Idle.** After a minute untouched, `rediwm-msg perf` shows no commits, as on
+   the legacy path.
+
+Record the result here when done. Any failure on the owned path that the legacy
+path does not show blocks making `owned` the default.
