@@ -67,6 +67,96 @@ static inline struct rediwm_snap rediwm_edges_snap(struct rediwm_edges e) {
   return (struct rediwm_snap){x, y, (int)lround(e.x2) - x, (int)lround(e.y2) - y};
 }
 
+// Stage 4 of docs/plans/scene-graph.md: one rounded-rectangle shape clips every
+// leaf of a tree (titlebar, client, subsurfaces). `rediwm_clip_spec` is what the
+// compositor sets on the tree, in source units and anchored at the tree's origin;
+// `rediwm_clip` is the same shape in layout space as resolve hands it on. A
+// presenter snaps `edges` like any item's, so the shape and the quads that tile
+// it agree on pixel columns, and evaluates the distance in device pixels.
+struct rediwm_clip_spec {
+  int width, height;
+  // Top-left, top-right, bottom-right, bottom-left.
+  double radii[4];
+  double border;
+};
+struct rediwm_clip {
+  struct rediwm_edges edges;
+  double radii[4];
+  double border;
+};
+// Radii are capped at half the short side before scaling, as the CPU chrome
+// does, so a small window never asks for an impossible arc.
+static inline struct rediwm_clip rediwm_clip_resolve(struct rediwm_xform t, double x,
+                                                     double y,
+                                                     const struct rediwm_clip_spec *spec) {
+  const double cap = 0.5 * (spec->width < spec->height ? spec->width : spec->height);
+  struct rediwm_clip clip = {
+      .edges = rediwm_xform_rect(t, x, y, spec->width, spec->height),
+      .border = spec->border * t.scale};
+  for (int i = 0; i < 4; i++)
+    clip.radii[i] = (spec->radii[i] < cap ? spec->radii[i] : cap) * t.scale;
+  return clip;
+}
+// Signed distance, negative inside, from (px, py) to the rounded rectangle
+// (x, y, w, h). The radius is picked by quadrant: the stage 1 shader's formula,
+// which `ui/sdf.zig` computes for one radius.
+static inline double rediwm_sd_rounded_box(double px, double py, double x, double y,
+                                           double w, double h, const double radii[4]) {
+  const double qx = px - (x + w / 2), qy = py - (y + h / 2);
+  const double r = qx < 0 ? (qy < 0 ? radii[0] : radii[3]) : (qy < 0 ? radii[1] : radii[2]);
+  const double dx = fabs(qx) - (w / 2 - r), dy = fabs(qy) - (h / 2 - r);
+  const double ox = dx > 0 ? dx : 0, oy = dy > 0 ? dy : 0;
+  const double inner = dx > dy ? dx : dy;
+  return sqrt(ox * ox + oy * oy) + (inner < 0 ? inner : 0) - r;
+}
+// Pixel coverage at signed distance `d` from an edge: a one-pixel ramp centred on it.
+static inline double rediwm_coverage(double d) {
+  return d >= .5 ? 0 : d <= -.5 ? 1 : .5 - d;
+}
+static inline double rediwm_clip_distance(const struct rediwm_clip *clip, double px,
+                                          double py) {
+  return rediwm_sd_rounded_box(px, py, clip->edges.x1, clip->edges.y1,
+                               clip->edges.x2 - clip->edges.x1,
+                               clip->edges.y2 - clip->edges.y1, clip->radii);
+}
+// A conservative cover of the pixels the shape fully covers, on the grid of the
+// space the clip is in: its snapped rectangle minus a square at each corner two
+// pixels deeper than the radius. The anti-aliased arc lies inside the radius
+// square; the margin keeps it, and the outward rounding of a region converted to
+// device pixels at any output scale of 1 or more, out of the claim. Culling and
+// blend decisions may only trust what is returned. Up to three rectangles: a
+// strip between the top corners, the full-width middle, a strip between the
+// bottom corners. When the corners leave no room for a middle (a pill, or a
+// small window with large radii) it is the one full-height column between the
+// left and right corners instead. Returns how many, 0 when nothing is safe.
+enum { REDIWM_CLIP_OPAQUE_MARGIN = 2 };
+static inline int rediwm_clip_opaque(const struct rediwm_clip *clip,
+                                     struct rediwm_snap out[3]) {
+  const struct rediwm_snap f = rediwm_edges_snap(clip->edges);
+  if (f.width <= 0 || f.height <= 0) return 0;
+  int inset[4];
+  for (int i = 0; i < 4; i++)
+    inset[i] = clip->radii[i] > 0 ? (int)ceil(clip->radii[i]) + REDIWM_CLIP_OPAQUE_MARGIN : 0;
+  const int top = inset[0] > inset[1] ? inset[0] : inset[1];
+  const int bottom = inset[2] > inset[3] ? inset[2] : inset[3];
+  if (top + bottom > f.height) {
+    const int left = inset[0] > inset[3] ? inset[0] : inset[3];
+    const int right = inset[1] > inset[2] ? inset[1] : inset[2];
+    if (f.width - left - right <= 0) return 0;
+    out[0] = (struct rediwm_snap){f.x + left, f.y, f.width - left - right, f.height};
+    return 1;
+  }
+  int n = 0;
+  if (top > 0 && f.width - inset[0] - inset[1] > 0)
+    out[n++] = (struct rediwm_snap){f.x + inset[0], f.y, f.width - inset[0] - inset[1], top};
+  if (f.height - top - bottom > 0)
+    out[n++] = (struct rediwm_snap){f.x, f.y + top, f.width, f.height - top - bottom};
+  if (bottom > 0 && f.width - inset[3] - inset[2] > 0)
+    out[n++] = (struct rediwm_snap){f.x + inset[3], f.y + f.height - bottom,
+                                    f.width - inset[3] - inset[2], bottom};
+  return n;
+}
+
 enum rediwm_item_kind {
   REDIWM_ITEM_RECT,    // a solid colour
   REDIWM_ITEM_SURFACE, // the buffer of a client wl_surface
@@ -118,4 +208,7 @@ struct rediwm_item {
   double scale;
   struct rediwm_edges edges;
   struct rediwm_content content;
+  // The shape clipping this item with the rest of its tree, or NULL. Owned by the
+  // leaf the item belongs to: valid for the callback, until the next resolve.
+  const struct rediwm_clip *clip;
 };

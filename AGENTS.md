@@ -81,7 +81,11 @@ the one for the directory you work in: `src/files`, `src/editor`,
   (clip, opacity, fractional placement) is a field on the item, not a
   computation in `present_leaf`. A leaf or group leaves its `paint` list before
   the head is freed (`detach`, `finish_group`). Buffer identity, wait points and
-  opaque regions are still read from the source node by `present`.
+  opaque regions are still read from the source node by `present`. A tree's
+  rounded clip (`rediwm_projection_set_tree_clip`) is a field on each item
+  (`item.clip`), resolved after the tree's own zoom and scale; an xdg popup
+  lives under its parent's tree and must carry
+  `rediwm_projection_set_tree_unclipped`.
 * **Client buffers:** `wlr_client_buffer_apply_damage` works in place only
   without extra locks, so mark long-held locks ignorable. v4
   `attach(buffer, 0, 0)` still sets OFFSET; only nonzero dx/dy remaps. Don't

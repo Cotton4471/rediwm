@@ -280,6 +280,265 @@ static void test_graph(struct wlr_scene *scene) {
   wlr_buffer_drop(buffer);
   wlr_buffer_drop(glass_buffer);
 }
+// Stage 4: the clip shape. Pure geometry first, with no scene at all.
+static bool near(double a, double b) { return fabs(a - b) < 1e-9; }
+static void test_clip_geometry(void) {
+  // Resolve composes the camera and the window's zoom into the transform, takes
+  // the rectangle's edges from it, scales radius and border, and caps a radius
+  // at half the short side first.
+  const struct rediwm_xform camera = rediwm_xform_camera(.85, 6.5, -2.5, -17, 31);
+  const struct rediwm_xform t = rediwm_xform_scale_about(camera, .75, 37, 29);
+  const struct rediwm_clip_spec spec = {.width = 120, .height = 80, .radii = {10, 10, 6, 60}, .border = 1};
+  const struct rediwm_clip clip = rediwm_clip_resolve(t, 37, 29, &spec);
+  const struct rediwm_edges expected = rediwm_xform_rect(t, 37, 29, 120, 80);
+  assert(clip.edges.x1 == expected.x1 && clip.edges.y1 == expected.y1 &&
+         clip.edges.x2 == expected.x2 && clip.edges.y2 == expected.y2);
+  assert(near(clip.radii[0], 10 * t.scale) && near(clip.radii[2], 6 * t.scale));
+  assert(near(clip.radii[3], 40 * t.scale)); // 60 capped to half of the 80 side.
+  assert(near(clip.border, t.scale));
+
+  // The distance, in a 100x60 box at (20, 10) with radius 10.
+  const double all[4] = {10, 10, 10, 10};
+  const double arc = 10 * (1 - sqrt(.5));
+  assert(near(rediwm_sd_rounded_box(70, 40, 20, 10, 100, 60, all), -20 - 10));
+  assert(near(rediwm_sd_rounded_box(70, 10, 20, 10, 100, 60, all), 0)); // On the top edge.
+  assert(near(rediwm_sd_rounded_box(20, 40, 20, 10, 100, 60, all), 0)); // On the left edge.
+  assert(near(rediwm_sd_rounded_box(20 + arc, 10 + arc, 20, 10, 100, 60, all), 0)); // On the arc.
+  assert(near(rediwm_sd_rounded_box(20, 10, 20, 10, 100, 60, all), 10 * (sqrt(2) - 1)));
+  assert(rediwm_sd_rounded_box(20 + arc + 1, 10 + arc + 1, 20, 10, 100, 60, all) < 0);
+  // Each corner has its own radius: the sharp one reaches the bounding corner,
+  // the large one stays away from it, and the others are untouched.
+  const double mixed[4] = {0, 20, 5, 10};
+  assert(near(rediwm_sd_rounded_box(20, 10, 20, 10, 100, 60, mixed), 0));
+  assert(near(rediwm_sd_rounded_box(120, 10, 20, 10, 100, 60, mixed), 20 * (sqrt(2) - 1)));
+  assert(near(rediwm_sd_rounded_box(120, 70, 20, 10, 100, 60, mixed), 5 * (sqrt(2) - 1)));
+  assert(near(rediwm_sd_rounded_box(20, 70, 20, 10, 100, 60, mixed), 10 * (sqrt(2) - 1)));
+  // Symmetric: the same radii mirrored give the mirrored distance.
+  const double mirrored[4] = {20, 0, 10, 5};
+  for (double px = 18; px <= 122; px += 6.5)
+    for (double py = 8; py <= 72; py += 5.5)
+      assert(near(rediwm_sd_rounded_box(px, py, 20, 10, 100, 60, mixed),
+                  rediwm_sd_rounded_box(140 - px, py, 20, 10, 100, 60, mirrored)));
+  // Coverage is the one-pixel ramp the CPU chrome and the shader both use.
+  assert(rediwm_coverage(-.5) == 1 && rediwm_coverage(-3) == 1 && rediwm_coverage(.5) == 0 &&
+         rediwm_coverage(9) == 0 && near(rediwm_coverage(0), .5) && near(rediwm_coverage(.25), .25));
+}
+// Every pixel the opaque cover claims must be fully covered by the shape, and it
+// may leave out only the corner squares. Checked in the clip's own pixel grid,
+// for fractional origins and for clips authored at fractional scales.
+static void test_clip_opaque(void) {
+  const int sizes[][2] = {{40, 40}, {120, 80}, {121, 79}, {300, 200}, {17, 60}, {8, 8}};
+  const double radii[][4] = {{10, 10, 10, 10}, {0, 0, 0, 0}, {10, 4, 0, 20}, {30, 30, 6, 6},
+                             {50, 50, 50, 50}, {0, 0, 12, 12}, {3, 3, 3, 3}};
+  const double scales[] = {1, 1.25, 1.5, 2};
+  for (size_t si = 0; si < sizeof(sizes) / sizeof(sizes[0]); ++si)
+    for (size_t ri = 0; ri < sizeof(radii) / sizeof(radii[0]); ++ri)
+      for (size_t k = 0; k < sizeof(scales) / sizeof(scales[0]); ++k) {
+        const struct rediwm_clip_spec spec = {
+            .width = sizes[si][0], .height = sizes[si][1],
+            .radii = {radii[ri][0], radii[ri][1], radii[ri][2], radii[ri][3]}};
+        // Authored at the output's scale, at a fractional origin: the space the
+        // pass evaluates the shape in.
+        const struct rediwm_xform t = {scales[k], 13.3, 7.8};
+        const struct rediwm_clip clip = rediwm_clip_resolve(t, 5.1, 3.7, &spec);
+        const struct rediwm_snap f = rediwm_edges_snap(clip.edges);
+        struct rediwm_snap rects[3];
+        const int n = rediwm_clip_opaque(&clip, rects);
+        assert(n >= 0 && n <= 3);
+        long claimed = 0;
+        for (int i = 0; i < n; i++) {
+          assert(rects[i].width > 0 && rects[i].height > 0);
+          assert(rects[i].x >= f.x && rects[i].y >= f.y &&
+                 rects[i].x + rects[i].width <= f.x + f.width &&
+                 rects[i].y + rects[i].height <= f.y + f.height);
+          for (int y = rects[i].y; y < rects[i].y + rects[i].height; y++)
+            for (int x = rects[i].x; x < rects[i].x + rects[i].width; x++) {
+              assert(rediwm_coverage(rediwm_sd_rounded_box(x + .5, y + .5, f.x, f.y, f.width,
+                                                           f.height, clip.radii)) == 1);
+              claimed++;
+            }
+        }
+        // Rectangles never overlap: a pixel claimed twice would be counted twice
+        // by a consumer that sums areas.
+        for (int i = 0; i < n; i++)
+          for (int j = i + 1; j < n; j++)
+            assert(rects[i].x + rects[i].width <= rects[j].x || rects[j].x + rects[j].width <= rects[i].x ||
+                   rects[i].y + rects[i].height <= rects[j].y || rects[j].y + rects[j].height <= rects[i].y);
+        long covered = 0;
+        for (int y = f.y; y < f.y + f.height; y++)
+          for (int x = f.x; x < f.x + f.width; x++)
+            covered += rediwm_coverage(rediwm_sd_rounded_box(x + .5, y + .5, f.x, f.y, f.width,
+                                                             f.height, clip.radii)) == 1;
+        int inset[4];
+        for (int i = 0; i < 4; i++)
+          inset[i] = clip.radii[i] > 0 ? (int)ceil(clip.radii[i]) + REDIWM_CLIP_OPAQUE_MARGIN : 0;
+        const int top = inset[0] > inset[1] ? inset[0] : inset[1];
+        const int bottom = inset[2] > inset[3] ? inset[2] : inset[3];
+        // What it leaves out of the fully covered pixels is bounded by the corner
+        // squares and the strips beside them, or by the two corner columns when
+        // there is no room for a middle band; a window too small for its corners
+        // may claim nothing at all.
+        const int left = inset[0] > inset[3] ? inset[0] : inset[3];
+        const int right = inset[1] > inset[2] ? inset[1] : inset[2];
+        const long bound = top + bottom > f.height
+                               ? (long)(left + right) * f.height
+                               : (long)(inset[0] + inset[1]) * top + (long)(inset[2] + inset[3]) * bottom;
+        assert(covered - claimed <= bound);
+        if (n == 0) assert(top + bottom > f.height ? f.width - left - right <= 0
+                                                    : f.width - inset[0] - inset[1] <= 0 && f.height == top + bottom);
+        if (radii[ri][0] + radii[ri][1] + radii[ri][2] + radii[ri][3] == 0) {
+          assert(n == 1 && rects[0].x == f.x && rects[0].y == f.y && rects[0].width == f.width &&
+                 rects[0].height == f.height); // Square corners lose nothing.
+        }
+      }
+  // A window too small for its corners claims nothing rather than guessing, and a
+  // pill keeps the full-height column between its two semicircles.
+  struct rediwm_snap one[3];
+  const struct rediwm_xform identity = {1, 0, 0};
+  assert(rediwm_clip_opaque(&(struct rediwm_clip){rediwm_xform_rect(identity, 0, 0, 8, 8), {4, 4, 4, 4}, 0}, one) == 0);
+  assert(rediwm_clip_opaque(&(struct rediwm_clip){rediwm_xform_rect(identity, 5, 7, 120, 80), {40, 40, 40, 40}, 0}, one) == 1);
+  assert(one[0].x == 5 + 42 && one[0].y == 7 && one[0].width == 120 - 84 && one[0].height == 80);
+}
+static void test_clip_projection(struct wlr_scene *scene) {
+  struct wlr_scene_tree *source = wlr_scene_tree_create(&scene->tree);
+  struct wlr_scene_tree *view = wlr_scene_tree_create(&scene->tree);
+  struct rediwm_projection *p = rediwm_projection_create(source, view, scene);
+  assert(p);
+  struct wlr_scene_tree *frame = wlr_scene_tree_create(source);
+  struct wlr_scene_tree *nested = wlr_scene_tree_create(frame);
+  struct wlr_scene_tree *other = wlr_scene_tree_create(source);
+  float color[4] = {.2, .3, .1, 1};
+  struct wlr_scene_rect *border = wlr_scene_rect_create(frame, 17, 9, color);
+  struct wlr_buffer *buffer = buffer_create(), *glass_buffer = buffer_create(), *title_buffer = buffer_create();
+  struct wlr_scene_buffer *client = wlr_scene_buffer_create(nested, buffer);
+  struct wlr_scene_buffer *title = wlr_scene_buffer_create(frame, title_buffer);
+  struct wlr_scene_buffer *glass = wlr_scene_buffer_create(frame, glass_buffer);
+  struct wlr_scene_rect *overlay = wlr_scene_rect_create(other, 20, 20, color);
+  assert(frame && nested && other && border && client && title && glass && overlay);
+  wlr_scene_node_set_position(&frame->node, 37, 29);
+  wlr_scene_node_set_position(&nested->node, 2, 12);
+  wlr_scene_buffer_set_dest_size(client, 100, 60);
+  wlr_scene_buffer_set_dest_size(title, 100, 12);
+  wlr_scene_buffer_set_dest_size(glass, 100, 12);
+  effect_node = &glass->node;
+  assert(rediwm_projection_set_tree_zoom(&frame->node, .85));
+  assert(rediwm_projection_set_tree_scale(&nested->node, .5));
+
+  // Nothing is clipped until a tree asks.
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  struct leaf *border_leaf = get_leaf(p, &border->node), *client_leaf = get_leaf(p, &client->node),
+              *title_leaf = get_leaf(p, &title->node), *glass_leaf = get_leaf(p, &glass->node),
+              *overlay_leaf = get_leaf(p, &overlay->node);
+  assert(!border_leaf->item.clip && !client_leaf->item.clip && !overlay_leaf->item.clip);
+
+  // Every leaf under the tree carries the one shape: the frame's rectangle after
+  // the window zoom about its origin, not changed by the inner tree's own scale.
+  struct rediwm_clip_spec spec = {.width = 120, .height = 80, .radii = {10, 10, 6, 6}, .border = 1};
+  assert(rediwm_projection_set_tree_clip(&frame->node, &spec));
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  const struct rediwm_xform zoomed = rediwm_xform_scale_about((struct rediwm_xform){1, 0, 0}, .85, 37, 29);
+  const struct rediwm_clip want = rediwm_clip_resolve(zoomed, 37, 29, &spec);
+  struct leaf *clipped[] = {border_leaf, client_leaf, title_leaf, glass_leaf};
+  for (size_t i = 0; i < sizeof(clipped) / sizeof(clipped[0]); ++i) {
+    const struct rediwm_clip *c = clipped[i]->item.clip;
+    assert(c == &clipped[i]->clip);
+    assert(near(c->edges.x1, want.edges.x1) && near(c->edges.y1, want.edges.y1) &&
+           near(c->edges.x2, want.edges.x2) && near(c->edges.y2, want.edges.y2));
+    assert(near(c->radii[0], 10 * .85) && near(c->radii[3], 6 * .85) && near(c->border, .85));
+  }
+  assert(near(want.edges.x1, 37) && near(want.edges.x2, 37 + .85 * 120)); // The origin stays put.
+  assert(!overlay_leaf->item.clip); // A sibling window is not clipped.
+  // It follows the camera with the window.
+  resolve(p, .5, 12, -8, 3, 4, NULL);
+  const struct rediwm_xform moved = rediwm_xform_scale_about(rediwm_xform_camera(.5, 12, -8, 3, 4), .85, 37, 29);
+  const struct rediwm_clip want_moved = rediwm_clip_resolve(moved, 37, 29, &spec);
+  assert(near(client_leaf->item.clip->edges.x1, want_moved.edges.x1) &&
+         near(client_leaf->item.clip->edges.y2, want_moved.edges.y2) &&
+         near(client_leaf->item.clip->radii[0], 10 * .85 * .5));
+  resolve(p, 1, 0, 0, 0, 0, NULL);
+
+  // The graph consumer sees the pointer too, and a glass effect takes the shape
+  // of the titlebar it sits under, in storage of its own.
+  // Glass works on the projected nodes, as the compositor calls it.
+  rediwm_projection_effect_updated(wlr_scene_buffer_from_node(glass_leaf->view),
+                                   wlr_scene_buffer_from_node(title_leaf->view));
+  assert(glass_leaf->effect_item.clip == &glass_leaf->effect_clip);
+  assert(glass_leaf->effect_item.clip != title_leaf->item.clip);
+  assert(near(glass_leaf->effect_item.clip->edges.x1, want.edges.x1) &&
+         near(glass_leaf->effect_item.clip->radii[1], 10 * .85));
+
+  // A popup lives under its parent's tree but is no part of the window's shape;
+  // its siblings, such as subsurfaces, still are. The barrier can be lifted.
+  struct wlr_scene_tree *subsurface = wlr_scene_tree_create(nested);
+  struct wlr_scene_tree *popup = wlr_scene_tree_create(nested);
+  struct wlr_buffer *popup_buffer = buffer_create(), *sub_buffer = buffer_create();
+  struct wlr_scene_buffer *popup_content = wlr_scene_buffer_create(popup, popup_buffer);
+  struct wlr_scene_buffer *sub_content = wlr_scene_buffer_create(subsurface, sub_buffer);
+  assert(popup_content && sub_content);
+  wlr_scene_node_set_position(&popup->node, 90, 70); // Hanging outside the 120x80 frame.
+  assert(rediwm_projection_set_tree_unclipped(&popup->node, true));
+  assert(rediwm_projection_set_tree_unclipped(&popup->node, true)); // Idempotent.
+  resolve(p, 1, 0, 0, 0, 0, NULL);
+  struct leaf *popup_leaf = get_leaf(p, &popup_content->node), *sub_leaf = get_leaf(p, &sub_content->node);
+  assert(!popup_leaf->item.clip && sub_leaf->item.clip && client_leaf->item.clip);
+  assert(rediwm_projection_set_tree_unclipped(&popup->node, false));
+  assert(rediwm_projection_set_tree_unclipped(&popup->node, false)); // Nothing to lift is fine.
+  resolve(p, 1, 0, 0, 0, 0, NULL);
+  assert(popup_leaf->item.clip);
+  assert(rediwm_projection_set_tree_unclipped(&popup->node, true));
+  // A barrier does not hide a clip the subtree sets for itself.
+  struct rediwm_clip_spec own = {.width = 50, .height = 40, .radii = {3, 3, 3, 3}};
+  assert(rediwm_projection_set_tree_clip(&popup->node, &own));
+  resolve(p, 1, 0, 0, 0, 0, NULL);
+  assert(popup_leaf->item.clip && near(popup_leaf->item.clip->edges.x2 - popup_leaf->item.clip->edges.x1, .85 * .5 * 50));
+  assert(rediwm_projection_set_tree_clip(&popup->node, NULL));
+  resolve(p, 1, 0, 0, 0, 0, NULL);
+  assert(!popup_leaf->item.clip);
+  assert(rediwm_projection_set_tree_unclipped(&popup->node, false));
+
+  // An inner clipped tree shapes its own leaves only.
+  struct rediwm_clip_spec inner_spec = {.width = 30, .height = 20, .radii = {4, 4, 4, 4}};
+  assert(rediwm_projection_set_tree_clip(&nested->node, &inner_spec));
+  resolve(p, 1, 0, 0, 0, 0, NULL);
+  assert(near(client_leaf->item.clip->edges.x2 - client_leaf->item.clip->edges.x1, .85 * .5 * 30));
+  assert(near(title_leaf->item.clip->edges.x2 - title_leaf->item.clip->edges.x1, .85 * 120));
+  assert(rediwm_projection_set_tree_clip(&nested->node, NULL));
+
+  // A bad shape is refused and leaves the old one in force; NULL removes it.
+  const struct rediwm_clip_spec bad[] = {
+      {.width = 0, .height = 80}, {.width = 120, .height = -1}, {.width = 120, .height = 80, .border = -1},
+      {.width = 120, .height = 80, .radii = {1, -1, 1, 1}}, {.width = 120, .height = 80, .radii = {NAN, 1, 1, 1}},
+      {.width = 120, .height = 80, .border = INFINITY}};
+  for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); ++i) assert(!rediwm_projection_set_tree_clip(&frame->node, &bad[i]));
+  resolve(p, 1, 0, 0, 0, 0, NULL);
+  assert(near(client_leaf->item.clip->edges.x2, want.edges.x2));
+  spec.width = 200;
+  assert(rediwm_projection_set_tree_clip(&frame->node, &spec));
+  resolve(p, 1, 0, 0, 0, 0, NULL);
+  assert(near(client_leaf->item.clip->edges.x2, 37 + .85 * 200));
+  assert(rediwm_projection_set_tree_clip(&frame->node, NULL));
+  assert(rediwm_projection_set_tree_clip(&frame->node, NULL)); // Removing nothing is fine.
+  resolve(p, 1, 0, 0, 0, 0, NULL);
+  assert(!client_leaf->item.clip && !border_leaf->item.clip);
+
+  // Presenting a clipped graph changes nothing about the view tree yet: the
+  // shape reaches no pixel until the output pass draws it.
+  assert(rediwm_projection_set_tree_clip(&frame->node, &spec));
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  assert_presented(p);
+  // Destroying the clipped tree frees its addon with it.
+  effect_node = NULL;
+  wlr_scene_node_destroy(&frame->node);
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  wlr_scene_node_destroy(&view->node);
+  rediwm_projection_destroy(p);
+  wlr_scene_node_destroy(&source->node);
+  wlr_buffer_drop(buffer);
+  wlr_buffer_drop(glass_buffer);
+  wlr_buffer_drop(title_buffer);
+  wlr_buffer_drop(popup_buffer);
+  wlr_buffer_drop(sub_buffer);
+}
 // A client surface's opaque region has to reach its view, or nothing below the
 // window is ever culled. The buffers here reveal no format, like a
 // wlr_client_buffer, so only the node's own region can say they are opaque.
@@ -639,6 +898,9 @@ int main(void) {
   rediwm_projection_destroy(p);
   test_groups(scene, out);
   test_graph(scene);
+  test_clip_geometry();
+  test_clip_opaque();
+  test_clip_projection(scene);
   test_opaque(scene);
   wlr_scene_node_destroy(&scene->tree.node);
   wlr_buffer_drop(a);

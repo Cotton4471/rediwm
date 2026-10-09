@@ -89,64 +89,95 @@ struct leaf {
   // without a report a replaced buffer damages its whole view.
   bool owned_damage;
   int damage_width, damage_height;
-  // The graph's view of this leaf, rewritten by every resolve().
+  // The graph's view of this leaf, rewritten by every resolve(). `item.clip`
+  // points at `clip` when the leaf is under a clipped tree.
   struct rediwm_item item;
+  struct rediwm_clip clip;
   // Glass's raster is published after resolve; its target still supplies the
   // geometry. Kept separately so an unchanged/held blur survives the next sync.
   struct rediwm_item effect_item;
+  struct rediwm_clip effect_clip;
   struct wlr_buffer *last_buffer;
   // The client buffer whose view lock we told wlroots to ignore, if any.
   struct wlr_client_buffer *marked;
   struct view_state applied;
   bool has_applied;
 };
-struct tree_zoom {
+// Everything the compositor says about how a source tree is presented, in one
+// addon. Resolve meets every tree of every window on every frame, and each
+// property that had an addon of its own cost a lookup there. The properties:
+//  * zoom: a window's scale about its origin, composing with the camera;
+//  * scale: a relative presentation scale (Xwayland's 1/N), composing with both;
+//  * clip: the rounded shape that clips everything under the tree. Resolve
+//    evaluates it after this tree's own zoom and scale, so it follows its window
+//    and an inner scale never changes it. A clipped tree inside another replaces
+//    the outer shape for its own leaves; nothing intersects them;
+//  * unclipped: ends the inherited clip for the subtree. A popup's scene tree is a
+//    child of its parent surface's, so it sits under the window's clipped tree in
+//    the source graph while belonging to no window shape. The subtree's own clip,
+//    if it sets one, still applies.
+struct tree_props {
   struct wlr_addon addon;
-  double scale;
+  bool has_zoom, has_scale, has_clip, unclipped;
+  double zoom, scale;
+  struct rediwm_clip_spec clip;
 };
-static void destroy_tree_zoom(struct wlr_addon *addon) {
-  struct tree_zoom *zoom = wl_container_of(addon, zoom, addon);
+static void destroy_tree_props(struct wlr_addon *addon) {
+  struct tree_props *props = wl_container_of(addon, props, addon);
   wlr_addon_finish(addon);
-  free(zoom);
+  free(props);
 }
-static const struct wlr_addon_interface tree_zoom_impl = {
-    .name = "rediwm window zoom", .destroy = destroy_tree_zoom};
+static const struct wlr_addon_interface tree_props_impl = {
+    .name = "rediwm tree presentation", .destroy = destroy_tree_props};
+static struct tree_props *tree_props_find(struct wlr_scene_node *node) {
+  struct wlr_addon *addon = wlr_addon_find(&node->addons, NULL, &tree_props_impl);
+  struct tree_props *props;
+  return addon ? (props = wl_container_of(addon, props, addon)) : NULL;
+}
+static struct tree_props *tree_props_get(struct wlr_scene_node *node) {
+  struct tree_props *props = tree_props_find(node);
+  if (props) return props;
+  props = calloc(1, sizeof(*props));
+  if (!props) return NULL;
+  wlr_addon_init(&props->addon, &node->addons, NULL, &tree_props_impl);
+  return props;
+}
 bool rediwm_projection_set_tree_zoom(struct wlr_scene_node *node, double scale) {
-  struct wlr_addon *addon = wlr_addon_find(&node->addons, NULL, &tree_zoom_impl);
-  struct tree_zoom *zoom;
-  if (addon) {
-    zoom = wl_container_of(addon, zoom, addon);
-  } else {
-    zoom = calloc(1, sizeof(*zoom));
-    if (!zoom) return false;
-    wlr_addon_init(&zoom->addon, &node->addons, NULL, &tree_zoom_impl);
-  }
-  zoom->scale = scale;
+  struct tree_props *props = tree_props_get(node);
+  if (!props) return false;
+  props->zoom = scale;
+  props->has_zoom = true;
   return true;
 }
-struct tree_scale {
-  struct wlr_addon addon;
-  double factor;
-};
-static void destroy_tree_scale(struct wlr_addon *addon) {
-  struct tree_scale *scale = wl_container_of(addon, scale, addon);
-  wlr_addon_finish(addon);
-  free(scale);
-}
-static const struct wlr_addon_interface tree_scale_impl = {
-    .name = "rediwm tree scale", .destroy = destroy_tree_scale};
 bool rediwm_projection_set_tree_scale(struct wlr_scene_node *node, double factor) {
   if (factor <= 0) return false;
-  struct wlr_addon *addon = wlr_addon_find(&node->addons, NULL, &tree_scale_impl);
-  struct tree_scale *scale;
-  if (addon) {
-    scale = wl_container_of(addon, scale, addon);
-  } else {
-    scale = calloc(1, sizeof(*scale));
-    if (!scale) return false;
-    wlr_addon_init(&scale->addon, &node->addons, NULL, &tree_scale_impl);
+  struct tree_props *props = tree_props_get(node);
+  if (!props) return false;
+  props->scale = factor;
+  props->has_scale = true;
+  return true;
+}
+static bool finite_at_least_zero(double value) { return isfinite(value) && value >= 0; }
+bool rediwm_projection_set_tree_clip(struct wlr_scene_node *node,
+                                     const struct rediwm_clip_spec *spec) {
+  if (!spec) {
+    struct tree_props *props = tree_props_find(node);
+    if (props) props->has_clip = false;
+    return true;
   }
-  scale->factor = factor;
+  if (spec->width <= 0 || spec->height <= 0 || !finite_at_least_zero(spec->border)) return false;
+  for (int i = 0; i < 4; i++)
+    if (!finite_at_least_zero(spec->radii[i])) return false;
+  struct tree_props *props = tree_props_get(node);
+  if (!props) return false;
+  props->clip = *spec;
+  props->has_clip = true;
+  return true;
+}
+bool rediwm_projection_set_tree_unclipped(struct wlr_scene_node *node, bool unclipped) {
+  struct tree_props *props = unclipped ? tree_props_get(node) : tree_props_find(node);
+  if (unclipped && !props) return false;
+  if (props) props->unclipped = unclipped;
   return true;
 }
 static const struct wlr_addon_interface lookup_impl, source_lookup_impl;
@@ -477,25 +508,27 @@ extern bool rediwm_glass_is_effect_node(struct wlr_scene_node *node);
 // moves, sizes and shows nothing in the view tree.
 static void resolve_node(struct rediwm_projection *p, struct group *g,
                          struct wlr_scene_node *node, double x, double y,
-                         bool enabled, struct rediwm_xform t) {
+                         bool enabled, struct rediwm_xform t,
+                         const struct rediwm_clip *clip) {
   x += node->x;
   y += node->y;
   enabled = enabled && node->enabled;
   if (node->type == WLR_SCENE_NODE_TREE) {
-    struct wlr_addon *addon = wlr_addon_find(&node->addons, NULL, &tree_zoom_impl);
-    if (addon) {
-      struct tree_zoom *zoom = wl_container_of(addon, zoom, addon);
+    struct rediwm_clip here;
+    const struct tree_props *props = tree_props_find(node);
+    if (props) {
       // Window zoom composes with the camera, around the frame origin.
-      t = rediwm_xform_scale_about(t, zoom->scale, x, y);
-    }
-    struct wlr_addon *scale_addon = wlr_addon_find(&node->addons, NULL, &tree_scale_impl);
-    if (scale_addon) {
-      struct tree_scale *scale = wl_container_of(scale_addon, scale, addon);
-      t = rediwm_xform_scale_about(t, scale->factor, x, y);
+      if (props->has_zoom) t = rediwm_xform_scale_about(t, props->zoom, x, y);
+      if (props->has_scale) t = rediwm_xform_scale_about(t, props->scale, x, y);
+      if (props->unclipped) clip = NULL;
+      if (props->has_clip) {
+        here = rediwm_clip_resolve(t, x, y, &props->clip);
+        clip = &here;
+      }
     }
     struct wlr_scene_node *child;
     wl_list_for_each(child, &wlr_scene_tree_from_node(node)->children, link)
-        resolve_node(p, g, child, x, y, enabled, t);
+        resolve_node(p, g, child, x, y, enabled, t, clip);
     return;
   }
   struct leaf *l = get_leaf(p, node);
@@ -510,6 +543,14 @@ static void resolve_node(struct rediwm_projection *p, struct group *g,
   item->enabled = enabled;
   item->scale = t.scale;
   item->content = (struct rediwm_content){0};
+  // Only write what changes: rewriting a NULL over a NULL on every leaf of every
+  // window dirties the line for nothing (measured at about 1 ns per leaf).
+  if (clip) {
+    l->clip = *clip;
+    item->clip = &l->clip;
+  } else if (item->clip) {
+    item->clip = NULL;
+  }
   if (node->type == WLR_SCENE_NODE_RECT) {
     struct wlr_scene_rect *r = wlr_scene_rect_from_node(node);
     item->kind = REDIWM_ITEM_RECT;
@@ -762,7 +803,7 @@ static void resolve(struct rediwm_projection *p, double z, double cx, double cy,
     rediwm_xform_point(t, node->x, node->y, &g->x, &g->y);
     g->enabled = node->enabled;
     wl_list_insert(p->paint.prev, &g->paint);
-    resolve_node(p, g, node, 0, 0, true, t);
+    resolve_node(p, g, node, 0, 0, true, t, NULL);
   }
 }
 // Graph -> view tree, then hide what the graph no longer reaches.
@@ -839,6 +880,11 @@ void rediwm_projection_effect_updated(struct wlr_scene_buffer *effect, struct wl
   if (!l || !t) return;
   const struct rediwm_snap snap = rediwm_edges_snap(t->item.edges);
   l->effect_item = layout_item(&effect->node, snap.x, snap.y);
+  // The blur takes the shape of the titlebar it sits under.
+  if (t->item.clip) {
+    l->effect_clip = *t->item.clip;
+    l->effect_item.clip = &l->effect_clip;
+  }
 }
 static bool visit_items(struct rediwm_projection *p, struct wlr_scene_node *node,
                        int x, int y, bool reverse, rediwm_item_iterator iterator, void *data) {

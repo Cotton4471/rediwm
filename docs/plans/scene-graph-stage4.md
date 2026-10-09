@@ -1,10 +1,10 @@
 # Scene graph plan, stage 4: clipping and primitives
 
-Status: **draft**, 2026-10-09, nothing implemented. Stage 3 of
+Status: **4a done, 4b to 4e not started**, 2026-10-09. Stage 3 of
 [scene-graph.md](scene-graph.md) (the owned output pass, radius zero) is done
 apart from hardware qualification; this stage is why the plan exists: the user
-requires clipped client corners, and wlroots 0.20 cannot mask a client. Open
-decisions are listed at the end; D1 changes the shape of the work.
+requires clipped client corners, and wlroots 0.20 cannot mask a client. The five
+decisions at the end were taken the same day, all as recommended.
 
 ## Goal and exit
 
@@ -93,7 +93,12 @@ presenters. Two ways to live with that, chosen in D1.
 (`Toplevel.frame_tree`), set through a new projection call beside
 `rediwm_projection_set_tree_scale`, and resolve copies it onto every leaf of the
 group, so chrome, client and subsurfaces share one shape. Popups are separate
-trees and are never clipped by their parent. Radius 0 means no clip: maximized
+trees in the sense that they belong to no window's shape, but the source graph
+makes them children of their parent surface's tree (`Popup.create` uses
+`parent_tree.createSceneXdgSurface`), under `content_tree` and `frame_tree`. A
+tree clip would clip menus and tooltips that hang outside the window, so a popup's
+tree carries a barrier (`rediwm_projection_set_tree_unclipped`, set by
+`Popup.create` in 4c) that ends the inherited clip. Radius 0 means no clip: maximized
 and fullscreen windows, and client-side-decorated windows (decided in stage 0:
 unclipped unless a rule asks). `.shell` windows (Settings) are clipped like
 native ones.
@@ -147,10 +152,47 @@ rest are untouched.
 
 Each leaves a working compositor and its own gates.
 
-**4a. Clip in the model (no visible change).** Clip on groups and items,
-`resolve` copies it, opaque-region helper; pure tests in `projection_test.c`
-(edges, per-corner radii, opaque cross, composition with scale, camera and `1/N`).
-Gate: 16/16 goldens unchanged, no cost change.
+**4a. Clip in the model (no visible change). Done.** `scene_graph.h` has
+`rediwm_clip_spec` (what a tree sets: size, four radii, border, in source units),
+`rediwm_clip` (the same in layout space), `rediwm_clip_resolve`, the per-corner
+signed distance `rediwm_sd_rounded_box` (the stage 1 shader's formula),
+`rediwm_coverage` and `rediwm_clip_opaque`. `projection.c` has two tree addons
+beside zoom and scale: `rediwm_projection_set_tree_clip` (NULL removes it; bad
+sizes, negative or non-finite radii and borders are refused) and
+`rediwm_projection_set_tree_unclipped` (the popup barrier). Resolve evaluates a
+tree's clip after that tree's own zoom and scale, so it follows its window and an
+inner scale never changes it; an inner clipped tree replaces the outer shape for
+its own leaves, and nothing intersects them. Each leaf stores its copy and
+`item.clip` points at it (NULL when unclipped); the glass effect item takes its
+target's clip into storage of its own. No compositor code sets a clip yet.
+
+The opaque cover is the snapped frame minus a square at each corner two pixels
+deeper than the radius (the margin keeps the anti-aliased arc, and the outward
+rounding of a region converted to device pixels at any scale of 1 or more, out of
+the claim). It returns up to three rectangles, or one full-height column when the
+corners leave no room for a middle band: the first version returned nothing for a
+pill-shaped window, which the property test caught. Tests (`test-projection`):
+the geometry above against hand-computed distances including per-corner radii and
+mirroring; a property test over six sizes, seven radius sets and scales 1 to 2
+with fractional origins, asserting every claimed pixel has full coverage under the
+shape, claims never overlap, square corners lose nothing and what is left out is
+bounded; and the projection path (zoom, camera, nested scale, sibling window,
+effect inheritance, replacement, removal, refusal of bad shapes, popup barrier,
+destruction). Zoom, scale, clip and the barrier share one per-tree addon
+(`tree_props`), so resolve does one lookup per tree, where zoom and scale had two.
+
+Gate met. The existing projection tests are unchanged and pass; Debug and
+ReleaseSafe build; `zig build test` passes; and screenshots from both presenters
+at scale 1, 1.5 and mixed are **bit-identical to ones captured before 4a**
+(16 of 16 each, tolerance 0). Cost was measured by timing `resolve()` on a
+30-window scene of 120 trees and 600 leaves, built against the committed
+`projection.c` and against this one, alternating runs: 10.1-10.2 us before and
+10.9 us after, about **+0.7 us per resolve, 1 ns per leaf**. Ablation found where
+it comes from: the unified lookup and the clip math cost nothing measurable; the
+cost is writing the new `item.clip` field on every leaf, and writing only when it
+changes (`else if (item->clip)`) halved it from 1.5 us. A typical scene has a
+fraction of those leaves, so this is far below what any frame-level measure can
+resolve; it is recorded rather than hidden because the gate said no cost change.
 
 **4b. Clip, border and shadow in the pass (owned path, nothing produces a clip
 yet).** The spike's gates 1 to 8, converted to production code in
@@ -223,31 +265,36 @@ before 4c and judge the stage against those.
   at the clip edge** (stale edge pixels): both have explicit rules and gates.
 * **Hit-test post-filter** must keep pointer constraints, tablets, touch and
   drag-and-drop on one path (they all use `hitTest`).
-* **Consumers that bypass the group:** window capture (`WindowCaptureSource`,
-  screencopy of a window), close-animation snapshots, the taskbar peek, switcher
-  and mini-map previews. Each either renders through the pass (and inherits the
-  clip) or needs the shape applied; audit in 4a. Decide whether a captured window
-  keeps transparent corners (recommended: yes).
+* **Consumers that bypass the group** (audited in 4a): the close-animation
+  snapshot is a child of `content_tree`, hence inside the clipped tree, and
+  inherits the shape. The taskbar peek only changes the real window's opacity.
+  The switcher shows a scaled thumbnail of the client buffer on a card and the
+  mini-map draws rectangles; neither shows a framed window, so neither changes.
+  **Window capture does bypass it:** `WindowCaptureSource` walks the content tree
+  with `wlr_scene_node_for_each_buffer` and draws each buffer in its own loop
+  (through the selected pass). It captures the client without the chrome, so D3
+  reduces to the client's two bottom corners; making them transparent means giving
+  that loop the frame's clip and the clip shader (4c), not a graph change.
 * **Fractional zoom and 1/N:** the arc is analytic, but the quad edges still snap;
   gates cover the full grid.
 * **Pre-existing failures** in suites this stage rewrites (`window_corners` flake,
   the Xwayland titlebar assertion) are fixed here rather than carried.
 
-## Decisions needed
+## Decisions (taken 2026-10-09, all as recommended)
 
-* **D1. What happens to the legacy presenter at 4e.** (a) Remove the `legacy`
-  choice there, folding the chrome-related part of stage 6 into stage 4;
-  simplest code, and the flag in `footerHeight` disappears, but there is no
-  fallback if the owned path misbehaves on some GPU. (b) Keep it selectable until
-  stage 6, with the old frame geometry behind the flag; safer, but two geometries
-  and the old skirt code survive another stage. Recommendation: (a), after the
-  hardware checklist and a period of use as the default.
-* **D2. Shadows:** analytic in 4d with a fallback to CPU patches, or leave them
-  CPU permanently. Recommendation: try 4d, keep the fallback.
-* **D3. Window capture corners:** transparent (recommended) or square.
-* **D4. CSD windows:** stay unclipped with the rect outline (current decision), or
-  gain an opt-in rule now. Recommendation: later; it is independent.
-* **D5. Hit tests:** post-filter now (recommended), graph hit test with stage 6.
+* **D1. The legacy presenter goes at 4e.** The `legacy` choice is removed there,
+  folding the chrome-related part of stage 6 into this stage, and the footer flag
+  disappears with it. It follows the stage 3 hardware checklist and a period of
+  use with `owned` as the default; until then 4c keeps the old geometry behind the
+  flag. Cost: no fallback if the owned path misbehaves on some GPU, which is why
+  the checklist comes first.
+* **D2. Shadows:** try analytic in 4d and keep the CPU patches as the fallback if
+  the corners do not pass.
+* **D3. Window capture:** the client's bottom corners are transparent in a
+  captured window (see the audit above for how).
+* **D4. CSD windows:** stay unclipped, with the rect outline.
+* **D5. Hit tests:** a shape post-filter on the existing pick now; the graph hit
+  test arrives with stage 6.
 
 ## Not in this stage
 
