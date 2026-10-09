@@ -150,7 +150,10 @@ environment variable: no test hooks in production), removed in stage 6.
    anonymous memory at most +0.5 MiB at startup and no growth under sustained
    damage. Stages 4–6 are judged against the stage 0 baseline, and the final state
    (stage 6) must again be at or below it.
-4. **Clipping and primitives.** Clip groups on frames, analytic borders and
+4. **Clipping and primitives.** *Draft plan, 2026-10-09, nothing implemented:
+   [scene-graph-stage4.md](scene-graph-stage4.md), with sub-stages 4a to 4e and
+   five decisions to make (the legacy presenter's fate at the flip comes first).*
+   Clip groups on frames, analytic borders and
    shadows, shape-aware hit testing; delete the skirt, `probeClientEdge`,
    `side_fills`, the dual border path and `edge_sampling.py`; shrink the footer.
 5. **Backdrop effects in the pass.** Delete `glass.c`'s prefix capture,
