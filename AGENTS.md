@@ -62,6 +62,13 @@ the one for the directory you work in: `src/files`, `src/editor`,
   The temporary `[compositor] scene_renderer = "owned"` requires GLES2 and a
   restart. The owned pass reads graph geometry; scene nodes remain resource and
   feedback transports until stage 6 (`docs/plans/scene-graph-stage3.md`).
+* **Shapes in the owned pass** (`scene_pass.h`): a window's rounded clip, ring
+  and shadow are `rediwm_scene_pass_add_*_shaped` calls, device pixels, snapped by
+  the caller. The programs cost the driver about 430 KiB (a GL program costs
+  130-150 KiB whatever its size), so `enable_shapes` builds them on request, never
+  with the renderer; before it a shaped draw fails the pass. Blend NONE is only
+  valid inside `rediwm_clip_opaque`. The distance ramp is not area coverage (up
+  to 18 of 208 levels at one pixel of a curved edge): that is expected.
 * **Idle makes no wakeups:** timers only for real deadlines, workers signal an
   eventfd, `text.applySize` instead of re-sizing faces, title changes repaint
   only their span and taskbar chip. Measure with per-thread context switches.

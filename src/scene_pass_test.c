@@ -1,6 +1,9 @@
 // Compare the actual owned drawing backend with wlroots, independently of
 // scene traversal and output policy. A noninstalled, real-GPU fixture.
 #include "scene_pass.c"
+#include "scene_graph.h"
+#include <math.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 #include <drm_fourcc.h>
@@ -49,19 +52,26 @@ static void clear(struct wlr_render_pass *pass) {
         .blend_mode = WLR_RENDER_BLEND_MODE_NONE,
     });
 }
+// With a shape the owned pass draws through its shaped programs; wlroots' pass,
+// which has no such thing, is always given NULL.
 static void paint(struct wlr_render_pass *pass, struct wlr_texture *texture,
-        int transform, int filter, int crop, float alpha, const pixman_region32_t *clip) {
-    wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options){
-        .box = {8, -7, 49, 63}, .color = {.3, .06, .17, .5}, .clip = clip,
-    });
-    wlr_render_pass_add_texture(pass, &(struct wlr_render_texture_options){
+        int transform, int filter, int crop, float alpha, const pixman_region32_t *clip,
+        const struct rediwm_pass_shape *shape) {
+    struct wlr_render_rect_options rects[2] = {
+        {.box = {8, -7, 49, 63}, .color = {.3, .06, .17, .5}, .clip = clip},
+        {.box = {41, 29, 37, 53}, .color = {.1, .2, .05, .4}, .clip = clip},
+    };
+    struct wlr_render_texture_options t = {
         .texture = texture, .dst_box = {-3, 11, 112, 77},
         .src_box = crop ? (struct wlr_fbox){2.25, 3.5, 16.5, 11.25} : (struct wlr_fbox){0},
         .transform = transform, .filter_mode = filter, .alpha = &alpha, .clip = clip,
-    });
-    wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options){
-        .box = {41, 29, 37, 53}, .color = {.1, .2, .05, .4}, .clip = clip,
-    });
+    };
+    if (shape) rediwm_scene_pass_add_rect_shaped(pass, &rects[0], shape);
+    else wlr_render_pass_add_rect(pass, &rects[0]);
+    if (shape) rediwm_scene_pass_add_texture_shaped(pass, &t, shape);
+    else wlr_render_pass_add_texture(pass, &t);
+    if (shape) rediwm_scene_pass_add_rect_shaped(pass, &rects[1], shape);
+    else wlr_render_pass_add_rect(pass, &rects[1]);
 }
 static struct wlr_texture *texture_create(struct wlr_renderer *renderer, bool opaque) {
     uint32_t pixels[TW * TH];
@@ -76,8 +86,12 @@ static struct wlr_texture *texture_create(struct wlr_renderer *renderer, bool op
     assert(t);
     return t;
 }
+// `shaped` runs every case through the shaped programs, with a shape that covers
+// the whole buffer and has no corners: it must still equal wlroots exactly.
 static void parity(struct rediwm_scene_renderer *r, struct wlr_buffer *actual,
-        struct wlr_buffer *expected) {
+        struct wlr_buffer *expected, bool shaped) {
+    const struct rediwm_pass_shape cover = {.box = {-50, -50, WIDTH + 100, HEIGHT + 100}};
+    const struct rediwm_pass_shape *shape = shaped ? &cover : NULL;
     pixman_region32_t clip;
     pixman_region32_init_rect(&clip, -10, 8, 65, 31);
     pixman_region32_union_rect(&clip, &clip, 71, 43, 81, 80);
@@ -90,17 +104,17 @@ static void parity(struct rediwm_scene_renderer *r, struct wlr_buffer *actual,
             struct wlr_render_pass *pass = wlr_renderer_begin_buffer_pass(r->renderer, expected, NULL);
             assert(pass);
             clear(pass);
-            paint(pass, t, tr, filter, crop, alpha, partial ? &clip : NULL);
+            paint(pass, t, tr, filter, crop, alpha, partial ? &clip : NULL, NULL);
             assert(wlr_render_pass_submit(pass));
             pass = rediwm_scene_pass_begin(r, actual, NULL);
             assert(pass);
             clear(pass);
-            paint(pass, t, tr, filter, crop, alpha, partial ? &clip : NULL);
+            paint(pass, t, tr, filter, crop, alpha, partial ? &clip : NULL, shape);
             assert(wlr_render_pass_submit(pass));
             int d = compare(r, actual, expected);
             if (d > 1) {
-                fprintf(stderr, "parity: opaque=%d transform=%d filter=%d crop=%d partial=%d diff=%d\n",
-                    opaque, tr, filter, crop, partial, d);
+                fprintf(stderr, "parity: shaped=%d opaque=%d transform=%d filter=%d crop=%d partial=%d diff=%d\n",
+                    shaped, opaque, tr, filter, crop, partial, d);
                 abort();
             }
             if (d > worst) worst = d;
@@ -109,7 +123,21 @@ static void parity(struct rediwm_scene_renderer *r, struct wlr_buffer *actual,
         wlr_texture_destroy(t);
     }
     pixman_region32_fini(&clip);
-    printf("PASS: %d texture/transform/crop/filter/alpha/damage cases (max difference %d)\n", cases, worst);
+    printf("PASS: %d texture/transform/crop/filter/alpha/damage cases%s (max difference %d)\n", cases,
+        shaped ? " through the shaped programs" : "", worst);
+}
+// Before enable_shapes there are no shaped programs: a shaped draw must fail the
+// pass at submit, not draw something else, and the next pass must work.
+static void shapes_fail_closed(struct rediwm_scene_renderer *r, struct wlr_buffer *buffer) {
+    const struct rediwm_pass_shape shape = {.box = {10, 10, 50, 50}, .radii = {5, 5, 5, 5}};
+    struct wlr_render_pass *pass = rediwm_scene_pass_begin(r, buffer, NULL);
+    assert(pass);
+    rediwm_scene_pass_add_rect_shaped(pass, &(struct wlr_render_rect_options){
+        .box = {10, 10, 50, 50}, .color = {1, 0, 0, 1}}, &shape);
+    assert(!wlr_render_pass_submit(pass));
+    pass = rediwm_scene_pass_begin(r, buffer, NULL);
+    assert(pass && wlr_render_pass_submit(pass));
+    puts("PASS: a shaped draw before enable_shapes fails the pass and the next pass works");
 }
 static void damage(struct rediwm_scene_renderer *r, struct wlr_buffer *actual,
         struct wlr_buffer *expected) {
@@ -125,7 +153,7 @@ static void damage(struct rediwm_scene_renderer *r, struct wlr_buffer *actual,
     struct wlr_texture *t = texture_create(r->renderer, false);
     pass = rediwm_scene_pass_begin(r, actual, NULL);
     assert(pass);
-    paint(pass, t, 3, 0, 1, .73, &clip);
+    paint(pass, t, 3, 0, 1, .73, &clip, NULL);
     assert(wlr_render_pass_submit(pass));
     read_pixels(r, actual, after);
     int changed = 0;
@@ -139,7 +167,7 @@ static void damage(struct rediwm_scene_renderer *r, struct wlr_buffer *actual,
     pixman_region32_clear(&clip);
     pass = rediwm_scene_pass_begin(r, actual, NULL);
     assert(pass);
-    paint(pass, t, 1, 1, 0, 1, &clip);
+    paint(pass, t, 1, 1, 0, 1, &clip, NULL);
     assert(wlr_render_pass_submit(pass));
     read_pixels(r, actual, before);
     assert(memcmp(before, after, sizeof(before)) == 0);
@@ -196,7 +224,7 @@ static void state_restoration(struct rediwm_scene_renderer *r, struct wlr_buffer
     assert(pass);
     assert(!rediwm_scene_pass_begin(r, buffer, NULL)); // no nested owned passes
     clear(pass);
-    paint(pass, t, 1, 0, 1, .5, NULL);
+    paint(pass, t, 1, 0, 1, .5, NULL, NULL);
     assert(wlr_render_pass_submit(pass));
     assert(enter(r, &after));
     leave(r, &after);
@@ -230,7 +258,7 @@ static void external_texture(struct rediwm_scene_renderer *r, struct wlr_allocat
     struct wlr_render_pass *base = wlr_renderer_begin_buffer_pass(r->renderer, source, NULL);
     assert(base);
     clear(base);
-    paint(base, pattern, 0, 1, 0, 1, NULL);
+    paint(base, pattern, 0, 1, 0, 1, NULL, NULL);
     assert(wlr_render_pass_submit(base));
     wlr_texture_destroy(pattern);
     struct wlr_texture *reference = wlr_texture_from_buffer(r->renderer, source);
@@ -281,9 +309,39 @@ static void external_texture(struct rediwm_scene_renderer *r, struct wlr_allocat
         struct pass *p = wl_container_of(base, p, base);
         // Force a real external EGLImage through the same draw routine; this
         // driver's normal import of an RGB dmabuf chooses a 2D target.
-        texture_draw(p, &o, a);
+        texture_draw(p, &o, a, NULL);
         assert(wlr_render_pass_submit(base));
         assert(compare(r, actual, expected) <= 1);
+        // The shaped external program with a cover-everything shape is the same draw.
+        const struct rediwm_pass_shape cover = {.box = {-50, -50, WIDTH + 100, HEIGHT + 100}};
+        base = rediwm_scene_pass_begin(r, actual, NULL);
+        assert(base);
+        clear(base);
+        p = wl_container_of(base, p, base);
+        texture_draw(p, &o, a, &cover);
+        assert(wlr_render_pass_submit(base));
+        assert(compare(r, actual, expected) <= 1);
+        // And through a rounded, bordered shape the external texture equals the 2D
+        // one of the same pixels: the clip does not depend on the sampler.
+        const struct rediwm_pass_shape round = {.box = {12, 14, 100, 70},
+            .radii = {18, 9, 25.5f, 3}, .border = 2, .border_color = {.5f, .1f, .1f, .5f}};
+        base = rediwm_scene_pass_begin(r, expected, NULL);
+        assert(base);
+        clear(base);
+        rediwm_scene_pass_add_texture_shaped(base, &o, &round);
+        assert(wlr_render_pass_submit(base));
+        base = rediwm_scene_pass_begin(r, actual, NULL);
+        assert(base);
+        clear(base);
+        p = wl_container_of(base, p, base);
+        texture_draw(p, &o, a, &round);
+        assert(wlr_render_pass_submit(base));
+        assert(compare(r, actual, expected) <= 1);
+        // Two blank images would also match: the corner must be cut, the middle drawn.
+        uint8_t shown[WIDTH * HEIGHT * 4];
+        read_pixels(r, actual, shown);
+        assert(memcmp(&shown[4 * (15 * WIDTH + 13)], &shown[0], 4) == 0);
+        assert(memcmp(&shown[4 * (50 * WIDTH + 60)], &shown[0], 4) != 0);
     }
     assert(enter(r, &state));
     glDeleteTextures(1, &a.tex);
@@ -291,7 +349,7 @@ static void external_texture(struct rediwm_scene_renderer *r, struct wlr_allocat
     leave(r, &state);
     wlr_texture_destroy(reference);
     wlr_buffer_drop(source);
-    puts("PASS: external-OES EGLImage matches wlroots across all transforms and filters");
+    puts("PASS: external-OES EGLImage matches wlroots across all transforms and filters, plain and shaped");
 }
 // Driver-converted YUV. A linear NV12 dmabuf is imported by wlroots exactly as a
 // video client's would be. Mesa reports it external-only, so both passes must
@@ -410,6 +468,406 @@ static void synchronization(struct rediwm_scene_renderer *r, struct wlr_buffer *
     wlr_drm_syncobj_timeline_unref(timeline);
     puts("PASS: acquire/release timeline points and recovery from unavailable acquire");
 }
+
+// ---- Stage 4b: rounded shapes (docs/plans/scene-graph-stage4.md) ----------------------
+// The stage 1 spike's gates, on the production pass. Windows are made the way the
+// compositor will make them: a clip spec in source units, resolved through a
+// transform and snapped, so these also test that the pieces tile on the grid.
+enum { GW = 640, GH = 480 };
+static const float BG[4] = {224 / 255.f, 225 / 255.f, 232 / 255.f, 1};
+static const float BODY[4] = {16 / 255.f, 18 / 255.f, 21 / 255.f, 1};
+static const float SCALES[] = {1.f, 1.25f, 1.5f, 2.f};
+static const float ZOOMS[] = {1.f, .85f, .70f, .55f, .25f};
+#define COUNT(a) (sizeof(a) / sizeof(*(a)))
+
+static void check(bool ok, const char *what, ...) {
+    if (ok) return;
+    char text[256];
+    va_list args;
+    va_start(args, what);
+    vsnprintf(text, sizeof(text), what, args);
+    va_end(args);
+    fprintf(stderr, "FAIL: %s\n", text);
+    exit(1);
+}
+struct image { int w, h; uint8_t *p; };
+static uint8_t *at(const struct image *img, int x, int y) { return img->p + 4 * (y * img->w + x); }
+static int diff(int a, int b) { return abs(a - b); }
+static void read_image(struct rediwm_scene_renderer *r, struct wlr_buffer *b, struct image *img) {
+    struct gl_state state;
+    assert(enter(r, &state));
+    img->w = b->width;
+    img->h = b->height;
+    img->p = realloc(img->p, 4 * (size_t)img->w * img->h);
+    glBindFramebuffer(GL_FRAMEBUFFER, wlr_gles2_renderer_get_buffer_fbo(r->renderer, b));
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(0, 0, img->w, img->h, GL_RGBA, GL_UNSIGNED_BYTE, img->p);
+    assert(glGetError() == GL_NO_ERROR);
+    leave(r, &state);
+}
+static struct wlr_buffer *target_sized(struct wlr_allocator *allocator, int w, int h) {
+    uint64_t modifier = DRM_FORMAT_MOD_INVALID;
+    struct wlr_drm_format format = {
+        .format = DRM_FORMAT_ARGB8888, .len = 1, .capacity = 1, .modifiers = &modifier,
+    };
+    struct wlr_buffer *b = wlr_allocator_create_buffer(allocator, w, h, &format);
+    assert(b);
+    return b;
+}
+// A pass whose buffer starts as one opaque colour.
+static struct wlr_render_pass *begin_fill(struct rediwm_scene_renderer *r, struct wlr_buffer *b,
+        const float color[4], const pixman_region32_t *clip) {
+    struct wlr_render_pass *pass = rediwm_scene_pass_begin(r, b, NULL);
+    check(pass != NULL, "cannot begin an owned pass");
+    wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options){
+        .box = {0, 0, b->width, b->height}, .color = {color[0], color[1], color[2], color[3]},
+        .blend_mode = WLR_RENDER_BLEND_MODE_NONE, .clip = clip,
+    });
+    return pass;
+}
+static void finish(struct wlr_render_pass *pass) { check(wlr_render_pass_submit(pass), "an owned pass failed"); }
+static void piece(struct wlr_render_pass *pass, const struct rediwm_pass_shape *shape,
+        struct wlr_box box, const float color[4], const pixman_region32_t *clip) {
+    rediwm_scene_pass_add_rect_shaped(pass, &(struct wlr_render_rect_options){
+        .box = box, .color = {color[0], color[1], color[2], color[3]}, .clip = clip,
+    }, shape);
+}
+
+// A window 200x140 (source units) at (30, 24), plus a titlebar of 36 and a footer
+// of 10, placed in a layout offset by 8 device pixels.
+struct window {
+    struct rediwm_pass_shape shape;
+    struct rediwm_clip clip;
+    struct wlr_box title, client, footer;
+};
+static struct wlr_box box_of(struct rediwm_snap s) { return (struct wlr_box){s.x, s.y, s.width, s.height}; }
+static struct window make_window(float scale, float zoom, float radius, double border) {
+    const struct rediwm_xform xf = {(double)scale * zoom, 8, 8};
+    const struct rediwm_clip_spec spec = {200, 140, {radius, radius, radius, radius}, border};
+    struct window w = {.clip = rediwm_clip_resolve(xf, 30, 24, &spec)};
+    w.shape.box = box_of(rediwm_edges_snap(w.clip.edges));
+    for (int i = 0; i < 4; i++) w.shape.radii[i] = w.clip.radii[i];
+    // A ring is whole device pixels, never thinner than one.
+    w.shape.border = w.clip.border > 0 ? fmaxf(1.f, roundf(w.clip.border)) : 0;
+    w.title = box_of(rediwm_edges_snap(rediwm_xform_rect(xf, 30, 24, 200, 36)));
+    w.client = box_of(rediwm_edges_snap(rediwm_xform_rect(xf, 30, 24 + 36, 200, 140 - 36 - 10)));
+    w.footer = box_of(rediwm_edges_snap(rediwm_xform_rect(xf, 30, 24 + 140 - 10, 200, 10)));
+    return w;
+}
+
+// ---- Gate 1: the clip against a supersampled reference ---------------------------------
+static bool inside_rrect(double px, double py, const struct rediwm_pass_shape *s) {
+    double x = px - s->box.x, y = py - s->box.y;
+    if (x < 0 || y < 0 || x > s->box.width || y > s->box.height) return false;
+    double r = (x < s->box.width / 2.) ? (y < s->box.height / 2. ? s->radii[0] : s->radii[3])
+                                       : (y < s->box.height / 2. ? s->radii[1] : s->radii[2]);
+    double cx = x < s->box.width / 2. ? r : s->box.width - r, cy = y < s->box.height / 2. ? r : s->box.height - r;
+    if (!((x < r || x > s->box.width - r) && (y < r || y > s->box.height - r))) return true;
+    return hypot(x - cx, y - cy) <= r;
+}
+static double reference_coverage(const struct rediwm_pass_shape *s, int x, int y) {
+    const int n = 8;
+    int hits = 0;
+    for (int j = 0; j < n; j++) for (int i = 0; i < n; i++) hits += inside_rrect(x + (i + .5) / n, y + (j + .5) / n, s);
+    return (double)hits / (n * n);
+}
+static void gate_clip_accuracy(struct rediwm_scene_renderer *r, struct wlr_buffer *buf, struct image *img) {
+    int worst = 0, fringe = 0;
+    const uint8_t bg[3] = {224, 225, 232}, body[3] = {16, 18, 21};
+    for (size_t si = 0; si < COUNT(SCALES); si++) for (size_t zi = 0; zi < COUNT(ZOOMS); zi++) {
+        struct window w = make_window(SCALES[si], ZOOMS[zi], 10, 0);
+        struct wlr_render_pass *pass = begin_fill(r, buf, BG, NULL);
+        piece(pass, &w.shape, w.shape.box, BODY, NULL);
+        finish(pass);
+        read_image(r, buf, img);
+        for (int y = w.shape.box.y - 2; y < w.shape.box.y + w.shape.box.height + 2; y++)
+        for (int x = w.shape.box.x - 2; x < w.shape.box.x + w.shape.box.width + 2; x++) {
+            double c = reference_coverage(&w.shape, x, y);
+            for (int ch = 0; ch < 3; ch++) {
+                int got = at(img, x, y)[ch];
+                int want = (int)lround(bg[ch] * (1 - c) + body[ch] * c);
+                if (diff(got, want) > worst) worst = diff(got, want);
+                // No fringe: never outside the range of the two colours.
+                int lo = body[ch] < bg[ch] ? body[ch] : bg[ch], hi = body[ch] < bg[ch] ? bg[ch] : body[ch];
+                if (got < lo - 1 || got > hi + 1) fringe++;
+            }
+        }
+    }
+    check(fringe == 0, "clip: %d channel values fall outside the bg/body range (fringe)", fringe);
+    // A one-pixel linear ramp on the distance is not area coverage: on a curved
+    // 45-degree edge it is off by up to about .08 of the contrast, here 18 of 208
+    // levels at scale 1.25, zoom .70 (an 8.75 px radius), pixel (2,2) of each
+    // corner. The spike, without the 1.25 scale, measured 12. glass.c uses the
+    // same ramp, and a straight edge or a pixel off the diagonal is exact.
+    check(worst <= 20, "clip: differs from supersampled coverage by %d levels", worst);
+    printf("PASS: rounded clip within %d levels of area coverage, no fringe, %zu scales x %zu zoom steps\n",
+        worst, COUNT(SCALES), COUNT(ZOOMS));
+}
+
+// ---- Gate 2: pieces of one window share the clip with no seam --------------------------
+static void gate_no_seams(struct rediwm_scene_renderer *r, struct wlr_buffer *buf, struct image *img) {
+    const float red[4] = {1, 0, 0, 1}, green[4] = {0, 1, 0, 1}, blue[4] = {0, 0, 1, 1};
+    for (size_t si = 0; si < COUNT(SCALES); si++) for (size_t zi = 0; zi < COUNT(ZOOMS); zi++) {
+        struct window w = make_window(SCALES[si], ZOOMS[zi], 10, 0);
+        struct wlr_render_pass *pass = begin_fill(r, buf, BG, NULL);
+        piece(pass, &w.shape, w.title, red, NULL);
+        piece(pass, &w.shape, w.client, green, NULL);
+        piece(pass, &w.shape, w.footer, blue, NULL);
+        finish(pass);
+        read_image(r, buf, img);
+        const struct wlr_box *b = &w.shape.box;
+        const int margin = (int)ceilf(w.shape.radii[0]) + 2;
+        for (int y = 0; y < b->height; y++) for (int x = margin; x < b->width - margin; x++) {
+            const float *want = b->y + y < w.client.y ? red : b->y + y < w.footer.y ? green : blue;
+            uint8_t *px = at(img, b->x + x, b->y + y);
+            for (int ch = 0; ch < 3; ch++)
+                check(diff(px[ch], (int)lround(want[ch] * 255)) <= 1,
+                    "seam at scale %.2f zoom %.2f, row %d col %d channel %d = %d",
+                    SCALES[si], ZOOMS[zi], y, x, ch, px[ch]);
+        }
+        // The pieces really tile the shape's box, with no gap and no overlap.
+        check(w.title.y == b->y && w.title.y + w.title.height == w.client.y &&
+              w.client.y + w.client.height == w.footer.y && w.footer.y + w.footer.height == b->y + b->height,
+              "pieces do not tile the window at scale %.2f zoom %.2f", SCALES[si], ZOOMS[zi]);
+    }
+    puts("PASS: titlebar, client and footer meet without a seam at every scale and zoom");
+}
+
+// ---- Gate 3: border and body partition the shape's coverage ----------------------------
+static void gate_border_partition(struct rediwm_scene_renderer *r, struct wlr_buffer *buf,
+        struct image *img, struct image *ref) {
+    int worst = 0;
+    for (size_t si = 0; si < COUNT(SCALES); si++) for (size_t zi = 0; zi < COUNT(ZOOMS); zi++) {
+        struct window w = make_window(SCALES[si], ZOOMS[zi], 10, 1);
+        struct rediwm_pass_shape ringed = w.shape, plain = w.shape;
+        plain.border = 0;
+        memcpy(ringed.border_color, BODY, sizeof(BODY));
+        // Ring and body in one colour, in three pieces, must equal one plain body,
+        // whatever the split between them, or coverage leaks.
+        struct wlr_render_pass *pass = begin_fill(r, buf, BG, NULL);
+        piece(pass, &plain, plain.box, BODY, NULL);
+        finish(pass);
+        read_image(r, buf, ref);
+        pass = begin_fill(r, buf, BG, NULL);
+        piece(pass, &ringed, w.title, BODY, NULL);
+        piece(pass, &ringed, w.client, BODY, NULL);
+        piece(pass, &ringed, w.footer, BODY, NULL);
+        finish(pass);
+        read_image(r, buf, img);
+        for (int i = 0; i < img->w * img->h * 4; i++) if (diff(img->p[i], ref->p[i]) > worst) worst = diff(img->p[i], ref->p[i]);
+        // And the ring really is the ring: its own colour on the outer row of a
+        // straight edge, the body colour just inside it.
+        const float red[4] = {1, 0, 0, 1};
+        memcpy(ringed.border_color, red, sizeof(red));
+        pass = begin_fill(r, buf, BG, NULL);
+        piece(pass, &ringed, ringed.box, BODY, NULL);
+        finish(pass);
+        read_image(r, buf, img);
+        int cx = ringed.box.x + ringed.box.width / 2, bw = (int)ringed.border;
+        check(at(img, cx, ringed.box.y)[0] >= 254 && at(img, cx, ringed.box.y)[1] <= 1,
+            "outer row is not the border colour at scale %.2f zoom %.2f", SCALES[si], ZOOMS[zi]);
+        check(diff(at(img, cx, ringed.box.y + bw)[0], 16) <= 1,
+            "row inside the border is not the body at scale %.2f zoom %.2f", SCALES[si], ZOOMS[zi]);
+        check(at(img, ringed.box.x, ringed.box.y + ringed.box.height / 2)[0] >= 254,
+            "left edge is not the border colour at scale %.2f zoom %.2f", SCALES[si], ZOOMS[zi]);
+    }
+    check(worst <= 2, "border + body differ from one shape by %d levels", worst);
+    printf("PASS: border ring and body, in one pass, add up to exactly the shape's coverage (max diff %d)\n", worst);
+}
+
+// ---- Gate 4: premultiplied texture edges and opaque (XRGB) textures ---------------------
+static void gate_premultiplied(struct rediwm_scene_renderer *r, struct wlr_buffer *buf, struct image *img) {
+    struct rediwm_pass_shape s = {.box = {40, 40, 80, 80}, .radii = {20, 20, 20, 20}};
+    // 50% red, premultiplied: (128, 0, 0, 128) is a half-intensity red at half alpha.
+    uint32_t half[16], junk = 0x000AC81E, white = 0xffffffff, solid_px[1] = {junk};
+    for (int i = 0; i < 16; i++) half[i] = 0x80800000;
+    struct wlr_texture *t_half = wlr_texture_from_pixels(r->renderer, DRM_FORMAT_ARGB8888, 16, 4, 4, half);
+    struct wlr_texture *t_xrgb = wlr_texture_from_pixels(r->renderer, DRM_FORMAT_XRGB8888, 4, 1, 1, solid_px);
+    struct wlr_texture *t_white = wlr_texture_from_pixels(r->renderer, DRM_FORMAT_XRGB8888, 4, 1, 1, &white);
+    check(t_half && t_xrgb && t_white, "cannot create the test textures");
+    struct { struct wlr_texture *t; float alpha; const char *name; } cases[] = {
+        {t_half, 1, "half-transparent"}, {t_xrgb, 1, "xrgb"}, {t_white, .5f, "opacity"},
+    };
+    for (size_t i = 0; i < COUNT(cases); i++) {
+        const bool on_black = cases[i].t == t_white;
+        float base[4] = {BG[0], BG[1], BG[2], 1};
+        if (on_black) memset(base, 0, sizeof(float) * 3);
+        struct wlr_render_pass *pass = begin_fill(r, buf, base, NULL);
+        float alpha = cases[i].alpha;
+        rediwm_scene_pass_add_texture_shaped(pass, &(struct wlr_render_texture_options){
+            .texture = cases[i].t, .dst_box = s.box, .alpha = &alpha}, &s);
+        finish(pass);
+        read_image(r, buf, img);
+        uint8_t *in = at(img, 80, 80);
+        const int want[3][3] = {{240, 112, 116}, {10, 200, 30}, {128, 128, 128}};
+        for (int ch = 0; ch < 3; ch++)
+            check(diff(in[ch], want[i][ch]) <= 2, "%s texel gave (%d,%d,%d) inside the shape",
+                cases[i].name, in[0], in[1], in[2]);
+        // At the edge the colour is the premultiplied source times coverage over the backdrop:
+        // never darker or brighter than the two ends, and within the clip's accuracy of area coverage.
+        double src_a = i == 0 ? .50196 : i == 2 ? .5 : 1;
+        for (int y = s.box.y - 1; y < s.box.y + s.box.height + 1; y++)
+        for (int x = s.box.x - 1; x < s.box.x + s.box.width + 1; x++) {
+            double c = reference_coverage(&s, x, y);
+            for (int ch = 0; ch < 3; ch++) {
+                double bgv = base[ch] * 255;
+                double want_v = want[i][ch] - (1 - src_a) * bgv;  // the premultiplied source, 0..255
+                double expect = want_v * c + bgv * (1 - src_a * c);
+                check(diff(at(img, x, y)[ch], (int)lround(expect)) <= 14,
+                    "%s edge pixel (%d,%d) channel %d is %d, area coverage predicts %.0f",
+                    cases[i].name, x, y, ch, at(img, x, y)[ch], expect);
+            }
+        }
+    }
+    wlr_texture_destroy(t_half);
+    wlr_texture_destroy(t_xrgb);
+    wlr_texture_destroy(t_white);
+    puts("PASS: premultiplied edges, opacity and XRGB textures blend correctly through the clip");
+}
+
+// ---- Gate 5: the opaque cover of the model is fully covered in real pixels -------------
+// rediwm_clip_opaque promises its rectangles are inside full coverage; the output
+// pass will draw them without blending and trust that. Painting them first with
+// blending off, then the whole window over them, must change nothing.
+static void gate_opaque_cover(struct rediwm_scene_renderer *r, struct wlr_buffer *buf,
+        struct image *img, struct image *ref) {
+    for (size_t si = 0; si < COUNT(SCALES); si++) for (size_t zi = 0; zi < COUNT(ZOOMS); zi++) {
+        struct window w = make_window(SCALES[si], ZOOMS[zi], 10, 1);
+        struct rediwm_pass_shape s = w.shape;
+        memcpy(s.border_color, BODY, sizeof(BODY));
+        struct wlr_render_pass *pass = begin_fill(r, buf, BG, NULL);
+        piece(pass, &s, s.box, BODY, NULL);
+        finish(pass);
+        read_image(r, buf, ref);
+        // Border colour equals the body's here, so the cover may include the ring.
+        struct rediwm_snap cover[3];
+        int n = rediwm_clip_opaque(&w.clip, cover);
+        check(n > 0, "no opaque cover at scale %.2f zoom %.2f", SCALES[si], ZOOMS[zi]);
+        pass = begin_fill(r, buf, BG, NULL);
+        for (int i = 0; i < n; i++)
+            wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options){
+                .box = box_of(cover[i]), .color = {BODY[0], BODY[1], BODY[2], 1},
+                .blend_mode = WLR_RENDER_BLEND_MODE_NONE});
+        piece(pass, &s, s.box, BODY, NULL);
+        finish(pass);
+        read_image(r, buf, img);
+        for (int i = 0; i < img->w * img->h * 4; i++)
+            check(diff(img->p[i], ref->p[i]) <= 1, "cover pixel differs at scale %.2f zoom %.2f (%d vs %d)",
+                SCALES[si], ZOOMS[zi], img->p[i], ref->p[i]);
+    }
+    puts("PASS: the opaque cover draws without blending and changes nothing, at every scale and zoom");
+}
+
+// ---- Gate 6: analytic shadow ------------------------------------------------------------
+static void gate_shadow(struct rediwm_scene_renderer *r, struct wlr_buffer *buf, struct image *img) {
+    const float white[4] = {1, 1, 1, 1};
+    const struct rediwm_pass_shape s = {.box = {80, 60, 200, 120}};
+    const float sigma = 12, oy = 6;
+    struct wlr_render_pass *pass = begin_fill(r, buf, white, NULL);
+    rediwm_scene_pass_add_shadow(pass, &s, &(struct rediwm_pass_shadow){
+        .offset_y = oy, .sigma = sigma, .color = {0, 0, 0, .5f}, .hide_inside = true});
+    finish(pass);
+    read_image(r, buf, img);
+    int x = s.box.x + s.box.width / 2, bottom = s.box.y + s.box.height, worst = 0, last = 0;
+    for (int dy = 0; dy < 60; dy++) {
+        // Distance of the pixel centre below the offset shape's bottom edge.
+        double d = (dy + .5) - oy;
+        int want = (int)lround(255 * (1 - .5 * .5 * erfc(d / (sigma * 1.41421356237))));
+        int got = at(img, x, bottom + dy)[0];
+        if (diff(got, want) > worst) worst = diff(got, want);
+        check(got >= last, "shadow is not monotonic at %d px (%d after %d)", dy, got, last);
+        last = got;
+    }
+    check(worst <= 3, "shadow profile differs from the Gaussian edge by %d levels", worst);
+    check(at(img, 10, 10)[0] == 255 && at(img, x, s.box.y + s.box.height / 2)[0] == 255,
+        "shadow reaches outside its footprint or inside the window");
+    // Not hidden inside: the same draw shows through the window.
+    pass = begin_fill(r, buf, white, NULL);
+    rediwm_scene_pass_add_shadow(pass, &s, &(struct rediwm_pass_shadow){
+        .offset_y = oy, .sigma = sigma, .color = {0, 0, 0, .5f}});
+    finish(pass);
+    read_image(r, buf, img);
+    check(at(img, x, s.box.y + s.box.height / 2)[0] < 200, "an unhidden shadow does not show under the shape");
+    printf("PASS: analytic shadow follows the Gaussian edge (max diff %d) and stays out of the window\n", worst);
+}
+
+// ---- Gate 7: a partial repaint across a clip edge equals a full repaint -----------------
+static void draw_scene(struct rediwm_scene_renderer *r, struct wlr_buffer *buf, const struct window *w,
+        int variant, const pixman_region32_t *clip) {
+    const float bodies[2][3][4] = {
+        {{.2f, .3f, .5f, 1}, {.9f, .9f, .9f, 1}, {.3f, .3f, .3f, 1}},
+        {{.8f, .2f, .2f, 1}, {.1f, .6f, .2f, 1}, {.6f, .6f, .1f, 1}},
+    };
+    struct rediwm_pass_shape s = w->shape;
+    const float rings[2][4] = {{1, 1, 1, 1}, {1, 0, 0, 1}};
+    memcpy(s.border_color, rings[variant], sizeof(rings[variant]));
+    struct wlr_render_pass *pass = begin_fill(r, buf, BG, clip);
+    rediwm_scene_pass_add_shadow(pass, &s, &(struct rediwm_pass_shadow){
+        .offset_y = 12, .sigma = 12,
+        .color = {0, 0, 0, .4f}, .hide_inside = true, .clip = clip});
+    piece(pass, &s, w->title, bodies[variant][0], clip);
+    piece(pass, &s, w->client, bodies[variant][1], clip);
+    piece(pass, &s, w->footer, bodies[variant][2], clip);
+    finish(pass);
+}
+static void gate_damage_at_clip_edge(struct rediwm_scene_renderer *r, struct wlr_allocator *allocator,
+        struct image *img) {
+    struct wlr_buffer *a = target_sized(allocator, GW, GH), *b = target_sized(allocator, GW, GH),
+        *c = target_sized(allocator, GW, GH);
+    struct image one = {0}, two = {0};
+    int differing_inside = 0, differing_outside = 0;
+    const float zooms[] = {1.f, .55f};
+    for (size_t si = 0; si < COUNT(SCALES); si++) for (size_t zi = 0; zi < COUNT(zooms); zi++) {
+        struct window w = make_window(SCALES[si], zooms[zi], 10, 1);
+        const struct wlr_box *bx = &w.shape.box;
+        // Damage whose edges cut through the corner arcs, the ring and the shadow:
+        // a square over the top-left arc, one over the bottom-right, and a band.
+        pixman_region32_t damage;
+        pixman_region32_init_rect(&damage, bx->x - 5, bx->y - 5, 13, 13);
+        pixman_region32_union_rect(&damage, &damage, bx->x + bx->width - 9, bx->y + bx->height - 11, 30, 29);
+        pixman_region32_union_rect(&damage, &damage, bx->x + bx->width / 3, bx->y + 3, 7, bx->height + 20);
+        draw_scene(r, a, &w, 0, NULL);
+        draw_scene(r, b, &w, 1, NULL);
+        draw_scene(r, c, &w, 0, NULL);
+        draw_scene(r, c, &w, 1, &damage);
+        read_image(r, a, &one);
+        read_image(r, b, &two);
+        read_image(r, c, img);
+        for (int y = 0; y < GH; y++) for (int x = 0; x < GW; x++) {
+            bool in = pixman_region32_contains_point(&damage, x, y, NULL);
+            const uint8_t *want = at(in ? &two : &one, x, y);
+            for (int ch = 0; ch < 4; ch++)
+                check(at(img, x, y)[ch] == want[ch],
+                    "partial repaint differs at (%d,%d) channel %d (%s damage): %d, wanted %d (scale %.2f)",
+                    x, y, ch, in ? "inside" : "outside", at(img, x, y)[ch], want[ch], SCALES[si]);
+            if (memcmp(at(&one, x, y), at(&two, x, y), 4)) in ? differing_inside++ : differing_outside++;
+        }
+        pixman_region32_fini(&damage);
+    }
+    // The control: the two frames really differ both where the damage is and where it is not.
+    check(differing_inside > 0 && differing_outside > 0, "the test frames do not differ across the damage edge");
+    free(one.p);
+    free(two.p);
+    wlr_buffer_drop(a);
+    wlr_buffer_drop(b);
+    wlr_buffer_drop(c);
+    puts("PASS: repainting only damage that cuts through arcs, ring and shadow equals a full repaint");
+}
+
+static void shaped_gates(struct rediwm_scene_renderer *r, struct wlr_allocator *allocator) {
+    struct wlr_buffer *buf = target_sized(allocator, GW, GH);
+    struct image img = {0}, ref = {0};
+    gate_clip_accuracy(r, buf, &img);
+    gate_no_seams(r, buf, &img);
+    gate_border_partition(r, buf, &img, &ref);
+    gate_premultiplied(r, buf, &img);
+    gate_opaque_cover(r, buf, &img, &ref);
+    gate_shadow(r, buf, &img);
+    gate_damage_at_clip_edge(r, allocator, &img);
+    free(img.p);
+    free(ref.p);
+    wlr_buffer_drop(buf);
+}
 int main(void) {
     wlr_log_init(WLR_ERROR, NULL);
     struct wl_display *display = wl_display_create();
@@ -423,18 +881,24 @@ int main(void) {
     struct rediwm_scene_renderer *r = rediwm_scene_renderer_create(renderer);
     assert(r);
     struct wlr_buffer *actual = target(allocator), *expected = target(allocator);
-    parity(r, actual, expected);
+    parity(r, actual, expected, false);
+    shapes_fail_closed(r, actual);
+    assert(rediwm_scene_renderer_enable_shapes(r));
+    assert(rediwm_scene_renderer_enable_shapes(r)); // idempotent
+    parity(r, actual, expected, true);
     damage(r, actual, expected);
     state_restoration(r, actual);
     external_texture(r, allocator, actual, expected);
     external_yuv(r, actual, expected);
     synchronization(r, actual);
+    shaped_gates(r, allocator);
     // The ordinary wlroots pass must still work after owned GL has run.
-    parity(r, actual, expected);
+    parity(r, actual, expected, false);
     if (r->has_vao) {
         // Exercise the GLES2 fallback even on hosts with vertex arrays.
         r->has_vao = false;
-        parity(r, actual, expected);
+        parity(r, actual, expected, false);
+        parity(r, actual, expected, true);
         state_restoration(r, actual);
         r->has_vao = true;
     }

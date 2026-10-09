@@ -1,6 +1,6 @@
 # Scene graph plan, stage 4: clipping and primitives
 
-Status: **4a done, 4b to 4e not started**, 2026-10-09. Stage 3 of
+Status: **4a and 4b done, 4c to 4e not started**, 2026-10-10. Stage 3 of
 [scene-graph.md](scene-graph.md) (the owned output pass, radius zero) is done
 apart from hardware qualification; this stage is why the plan exists: the user
 requires clipped client corners, and wlroots 0.20 cannot mask a client. The five
@@ -194,14 +194,82 @@ changes (`else if (item->clip)`) halved it from 1.5 us. A typical scene has a
 fraction of those leaves, so this is far below what any frame-level measure can
 resolve; it is recorded rather than hidden because the gate said no cost change.
 
-**4b. Clip, border and shadow in the pass (owned path, nothing produces a clip
-yet).** The spike's gates 1 to 8, converted to production code in
-`test-scene-pass`: rounded clip against an 8x8 supersampled reference at scales 1,
-1.25, 1.5, 2 and zoom 1 to .25 (spike: maximum error 12 levels on arcs, zero
-fringe); piece joins; border and body equal one shape; premultiplied edges;
-external-OES equals 2D; shadow against the `erfc` profile; and buffer-age damage
-at a clip edge. Gate: those pass and unclipped draws stay at maximum difference 0
-against wlroots (the existing 128 cases).
+**4b. Clip, border and shadow in the pass. Done.** `scene_pass.h` gains
+`rediwm_pass_shape` (a snapped device box, four radii, a border width and colour),
+`rediwm_pass_shadow`, and three calls on a pass from `rediwm_scene_pass_begin`:
+`rediwm_scene_pass_add_rect_shaped`, `_add_texture_shaped` and `_add_shadow`. They
+take the same options as the wlroots calls, plus the shape; `wlr_render_pass` has
+no way to carry one, hence the extension calls. The pass stays free of geometry
+policy: the caller snaps the box (`rediwm_edges_snap`) and scales radii and border,
+and nothing is rounded in the pass. Unclipped draws do not change at all: they keep
+the stage 3 programs, and the shaped ones are separate.
+
+The shader is the spike's, with three changes. The body, the ring and the
+shadow are one fragment program with a `mode` uniform (texture, solid, shadow;
+every fragment of a draw reads the same mode, so the branch costs nothing), built
+twice, for `sampler2D` and for external. The shape's position relative to its
+corner is computed in the vertex stage, so the distance function works on
+window-sized numbers. And a radius is clamped to what fits, so a bad radius never
+produces junk. The backdrop mode of the spike is not ported: glass keeps its own
+blur until the stage that replaces it.
+
+**Memory decided the program count.** Measured as anonymous RSS on the Intel node:
+a GL program costs the driver 130-150 KiB **whatever its size** (the same for a
+one-line solid fill and the full shaped shader). The first version built four
+shaped programs with the renderer and added 600 KiB for nothing, on top of the
+0.44 MiB stage 3 is already carrying. Now there are two, and they are built by
+`rediwm_scene_renderer_enable_shapes` (once, outside a pass; idempotent), which
+costs **about 430 KiB when called and nothing otherwise**. 4c calls it only when
+the owned presenter will draw analytic frames. Until then a shaped draw fails the
+pass at submit (tested), so a missed call cannot draw square corners silently.
+If the build fails, plain drawing is unaffected and the caller learns it from the
+return value.
+
+Gates, all in `test-scene-pass` and run in Debug and ReleaseSafe:
+
+* **Unclipped draws unchanged:** the 128 parity cases against wlroots stay at
+  maximum difference **0**, and the same 128 run through the **shaped** programs
+  with a shape that covers the whole buffer are also at 0 (so transform, crop,
+  filter, alpha, XRGB, damage clip, no-VAO fallback and the external sampler are all
+  exact there), plus external-OES shaped equal to wlroots, and a rounded shape on
+  external equal to the same shape on the 2D texture.
+* **Clip against an 8x8 supersampled reference** at scales 1, 1.25, 1.5 and 2 and
+  zoom 1 to .25, windows built with `rediwm_clip_resolve` and `rediwm_edges_snap`:
+  zero fringe, maximum error **18 levels of 208**. The spike's 12 did not include
+  scale 1.25; the worst pixel is (2,2) of an 8.75 px radius, where area coverage is
+  .33 and the one-pixel distance ramp gives .41. That is the ramp itself, not a
+  defect: on a curved 45-degree edge it cannot equal area coverage, and `glass.c`
+  already uses it. The bound is 20.
+* **Piece joins:** titlebar, client and footer meet with no seam at every scale
+  and zoom, and the snapped pieces tile the shape exactly.
+* **Border and body are one shape:** three pieces with a ring in the body's colour
+  equal one plain body (difference 0), and the ring is its own colour on the outer
+  row and the left edge.
+* **Premultiplied edges:** half-transparent, XRGB with a junk alpha byte and a
+  half-opacity texture, inside and on every edge pixel against area coverage.
+* **The opaque cover of 4a, in real pixels:** drawing `rediwm_clip_opaque`'s
+  rectangles with blending off and then the window over them changes nothing, at
+  every scale and zoom. This is the claim 4c's blend decisions rest on.
+* **Shadow** against the `erfc` profile (difference 0 levels), monotonic, kept out
+  of the window when asked, and showing through when not.
+* **Damage across a clip edge:** a full frame, then a second one painted only
+  inside damage that cuts through two corner arcs, the ring and the shadow, equals
+  the full repaint exactly (all four channels, 8 scale/zoom cases), with a control
+  that the two frames really differ on both sides of the damage edge.
+
+The gates can fail: a coverage ramp offset, a halved ring, a shadow that ignores
+`hide`, a shaped texture that ignores the opaque flag, and a ring colour that is
+dropped each fail a gate when injected into the shader.
+
+Outside the fixture: Debug and ReleaseSafe builds and `zig build test` pass; the
+owned presenter matches the legacy one on all 16 goldens at tolerance 0; and
+`explicit_sync`, `direct_scanout`, `screenshot_regressions`, `appearance_chrome`,
+`output_scale`, `desktop_damage` and `panel_damage` pass on the owned path.
+
+Left for later, from what the numbers allow: the 128-case result means the shaped
+program with no shape is exactly the plain one, so 4e could replace the three
+plain programs by the two shaped ones and give back about 410 KiB, if the cost of
+the solid fill (every rectangle goes through it) is acceptable. It is not done here.
 
 **4c. Analytic frames, owned path only.** When the owned presenter is selected,
 `Toplevel` sets the group clip, the footer is `frame_border`, the titlebar raster
@@ -248,7 +316,7 @@ in `AGENTS.md`. The audit of the ~22 footer sites happens here for the legacy fl
 | Resize and move frames | Lower: the footer raster and the titlebar arcs go; titlebar re-rasters only on width/title/state. |
 | Output build CPU | Within the stage 3 tolerance of the stage 3 figures. |
 | GPU | A distance-field multiply per fragment of clipped windows only; check `gpu_elapsed`. |
-| RAM | Lower after 4e: footer buffers, and with 4d the shadow patch cache, are freed. |
+| RAM | Lower after 4e: footer buffers, and with 4d the shadow patch cache, are freed. 4c adds the shaped programs (about 430 KiB, `enable_shapes`) on the owned path only; judge the net of the two. |
 
 The live legacy/owned A/B (`tests/scene_ab.py`) stops being meaningful once the
 frames differ (4c), so record an owned reference with it, and the `clean` baseline,

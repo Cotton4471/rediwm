@@ -7,6 +7,7 @@
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
 #include <assert.h>
+#include <math.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <wlr/render/drm_syncobj.h>
@@ -18,7 +19,10 @@
 
 struct program {
     GLuint id;
+    unsigned bit; // which bit of pass.targets_set tracks this program's target size
     GLint target, dst, color, alpha, opaque, sampler, coords;
+    // Shaped programs only (-1 elsewhere): the shape, and the shadow's own terms.
+    GLint mode, origin, size, radii, border, bcolor, offset, sigma, hide;
 };
 struct attrib_state {
     GLint enabled, size, type, normalized, stride, buffer;
@@ -37,7 +41,11 @@ struct gl_state {
 struct rediwm_scene_renderer {
     struct wlr_renderer *renderer;
     struct program solid, texture, external;
-    bool active, has_external, has_sync, has_vao;
+    // Rounded-rectangle shapes (stage 4b), built by enable_shapes: one program for
+    // a 2D texture, a solid colour and the shape's shadow (they differ in a mode
+    // uniform, which every fragment of a draw reads the same), one for external.
+    struct program shaped, shaped_external;
+    bool active, has_external, has_sync, has_vao, has_shapes, shapes_tried;
     GLuint vertex_array, vertices;
     PFNGLGENVERTEXARRAYSOESPROC gen_vertex_arrays;
     PFNGLBINDVERTEXARRAYOESPROC bind_vertex_array;
@@ -141,6 +149,53 @@ static const char fragment[] =
     "precision mediump float; varying vec2 uv; uniform float alpha, opaque;"
     "void main(){vec4 c=texture2D(tex,uv); if(opaque>0.5)c.a=1.; gl_FragColor=c*alpha;}";
 
+// Shaped draws (stage 4b): the same quad and texture coordinates, plus the
+// position relative to the shape's corner, evaluated in the vertex stage so the
+// fragment's distance function works on window-sized numbers, not on output ones.
+static const char shaped_vertex[] =
+    "attribute vec2 position; uniform vec2 target, origin; uniform vec4 dst, coords[2];"
+    "varying vec2 uv; varying vec2 local;"
+    "void main(){ vec4 row=position.y<.5?coords[0]:coords[1];"
+    "uv=position.x<.5?row.xy:row.zw; vec2 p=dst.xy+position*dst.zw;"
+    "local=p-origin; gl_Position=vec4(p/target*2.-1.,0.,1.); }";
+// One distance function for every piece of a window, so titlebar, client, border
+// and shadow agree on the arc to the last bit. The radius is picked by quadrant
+// and capped to what fits, as the compositor caps it before scaling.
+#define SHAPED_HEAD \
+    "#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n" \
+    "varying vec2 uv; varying vec2 local; uniform vec2 size; uniform vec4 radii, bcolor, color;" \
+    "uniform float border;" \
+    "float sdf(vec2 p, vec4 r){ vec2 q=p-size*.5;" \
+    "float rad=q.x<0.?(q.y<0.?r.x:r.w):(q.y<0.?r.y:r.z);" \
+    "rad=clamp(rad,0.,min(size.x,size.y)*.5);" \
+    "vec2 d=abs(q)-(size*.5-vec2(rad));" \
+    "return length(max(d,0.))+min(max(d.x,d.y),0.)-rad; }" \
+    "float cov(float d){ return clamp(.5-d,0.,1.); }"
+// A border is part of the same pass as its body: the body keeps the inside of the
+// inset shape and the ring the rest, both evaluated at this fragment, so their
+// coverages add up to the shape's. As two draws they would multiply, and a seam
+// would show where each is partly covered.
+//
+// `mode` 0 draws the texture, 1 the solid colour, 2 the shape's shadow: a
+// Gaussian-blurred copy of the shape, offset, approximated through its distance
+// field (exact on straight edges, close at corners), kept out of the shape when
+// `hide` is set, which matters under translucent windows. One program for the
+// three because a program costs the driver 130-150 KiB however small it is.
+static const char shaped_fragment[] = SHAPED_HEAD
+    "uniform float alpha, opaque, mode, sigma, hide; uniform vec2 offset;"
+    // Abramowitz-Stegun 7.1.26, |error| < 1.5e-7.
+    "float erf1(float x){ float s=x<0.?-1.:1.; x=abs(x); float t=1./(1.+.3275911*x);"
+    "float y=1.-(((((1.061405429*t-1.453152027)*t)+1.421413741)*t-.284496736)*t+.254829592)*t*exp(-x*x);"
+    "return s*y; }"
+    "void main(){"
+    "if(mode>1.5){ float s=.5*(1.-erf1(sdf(local-offset,radii)/(sigma*1.41421356)));"
+    "if(hide>.5)s*=1.-cov(sdf(local,radii)); gl_FragColor=color*s; return; }"
+    "vec4 c=color; if(mode<.5){ c=texture2D(tex,uv); if(opaque>.5)c.a=1.; c*=alpha; }"
+    "float d=sdf(local,radii);"
+    "float inner=border>0.?cov(d+border):cov(d);"
+    "float ring=border>0.?cov(d)-cov(d+border):0.;"
+    "gl_FragColor=c*inner+bcolor*ring; }";
+
 static GLuint shader(GLenum type, const char *prefix, const char *source) {
     GLuint id = glCreateShader(type);
     if (!id) return 0;
@@ -158,8 +213,10 @@ static GLuint shader(GLenum type, const char *prefix, const char *source) {
     }
     return id;
 }
-static bool program_init(struct program *p, const char *prefix, const char *source) {
-    GLuint vs = shader(GL_VERTEX_SHADER, "", vertex);
+static bool program_init(struct program *p, unsigned bit, const char *vertex_source,
+        const char *prefix, const char *source) {
+    p->bit = bit;
+    GLuint vs = shader(GL_VERTEX_SHADER, "", vertex_source);
     GLuint fs = shader(GL_FRAGMENT_SHADER, prefix, source);
     if (vs && fs) {
         p->id = glCreateProgram();
@@ -189,8 +246,19 @@ static bool program_init(struct program *p, const char *prefix, const char *sour
     p->opaque = glGetUniformLocation(p->id, "opaque");
     p->sampler = glGetUniformLocation(p->id, "tex");
     p->coords = glGetUniformLocation(p->id, "coords[0]");
+    p->mode = glGetUniformLocation(p->id, "mode");
+    p->origin = glGetUniformLocation(p->id, "origin");
+    p->size = glGetUniformLocation(p->id, "size");
+    p->radii = glGetUniformLocation(p->id, "radii");
+    p->border = glGetUniformLocation(p->id, "border");
+    p->bcolor = glGetUniformLocation(p->id, "bcolor");
+    p->offset = glGetUniformLocation(p->id, "offset");
+    p->sigma = glGetUniformLocation(p->id, "sigma");
+    p->hide = glGetUniformLocation(p->id, "hide");
     return true;
 }
+static const char ext_prefix[] =
+    "#extension GL_OES_EGL_image_external : require\nuniform samplerExternalOES tex;\n";
 static const GLfloat positions[] = {0, 0, 1, 0, 0, 1, 1, 1};
 struct rediwm_scene_renderer *rediwm_scene_renderer_create(struct wlr_renderer *renderer) {
     if (!wlr_renderer_is_gles2(renderer)) return NULL;
@@ -211,10 +279,9 @@ struct rediwm_scene_renderer *rediwm_scene_renderer_create(struct wlr_renderer *
         r->destroy_sync && r->wait_sync && r->dup_fence;
     struct gl_state state;
     if (!enter(r, &state)) { free(r); return NULL; }
-    bool ok = program_init(&r->solid, "", solid) &&
-        program_init(&r->texture, "uniform sampler2D tex;", fragment) &&
-        (!r->has_external || program_init(&r->external,
-            "#extension GL_OES_EGL_image_external : require\nuniform samplerExternalOES tex;", fragment));
+    bool ok = program_init(&r->solid, 1, vertex, "", solid) &&
+        program_init(&r->texture, 2, vertex, "uniform sampler2D tex;", fragment) &&
+        (!r->has_external || program_init(&r->external, 4, vertex, ext_prefix, fragment));
     if (ok && r->has_vao) {
         r->gen_vertex_arrays(1, &r->vertex_array);
         r->bind_vertex_array(r->vertex_array);
@@ -246,6 +313,8 @@ void rediwm_scene_renderer_destroy(struct rediwm_scene_renderer *r) {
         glDeleteProgram(r->solid.id);
         glDeleteProgram(r->texture.id);
         glDeleteProgram(r->external.id);
+        glDeleteProgram(r->shaped.id);
+        glDeleteProgram(r->shaped_external.id);
         leave(r, &state);
     }
     free(r);
@@ -257,10 +326,9 @@ static void setup(struct pass *p, struct program *program, struct wlr_box box,
         glUseProgram(program->id);
         p->program = program->id;
     }
-    unsigned bit = program == &p->renderer->solid ? 1 : program == &p->renderer->texture ? 2 : 4;
-    if (!(p->targets_set & bit)) {
+    if (!(p->targets_set & program->bit)) {
         glUniform2f(program->target, p->buffer->width, p->buffer->height);
-        p->targets_set |= bit;
+        p->targets_set |= program->bit;
     }
     glUniform4f(program->dst, box.x, box.y, box.width, box.height);
     if (p->blend_mode != (int)blend) {
@@ -282,6 +350,22 @@ static void draw(const pixman_region32_t *clip) {
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     }
 }
+// The shape's uniforms. A degenerate or non-finite shape is the caller's bug;
+// it fails the pass at submit like any other bad draw.
+static bool shape_usable(const struct rediwm_pass_shape *s) {
+    if (!isfinite(s->border) || s->border < 0) return false;
+    for (int i = 0; i < 4; i++) if (!isfinite(s->radii[i]) || s->radii[i] < 0) return false;
+    for (int i = 0; i < 4; i++) if (!isfinite(s->border_color[i])) return false;
+    return true;
+}
+static void set_shape(const struct program *g, const struct rediwm_pass_shape *s) {
+    glUniform2f(g->origin, s->box.x, s->box.y);
+    glUniform2f(g->size, s->box.width, s->box.height);
+    glUniform4f(g->radii, s->radii[0], s->radii[1], s->radii[2], s->radii[3]);
+    glUniform1f(g->border, s->border);
+    glUniform4f(g->bcolor, s->border_color[0], s->border_color[1], s->border_color[2],
+        s->border_color[3]);
+}
 static void add_rect(struct wlr_render_pass *base, const struct wlr_render_rect_options *o) {
     struct pass *p = wl_container_of(base, p, base);
     if (p->failed || (o->clip && !pixman_region32_not_empty(o->clip))) return;
@@ -289,6 +373,19 @@ static void add_rect(struct wlr_render_pass *base, const struct wlr_render_rect_
     wlr_render_rect_options_get_box(o, p->buffer, &box);
     setup(p, &p->renderer->solid, box, o->blend_mode);
     glUniform4f(p->renderer->solid.color, o->color.r, o->color.g, o->color.b, o->color.a);
+    draw(o->clip);
+}
+static void rect_shaped(struct pass *p, const struct wlr_render_rect_options *o,
+        const struct rediwm_pass_shape *shape) {
+    struct program *g = &p->renderer->shaped;
+    if (p->failed || (o->clip && !pixman_region32_not_empty(o->clip))) return;
+    if (!g->id || !shape_usable(shape)) { p->failed = true; return; }
+    struct wlr_box box;
+    wlr_render_rect_options_get_box(o, p->buffer, &box);
+    setup(p, g, box, o->blend_mode);
+    glUniform4f(g->color, o->color.r, o->color.g, o->color.b, o->color.a);
+    glUniform1f(g->mode, 1.f);
+    set_shape(g, shape);
     draw(o->clip);
 }
 static bool wait_point(struct pass *p, struct wlr_drm_syncobj_timeline *timeline, uint64_t point) {
@@ -306,10 +403,11 @@ static bool wait_point(struct pass *p, struct wlr_drm_syncobj_timeline *timeline
     return ok;
 }
 static void texture_draw(struct pass *p, const struct wlr_render_texture_options *o,
-        struct wlr_gles2_texture_attribs a) {
-    struct program *program = a.target == GL_TEXTURE_2D ? &p->renderer->texture :
-        a.target == GL_TEXTURE_EXTERNAL_OES ? &p->renderer->external : NULL;
-    if (!program || !program->id) { p->failed = true; return; }
+        struct wlr_gles2_texture_attribs a, const struct rediwm_pass_shape *shape) {
+    struct rediwm_scene_renderer *r = p->renderer;
+    struct program *program = a.target == GL_TEXTURE_2D ? (shape ? &r->shaped : &r->texture) :
+        a.target == GL_TEXTURE_EXTERNAL_OES ? (shape ? &r->shaped_external : &r->external) : NULL;
+    if (!program || !program->id || (shape && !shape_usable(shape))) { p->failed = true; return; }
     struct wlr_box dst;
     struct wlr_fbox src;
     wlr_render_texture_options_get_dst_box(o, &dst);
@@ -342,9 +440,14 @@ static void texture_draw(struct pass *p, const struct wlr_render_texture_options
         uv[2 * i + 1] = (src.y + v * src.height) / o->texture->height;
     }
     glUniform4fv(program->coords, 2, uv);
+    if (shape) {
+        glUniform1f(program->mode, 0.f);
+        set_shape(program, shape);
+    }
     draw(o->clip);
 }
-static void add_texture(struct wlr_render_pass *base, const struct wlr_render_texture_options *o) {
+static void texture_add(struct wlr_render_pass *base, const struct wlr_render_texture_options *o,
+        const struct rediwm_pass_shape *shape) {
     struct pass *p = wl_container_of(base, p, base);
     if (p->failed || (o->clip && !pixman_region32_not_empty(o->clip))) return;
     if (!wlr_texture_is_gles2(o->texture) || o->texture->renderer != p->renderer->renderer ||
@@ -354,7 +457,10 @@ static void add_texture(struct wlr_render_pass *base, const struct wlr_render_te
     }
     struct wlr_gles2_texture_attribs a;
     wlr_gles2_texture_get_attribs(o->texture, &a);
-    texture_draw(p, o, a);
+    texture_draw(p, o, a, shape);
+}
+static void add_texture(struct wlr_render_pass *base, const struct wlr_render_texture_options *o) {
+    texture_add(base, o, NULL);
 }
 static bool submit(struct wlr_render_pass *base) {
     struct pass *p = wl_container_of(base, p, base);
@@ -420,4 +526,68 @@ struct wlr_render_pass *rediwm_scene_pass_begin(struct rediwm_scene_renderer *r,
     r->active = true;
     wlr_render_pass_init(&p->base, &impl);
     return &p->base;
+}
+
+bool rediwm_scene_renderer_enable_shapes(struct rediwm_scene_renderer *r) {
+    assert(!r->active);
+    if (r->shapes_tried) return r->has_shapes;
+    r->shapes_tried = true;
+    struct gl_state state;
+    if (!enter(r, &state)) return false;
+    r->has_shapes = program_init(&r->shaped, 8, shaped_vertex, "uniform sampler2D tex;\n",
+            shaped_fragment) &&
+        (!r->has_external || program_init(&r->shaped_external, 16, shaped_vertex, ext_prefix,
+            shaped_fragment));
+    if (!r->has_shapes) {
+        wlr_log(WLR_ERROR, "scene pass: shaped programs failed to build, windows stay square");
+        glDeleteProgram(r->shaped.id);
+        glDeleteProgram(r->shaped_external.id);
+        r->shaped.id = r->shaped_external.id = 0;
+    }
+    leave(r, &state);
+    return r->has_shapes;
+}
+// Only a pass from rediwm_scene_pass_begin carries these: handing in a wlroots
+// pass is a programming error, not something to degrade around.
+static struct pass *owned_pass(struct wlr_render_pass *base) {
+    assert(base->impl == &impl);
+    struct pass *p = wl_container_of(base, p, base);
+    return p;
+}
+void rediwm_scene_pass_add_rect_shaped(struct wlr_render_pass *base,
+        const struct wlr_render_rect_options *o, const struct rediwm_pass_shape *shape) {
+    rect_shaped(owned_pass(base), o, shape);
+}
+void rediwm_scene_pass_add_texture_shaped(struct wlr_render_pass *base,
+        const struct wlr_render_texture_options *o, const struct rediwm_pass_shape *shape) {
+    owned_pass(base);
+    texture_add(base, o, shape);
+}
+void rediwm_scene_pass_add_shadow(struct wlr_render_pass *base,
+        const struct rediwm_pass_shape *shape, const struct rediwm_pass_shadow *shadow) {
+    struct pass *p = owned_pass(base);
+    struct program *g = &p->renderer->shaped;
+    if (p->failed || (shadow->clip && !pixman_region32_not_empty(shadow->clip))) return;
+    if (!g->id || !shape_usable(shape) || !isfinite(shadow->offset_x) ||
+            !isfinite(shadow->offset_y) || !isfinite(shadow->sigma) || shadow->sigma > 1024 ||
+            fabsf(shadow->offset_x) > 65536 || fabsf(shadow->offset_y) > 65536) {
+        p->failed = true;
+        return;
+    }
+    // A quarter pixel is a hard edge; zero would divide by it.
+    const float sigma = shadow->sigma < .25f ? .25f : shadow->sigma;
+    // The quad reaches three sigma past the shape, and as far again as the offset.
+    const int pad = (int)ceilf(3 * sigma) + (int)ceilf(fmaxf(fabsf(shadow->offset_x), fabsf(shadow->offset_y)));
+    const struct wlr_box box = {shape->box.x - pad, shape->box.y - pad,
+        shape->box.width + 2 * pad, shape->box.height + 2 * pad};
+    setup(p, g, box, WLR_RENDER_BLEND_MODE_PREMULTIPLIED);
+    glUniform4f(g->color, shadow->color[0], shadow->color[1], shadow->color[2], shadow->color[3]);
+    struct rediwm_pass_shape bare = *shape; // the shadow has no border of its own
+    bare.border = 0;
+    set_shape(g, &bare);
+    glUniform1f(g->mode, 2.f);
+    glUniform2f(g->offset, shadow->offset_x, shadow->offset_y);
+    glUniform1f(g->sigma, sigma);
+    glUniform1f(g->hide, shadow->hide_inside ? 1.f : 0.f);
+    draw(shadow->clip);
 }
