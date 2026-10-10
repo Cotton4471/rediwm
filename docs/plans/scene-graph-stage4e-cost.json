@@ -1,0 +1,2837 @@
+{
+ "what": "stage 4e cost gate: stage 0 baseline (f6e7b24) vs 4e (a35f78b), ReleaseSafe, scene_baseline clean and stats sessions, interleaved stage0, 4e, 4e, stage0",
+ "runs": {
+  "stage0-a": {
+   "meta": {
+    "binary_bytes": 26769600,
+    "kernel": "7.2.9-zen1-1-zen",
+    "cpu": "12th Gen Intel(R) Core(TM) i9-12900H",
+    "pinned_cpus": [
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9
+    ],
+    "render_device": "/dev/dri/renderD128",
+    "seconds": 4.0,
+    "power": {
+     "ac_online": true,
+     "battery": "Not charging",
+     "platform_profile": "performance",
+     "governor": "schedutil",
+     "epp": "performance",
+     "no_turbo": "0"
+    },
+    "date": "2026-10-10 15:50:13"
+   },
+   "clean": {
+    "scale1": {
+     "idle": {
+      "cpu_percent": 0.007,
+      "instructions_per_s": 2148,
+      "cycles_per_s": 7009,
+      "ghz_user": 0.1,
+      "rss_anon_kb": 43320,
+      "voluntary_switches_per_s": 0.4
+     },
+     "spinner_clear": {
+      "cpu_percent": 8.561,
+      "instructions_per_s": 37261806,
+      "cycles_per_s": 45940141,
+      "ghz_user": 0.537,
+      "rss_anon_kb": 43964,
+      "voluntary_switches_per_s": 189.0
+     },
+     "spinner_glass": {
+      "cpu_percent": 11.272,
+      "instructions_per_s": 66549324,
+      "cycles_per_s": 63137710,
+      "ghz_user": 0.56,
+      "rss_anon_kb": 44076,
+      "voluntary_switches_per_s": 184.2
+     },
+     "damage_full": {
+      "cpu_percent": 20.96,
+      "instructions_per_s": 86130727,
+      "cycles_per_s": 121318553,
+      "ghz_user": 0.579,
+      "rss_anon_kb": 44076,
+      "voluntary_switches_per_s": 671.2
+     },
+     "drag": {
+      "cpu_percent": 8.221,
+      "instructions_per_s": 71941251,
+      "cycles_per_s": 56295526,
+      "ghz_user": 0.685,
+      "rss_anon_kb": 44080,
+      "voluntary_switches_per_s": 161.5
+     },
+     "resize": {
+      "cpu_percent": 22.294,
+      "instructions_per_s": 306403872,
+      "cycles_per_s": 194516234,
+      "ghz_user": 0.873,
+      "rss_anon_kb": 44240,
+      "voluntary_switches_per_s": 336.5
+     },
+     "fullscreen": {
+      "cpu_percent": 42.109,
+      "instructions_per_s": 58916670,
+      "cycles_per_s": 296522031,
+      "ghz_user": 0.704,
+      "rss_anon_kb": 47984,
+      "voluntary_switches_per_s": 97.7
+     },
+     "zoom_85": {
+      "cpu_percent": 10.48,
+      "instructions_per_s": 64087560,
+      "cycles_per_s": 61356128,
+      "ghz_user": 0.585,
+      "rss_anon_kb": 47984,
+      "voluntary_switches_per_s": 184.5
+     },
+     "zoom_70": {
+      "cpu_percent": 8.629,
+      "instructions_per_s": 67385670,
+      "cycles_per_s": 65201832,
+      "ghz_user": 0.756,
+      "rss_anon_kb": 48028,
+      "voluntary_switches_per_s": 187.5
+     },
+     "zoom_55": {
+      "cpu_percent": 8.831,
+      "instructions_per_s": 64805020,
+      "cycles_per_s": 66046897,
+      "ghz_user": 0.748,
+      "rss_anon_kb": 48028,
+      "voluntary_switches_per_s": 187.2
+     },
+     "zoom_min_hold": {
+      "cpu_percent": 8.452,
+      "instructions_per_s": 38225267,
+      "cycles_per_s": 45261748,
+      "ghz_user": 0.536,
+      "rss_anon_kb": 48352,
+      "voluntary_switches_per_s": 188.2
+     }
+    },
+    "scale1.5": {
+     "idle": {
+      "cpu_percent": 0.009,
+      "instructions_per_s": 4715,
+      "cycles_per_s": 10064,
+      "ghz_user": 0.118,
+      "rss_anon_kb": 46924,
+      "voluntary_switches_per_s": 0.6
+     },
+     "spinner_clear": {
+      "cpu_percent": 8.329,
+      "instructions_per_s": 39301463,
+      "cycles_per_s": 44327664,
+      "ghz_user": 0.532,
+      "rss_anon_kb": 47532,
+      "voluntary_switches_per_s": 189.0
+     },
+     "spinner_glass": {
+      "cpu_percent": 11.224,
+      "instructions_per_s": 69481427,
+      "cycles_per_s": 63336825,
+      "ghz_user": 0.564,
+      "rss_anon_kb": 47532,
+      "voluntary_switches_per_s": 184.2
+     },
+     "damage_full": {
+      "cpu_percent": 20.422,
+      "instructions_per_s": 92265211,
+      "cycles_per_s": 124894969,
+      "ghz_user": 0.612,
+      "rss_anon_kb": 47616,
+      "voluntary_switches_per_s": 667.7
+     },
+     "drag": {
+      "cpu_percent": 9.046,
+      "instructions_per_s": 74760289,
+      "cycles_per_s": 57853461,
+      "ghz_user": 0.64,
+      "rss_anon_kb": 47740,
+      "voluntary_switches_per_s": 159.4
+     },
+     "resize": {
+      "cpu_percent": 28.391,
+      "instructions_per_s": 481284302,
+      "cycles_per_s": 254467079,
+      "ghz_user": 0.896,
+      "rss_anon_kb": 47776,
+      "voluntary_switches_per_s": 330.7
+     },
+     "fullscreen": {
+      "cpu_percent": 34.89,
+      "instructions_per_s": 65074304,
+      "cycles_per_s": 383433783,
+      "ghz_user": 1.099,
+      "rss_anon_kb": 55652,
+      "voluntary_switches_per_s": 159.2
+     },
+     "zoom_85": {
+      "cpu_percent": 9.602,
+      "instructions_per_s": 68325817,
+      "cycles_per_s": 64487132,
+      "ghz_user": 0.672,
+      "rss_anon_kb": 55652,
+      "voluntary_switches_per_s": 186.5
+     },
+     "zoom_70": {
+      "cpu_percent": 11.714,
+      "instructions_per_s": 69120620,
+      "cycles_per_s": 60680918,
+      "ghz_user": 0.518,
+      "rss_anon_kb": 56376,
+      "voluntary_switches_per_s": 183.5
+     },
+     "zoom_55": {
+      "cpu_percent": 11.454,
+      "instructions_per_s": 67753095,
+      "cycles_per_s": 61215246,
+      "ghz_user": 0.534,
+      "rss_anon_kb": 56376,
+      "voluntary_switches_per_s": 184.2
+     },
+     "zoom_min_hold": {
+      "cpu_percent": 8.764,
+      "instructions_per_s": 40218154,
+      "cycles_per_s": 45871669,
+      "ghz_user": 0.523,
+      "rss_anon_kb": 56544,
+      "voluntary_switches_per_s": 188.0
+     }
+    },
+    "mixed": {
+     "idle": {
+      "cpu_percent": 0.006,
+      "instructions_per_s": 2153,
+      "cycles_per_s": 8170,
+      "ghz_user": 0.145,
+      "rss_anon_kb": 47288,
+      "voluntary_switches_per_s": 0.6
+     },
+     "spinner_clear": {
+      "cpu_percent": 7.917,
+      "instructions_per_s": 47992588,
+      "cycles_per_s": 82550805,
+      "ghz_user": 1.043,
+      "rss_anon_kb": 51880,
+      "voluntary_switches_per_s": 242.0
+     },
+     "spinner_glass": {
+      "cpu_percent": 10.036,
+      "instructions_per_s": 87188569,
+      "cycles_per_s": 120135872,
+      "ghz_user": 1.197,
+      "rss_anon_kb": 51880,
+      "voluntary_switches_per_s": 185.2
+     },
+     "damage_full": {
+      "cpu_percent": 15.767,
+      "instructions_per_s": 107738693,
+      "cycles_per_s": 182660525,
+      "ghz_user": 1.158,
+      "rss_anon_kb": 51880,
+      "voluntary_switches_per_s": 682.0
+     },
+     "drag": {
+      "cpu_percent": 9.071,
+      "instructions_per_s": 78526549,
+      "cycles_per_s": 64476552,
+      "ghz_user": 0.711,
+      "rss_anon_kb": 51884,
+      "voluntary_switches_per_s": 171.8
+     },
+     "resize": {
+      "cpu_percent": 32.985,
+      "instructions_per_s": 536107697,
+      "cycles_per_s": 286919249,
+      "ghz_user": 0.87,
+      "rss_anon_kb": 51884,
+      "voluntary_switches_per_s": 329.2
+     },
+     "fullscreen": {
+      "cpu_percent": 42.009,
+      "instructions_per_s": 84968148,
+      "cycles_per_s": 326907258,
+      "ghz_user": 0.778,
+      "rss_anon_kb": 56324,
+      "voluntary_switches_per_s": 105.2
+     },
+     "zoom_85": {
+      "cpu_percent": 12.8,
+      "instructions_per_s": 86292049,
+      "cycles_per_s": 74548346,
+      "ghz_user": 0.582,
+      "rss_anon_kb": 56324,
+      "voluntary_switches_per_s": 185.2
+     },
+     "zoom_70": {
+      "cpu_percent": 12.405,
+      "instructions_per_s": 76488490,
+      "cycles_per_s": 75683930,
+      "ghz_user": 0.61,
+      "rss_anon_kb": 56904,
+      "voluntary_switches_per_s": 240.0
+     },
+     "zoom_55": {
+      "cpu_percent": 11.846,
+      "instructions_per_s": 76820779,
+      "cycles_per_s": 78728685,
+      "ghz_user": 0.665,
+      "rss_anon_kb": 56904,
+      "voluntary_switches_per_s": 240.2
+     },
+     "zoom_min_hold": {
+      "cpu_percent": 7.551,
+      "instructions_per_s": 44598964,
+      "cycles_per_s": 61412223,
+      "ghz_user": 0.813,
+      "rss_anon_kb": 56904,
+      "voluntary_switches_per_s": 241.7
+     }
+    },
+    "mixed_noglass": {
+     "idle": {
+      "cpu_percent": 0.004,
+      "instructions_per_s": 2153,
+      "cycles_per_s": 9901,
+      "ghz_user": 0.282,
+      "rss_anon_kb": 45492,
+      "voluntary_switches_per_s": 0.8
+     },
+     "spinner_clear": {
+      "cpu_percent": 6.676,
+      "instructions_per_s": 36828211,
+      "cycles_per_s": 57042863,
+      "ghz_user": 0.854,
+      "rss_anon_kb": 50096,
+      "voluntary_switches_per_s": 245.0
+     },
+     "spinner_glass": {
+      "cpu_percent": 8.054,
+      "instructions_per_s": 38496097,
+      "cycles_per_s": 53563329,
+      "ghz_user": 0.665,
+      "rss_anon_kb": 50096,
+      "voluntary_switches_per_s": 243.0
+     },
+     "damage_full": {
+      "cpu_percent": 16.016,
+      "instructions_per_s": 62708767,
+      "cycles_per_s": 119581567,
+      "ghz_user": 0.747,
+      "rss_anon_kb": 50096,
+      "voluntary_switches_per_s": 738.2
+     },
+     "drag": {
+      "cpu_percent": 7.43,
+      "instructions_per_s": 57444480,
+      "cycles_per_s": 48431570,
+      "ghz_user": 0.652,
+      "rss_anon_kb": 50100,
+      "voluntary_switches_per_s": 185.9
+     },
+     "resize": {
+      "cpu_percent": 26.63,
+      "instructions_per_s": 456199374,
+      "cycles_per_s": 233276774,
+      "ghz_user": 0.876,
+      "rss_anon_kb": 50100,
+      "voluntary_switches_per_s": 341.2
+     },
+     "fullscreen": {
+      "cpu_percent": 41.434,
+      "instructions_per_s": 58924474,
+      "cycles_per_s": 308936920,
+      "ghz_user": 0.746,
+      "rss_anon_kb": 54988,
+      "voluntary_switches_per_s": 112.2
+     },
+     "zoom_85": {
+      "cpu_percent": 9.96,
+      "instructions_per_s": 39468456,
+      "cycles_per_s": 52312942,
+      "ghz_user": 0.525,
+      "rss_anon_kb": 54988,
+      "voluntary_switches_per_s": 242.5
+     },
+     "zoom_70": {
+      "cpu_percent": 9.866,
+      "instructions_per_s": 41046045,
+      "cycles_per_s": 52899088,
+      "ghz_user": 0.536,
+      "rss_anon_kb": 55204,
+      "voluntary_switches_per_s": 242.2
+     },
+     "zoom_55": {
+      "cpu_percent": 7.92,
+      "instructions_per_s": 41720983,
+      "cycles_per_s": 57083009,
+      "ghz_user": 0.721,
+      "rss_anon_kb": 55204,
+      "voluntary_switches_per_s": 246.5
+     },
+     "zoom_min_hold": {
+      "cpu_percent": 9.613,
+      "instructions_per_s": 39541621,
+      "cycles_per_s": 52910659,
+      "ghz_user": 0.55,
+      "rss_anon_kb": 55204,
+      "voluntary_switches_per_s": 246.5
+     }
+    }
+   },
+   "stats": {
+    "scale1": {
+     "idle": {
+      "output_commits": 0,
+      "cpu_frame_avg_ms": 0,
+      "projection_cpu_avg_ms": 0,
+      "scene_commit_cpu_avg_ms": 0,
+      "gpu_elapsed_avg_ms": 0
+     },
+     "spinner_clear": {
+      "output_commits": 242,
+      "cpu_frame_avg_ms": 0.4591575743801653,
+      "projection_cpu_avg_ms": 0.03438004958677686,
+      "scene_commit_cpu_avg_ms": 0.19229907024793388,
+      "gpu_elapsed_avg_ms": 0.2073428429752066
+     },
+     "spinner_glass": {
+      "output_commits": 236,
+      "cpu_frame_avg_ms": 0.9009571101694915,
+      "projection_cpu_avg_ms": 0.039058720338983055,
+      "scene_commit_cpu_avg_ms": 0.23926212288135593,
+      "gpu_elapsed_avg_ms": 0.6618319576271187
+     },
+     "damage_full": {
+      "output_commits": 235,
+      "cpu_frame_avg_ms": 0.984612085106383,
+      "projection_cpu_avg_ms": 0.03934975319148936,
+      "scene_commit_cpu_avg_ms": 0.29083127659574465,
+      "gpu_elapsed_avg_ms": 0.753755574468085
+     },
+     "drag": {
+      "output_commits": 233,
+      "cpu_frame_avg_ms": 1.2341325213675212,
+      "projection_cpu_avg_ms": 0.1208670641025641,
+      "scene_commit_cpu_avg_ms": 0.37906266666666666,
+      "gpu_elapsed_avg_ms": 0.951412735042735
+     },
+     "resize": {
+      "output_commits": 221,
+      "cpu_frame_avg_ms": 1.978940117647059,
+      "projection_cpu_avg_ms": 0.4363554660633484,
+      "scene_commit_cpu_avg_ms": 0.3966748823529412,
+      "gpu_elapsed_avg_ms": 1.504058923076923
+     },
+     "fullscreen": {
+      "output_commits": 232,
+      "cpu_frame_avg_ms": 0.4688855732758621,
+      "projection_cpu_avg_ms": 0.02890696551724138,
+      "scene_commit_cpu_avg_ms": 0.3068076982758621,
+      "gpu_elapsed_avg_ms": 0.6542663663793103
+     },
+     "zoom_85": {
+      "output_commits": 235,
+      "cpu_frame_avg_ms": 0.9779377531914893,
+      "projection_cpu_avg_ms": 0.04332132340425532,
+      "scene_commit_cpu_avg_ms": 0.24300884680851062,
+      "gpu_elapsed_avg_ms": 0.6923295829787235
+     },
+     "zoom_70": {
+      "output_commits": 237,
+      "cpu_frame_avg_ms": 0.8308669915611814,
+      "projection_cpu_avg_ms": 0.036448755274261606,
+      "scene_commit_cpu_avg_ms": 0.215647194092827,
+      "gpu_elapsed_avg_ms": 0.6046981983122363
+     },
+     "zoom_55": {
+      "output_commits": 237,
+      "cpu_frame_avg_ms": 0.8548118902953586,
+      "projection_cpu_avg_ms": 0.03720393670886076,
+      "scene_commit_cpu_avg_ms": 0.2141233628691983,
+      "gpu_elapsed_avg_ms": 0.5981579662447257
+     },
+     "zoom_min_hold": {
+      "output_commits": 240,
+      "cpu_frame_avg_ms": 0.6030722583333333,
+      "projection_cpu_avg_ms": 0.042376854166666665,
+      "scene_commit_cpu_avg_ms": 0.2667810916666667,
+      "gpu_elapsed_avg_ms": 0.28046944166666665
+     }
+    },
+    "scale1.5": {
+     "idle": {
+      "output_commits": 0,
+      "cpu_frame_avg_ms": 0,
+      "projection_cpu_avg_ms": 0,
+      "scene_commit_cpu_avg_ms": 0,
+      "gpu_elapsed_avg_ms": 0
+     },
+     "spinner_clear": {
+      "output_commits": 243,
+      "cpu_frame_avg_ms": 0.40954007818930044,
+      "projection_cpu_avg_ms": 0.031484913580246916,
+      "scene_commit_cpu_avg_ms": 0.17882212757201646,
+      "gpu_elapsed_avg_ms": 0.1798744320987654
+     },
+     "spinner_glass": {
+      "output_commits": 240,
+      "cpu_frame_avg_ms": 0.5641712833333333,
+      "projection_cpu_avg_ms": 0.025600266666666666,
+      "scene_commit_cpu_avg_ms": 0.1522516875,
+      "gpu_elapsed_avg_ms": 0.4028302791666667
+     },
+     "damage_full": {
+      "output_commits": 240,
+      "cpu_frame_avg_ms": 0.6050955250000001,
+      "projection_cpu_avg_ms": 0.026429512500000002,
+      "scene_commit_cpu_avg_ms": 0.17305964166666665,
+      "gpu_elapsed_avg_ms": 0.5127037740585775
+     },
+     "drag": {
+      "output_commits": 241,
+      "cpu_frame_avg_ms": 0.673444673553719,
+      "projection_cpu_avg_ms": 0.0593135826446281,
+      "scene_commit_cpu_avg_ms": 0.1989499090909091,
+      "gpu_elapsed_avg_ms": 0.6493061074380165
+     },
+     "resize": {
+      "output_commits": 226,
+      "cpu_frame_avg_ms": 1.520564115044248,
+      "projection_cpu_avg_ms": 0.2708122300884956,
+      "scene_commit_cpu_avg_ms": 0.33034799115044244,
+      "gpu_elapsed_avg_ms": 1.3481024203539824
+     },
+     "fullscreen": {
+      "output_commits": 147,
+      "cpu_frame_avg_ms": 0.3277939094827586,
+      "projection_cpu_avg_ms": 0.023594456896551725,
+      "scene_commit_cpu_avg_ms": 0.1651398620689655,
+      "gpu_elapsed_avg_ms": 0.575213051724138
+     },
+     "zoom_85": {
+      "output_commits": 240,
+      "cpu_frame_avg_ms": 0.5581668791666666,
+      "projection_cpu_avg_ms": 0.026036670833333334,
+      "scene_commit_cpu_avg_ms": 0.1385925625,
+      "gpu_elapsed_avg_ms": 0.3789577041666667
+     },
+     "zoom_70": {
+      "output_commits": 240,
+      "cpu_frame_avg_ms": 0.6253770958333333,
+      "projection_cpu_avg_ms": 0.027517958333333332,
+      "scene_commit_cpu_avg_ms": 0.16322040416666667,
+      "gpu_elapsed_avg_ms": 0.45915669583333335
+     },
+     "zoom_55": {
+      "output_commits": 239,
+      "cpu_frame_avg_ms": 0.6612444937238494,
+      "projection_cpu_avg_ms": 0.027054276150627613,
+      "scene_commit_cpu_avg_ms": 0.18094078242677825,
+      "gpu_elapsed_avg_ms": 0.47095624267782427
+     },
+     "zoom_min_hold": {
+      "output_commits": 242,
+      "cpu_frame_avg_ms": 0.477353652892562,
+      "projection_cpu_avg_ms": 0.035840599173553714,
+      "scene_commit_cpu_avg_ms": 0.23334519008264465,
+      "gpu_elapsed_avg_ms": 0.2334723429752066
+     }
+    },
+    "mixed": {
+     "idle": {
+      "output_commits": 0,
+      "cpu_frame_avg_ms": 0,
+      "projection_cpu_avg_ms": 0,
+      "scene_commit_cpu_avg_ms": 0,
+      "gpu_elapsed_avg_ms": 0
+     },
+     "spinner_clear": {
+      "output_commits": 244,
+      "cpu_frame_avg_ms": 0.22366032438016528,
+      "projection_cpu_avg_ms": 0.019417828512396693,
+      "scene_commit_cpu_avg_ms": 0.0711423285123967,
+      "gpu_elapsed_avg_ms": 0.06968824173553718
+     },
+     "spinner_glass": {
+      "output_commits": 481,
+      "cpu_frame_avg_ms": 0.3603201704781705,
+      "projection_cpu_avg_ms": 0.019716914760914764,
+      "scene_commit_cpu_avg_ms": 0.09807145322245321,
+      "gpu_elapsed_avg_ms": 0.25032259875259877
+     },
+     "damage_full": {
+      "output_commits": 476,
+      "cpu_frame_avg_ms": 0.5234386680672268,
+      "projection_cpu_avg_ms": 0.0253212268907563,
+      "scene_commit_cpu_avg_ms": 0.16186536344537814,
+      "gpu_elapsed_avg_ms": 0.41442128842105264
+     },
+     "drag": {
+      "output_commits": 480,
+      "cpu_frame_avg_ms": 0.538180817427386,
+      "projection_cpu_avg_ms": 0.062489748962655606,
+      "scene_commit_cpu_avg_ms": 0.15189451452282157,
+      "gpu_elapsed_avg_ms": 0.394198020746888
+     },
+     "resize": {
+      "output_commits": 428,
+      "cpu_frame_avg_ms": 1.7977692733644859,
+      "projection_cpu_avg_ms": 0.2774745887850467,
+      "scene_commit_cpu_avg_ms": 0.3502555093457944,
+      "gpu_elapsed_avg_ms": 1.4790129859813084
+     },
+     "fullscreen": {
+      "output_commits": 204,
+      "cpu_frame_avg_ms": 0.3605309688888889,
+      "projection_cpu_avg_ms": 0.025992651111111112,
+      "scene_commit_cpu_avg_ms": 0.09964278,
+      "gpu_elapsed_avg_ms": 0.27234848
+     },
+     "zoom_85": {
+      "output_commits": 474,
+      "cpu_frame_avg_ms": 0.5235152088607595,
+      "projection_cpu_avg_ms": 0.025964350210970464,
+      "scene_commit_cpu_avg_ms": 0.15320386497890295,
+      "gpu_elapsed_avg_ms": 0.3899301097046413
+     },
+     "zoom_70": {
+      "output_commits": 242,
+      "cpu_frame_avg_ms": 0.432275744813278,
+      "projection_cpu_avg_ms": 0.022337881742738586,
+      "scene_commit_cpu_avg_ms": 0.11403367842323651,
+      "gpu_elapsed_avg_ms": 0.30003154677754673
+     },
+     "zoom_55": {
+      "output_commits": 240,
+      "cpu_frame_avg_ms": 0.43181704375,
+      "projection_cpu_avg_ms": 0.0235404375,
+      "scene_commit_cpu_avg_ms": 0.10152722916666668,
+      "gpu_elapsed_avg_ms": 0.30100128125
+     },
+     "zoom_min_hold": {
+      "output_commits": 244,
+      "cpu_frame_avg_ms": 0.2882342505175984,
+      "projection_cpu_avg_ms": 0.025348476190476192,
+      "scene_commit_cpu_avg_ms": 0.10590452795031055,
+      "gpu_elapsed_avg_ms": 0.11196914492753622
+     }
+    },
+    "mixed_noglass": {
+     "idle": {
+      "output_commits": 0,
+      "cpu_frame_avg_ms": 0,
+      "projection_cpu_avg_ms": 0,
+      "scene_commit_cpu_avg_ms": 0,
+      "gpu_elapsed_avg_ms": 0
+     },
+     "spinner_clear": {
+      "output_commits": 244,
+      "cpu_frame_avg_ms": 0.2668644639175258,
+      "projection_cpu_avg_ms": 0.02393758762886598,
+      "scene_commit_cpu_avg_ms": 0.08915172371134021,
+      "gpu_elapsed_avg_ms": 0.09596945360824742
+     },
+     "spinner_glass": {
+      "output_commits": 242,
+      "cpu_frame_avg_ms": 0.3326560186721992,
+      "projection_cpu_avg_ms": 0.029384029045643155,
+      "scene_commit_cpu_avg_ms": 0.12117700622406638,
+      "gpu_elapsed_avg_ms": 0.1318942053941909
+     },
+     "damage_full": {
+      "output_commits": 243,
+      "cpu_frame_avg_ms": 0.2877271055900621,
+      "projection_cpu_avg_ms": 0.023269548654244306,
+      "scene_commit_cpu_avg_ms": 0.1221058447204969,
+      "gpu_elapsed_avg_ms": 0.14129957556935818
+     },
+     "drag": {
+      "output_commits": 482,
+      "cpu_frame_avg_ms": 0.5083982685950413,
+      "projection_cpu_avg_ms": 0.0805863347107438,
+      "scene_commit_cpu_avg_ms": 0.23547126652892564,
+      "gpu_elapsed_avg_ms": 0.30584741735537185
+     },
+     "resize": {
+      "output_commits": 466,
+      "cpu_frame_avg_ms": 0.6754855579399142,
+      "projection_cpu_avg_ms": 0.22979009227467811,
+      "scene_commit_cpu_avg_ms": 0.30533547854077253,
+      "gpu_elapsed_avg_ms": 0.3669263175965665
+     },
+     "fullscreen": {
+      "output_commits": 475,
+      "cpu_frame_avg_ms": 0.25020787789473686,
+      "projection_cpu_avg_ms": 0.018237595789473687,
+      "scene_commit_cpu_avg_ms": 0.1473788863157895,
+      "gpu_elapsed_avg_ms": 0.23587149052631579
+     },
+     "zoom_85": {
+      "output_commits": 257,
+      "cpu_frame_avg_ms": 0.28875365082644633,
+      "projection_cpu_avg_ms": 0.02437617561983471,
+      "scene_commit_cpu_avg_ms": 0.10528844214876032,
+      "gpu_elapsed_avg_ms": 0.10618425413223141
+     },
+     "zoom_70": {
+      "output_commits": 242,
+      "cpu_frame_avg_ms": 0.3679750997920998,
+      "projection_cpu_avg_ms": 0.03170929313929314,
+      "scene_commit_cpu_avg_ms": 0.1419679708939709,
+      "gpu_elapsed_avg_ms": 0.14726502702702704
+     },
+     "zoom_55": {
+      "output_commits": 242,
+      "cpu_frame_avg_ms": 0.3191905394190871,
+      "projection_cpu_avg_ms": 0.02573419294605809,
+      "scene_commit_cpu_avg_ms": 0.1207243817427386,
+      "gpu_elapsed_avg_ms": 0.12604154771784232
+     },
+     "zoom_min_hold": {
+      "output_commits": 252,
+      "cpu_frame_avg_ms": 0.30858861363636364,
+      "projection_cpu_avg_ms": 0.024784047520661157,
+      "scene_commit_cpu_avg_ms": 0.11151048140495867,
+      "gpu_elapsed_avg_ms": 0.11451770661157025
+     }
+    }
+   }
+  },
+  "4e-a": {
+   "meta": {
+    "binary_bytes": 26905016,
+    "kernel": "7.2.9-zen1-1-zen",
+    "cpu": "12th Gen Intel(R) Core(TM) i9-12900H",
+    "pinned_cpus": [
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9
+    ],
+    "render_device": "/dev/dri/renderD128",
+    "seconds": 4.0,
+    "power": {
+     "ac_online": true,
+     "battery": "Not charging",
+     "platform_profile": "performance",
+     "governor": "schedutil",
+     "epp": "performance",
+     "no_turbo": "0"
+    },
+    "date": "2026-10-10 15:57:53"
+   },
+   "clean": {
+    "scale1": {
+     "idle": {
+      "cpu_percent": 0.002,
+      "instructions_per_s": 143,
+      "cycles_per_s": 2125,
+      "ghz_user": 0.094,
+      "rss_anon_kb": 45856,
+      "voluntary_switches_per_s": 0.4
+     },
+     "spinner_clear": {
+      "cpu_percent": 8.097,
+      "instructions_per_s": 35532330,
+      "cycles_per_s": 45362343,
+      "ghz_user": 0.56,
+      "rss_anon_kb": 46444,
+      "voluntary_switches_per_s": 189.0
+     },
+     "spinner_glass": {
+      "cpu_percent": 10.864,
+      "instructions_per_s": 55434152,
+      "cycles_per_s": 59440864,
+      "ghz_user": 0.547,
+      "rss_anon_kb": 46476,
+      "voluntary_switches_per_s": 184.2
+     },
+     "damage_full": {
+      "cpu_percent": 14.127,
+      "instructions_per_s": 59091379,
+      "cycles_per_s": 83731051,
+      "ghz_user": 0.593,
+      "rss_anon_kb": 46476,
+      "voluntary_switches_per_s": 184.5
+     },
+     "drag": {
+      "cpu_percent": 7.019,
+      "instructions_per_s": 50422618,
+      "cycles_per_s": 53798894,
+      "ghz_user": 0.766,
+      "rss_anon_kb": 46476,
+      "voluntary_switches_per_s": 161.2
+     },
+     "resize": {
+      "cpu_percent": 25.475,
+      "instructions_per_s": 195331388,
+      "cycles_per_s": 145529372,
+      "ghz_user": 0.571,
+      "rss_anon_kb": 46584,
+      "voluntary_switches_per_s": 212.7
+     },
+     "fullscreen": {
+      "cpu_percent": 48.143,
+      "instructions_per_s": 39770879,
+      "cycles_per_s": 302785486,
+      "ghz_user": 0.629,
+      "rss_anon_kb": 50468,
+      "voluntary_switches_per_s": 93.7
+     },
+     "zoom_85": {
+      "cpu_percent": 12.796,
+      "instructions_per_s": 54590201,
+      "cycles_per_s": 58481027,
+      "ghz_user": 0.457,
+      "rss_anon_kb": 50468,
+      "voluntary_switches_per_s": 183.5
+     },
+     "zoom_70": {
+      "cpu_percent": 11.88,
+      "instructions_per_s": 55552863,
+      "cycles_per_s": 61481883,
+      "ghz_user": 0.518,
+      "rss_anon_kb": 50708,
+      "voluntary_switches_per_s": 188.2
+     },
+     "zoom_55": {
+      "cpu_percent": 11.175,
+      "instructions_per_s": 54814035,
+      "cycles_per_s": 61219854,
+      "ghz_user": 0.548,
+      "rss_anon_kb": 50708,
+      "voluntary_switches_per_s": 184.2
+     },
+     "zoom_min_hold": {
+      "cpu_percent": 9.207,
+      "instructions_per_s": 36979791,
+      "cycles_per_s": 46866099,
+      "ghz_user": 0.509,
+      "rss_anon_kb": 50920,
+      "voluntary_switches_per_s": 187.5
+     }
+    },
+    "scale1.5": {
+     "idle": {
+      "cpu_percent": 0.001,
+      "instructions_per_s": 146,
+      "cycles_per_s": 2625,
+      "ghz_user": 0.267,
+      "rss_anon_kb": 48460,
+      "voluntary_switches_per_s": 0.4
+     },
+     "spinner_clear": {
+      "cpu_percent": 8.923,
+      "instructions_per_s": 35328119,
+      "cycles_per_s": 45453507,
+      "ghz_user": 0.509,
+      "rss_anon_kb": 49008,
+      "voluntary_switches_per_s": 187.7
+     },
+     "spinner_glass": {
+      "cpu_percent": 11.521,
+      "instructions_per_s": 57647989,
+      "cycles_per_s": 63688367,
+      "ghz_user": 0.553,
+      "rss_anon_kb": 49008,
+      "voluntary_switches_per_s": 183.5
+     },
+     "damage_full": {
+      "cpu_percent": 14.477,
+      "instructions_per_s": 64341535,
+      "cycles_per_s": 84415504,
+      "ghz_user": 0.583,
+      "rss_anon_kb": 49220,
+      "voluntary_switches_per_s": 183.0
+     },
+     "drag": {
+      "cpu_percent": 7.757,
+      "instructions_per_s": 51872182,
+      "cycles_per_s": 53782502,
+      "ghz_user": 0.693,
+      "rss_anon_kb": 49384,
+      "voluntary_switches_per_s": 161.2
+     },
+     "resize": {
+      "cpu_percent": 24.928,
+      "instructions_per_s": 323827678,
+      "cycles_per_s": 190003921,
+      "ghz_user": 0.762,
+      "rss_anon_kb": 49828,
+      "voluntary_switches_per_s": 216.7
+     },
+     "fullscreen": {
+      "cpu_percent": 45.109,
+      "instructions_per_s": 43748848,
+      "cycles_per_s": 299540243,
+      "ghz_user": 0.664,
+      "rss_anon_kb": 57684,
+      "voluntary_switches_per_s": 97.0
+     },
+     "zoom_85": {
+      "cpu_percent": 10.55,
+      "instructions_per_s": 57128765,
+      "cycles_per_s": 61940786,
+      "ghz_user": 0.587,
+      "rss_anon_kb": 57684,
+      "voluntary_switches_per_s": 185.7
+     },
+     "zoom_70": {
+      "cpu_percent": 10.623,
+      "instructions_per_s": 58129369,
+      "cycles_per_s": 60524140,
+      "ghz_user": 0.57,
+      "rss_anon_kb": 58160,
+      "voluntary_switches_per_s": 185.7
+     },
+     "zoom_55": {
+      "cpu_percent": 11.195,
+      "instructions_per_s": 57363485,
+      "cycles_per_s": 60243443,
+      "ghz_user": 0.538,
+      "rss_anon_kb": 58160,
+      "voluntary_switches_per_s": 189.5
+     },
+     "zoom_min_hold": {
+      "cpu_percent": 8.573,
+      "instructions_per_s": 37497494,
+      "cycles_per_s": 45243922,
+      "ghz_user": 0.528,
+      "rss_anon_kb": 58328,
+      "voluntary_switches_per_s": 188.7
+     }
+    },
+    "mixed": {
+     "idle": {
+      "cpu_percent": 0.003,
+      "instructions_per_s": 151,
+      "cycles_per_s": 2715,
+      "ghz_user": 0.078,
+      "rss_anon_kb": 48636,
+      "voluntary_switches_per_s": 0.6
+     },
+     "spinner_clear": {
+      "cpu_percent": 10.688,
+      "instructions_per_s": 42278138,
+      "cycles_per_s": 54406976,
+      "ghz_user": 0.509,
+      "rss_anon_kb": 53136,
+      "voluntary_switches_per_s": 220.0
+     },
+     "spinner_glass": {
+      "cpu_percent": 14.425,
+      "instructions_per_s": 73362751,
+      "cycles_per_s": 75989196,
+      "ghz_user": 0.527,
+      "rss_anon_kb": 53136,
+      "voluntary_switches_per_s": 183.5
+     },
+     "damage_full": {
+      "cpu_percent": 17.476,
+      "instructions_per_s": 78105395,
+      "cycles_per_s": 106553077,
+      "ghz_user": 0.61,
+      "rss_anon_kb": 53136,
+      "voluntary_switches_per_s": 184.0
+     },
+     "drag": {
+      "cpu_percent": 8.758,
+      "instructions_per_s": 58683959,
+      "cycles_per_s": 65049722,
+      "ghz_user": 0.743,
+      "rss_anon_kb": 53136,
+      "voluntary_switches_per_s": 175.6
+     },
+     "resize": {
+      "cpu_percent": 33.763,
+      "instructions_per_s": 367495870,
+      "cycles_per_s": 244220332,
+      "ghz_user": 0.723,
+      "rss_anon_kb": 53136,
+      "voluntary_switches_per_s": 208.5
+     },
+     "fullscreen": {
+      "cpu_percent": 39.625,
+      "instructions_per_s": 57228872,
+      "cycles_per_s": 253486234,
+      "ghz_user": 0.64,
+      "rss_anon_kb": 58092,
+      "voluntary_switches_per_s": 112.2
+     },
+     "zoom_85": {
+      "cpu_percent": 13.526,
+      "instructions_per_s": 74599215,
+      "cycles_per_s": 78374593,
+      "ghz_user": 0.579,
+      "rss_anon_kb": 58092,
+      "voluntary_switches_per_s": 184.2
+     },
+     "zoom_70": {
+      "cpu_percent": 13.539,
+      "instructions_per_s": 64878633,
+      "cycles_per_s": 73783231,
+      "ghz_user": 0.545,
+      "rss_anon_kb": 58328,
+      "voluntary_switches_per_s": 212.0
+     },
+     "zoom_55": {
+      "cpu_percent": 13.571,
+      "instructions_per_s": 64536169,
+      "cycles_per_s": 71642560,
+      "ghz_user": 0.528,
+      "rss_anon_kb": 58328,
+      "voluntary_switches_per_s": 206.7
+     },
+     "zoom_min_hold": {
+      "cpu_percent": 11.204,
+      "instructions_per_s": 43904947,
+      "cycles_per_s": 58457191,
+      "ghz_user": 0.522,
+      "rss_anon_kb": 58328,
+      "voluntary_switches_per_s": 241.2
+     }
+    },
+    "mixed_noglass": {
+     "idle": {
+      "cpu_percent": 0.107,
+      "instructions_per_s": 469149,
+      "cycles_per_s": 436734,
+      "ghz_user": 0.409,
+      "rss_anon_kb": 47096,
+      "voluntary_switches_per_s": 4.6
+     },
+     "spinner_clear": {
+      "cpu_percent": 10.298,
+      "instructions_per_s": 35373664,
+      "cycles_per_s": 52937572,
+      "ghz_user": 0.514,
+      "rss_anon_kb": 51700,
+      "voluntary_switches_per_s": 226.7
+     },
+     "spinner_glass": {
+      "cpu_percent": 10.245,
+      "instructions_per_s": 37305311,
+      "cycles_per_s": 59565790,
+      "ghz_user": 0.581,
+      "rss_anon_kb": 51700,
+      "voluntary_switches_per_s": 242.5
+     },
+     "damage_full": {
+      "cpu_percent": 14.62,
+      "instructions_per_s": 40136219,
+      "cycles_per_s": 83463878,
+      "ghz_user": 0.571,
+      "rss_anon_kb": 51700,
+      "voluntary_switches_per_s": 219.2
+     },
+     "drag": {
+      "cpu_percent": 7.174,
+      "instructions_per_s": 39913418,
+      "cycles_per_s": 48023708,
+      "ghz_user": 0.669,
+      "rss_anon_kb": 51700,
+      "voluntary_switches_per_s": 189.9
+     },
+     "resize": {
+      "cpu_percent": 21.95,
+      "instructions_per_s": 302541432,
+      "cycles_per_s": 180207738,
+      "ghz_user": 0.821,
+      "rss_anon_kb": 51700,
+      "voluntary_switches_per_s": 226.7
+     },
+     "fullscreen": {
+      "cpu_percent": 44.172,
+      "instructions_per_s": 48311705,
+      "cycles_per_s": 298529212,
+      "ghz_user": 0.676,
+      "rss_anon_kb": 56500,
+      "voluntary_switches_per_s": 89.2
+     },
+     "zoom_85": {
+      "cpu_percent": 9.063,
+      "instructions_per_s": 38079116,
+      "cycles_per_s": 51622743,
+      "ghz_user": 0.57,
+      "rss_anon_kb": 56500,
+      "voluntary_switches_per_s": 241.7
+     },
+     "zoom_70": {
+      "cpu_percent": 8.395,
+      "instructions_per_s": 38171741,
+      "cycles_per_s": 48738983,
+      "ghz_user": 0.581,
+      "rss_anon_kb": 56728,
+      "voluntary_switches_per_s": 240.2
+     },
+     "zoom_55": {
+      "cpu_percent": 8.631,
+      "instructions_per_s": 38560596,
+      "cycles_per_s": 47680939,
+      "ghz_user": 0.552,
+      "rss_anon_kb": 56728,
+      "voluntary_switches_per_s": 242.7
+     },
+     "zoom_min_hold": {
+      "cpu_percent": 8.988,
+      "instructions_per_s": 38771062,
+      "cycles_per_s": 48848839,
+      "ghz_user": 0.543,
+      "rss_anon_kb": 56728,
+      "voluntary_switches_per_s": 238.7
+     }
+    }
+   },
+   "stats": {
+    "scale1": {
+     "idle": {
+      "output_commits": 0,
+      "cpu_frame_avg_ms": 0,
+      "projection_cpu_avg_ms": 0,
+      "scene_commit_cpu_avg_ms": 0,
+      "gpu_elapsed_avg_ms": 0
+     },
+     "spinner_clear": {
+      "output_commits": 242,
+      "cpu_frame_avg_ms": 0.5285963388429752,
+      "projection_cpu_avg_ms": 0.04075286776859504,
+      "scene_commit_cpu_avg_ms": 0.23179954132231406,
+      "gpu_elapsed_avg_ms": 0.25877778512396693
+     },
+     "spinner_glass": {
+      "output_commits": 236,
+      "cpu_frame_avg_ms": 0.9108663262711865,
+      "projection_cpu_avg_ms": 0.04488848728813559,
+      "scene_commit_cpu_avg_ms": 0.2296705466101695,
+      "gpu_elapsed_avg_ms": 0.6532777076271187
+     },
+     "damage_full": {
+      "output_commits": 236,
+      "cpu_frame_avg_ms": 0.9404649194915254,
+      "projection_cpu_avg_ms": 0.04331497457627119,
+      "scene_commit_cpu_avg_ms": 0.25868493644067797,
+      "gpu_elapsed_avg_ms": 0.7470636186440678
+     },
+     "drag": {
+      "output_commits": 236,
+      "cpu_frame_avg_ms": 1.0756459240506329,
+      "projection_cpu_avg_ms": 0.09305966666666667,
+      "scene_commit_cpu_avg_ms": 0.30006427426160337,
+      "gpu_elapsed_avg_ms": 0.8566882881355932
+     },
+     "resize": {
+      "output_commits": 226,
+      "cpu_frame_avg_ms": 1.6377347610619468,
+      "projection_cpu_avg_ms": 0.23845960176991152,
+      "scene_commit_cpu_avg_ms": 0.3011534159292036,
+      "gpu_elapsed_avg_ms": 1.3877622168141592
+     },
+     "fullscreen": {
+      "output_commits": 213,
+      "cpu_frame_avg_ms": 0.3899178398268398,
+      "projection_cpu_avg_ms": 0.028678112554112553,
+      "scene_commit_cpu_avg_ms": 0.22912180952380953,
+      "gpu_elapsed_avg_ms": 0.570767
+     },
+     "zoom_85": {
+      "output_commits": 235,
+      "cpu_frame_avg_ms": 0.9995646808510638,
+      "projection_cpu_avg_ms": 0.05024310212765957,
+      "scene_commit_cpu_avg_ms": 0.24074969361702128,
+      "gpu_elapsed_avg_ms": 0.6814638978723404
+     },
+     "zoom_70": {
+      "output_commits": 236,
+      "cpu_frame_avg_ms": 0.9755901525423729,
+      "projection_cpu_avg_ms": 0.048913682203389826,
+      "scene_commit_cpu_avg_ms": 0.23908729237288134,
+      "gpu_elapsed_avg_ms": 0.6730475593220339
+     },
+     "zoom_55": {
+      "output_commits": 235,
+      "cpu_frame_avg_ms": 0.9745372085106383,
+      "projection_cpu_avg_ms": 0.04874090212765957,
+      "scene_commit_cpu_avg_ms": 0.23473417021276596,
+      "gpu_elapsed_avg_ms": 0.6677903489361702
+     },
+     "zoom_min_hold": {
+      "output_commits": 240,
+      "cpu_frame_avg_ms": 0.6566562874999999,
+      "projection_cpu_avg_ms": 0.05216024166666667,
+      "scene_commit_cpu_avg_ms": 0.29723086666666665,
+      "gpu_elapsed_avg_ms": 0.3149952166666667
+     }
+    },
+    "scale1.5": {
+     "idle": {
+      "output_commits": 0,
+      "cpu_frame_avg_ms": 0,
+      "projection_cpu_avg_ms": 0,
+      "scene_commit_cpu_avg_ms": 0,
+      "gpu_elapsed_avg_ms": 0
+     },
+     "spinner_clear": {
+      "output_commits": 242,
+      "cpu_frame_avg_ms": 0.4903759049586777,
+      "projection_cpu_avg_ms": 0.03821184710743802,
+      "scene_commit_cpu_avg_ms": 0.21741267355371902,
+      "gpu_elapsed_avg_ms": 0.23633136363636364
+     },
+     "spinner_glass": {
+      "output_commits": 236,
+      "cpu_frame_avg_ms": 0.9352046440677967,
+      "projection_cpu_avg_ms": 0.046606483050847455,
+      "scene_commit_cpu_avg_ms": 0.2418129872881356,
+      "gpu_elapsed_avg_ms": 0.6822228093220339
+     },
+     "damage_full": {
+      "output_commits": 236,
+      "cpu_frame_avg_ms": 0.9660893347457628,
+      "projection_cpu_avg_ms": 0.04348677542372881,
+      "scene_commit_cpu_avg_ms": 0.29364785593220344,
+      "gpu_elapsed_avg_ms": 0.8542451991525424
+     },
+     "drag": {
+      "output_commits": 235,
+      "cpu_frame_avg_ms": 1.1248709067796612,
+      "projection_cpu_avg_ms": 0.10619061016949152,
+      "scene_commit_cpu_avg_ms": 0.3137724406779661,
+      "gpu_elapsed_avg_ms": 1.032649593220339
+     },
+     "resize": {
+      "output_commits": 225,
+      "cpu_frame_avg_ms": 1.6968621022222221,
+      "projection_cpu_avg_ms": 0.23766648444444444,
+      "scene_commit_cpu_avg_ms": 0.3184261066666667,
+      "gpu_elapsed_avg_ms": 1.6415488755555556
+     },
+     "fullscreen": {
+      "output_commits": 231,
+      "cpu_frame_avg_ms": 0.44645474025974025,
+      "projection_cpu_avg_ms": 0.034466277056277056,
+      "scene_commit_cpu_avg_ms": 0.2737170822510822,
+      "gpu_elapsed_avg_ms": 1.0559345584415585
+     },
+     "zoom_85": {
+      "output_commits": 236,
+      "cpu_frame_avg_ms": 0.970867279661017,
+      "projection_cpu_avg_ms": 0.04691425,
+      "scene_commit_cpu_avg_ms": 0.250336093220339,
+      "gpu_elapsed_avg_ms": 0.7204151483050848
+     },
+     "zoom_70": {
+      "output_commits": 236,
+      "cpu_frame_avg_ms": 0.9603890635593221,
+      "projection_cpu_avg_ms": 0.04664549152542373,
+      "scene_commit_cpu_avg_ms": 0.2504626779661017,
+      "gpu_elapsed_avg_ms": 0.6710290593220339
+     },
+     "zoom_55": {
+      "output_commits": 235,
+      "cpu_frame_avg_ms": 1.0405410638297872,
+      "projection_cpu_avg_ms": 0.05203050638297872,
+      "scene_commit_cpu_avg_ms": 0.25770638723404254,
+      "gpu_elapsed_avg_ms": 0.7476090510638298
+     },
+     "zoom_min_hold": {
+      "output_commits": 240,
+      "cpu_frame_avg_ms": 0.6628381875,
+      "projection_cpu_avg_ms": 0.051200699999999995,
+      "scene_commit_cpu_avg_ms": 0.3147144416666667,
+      "gpu_elapsed_avg_ms": 0.3941911166666666
+     }
+    },
+    "mixed": {
+     "idle": {
+      "output_commits": 0,
+      "cpu_frame_avg_ms": 0,
+      "projection_cpu_avg_ms": 0,
+      "scene_commit_cpu_avg_ms": 0,
+      "gpu_elapsed_avg_ms": 0
+     },
+     "spinner_clear": {
+      "output_commits": 240,
+      "cpu_frame_avg_ms": 0.44584115625,
+      "projection_cpu_avg_ms": 0.0411516375,
+      "scene_commit_cpu_avg_ms": 0.14317804166666664,
+      "gpu_elapsed_avg_ms": 0.23094964791666667
+     },
+     "spinner_glass": {
+      "output_commits": 468,
+      "cpu_frame_avg_ms": 0.7156818952991453,
+      "projection_cpu_avg_ms": 0.03914857478632479,
+      "scene_commit_cpu_avg_ms": 0.20145101923076922,
+      "gpu_elapsed_avg_ms": 0.5377085982905982
+     },
+     "damage_full": {
+      "output_commits": 468,
+      "cpu_frame_avg_ms": 0.7494734273504273,
+      "projection_cpu_avg_ms": 0.04006622222222222,
+      "scene_commit_cpu_avg_ms": 0.22775405341880342,
+      "gpu_elapsed_avg_ms": 0.5927130256959315
+     },
+     "drag": {
+      "output_commits": 472,
+      "cpu_frame_avg_ms": 0.7120244071729958,
+      "projection_cpu_avg_ms": 0.07734138818565402,
+      "scene_commit_cpu_avg_ms": 0.1881419556962025,
+      "gpu_elapsed_avg_ms": 0.523825717299578
+     },
+     "resize": {
+      "output_commits": 436,
+      "cpu_frame_avg_ms": 1.6170529701834864,
+      "projection_cpu_avg_ms": 0.1684337224770642,
+      "scene_commit_cpu_avg_ms": 0.2983888325688073,
+      "gpu_elapsed_avg_ms": 1.4503752133027523
+     },
+     "fullscreen": {
+      "output_commits": 426,
+      "cpu_frame_avg_ms": 0.45592349772727275,
+      "projection_cpu_avg_ms": 0.022934118181818182,
+      "scene_commit_cpu_avg_ms": 0.167067,
+      "gpu_elapsed_avg_ms": 0.4616003727272727
+     },
+     "zoom_85": {
+      "output_commits": 468,
+      "cpu_frame_avg_ms": 0.7094902585470085,
+      "projection_cpu_avg_ms": 0.03769521153846154,
+      "scene_commit_cpu_avg_ms": 0.20059735042735044,
+      "gpu_elapsed_avg_ms": 0.5346703739316239
+     },
+     "zoom_70": {
+      "output_commits": 239,
+      "cpu_frame_avg_ms": 0.6409023619246862,
+      "projection_cpu_avg_ms": 0.035782564853556485,
+      "scene_commit_cpu_avg_ms": 0.1921735481171548,
+      "gpu_elapsed_avg_ms": 0.475993
+     },
+     "zoom_55": {
+      "output_commits": 241,
+      "cpu_frame_avg_ms": 0.6254356673596674,
+      "projection_cpu_avg_ms": 0.038079553014553014,
+      "scene_commit_cpu_avg_ms": 0.12869329729729728,
+      "gpu_elapsed_avg_ms": 0.41732718918918915
+     },
+     "zoom_min_hold": {
+      "output_commits": 250,
+      "cpu_frame_avg_ms": 0.4314608858921162,
+      "projection_cpu_avg_ms": 0.03770901867219917,
+      "scene_commit_cpu_avg_ms": 0.15824129460580913,
+      "gpu_elapsed_avg_ms": 0.19658592323651453
+     }
+    },
+    "mixed_noglass": {
+     "idle": {
+      "output_commits": 2,
+      "cpu_frame_avg_ms": 0.7156975,
+      "projection_cpu_avg_ms": 0.02507525,
+      "scene_commit_cpu_avg_ms": 0.16208925,
+      "gpu_elapsed_avg_ms": 0.16132825
+     },
+     "spinner_clear": {
+      "output_commits": 243,
+      "cpu_frame_avg_ms": 0.3196651200828158,
+      "projection_cpu_avg_ms": 0.02998968530020704,
+      "scene_commit_cpu_avg_ms": 0.11531784679089027,
+      "gpu_elapsed_avg_ms": 0.1212986314699793
+     },
+     "spinner_glass": {
+      "output_commits": 243,
+      "cpu_frame_avg_ms": 0.3165012582644628,
+      "projection_cpu_avg_ms": 0.028463378099173556,
+      "scene_commit_cpu_avg_ms": 0.11745335123966943,
+      "gpu_elapsed_avg_ms": 0.12135295041322314
+     },
+     "damage_full": {
+      "output_commits": 243,
+      "cpu_frame_avg_ms": 0.3051557809917355,
+      "projection_cpu_avg_ms": 0.02729665082644628,
+      "scene_commit_cpu_avg_ms": 0.11846805578512397,
+      "gpu_elapsed_avg_ms": 0.14270206611570246
+     },
+     "drag": {
+      "output_commits": 486,
+      "cpu_frame_avg_ms": 0.3764634979508197,
+      "projection_cpu_avg_ms": 0.054439764344262294,
+      "scene_commit_cpu_avg_ms": 0.16774485450819673,
+      "gpu_elapsed_avg_ms": 0.24405757786885246
+     },
+     "resize": {
+      "output_commits": 476,
+      "cpu_frame_avg_ms": 0.4670784054621849,
+      "projection_cpu_avg_ms": 0.11830837815126051,
+      "scene_commit_cpu_avg_ms": 0.23319727100840337,
+      "gpu_elapsed_avg_ms": 0.3154590924369748
+     },
+     "fullscreen": {
+      "output_commits": 394,
+      "cpu_frame_avg_ms": 0.26734135745614035,
+      "projection_cpu_avg_ms": 0.020334708333333333,
+      "scene_commit_cpu_avg_ms": 0.14632120833333334,
+      "gpu_elapsed_avg_ms": 0.25581286842105266
+     },
+     "zoom_85": {
+      "output_commits": 257,
+      "cpu_frame_avg_ms": 0.32096954226804125,
+      "projection_cpu_avg_ms": 0.026676589690721647,
+      "scene_commit_cpu_avg_ms": 0.12753454639175257,
+      "gpu_elapsed_avg_ms": 0.1312161670103093
+     },
+     "zoom_70": {
+      "output_commits": 242,
+      "cpu_frame_avg_ms": 0.36473413457556936,
+      "projection_cpu_avg_ms": 0.030576768115942028,
+      "scene_commit_cpu_avg_ms": 0.14237068115942028,
+      "gpu_elapsed_avg_ms": 0.1564261265560166
+     },
+     "zoom_55": {
+      "output_commits": 243,
+      "cpu_frame_avg_ms": 0.32039546169772254,
+      "projection_cpu_avg_ms": 0.028124587991718426,
+      "scene_commit_cpu_avg_ms": 0.12438115527950311,
+      "gpu_elapsed_avg_ms": 0.12616279875518674
+     },
+     "zoom_min_hold": {
+      "output_commits": 252,
+      "cpu_frame_avg_ms": 0.32001391546391755,
+      "projection_cpu_avg_ms": 0.026729315463917526,
+      "scene_commit_cpu_avg_ms": 0.12258818350515464,
+      "gpu_elapsed_avg_ms": 0.13080389484536084
+     }
+    }
+   }
+  },
+  "4e-b": {
+   "meta": {
+    "binary_bytes": 26905016,
+    "kernel": "7.2.9-zen1-1-zen",
+    "cpu": "12th Gen Intel(R) Core(TM) i9-12900H",
+    "pinned_cpus": [
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9
+    ],
+    "render_device": "/dev/dri/renderD128",
+    "seconds": 4.0,
+    "power": {
+     "ac_online": true,
+     "battery": "Not charging",
+     "platform_profile": "performance",
+     "governor": "schedutil",
+     "epp": "performance",
+     "no_turbo": "0"
+    },
+    "date": "2026-10-10 16:05:32"
+   },
+   "clean": {
+    "scale1": {
+     "idle": {
+      "cpu_percent": 0.001,
+      "instructions_per_s": 142,
+      "cycles_per_s": 2577,
+      "ghz_user": 0.211,
+      "rss_anon_kb": 45848,
+      "voluntary_switches_per_s": 0.4
+     },
+     "spinner_clear": {
+      "cpu_percent": 8.055,
+      "instructions_per_s": 35496031,
+      "cycles_per_s": 48136640,
+      "ghz_user": 0.598,
+      "rss_anon_kb": 46440,
+      "voluntary_switches_per_s": 189.7
+     },
+     "spinner_glass": {
+      "cpu_percent": 10.253,
+      "instructions_per_s": 55635349,
+      "cycles_per_s": 64954940,
+      "ghz_user": 0.634,
+      "rss_anon_kb": 46472,
+      "voluntary_switches_per_s": 185.2
+     },
+     "damage_full": {
+      "cpu_percent": 13.101,
+      "instructions_per_s": 59059000,
+      "cycles_per_s": 94561341,
+      "ghz_user": 0.722,
+      "rss_anon_kb": 46472,
+      "voluntary_switches_per_s": 184.7
+     },
+     "drag": {
+      "cpu_percent": 6.952,
+      "instructions_per_s": 50431919,
+      "cycles_per_s": 52908016,
+      "ghz_user": 0.761,
+      "rss_anon_kb": 46472,
+      "voluntary_switches_per_s": 162.6
+     },
+     "resize": {
+      "cpu_percent": 20.484,
+      "instructions_per_s": 197634647,
+      "cycles_per_s": 149813111,
+      "ghz_user": 0.731,
+      "rss_anon_kb": 46584,
+      "voluntary_switches_per_s": 221.5
+     },
+     "fullscreen": {
+      "cpu_percent": 37.941,
+      "instructions_per_s": 43809681,
+      "cycles_per_s": 325109232,
+      "ghz_user": 0.857,
+      "rss_anon_kb": 50456,
+      "voluntary_switches_per_s": 126.7
+     },
+     "zoom_85": {
+      "cpu_percent": 9.748,
+      "instructions_per_s": 55222828,
+      "cycles_per_s": 65403635,
+      "ghz_user": 0.671,
+      "rss_anon_kb": 50456,
+      "voluntary_switches_per_s": 185.7
+     },
+     "zoom_70": {
+      "cpu_percent": 10.478,
+      "instructions_per_s": 55352680,
+      "cycles_per_s": 64029530,
+      "ghz_user": 0.611,
+      "rss_anon_kb": 50592,
+      "voluntary_switches_per_s": 184.5
+     },
+     "zoom_55": {
+      "cpu_percent": 9.862,
+      "instructions_per_s": 55146006,
+      "cycles_per_s": 63717511,
+      "ghz_user": 0.646,
+      "rss_anon_kb": 50592,
+      "voluntary_switches_per_s": 185.5
+     },
+     "zoom_min_hold": {
+      "cpu_percent": 8.771,
+      "instructions_per_s": 37124488,
+      "cycles_per_s": 48970900,
+      "ghz_user": 0.558,
+      "rss_anon_kb": 50916,
+      "voluntary_switches_per_s": 188.0
+     }
+    },
+    "scale1.5": {
+     "idle": {
+      "cpu_percent": 0.002,
+      "instructions_per_s": 146,
+      "cycles_per_s": 3042,
+      "ghz_user": 0.176,
+      "rss_anon_kb": 48732,
+      "voluntary_switches_per_s": 0.4
+     },
+     "spinner_clear": {
+      "cpu_percent": 7.545,
+      "instructions_per_s": 35763253,
+      "cycles_per_s": 48134223,
+      "ghz_user": 0.638,
+      "rss_anon_kb": 49284,
+      "voluntary_switches_per_s": 189.7
+     },
+     "spinner_glass": {
+      "cpu_percent": 10.067,
+      "instructions_per_s": 57776285,
+      "cycles_per_s": 63820830,
+      "ghz_user": 0.634,
+      "rss_anon_kb": 49284,
+      "voluntary_switches_per_s": 184.2
+     },
+     "damage_full": {
+      "cpu_percent": 14.202,
+      "instructions_per_s": 64260131,
+      "cycles_per_s": 88409083,
+      "ghz_user": 0.623,
+      "rss_anon_kb": 49496,
+      "voluntary_switches_per_s": 183.7
+     },
+     "drag": {
+      "cpu_percent": 8.053,
+      "instructions_per_s": 51929592,
+      "cycles_per_s": 53625641,
+      "ghz_user": 0.666,
+      "rss_anon_kb": 49656,
+      "voluntary_switches_per_s": 161.9
+     },
+     "resize": {
+      "cpu_percent": 23.927,
+      "instructions_per_s": 323840581,
+      "cycles_per_s": 198800849,
+      "ghz_user": 0.831,
+      "rss_anon_kb": 50100,
+      "voluntary_switches_per_s": 218.0
+     },
+     "fullscreen": {
+      "cpu_percent": 37.426,
+      "instructions_per_s": 44763161,
+      "cycles_per_s": 317702349,
+      "ghz_user": 0.849,
+      "rss_anon_kb": 58376,
+      "voluntary_switches_per_s": 129.7
+     },
+     "zoom_85": {
+      "cpu_percent": 10.207,
+      "instructions_per_s": 57246464,
+      "cycles_per_s": 68846592,
+      "ghz_user": 0.675,
+      "rss_anon_kb": 58376,
+      "voluntary_switches_per_s": 185.5
+     },
+     "zoom_70": {
+      "cpu_percent": 11.022,
+      "instructions_per_s": 58408842,
+      "cycles_per_s": 63857994,
+      "ghz_user": 0.579,
+      "rss_anon_kb": 58404,
+      "voluntary_switches_per_s": 185.2
+     },
+     "zoom_55": {
+      "cpu_percent": 10.829,
+      "instructions_per_s": 57299049,
+      "cycles_per_s": 73051206,
+      "ghz_user": 0.675,
+      "rss_anon_kb": 58404,
+      "voluntary_switches_per_s": 185.7
+     },
+     "zoom_min_hold": {
+      "cpu_percent": 10.503,
+      "instructions_per_s": 37378421,
+      "cycles_per_s": 48839578,
+      "ghz_user": 0.465,
+      "rss_anon_kb": 58572,
+      "voluntary_switches_per_s": 187.5
+     }
+    },
+    "mixed": {
+     "idle": {
+      "cpu_percent": 0.006,
+      "instructions_per_s": 7861,
+      "cycles_per_s": 11521,
+      "ghz_user": 0.178,
+      "rss_anon_kb": 49204,
+      "voluntary_switches_per_s": 1.2
+     },
+     "spinner_clear": {
+      "cpu_percent": 8.805,
+      "instructions_per_s": 44765586,
+      "cycles_per_s": 55191763,
+      "ghz_user": 0.627,
+      "rss_anon_kb": 53796,
+      "voluntary_switches_per_s": 242.7
+     },
+     "spinner_glass": {
+      "cpu_percent": 11.818,
+      "instructions_per_s": 74096859,
+      "cycles_per_s": 73752575,
+      "ghz_user": 0.624,
+      "rss_anon_kb": 53796,
+      "voluntary_switches_per_s": 187.0
+     },
+     "damage_full": {
+      "cpu_percent": 15.561,
+      "instructions_per_s": 78886993,
+      "cycles_per_s": 102156000,
+      "ghz_user": 0.656,
+      "rss_anon_kb": 53796,
+      "voluntary_switches_per_s": 188.7
+     },
+     "drag": {
+      "cpu_percent": 8.2,
+      "instructions_per_s": 58639881,
+      "cycles_per_s": 59579227,
+      "ghz_user": 0.727,
+      "rss_anon_kb": 53796,
+      "voluntary_switches_per_s": 172.0
+     },
+     "resize": {
+      "cpu_percent": 29.436,
+      "instructions_per_s": 369861668,
+      "cycles_per_s": 231226815,
+      "ghz_user": 0.786,
+      "rss_anon_kb": 53796,
+      "voluntary_switches_per_s": 212.0
+     },
+     "fullscreen": {
+      "cpu_percent": 42.933,
+      "instructions_per_s": 75782473,
+      "cycles_per_s": 324726067,
+      "ghz_user": 0.756,
+      "rss_anon_kb": 58604,
+      "voluntary_switches_per_s": 101.0
+     },
+     "zoom_85": {
+      "cpu_percent": 11.87,
+      "instructions_per_s": 75204315,
+      "cycles_per_s": 74595767,
+      "ghz_user": 0.628,
+      "rss_anon_kb": 58604,
+      "voluntary_switches_per_s": 185.7
+     },
+     "zoom_70": {
+      "cpu_percent": 10.558,
+      "instructions_per_s": 62809934,
+      "cycles_per_s": 74261385,
+      "ghz_user": 0.703,
+      "rss_anon_kb": 59012,
+      "voluntary_switches_per_s": 205.7
+     },
+     "zoom_55": {
+      "cpu_percent": 10.876,
+      "instructions_per_s": 62845021,
+      "cycles_per_s": 76811242,
+      "ghz_user": 0.706,
+      "rss_anon_kb": 59012,
+      "voluntary_switches_per_s": 210.7
+     },
+     "zoom_min_hold": {
+      "cpu_percent": 8.135,
+      "instructions_per_s": 43570611,
+      "cycles_per_s": 57296446,
+      "ghz_user": 0.704,
+      "rss_anon_kb": 59012,
+      "voluntary_switches_per_s": 242.0
+     }
+    },
+    "mixed_noglass": {
+     "idle": {
+      "cpu_percent": 0.004,
+      "instructions_per_s": 2721,
+      "cycles_per_s": 5895,
+      "ghz_user": 0.146,
+      "rss_anon_kb": 48044,
+      "voluntary_switches_per_s": 0.8
+     },
+     "spinner_clear": {
+      "cpu_percent": 8.593,
+      "instructions_per_s": 35771532,
+      "cycles_per_s": 52578727,
+      "ghz_user": 0.612,
+      "rss_anon_kb": 52648,
+      "voluntary_switches_per_s": 245.0
+     },
+     "spinner_glass": {
+      "cpu_percent": 9.091,
+      "instructions_per_s": 37428692,
+      "cycles_per_s": 47944626,
+      "ghz_user": 0.527,
+      "rss_anon_kb": 52648,
+      "voluntary_switches_per_s": 243.0
+     },
+     "damage_full": {
+      "cpu_percent": 13.806,
+      "instructions_per_s": 40291777,
+      "cycles_per_s": 82140426,
+      "ghz_user": 0.595,
+      "rss_anon_kb": 52648,
+      "voluntary_switches_per_s": 242.5
+     },
+     "drag": {
+      "cpu_percent": 5.503,
+      "instructions_per_s": 40713852,
+      "cycles_per_s": 45356781,
+      "ghz_user": 0.824,
+      "rss_anon_kb": 52648,
+      "voluntary_switches_per_s": 199.2
+     },
+     "resize": {
+      "cpu_percent": 22.311,
+      "instructions_per_s": 302661540,
+      "cycles_per_s": 175977221,
+      "ghz_user": 0.789,
+      "rss_anon_kb": 52648,
+      "voluntary_switches_per_s": 230.7
+     },
+     "fullscreen": {
+      "cpu_percent": 28.823,
+      "instructions_per_s": 29509208,
+      "cycles_per_s": 177478991,
+      "ghz_user": 0.616,
+      "rss_anon_kb": 57200,
+      "voluntary_switches_per_s": 153.7
+     },
+     "zoom_85": {
+      "cpu_percent": 9.591,
+      "instructions_per_s": 38066424,
+      "cycles_per_s": 51642176,
+      "ghz_user": 0.538,
+      "rss_anon_kb": 57200,
+      "voluntary_switches_per_s": 244.5
+     },
+     "zoom_70": {
+      "cpu_percent": 9.783,
+      "instructions_per_s": 38075704,
+      "cycles_per_s": 52742130,
+      "ghz_user": 0.539,
+      "rss_anon_kb": 57624,
+      "voluntary_switches_per_s": 243.7
+     },
+     "zoom_55": {
+      "cpu_percent": 10.386,
+      "instructions_per_s": 38464596,
+      "cycles_per_s": 54140845,
+      "ghz_user": 0.521,
+      "rss_anon_kb": 57624,
+      "voluntary_switches_per_s": 236.0
+     },
+     "zoom_min_hold": {
+      "cpu_percent": 10.781,
+      "instructions_per_s": 38667704,
+      "cycles_per_s": 52929675,
+      "ghz_user": 0.491,
+      "rss_anon_kb": 57624,
+      "voluntary_switches_per_s": 228.5
+     }
+    }
+   },
+   "stats": {
+    "scale1": {
+     "idle": {
+      "output_commits": 0,
+      "cpu_frame_avg_ms": 0,
+      "projection_cpu_avg_ms": 0,
+      "scene_commit_cpu_avg_ms": 0,
+      "gpu_elapsed_avg_ms": 0
+     },
+     "spinner_clear": {
+      "output_commits": 241,
+      "cpu_frame_avg_ms": 0.5653517593360996,
+      "projection_cpu_avg_ms": 0.04531471369294606,
+      "scene_commit_cpu_avg_ms": 0.24653418672199168,
+      "gpu_elapsed_avg_ms": 0.27835154356846475
+     },
+     "spinner_glass": {
+      "output_commits": 236,
+      "cpu_frame_avg_ms": 0.9310601949152543,
+      "projection_cpu_avg_ms": 0.043754966101694916,
+      "scene_commit_cpu_avg_ms": 0.24077320338983052,
+      "gpu_elapsed_avg_ms": 0.6734461016949153
+     },
+     "damage_full": {
+      "output_commits": 236,
+      "cpu_frame_avg_ms": 0.9049291652542373,
+      "projection_cpu_avg_ms": 0.03974909745762712,
+      "scene_commit_cpu_avg_ms": 0.24993713983050847,
+      "gpu_elapsed_avg_ms": 0.7339066567796609
+     },
+     "drag": {
+      "output_commits": 238,
+      "cpu_frame_avg_ms": 0.9277844979079498,
+      "projection_cpu_avg_ms": 0.08195161087866108,
+      "scene_commit_cpu_avg_ms": 0.26181355230125525,
+      "gpu_elapsed_avg_ms": 0.7981407029288703
+     },
+     "resize": {
+      "output_commits": 229,
+      "cpu_frame_avg_ms": 1.4558886113537117,
+      "projection_cpu_avg_ms": 0.19630113537117902,
+      "scene_commit_cpu_avg_ms": 0.269611288209607,
+      "gpu_elapsed_avg_ms": 1.3057364366812227
+     },
+     "fullscreen": {
+      "output_commits": 224,
+      "cpu_frame_avg_ms": 0.38411280086580085,
+      "projection_cpu_avg_ms": 0.026982926406926407,
+      "scene_commit_cpu_avg_ms": 0.23104855411255412,
+      "gpu_elapsed_avg_ms": 0.586290380952381
+     },
+     "zoom_85": {
+      "output_commits": 237,
+      "cpu_frame_avg_ms": 0.8402020801687763,
+      "projection_cpu_avg_ms": 0.03953949789029536,
+      "scene_commit_cpu_avg_ms": 0.20540969198312234,
+      "gpu_elapsed_avg_ms": 0.5912827552742616
+     },
+     "zoom_70": {
+      "output_commits": 237,
+      "cpu_frame_avg_ms": 0.843226911392405,
+      "projection_cpu_avg_ms": 0.041138654008438816,
+      "scene_commit_cpu_avg_ms": 0.20869937130801688,
+      "gpu_elapsed_avg_ms": 0.6070062447257384
+     },
+     "zoom_55": {
+      "output_commits": 238,
+      "cpu_frame_avg_ms": 0.8025031050420168,
+      "projection_cpu_avg_ms": 0.03953345798319328,
+      "scene_commit_cpu_avg_ms": 0.1936595,
+      "gpu_elapsed_avg_ms": 0.5667463067226891
+     },
+     "zoom_min_hold": {
+      "output_commits": 242,
+      "cpu_frame_avg_ms": 0.5214591404958677,
+      "projection_cpu_avg_ms": 0.03941836363636364,
+      "scene_commit_cpu_avg_ms": 0.2517156818181818,
+      "gpu_elapsed_avg_ms": 0.26346097107438016
+     }
+    },
+    "scale1.5": {
+     "idle": {
+      "output_commits": 0,
+      "cpu_frame_avg_ms": 0,
+      "projection_cpu_avg_ms": 0,
+      "scene_commit_cpu_avg_ms": 0,
+      "gpu_elapsed_avg_ms": 0
+     },
+     "spinner_clear": {
+      "output_commits": 241,
+      "cpu_frame_avg_ms": 0.6069629336099585,
+      "projection_cpu_avg_ms": 0.05209474273858922,
+      "scene_commit_cpu_avg_ms": 0.2583033900414938,
+      "gpu_elapsed_avg_ms": 0.3258097842323651
+     },
+     "spinner_glass": {
+      "output_commits": 234,
+      "cpu_frame_avg_ms": 1.0702079017094017,
+      "projection_cpu_avg_ms": 0.05163961538461538,
+      "scene_commit_cpu_avg_ms": 0.27825818803418806,
+      "gpu_elapsed_avg_ms": 0.7465099487179487
+     },
+     "damage_full": {
+      "output_commits": 230,
+      "cpu_frame_avg_ms": 1.4471948565217392,
+      "projection_cpu_avg_ms": 0.06699368260869566,
+      "scene_commit_cpu_avg_ms": 0.43221919565217387,
+      "gpu_elapsed_avg_ms": 1.2460132576419214
+     },
+     "drag": {
+      "output_commits": 232,
+      "cpu_frame_avg_ms": 1.3712287596566524,
+      "projection_cpu_avg_ms": 0.12573930901287556,
+      "scene_commit_cpu_avg_ms": 0.38648377682403434,
+      "gpu_elapsed_avg_ms": 1.19827052360515
+     },
+     "resize": {
+      "output_commits": 211,
+      "cpu_frame_avg_ms": 2.6373328341232227,
+      "projection_cpu_avg_ms": 0.345584990521327,
+      "scene_commit_cpu_avg_ms": 0.5224245639810426,
+      "gpu_elapsed_avg_ms": 2.3331037440758293
+     },
+     "fullscreen": {
+      "output_commits": 228,
+      "cpu_frame_avg_ms": 0.4230383245614035,
+      "projection_cpu_avg_ms": 0.031294802631578945,
+      "scene_commit_cpu_avg_ms": 0.26043456578947366,
+      "gpu_elapsed_avg_ms": 1.0385176211453744
+     },
+     "zoom_85": {
+      "output_commits": 236,
+      "cpu_frame_avg_ms": 0.9115731949152542,
+      "projection_cpu_avg_ms": 0.0430528686440678,
+      "scene_commit_cpu_avg_ms": 0.23460040254237288,
+      "gpu_elapsed_avg_ms": 0.6585261822033899
+     },
+     "zoom_70": {
+      "output_commits": 235,
+      "cpu_frame_avg_ms": 1.0086708425531914,
+      "projection_cpu_avg_ms": 0.04791980425531915,
+      "scene_commit_cpu_avg_ms": 0.2684744893617021,
+      "gpu_elapsed_avg_ms": 0.7265079489361702
+     },
+     "zoom_55": {
+      "output_commits": 236,
+      "cpu_frame_avg_ms": 0.9537003771186441,
+      "projection_cpu_avg_ms": 0.04526302118644068,
+      "scene_commit_cpu_avg_ms": 0.2455561313559322,
+      "gpu_elapsed_avg_ms": 0.6866003872340425
+     },
+     "zoom_min_hold": {
+      "output_commits": 242,
+      "cpu_frame_avg_ms": 0.5249780247933884,
+      "projection_cpu_avg_ms": 0.03946980578512396,
+      "scene_commit_cpu_avg_ms": 0.25415130578512396,
+      "gpu_elapsed_avg_ms": 0.2684265413223141
+     }
+    },
+    "mixed": {
+     "idle": {
+      "output_commits": 0,
+      "cpu_frame_avg_ms": 0,
+      "projection_cpu_avg_ms": 0,
+      "scene_commit_cpu_avg_ms": 0,
+      "gpu_elapsed_avg_ms": 0
+     },
+     "spinner_clear": {
+      "output_commits": 243,
+      "cpu_frame_avg_ms": 0.3388376446280992,
+      "projection_cpu_avg_ms": 0.03077439256198347,
+      "scene_commit_cpu_avg_ms": 0.10894826239669422,
+      "gpu_elapsed_avg_ms": 0.13202805785123967
+     },
+     "spinner_glass": {
+      "output_commits": 476,
+      "cpu_frame_avg_ms": 0.5079750945378151,
+      "projection_cpu_avg_ms": 0.027539105042016808,
+      "scene_commit_cpu_avg_ms": 0.14358581722689076,
+      "gpu_elapsed_avg_ms": 0.373972968487395
+     },
+     "damage_full": {
+      "output_commits": 474,
+      "cpu_frame_avg_ms": 0.564612947257384,
+      "projection_cpu_avg_ms": 0.029161521097046415,
+      "scene_commit_cpu_avg_ms": 0.17262666666666665,
+      "gpu_elapsed_avg_ms": 0.447193
+     },
+     "drag": {
+      "output_commits": 478,
+      "cpu_frame_avg_ms": 0.5828348874999999,
+      "projection_cpu_avg_ms": 0.06288575833333333,
+      "scene_commit_cpu_avg_ms": 0.15800696041666668,
+      "gpu_elapsed_avg_ms": 0.4360062791666667
+     },
+     "resize": {
+      "output_commits": 444,
+      "cpu_frame_avg_ms": 1.441921301801802,
+      "projection_cpu_avg_ms": 0.1501733873873874,
+      "scene_commit_cpu_avg_ms": 0.26796232207207205,
+      "gpu_elapsed_avg_ms": 1.3124508581081082
+     },
+     "fullscreen": {
+      "output_commits": 252,
+      "cpu_frame_avg_ms": 0.38168840563991324,
+      "projection_cpu_avg_ms": 0.026610360086767895,
+      "scene_commit_cpu_avg_ms": 0.11245011279826464,
+      "gpu_elapsed_avg_ms": 0.31509309327548807
+     },
+     "zoom_85": {
+      "output_commits": 473,
+      "cpu_frame_avg_ms": 0.6040536109936575,
+      "projection_cpu_avg_ms": 0.03302901268498943,
+      "scene_commit_cpu_avg_ms": 0.17264776109936575,
+      "gpu_elapsed_avg_ms": 0.44300564904862577
+     },
+     "zoom_70": {
+      "output_commits": 242,
+      "cpu_frame_avg_ms": 0.5373983850931676,
+      "projection_cpu_avg_ms": 0.03114400414078675,
+      "scene_commit_cpu_avg_ms": 0.14353820703933745,
+      "gpu_elapsed_avg_ms": 0.3713746950207469
+     },
+     "zoom_55": {
+      "output_commits": 241,
+      "cpu_frame_avg_ms": 0.538529395010395,
+      "projection_cpu_avg_ms": 0.03292812681912682,
+      "scene_commit_cpu_avg_ms": 0.11690093762993763,
+      "gpu_elapsed_avg_ms": 0.37831262993762993
+     },
+     "zoom_min_hold": {
+      "output_commits": 251,
+      "cpu_frame_avg_ms": 0.38058453734439834,
+      "projection_cpu_avg_ms": 0.03549269294605809,
+      "scene_commit_cpu_avg_ms": 0.14208104564315352,
+      "gpu_elapsed_avg_ms": 0.17047645850622406
+     }
+    },
+    "mixed_noglass": {
+     "idle": {
+      "output_commits": 0,
+      "cpu_frame_avg_ms": 0,
+      "projection_cpu_avg_ms": 0,
+      "scene_commit_cpu_avg_ms": 0,
+      "gpu_elapsed_avg_ms": 0
+     },
+     "spinner_clear": {
+      "output_commits": 242,
+      "cpu_frame_avg_ms": 0.3454650622406639,
+      "projection_cpu_avg_ms": 0.03219763070539419,
+      "scene_commit_cpu_avg_ms": 0.12554640248962656,
+      "gpu_elapsed_avg_ms": 0.1352698215767635
+     },
+     "spinner_glass": {
+      "output_commits": 242,
+      "cpu_frame_avg_ms": 0.3762960684647303,
+      "projection_cpu_avg_ms": 0.03349408091286307,
+      "scene_commit_cpu_avg_ms": 0.14022993775933612,
+      "gpu_elapsed_avg_ms": 0.14816757676348546
+     },
+     "damage_full": {
+      "output_commits": 241,
+      "cpu_frame_avg_ms": 0.38445889004149375,
+      "projection_cpu_avg_ms": 0.03551187966804979,
+      "scene_commit_cpu_avg_ms": 0.15614063485477178,
+      "gpu_elapsed_avg_ms": 0.2114741307053942
+     },
+     "drag": {
+      "output_commits": 486,
+      "cpu_frame_avg_ms": 0.4112300983606557,
+      "projection_cpu_avg_ms": 0.06114378483606558,
+      "scene_commit_cpu_avg_ms": 0.17733923155737705,
+      "gpu_elapsed_avg_ms": 0.2761258893442623
+     },
+     "resize": {
+      "output_commits": 472,
+      "cpu_frame_avg_ms": 0.5934543432203391,
+      "projection_cpu_avg_ms": 0.1532497838983051,
+      "scene_commit_cpu_avg_ms": 0.2910591673728814,
+      "gpu_elapsed_avg_ms": 0.375966531779661
+     },
+     "fullscreen": {
+      "output_commits": 342,
+      "cpu_frame_avg_ms": 0.24195559442060086,
+      "projection_cpu_avg_ms": 0.01893879399141631,
+      "scene_commit_cpu_avg_ms": 0.12075638626609442,
+      "gpu_elapsed_avg_ms": 0.24823286695278968
+     },
+     "zoom_85": {
+      "output_commits": 256,
+      "cpu_frame_avg_ms": 0.31432241322314053,
+      "projection_cpu_avg_ms": 0.027343299586776858,
+      "scene_commit_cpu_avg_ms": 0.1256931632231405,
+      "gpu_elapsed_avg_ms": 0.13670261983471077
+     },
+     "zoom_70": {
+      "output_commits": 241,
+      "cpu_frame_avg_ms": 0.4003629958419958,
+      "projection_cpu_avg_ms": 0.0371126133056133,
+      "scene_commit_cpu_avg_ms": 0.1589673451143451,
+      "gpu_elapsed_avg_ms": 0.16830882708333333
+     },
+     "zoom_55": {
+      "output_commits": 240,
+      "cpu_frame_avg_ms": 0.39223885208333337,
+      "projection_cpu_avg_ms": 0.03705194583333333,
+      "scene_commit_cpu_avg_ms": 0.15851032916666666,
+      "gpu_elapsed_avg_ms": 0.20327539374999998
+     },
+     "zoom_min_hold": {
+      "output_commits": 252,
+      "cpu_frame_avg_ms": 0.38945681573498964,
+      "projection_cpu_avg_ms": 0.03499250724637681,
+      "scene_commit_cpu_avg_ms": 0.1474158861283644,
+      "gpu_elapsed_avg_ms": 0.16345689855072465
+     }
+    }
+   }
+  },
+  "stage0-b": {
+   "meta": {
+    "binary_bytes": 26769600,
+    "kernel": "7.2.9-zen1-1-zen",
+    "cpu": "12th Gen Intel(R) Core(TM) i9-12900H",
+    "pinned_cpus": [
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9
+    ],
+    "render_device": "/dev/dri/renderD128",
+    "seconds": 4.0,
+    "power": {
+     "ac_online": true,
+     "battery": "Not charging",
+     "platform_profile": "performance",
+     "governor": "schedutil",
+     "epp": "performance",
+     "no_turbo": "0"
+    },
+    "date": "2026-10-10 16:13:11"
+   },
+   "clean": {
+    "scale1": {
+     "idle": {
+      "cpu_percent": 0.007,
+      "instructions_per_s": 7289,
+      "cycles_per_s": 15614,
+      "ghz_user": 0.231,
+      "rss_anon_kb": 44004,
+      "voluntary_switches_per_s": 0.8
+     },
+     "spinner_clear": {
+      "cpu_percent": 11.441,
+      "instructions_per_s": 37109926,
+      "cycles_per_s": 45552633,
+      "ghz_user": 0.398,
+      "rss_anon_kb": 44648,
+      "voluntary_switches_per_s": 188.7
+     },
+     "spinner_glass": {
+      "cpu_percent": 15.331,
+      "instructions_per_s": 65525628,
+      "cycles_per_s": 68264768,
+      "ghz_user": 0.445,
+      "rss_anon_kb": 44756,
+      "voluntary_switches_per_s": 182.5
+     },
+     "damage_full": {
+      "cpu_percent": 29.176,
+      "instructions_per_s": 84470002,
+      "cycles_per_s": 142171181,
+      "ghz_user": 0.487,
+      "rss_anon_kb": 44756,
+      "voluntary_switches_per_s": 620.5
+     },
+     "drag": {
+      "cpu_percent": 9.933,
+      "instructions_per_s": 71014152,
+      "cycles_per_s": 62663628,
+      "ghz_user": 0.631,
+      "rss_anon_kb": 44764,
+      "voluntary_switches_per_s": 159.1
+     },
+     "resize": {
+      "cpu_percent": 32.978,
+      "instructions_per_s": 297676011,
+      "cycles_per_s": 213330898,
+      "ghz_user": 0.647,
+      "rss_anon_kb": 44788,
+      "voluntary_switches_per_s": 314.0
+     },
+     "fullscreen": {
+      "cpu_percent": 48.557,
+      "instructions_per_s": 59248290,
+      "cycles_per_s": 324095506,
+      "ghz_user": 0.667,
+      "rss_anon_kb": 48668,
+      "voluntary_switches_per_s": 70.0
+     },
+     "zoom_85": {
+      "cpu_percent": 10.913,
+      "instructions_per_s": 64379328,
+      "cycles_per_s": 63094720,
+      "ghz_user": 0.578,
+      "rss_anon_kb": 48668,
+      "voluntary_switches_per_s": 185.7
+     },
+     "zoom_70": {
+      "cpu_percent": 10.183,
+      "instructions_per_s": 66839283,
+      "cycles_per_s": 62387900,
+      "ghz_user": 0.613,
+      "rss_anon_kb": 48720,
+      "voluntary_switches_per_s": 186.2
+     },
+     "zoom_55": {
+      "cpu_percent": 11.289,
+      "instructions_per_s": 64252073,
+      "cycles_per_s": 63850266,
+      "ghz_user": 0.566,
+      "rss_anon_kb": 48720,
+      "voluntary_switches_per_s": 185.5
+     },
+     "zoom_min_hold": {
+      "cpu_percent": 8.884,
+      "instructions_per_s": 38297602,
+      "cycles_per_s": 48102809,
+      "ghz_user": 0.541,
+      "rss_anon_kb": 49044,
+      "voluntary_switches_per_s": 188.5
+     }
+    },
+    "scale1.5": {
+     "idle": {
+      "cpu_percent": 0.005,
+      "instructions_per_s": 4718,
+      "cycles_per_s": 10739,
+      "ghz_user": 0.219,
+      "rss_anon_kb": 46988,
+      "voluntary_switches_per_s": 0.6
+     },
+     "spinner_clear": {
+      "cpu_percent": 6.944,
+      "instructions_per_s": 39696976,
+      "cycles_per_s": 53753213,
+      "ghz_user": 0.774,
+      "rss_anon_kb": 47604,
+      "voluntary_switches_per_s": 191.0
+     },
+     "spinner_glass": {
+      "cpu_percent": 10.26,
+      "instructions_per_s": 69796779,
+      "cycles_per_s": 62527444,
+      "ghz_user": 0.609,
+      "rss_anon_kb": 47604,
+      "voluntary_switches_per_s": 185.0
+     },
+     "damage_full": {
+      "cpu_percent": 16.412,
+      "instructions_per_s": 93711725,
+      "cycles_per_s": 141373624,
+      "ghz_user": 0.861,
+      "rss_anon_kb": 47604,
+      "voluntary_switches_per_s": 673.0
+     },
+     "drag": {
+      "cpu_percent": 7.235,
+      "instructions_per_s": 76058075,
+      "cycles_per_s": 66678135,
+      "ghz_user": 0.922,
+      "rss_anon_kb": 47772,
+      "voluntary_switches_per_s": 162.5
+     },
+     "resize": {
+      "cpu_percent": 26.158,
+      "instructions_per_s": 482152649,
+      "cycles_per_s": 280130127,
+      "ghz_user": 1.071,
+      "rss_anon_kb": 47920,
+      "voluntary_switches_per_s": 334.7
+     },
+     "fullscreen": {
+      "cpu_percent": 33.99,
+      "instructions_per_s": 63667665,
+      "cycles_per_s": 395386885,
+      "ghz_user": 1.163,
+      "rss_anon_kb": 55968,
+      "voluntary_switches_per_s": 150.0
+     },
+     "zoom_85": {
+      "cpu_percent": 6.579,
+      "instructions_per_s": 69571066,
+      "cycles_per_s": 65839096,
+      "ghz_user": 1.001,
+      "rss_anon_kb": 55968,
+      "voluntary_switches_per_s": 189.2
+     },
+     "zoom_70": {
+      "cpu_percent": 6.061,
+      "instructions_per_s": 71429201,
+      "cycles_per_s": 65971166,
+      "ghz_user": 1.088,
+      "rss_anon_kb": 56396,
+      "voluntary_switches_per_s": 189.5
+     },
+     "zoom_55": {
+      "cpu_percent": 6.691,
+      "instructions_per_s": 69677189,
+      "cycles_per_s": 64401686,
+      "ghz_user": 0.962,
+      "rss_anon_kb": 56396,
+      "voluntary_switches_per_s": 189.5
+     },
+     "zoom_min_hold": {
+      "cpu_percent": 5.632,
+      "instructions_per_s": 41055511,
+      "cycles_per_s": 48416331,
+      "ghz_user": 0.86,
+      "rss_anon_kb": 56564,
+      "voluntary_switches_per_s": 191.2
+     }
+    },
+    "mixed": {
+     "idle": {
+      "cpu_percent": 0.007,
+      "instructions_per_s": 2153,
+      "cycles_per_s": 6980,
+      "ghz_user": 0.101,
+      "rss_anon_kb": 46532,
+      "voluntary_switches_per_s": 0.6
+     },
+     "spinner_clear": {
+      "cpu_percent": 8.435,
+      "instructions_per_s": 48124499,
+      "cycles_per_s": 61935110,
+      "ghz_user": 0.734,
+      "rss_anon_kb": 51124,
+      "voluntary_switches_per_s": 244.2
+     },
+     "spinner_glass": {
+      "cpu_percent": 12.931,
+      "instructions_per_s": 86793066,
+      "cycles_per_s": 84672843,
+      "ghz_user": 0.655,
+      "rss_anon_kb": 51124,
+      "voluntary_switches_per_s": 185.5
+     },
+     "damage_full": {
+      "cpu_percent": 24.465,
+      "instructions_per_s": 106758676,
+      "cycles_per_s": 145785428,
+      "ghz_user": 0.596,
+      "rss_anon_kb": 51124,
+      "voluntary_switches_per_s": 657.2
+     },
+     "drag": {
+      "cpu_percent": 6.977,
+      "instructions_per_s": 80286962,
+      "cycles_per_s": 87853162,
+      "ghz_user": 1.259,
+      "rss_anon_kb": 51128,
+      "voluntary_switches_per_s": 182.8
+     },
+     "resize": {
+      "cpu_percent": 25.809,
+      "instructions_per_s": 543074690,
+      "cycles_per_s": 315306129,
+      "ghz_user": 1.222,
+      "rss_anon_kb": 51128,
+      "voluntary_switches_per_s": 335.0
+     },
+     "fullscreen": {
+      "cpu_percent": 44.519,
+      "instructions_per_s": 86095722,
+      "cycles_per_s": 348965485,
+      "ghz_user": 0.784,
+      "rss_anon_kb": 55900,
+      "voluntary_switches_per_s": 108.5
+     },
+     "zoom_85": {
+      "cpu_percent": 9.943,
+      "instructions_per_s": 88689760,
+      "cycles_per_s": 82081555,
+      "ghz_user": 0.826,
+      "rss_anon_kb": 55900,
+      "voluntary_switches_per_s": 192.5
+     },
+     "zoom_70": {
+      "cpu_percent": 7.93,
+      "instructions_per_s": 76402555,
+      "cycles_per_s": 72783436,
+      "ghz_user": 0.918,
+      "rss_anon_kb": 56320,
+      "voluntary_switches_per_s": 243.5
+     },
+     "zoom_55": {
+      "cpu_percent": 7.3,
+      "instructions_per_s": 76980351,
+      "cycles_per_s": 71386003,
+      "ghz_user": 0.978,
+      "rss_anon_kb": 56320,
+      "voluntary_switches_per_s": 243.0
+     },
+     "zoom_min_hold": {
+      "cpu_percent": 5.975,
+      "instructions_per_s": 45115461,
+      "cycles_per_s": 50303640,
+      "ghz_user": 0.842,
+      "rss_anon_kb": 56320,
+      "voluntary_switches_per_s": 249.5
+     }
+    },
+    "mixed_noglass": {
+     "idle": {
+      "cpu_percent": 0.006,
+      "instructions_per_s": 4723,
+      "cycles_per_s": 10165,
+      "ghz_user": 0.163,
+      "rss_anon_kb": 45236,
+      "voluntary_switches_per_s": 0.8
+     },
+     "spinner_clear": {
+      "cpu_percent": 6.525,
+      "instructions_per_s": 36877944,
+      "cycles_per_s": 47450765,
+      "ghz_user": 0.727,
+      "rss_anon_kb": 49840,
+      "voluntary_switches_per_s": 245.2
+     },
+     "spinner_glass": {
+      "cpu_percent": 6.36,
+      "instructions_per_s": 38825863,
+      "cycles_per_s": 46585029,
+      "ghz_user": 0.732,
+      "rss_anon_kb": 49840,
+      "voluntary_switches_per_s": 246.7
+     },
+     "damage_full": {
+      "cpu_percent": 11.173,
+      "instructions_per_s": 63196760,
+      "cycles_per_s": 100855156,
+      "ghz_user": 0.903,
+      "rss_anon_kb": 49840,
+      "voluntary_switches_per_s": 742.5
+     },
+     "drag": {
+      "cpu_percent": 3.54,
+      "instructions_per_s": 59616628,
+      "cycles_per_s": 47901858,
+      "ghz_user": 1.353,
+      "rss_anon_kb": 49844,
+      "voluntary_switches_per_s": 206.8
+     },
+     "resize": {
+      "cpu_percent": 18.539,
+      "instructions_per_s": 459487895,
+      "cycles_per_s": 233615930,
+      "ghz_user": 1.26,
+      "rss_anon_kb": 49844,
+      "voluntary_switches_per_s": 359.7
+     },
+     "fullscreen": {
+      "cpu_percent": 33.785,
+      "instructions_per_s": 59723050,
+      "cycles_per_s": 350597938,
+      "ghz_user": 1.038,
+      "rss_anon_kb": 54560,
+      "voluntary_switches_per_s": 136.0
+     },
+     "zoom_85": {
+      "cpu_percent": 6.295,
+      "instructions_per_s": 39655292,
+      "cycles_per_s": 52854070,
+      "ghz_user": 0.84,
+      "rss_anon_kb": 54560,
+      "voluntary_switches_per_s": 248.5
+     },
+     "zoom_70": {
+      "cpu_percent": 6.38,
+      "instructions_per_s": 42160322,
+      "cycles_per_s": 49035550,
+      "ghz_user": 0.769,
+      "rss_anon_kb": 55112,
+      "voluntary_switches_per_s": 251.5
+     },
+     "zoom_55": {
+      "cpu_percent": 6.843,
+      "instructions_per_s": 42027062,
+      "cycles_per_s": 54206581,
+      "ghz_user": 0.792,
+      "rss_anon_kb": 55112,
+      "voluntary_switches_per_s": 247.7
+     },
+     "zoom_min_hold": {
+      "cpu_percent": 7.23,
+      "instructions_per_s": 39916181,
+      "cycles_per_s": 71694844,
+      "ghz_user": 0.992,
+      "rss_anon_kb": 55112,
+      "voluntary_switches_per_s": 245.2
+     }
+    }
+   },
+   "stats": {
+    "scale1": {
+     "idle": {
+      "output_commits": 0,
+      "cpu_frame_avg_ms": 0,
+      "projection_cpu_avg_ms": 0,
+      "scene_commit_cpu_avg_ms": 0,
+      "gpu_elapsed_avg_ms": 0
+     },
+     "spinner_clear": {
+      "output_commits": 242,
+      "cpu_frame_avg_ms": 0.4781486611570248,
+      "projection_cpu_avg_ms": 0.03744454545454545,
+      "scene_commit_cpu_avg_ms": 0.2032478388429752,
+      "gpu_elapsed_avg_ms": 0.227988347107438
+     },
+     "spinner_glass": {
+      "output_commits": 237,
+      "cpu_frame_avg_ms": 0.8745319282700422,
+      "projection_cpu_avg_ms": 0.03763763713080169,
+      "scene_commit_cpu_avg_ms": 0.23330458227848103,
+      "gpu_elapsed_avg_ms": 0.667980864978903
+     },
+     "damage_full": {
+      "output_commits": 235,
+      "cpu_frame_avg_ms": 1.0531996595744681,
+      "projection_cpu_avg_ms": 0.04486364255319149,
+      "scene_commit_cpu_avg_ms": 0.31248761276595743,
+      "gpu_elapsed_avg_ms": 0.8237014680851064
+     },
+     "drag": {
+      "output_commits": 230,
+      "cpu_frame_avg_ms": 1.5098620865800865,
+      "projection_cpu_avg_ms": 0.14716427272727273,
+      "scene_commit_cpu_avg_ms": 0.482337948051948,
+      "gpu_elapsed_avg_ms": 1.2270691168831167
+     },
+     "resize": {
+      "output_commits": 207,
+      "cpu_frame_avg_ms": 3.045212816425121,
+      "projection_cpu_avg_ms": 0.6549739806763285,
+      "scene_commit_cpu_avg_ms": 0.6419680676328503,
+      "gpu_elapsed_avg_ms": 2.311762579710145
+     },
+     "fullscreen": {
+      "output_commits": 216,
+      "cpu_frame_avg_ms": 0.5176387909090909,
+      "projection_cpu_avg_ms": 0.0314781,
+      "scene_commit_cpu_avg_ms": 0.3360912909090909,
+      "gpu_elapsed_avg_ms": 0.7062175045454545
+     },
+     "zoom_85": {
+      "output_commits": 235,
+      "cpu_frame_avg_ms": 1.017434365957447,
+      "projection_cpu_avg_ms": 0.046150936170212764,
+      "scene_commit_cpu_avg_ms": 0.25208797021276597,
+      "gpu_elapsed_avg_ms": 0.712672
+     },
+     "zoom_70": {
+      "output_commits": 235,
+      "cpu_frame_avg_ms": 1.0175623617021277,
+      "projection_cpu_avg_ms": 0.045361378723404254,
+      "scene_commit_cpu_avg_ms": 0.2687318340425532,
+      "gpu_elapsed_avg_ms": 0.7598051914893617
+     },
+     "zoom_55": {
+      "output_commits": 238,
+      "cpu_frame_avg_ms": 0.8070821848739497,
+      "projection_cpu_avg_ms": 0.034942936974789916,
+      "scene_commit_cpu_avg_ms": 0.20067274369747898,
+      "gpu_elapsed_avg_ms": 0.5764493739495797
+     },
+     "zoom_min_hold": {
+      "output_commits": 241,
+      "cpu_frame_avg_ms": 0.5887947261410789,
+      "projection_cpu_avg_ms": 0.042856912863070536,
+      "scene_commit_cpu_avg_ms": 0.2649705020746888,
+      "gpu_elapsed_avg_ms": 0.2998997095435685
+     }
+    },
+    "scale1.5": {
+     "idle": {
+      "output_commits": 0,
+      "cpu_frame_avg_ms": 0,
+      "projection_cpu_avg_ms": 0,
+      "scene_commit_cpu_avg_ms": 0,
+      "gpu_elapsed_avg_ms": 0
+     },
+     "spinner_clear": {
+      "output_commits": 244,
+      "cpu_frame_avg_ms": 0.3936904672131148,
+      "projection_cpu_avg_ms": 0.031915049180327865,
+      "scene_commit_cpu_avg_ms": 0.17252919672131148,
+      "gpu_elapsed_avg_ms": 0.1846196475409836
+     },
+     "spinner_glass": {
+      "output_commits": 240,
+      "cpu_frame_avg_ms": 0.6607080125,
+      "projection_cpu_avg_ms": 0.030167983333333332,
+      "scene_commit_cpu_avg_ms": 0.1790263,
+      "gpu_elapsed_avg_ms": 0.7748500500000001
+     },
+     "damage_full": {
+      "output_commits": 240,
+      "cpu_frame_avg_ms": 0.6779031208333334,
+      "projection_cpu_avg_ms": 0.028956408333333333,
+      "scene_commit_cpu_avg_ms": 0.22200342916666665,
+      "gpu_elapsed_avg_ms": 0.6779301757322176
+     },
+     "drag": {
+      "output_commits": 241,
+      "cpu_frame_avg_ms": 0.7262553719008265,
+      "projection_cpu_avg_ms": 0.06912417768595042,
+      "scene_commit_cpu_avg_ms": 0.2253056611570248,
+      "gpu_elapsed_avg_ms": 0.7077916280991735
+     },
+     "resize": {
+      "output_commits": 227,
+      "cpu_frame_avg_ms": 1.5222249823788547,
+      "projection_cpu_avg_ms": 0.30797019823788546,
+      "scene_commit_cpu_avg_ms": 0.32892623788546255,
+      "gpu_elapsed_avg_ms": 1.34834895154185
+     },
+     "fullscreen": {
+      "output_commits": 228,
+      "cpu_frame_avg_ms": 0.44284630869565217,
+      "projection_cpu_avg_ms": 0.028049821739130436,
+      "scene_commit_cpu_avg_ms": 0.2902753782608696,
+      "gpu_elapsed_avg_ms": 0.9333761347826087
+     },
+     "zoom_85": {
+      "output_commits": 238,
+      "cpu_frame_avg_ms": 0.7761139957983193,
+      "projection_cpu_avg_ms": 0.03395472689075631,
+      "scene_commit_cpu_avg_ms": 0.21123677731092438,
+      "gpu_elapsed_avg_ms": 0.592603743697479
+     },
+     "zoom_70": {
+      "output_commits": 237,
+      "cpu_frame_avg_ms": 0.8716835780590717,
+      "projection_cpu_avg_ms": 0.036782987341772155,
+      "scene_commit_cpu_avg_ms": 0.23839708016877637,
+      "gpu_elapsed_avg_ms": 0.6447910084388186
+     },
+     "zoom_55": {
+      "output_commits": 238,
+      "cpu_frame_avg_ms": 0.7791564327731093,
+      "projection_cpu_avg_ms": 0.032899226890756306,
+      "scene_commit_cpu_avg_ms": 0.20724815966386553,
+      "gpu_elapsed_avg_ms": 0.5625833907563025
+     },
+     "zoom_min_hold": {
+      "output_commits": 242,
+      "cpu_frame_avg_ms": 0.5344439834710744,
+      "projection_cpu_avg_ms": 0.03789394628099174,
+      "scene_commit_cpu_avg_ms": 0.25050344628099175,
+      "gpu_elapsed_avg_ms": 0.2675604049586777
+     }
+    },
+    "mixed": {
+     "idle": {
+      "output_commits": 0,
+      "cpu_frame_avg_ms": 0,
+      "projection_cpu_avg_ms": 0,
+      "scene_commit_cpu_avg_ms": 0,
+      "gpu_elapsed_avg_ms": 0
+     },
+     "spinner_clear": {
+      "output_commits": 245,
+      "cpu_frame_avg_ms": 0.25022030721649485,
+      "projection_cpu_avg_ms": 0.021667861855670104,
+      "scene_commit_cpu_avg_ms": 0.07999409690721648,
+      "gpu_elapsed_avg_ms": 0.09944105567010308
+     },
+     "spinner_glass": {
+      "output_commits": 480,
+      "cpu_frame_avg_ms": 0.43400856666666665,
+      "projection_cpu_avg_ms": 0.022216925,
+      "scene_commit_cpu_avg_ms": 0.12435968333333333,
+      "gpu_elapsed_avg_ms": 0.3123255
+     },
+     "damage_full": {
+      "output_commits": 482,
+      "cpu_frame_avg_ms": 0.38750321784232367,
+      "projection_cpu_avg_ms": 0.018342784232365145,
+      "scene_commit_cpu_avg_ms": 0.12208571161825726,
+      "gpu_elapsed_avg_ms": 0.30523731950207467
+     },
+     "drag": {
+      "output_commits": 472,
+      "cpu_frame_avg_ms": 0.669840582278481,
+      "projection_cpu_avg_ms": 0.08396799789029535,
+      "scene_commit_cpu_avg_ms": 0.18794868776371307,
+      "gpu_elapsed_avg_ms": 0.4663474451476793
+     },
+     "resize": {
+      "output_commits": 440,
+      "cpu_frame_avg_ms": 1.3679062318181818,
+      "projection_cpu_avg_ms": 0.22638816363636363,
+      "scene_commit_cpu_avg_ms": 0.2513304090909091,
+      "gpu_elapsed_avg_ms": 1.1250414454545457
+     },
+     "fullscreen": {
+      "output_commits": 283,
+      "cpu_frame_avg_ms": 0.39710350434782604,
+      "projection_cpu_avg_ms": 0.025485397826086956,
+      "scene_commit_cpu_avg_ms": 0.12963719130434784,
+      "gpu_elapsed_avg_ms": 0.3731455304347826
+     },
+     "zoom_85": {
+      "output_commits": 478,
+      "cpu_frame_avg_ms": 0.4724712761506276,
+      "projection_cpu_avg_ms": 0.023613675732217572,
+      "scene_commit_cpu_avg_ms": 0.13305476778242678,
+      "gpu_elapsed_avg_ms": 0.3526927782426778
+     },
+     "zoom_70": {
+      "output_commits": 241,
+      "cpu_frame_avg_ms": 0.47742241701244814,
+      "projection_cpu_avg_ms": 0.025680929460580912,
+      "scene_commit_cpu_avg_ms": 0.11396389626556017,
+      "gpu_elapsed_avg_ms": 0.3260153049792531
+     },
+     "zoom_55": {
+      "output_commits": 240,
+      "cpu_frame_avg_ms": 0.5102375333333333,
+      "projection_cpu_avg_ms": 0.027895397916666665,
+      "scene_commit_cpu_avg_ms": 0.11621068958333335,
+      "gpu_elapsed_avg_ms": 0.35329426458333335
+     },
+     "zoom_min_hold": {
+      "output_commits": 252,
+      "cpu_frame_avg_ms": 0.3180265360824742,
+      "projection_cpu_avg_ms": 0.02708674226804124,
+      "scene_commit_cpu_avg_ms": 0.11067828041237114,
+      "gpu_elapsed_avg_ms": 0.1220789381443299
+     }
+    },
+    "mixed_noglass": {
+     "idle": {
+      "output_commits": 0,
+      "cpu_frame_avg_ms": 0,
+      "projection_cpu_avg_ms": 0,
+      "scene_commit_cpu_avg_ms": 0,
+      "gpu_elapsed_avg_ms": 0
+     },
+     "spinner_clear": {
+      "output_commits": 246,
+      "cpu_frame_avg_ms": 0.1770848600823045,
+      "projection_cpu_avg_ms": 0.015449199588477366,
+      "scene_commit_cpu_avg_ms": 0.0622310987654321,
+      "gpu_elapsed_avg_ms": 0.052535574074074075
+     },
+     "spinner_glass": {
+      "output_commits": 243,
+      "cpu_frame_avg_ms": 0.31317531818181815,
+      "projection_cpu_avg_ms": 0.027160136363636365,
+      "scene_commit_cpu_avg_ms": 0.11567032644628099,
+      "gpu_elapsed_avg_ms": 0.12314383884297521
+     },
+     "damage_full": {
+      "output_commits": 243,
+      "cpu_frame_avg_ms": 0.3470042277432712,
+      "projection_cpu_avg_ms": 0.027589132505175987,
+      "scene_commit_cpu_avg_ms": 0.14905013457556937,
+      "gpu_elapsed_avg_ms": 0.1795864927536232
+     },
+     "drag": {
+      "output_commits": 484,
+      "cpu_frame_avg_ms": 0.45386004526748974,
+      "projection_cpu_avg_ms": 0.07313680452674896,
+      "scene_commit_cpu_avg_ms": 0.20871510905349794,
+      "gpu_elapsed_avg_ms": 0.27409777366255145
+     },
+     "resize": {
+      "output_commits": 466,
+      "cpu_frame_avg_ms": 0.6899709957081546,
+      "projection_cpu_avg_ms": 0.24340635193133048,
+      "scene_commit_cpu_avg_ms": 0.3117513712446352,
+      "gpu_elapsed_avg_ms": 0.3687583741935484
+     },
+     "fullscreen": {
+      "output_commits": 455,
+      "cpu_frame_avg_ms": 0.2672172778993435,
+      "projection_cpu_avg_ms": 0.01984746389496718,
+      "scene_commit_cpu_avg_ms": 0.15941523194748358,
+      "gpu_elapsed_avg_ms": 0.26373856673960616
+     },
+     "zoom_85": {
+      "output_commits": 257,
+      "cpu_frame_avg_ms": 0.2925634772727273,
+      "projection_cpu_avg_ms": 0.024441260330578512,
+      "scene_commit_cpu_avg_ms": 0.11103879958677686,
+      "gpu_elapsed_avg_ms": 0.11958569834710743
+     },
+     "zoom_70": {
+      "output_commits": 245,
+      "cpu_frame_avg_ms": 0.2675221074380165,
+      "projection_cpu_avg_ms": 0.023059834710743802,
+      "scene_commit_cpu_avg_ms": 0.10346771074380165,
+      "gpu_elapsed_avg_ms": 0.10541182438016529
+     },
+     "zoom_55": {
+      "output_commits": 243,
+      "cpu_frame_avg_ms": 0.30068719047619047,
+      "projection_cpu_avg_ms": 0.026371070393374742,
+      "scene_commit_cpu_avg_ms": 0.1134972712215321,
+      "gpu_elapsed_avg_ms": 0.12421444720496895
+     },
+     "zoom_min_hold": {
+      "output_commits": 252,
+      "cpu_frame_avg_ms": 0.26464967148760327,
+      "projection_cpu_avg_ms": 0.02108496694214876,
+      "scene_commit_cpu_avg_ms": 0.09694334504132232,
+      "gpu_elapsed_avg_ms": 0.10003001652892562
+     }
+    }
+   }
+  }
+ }
+}

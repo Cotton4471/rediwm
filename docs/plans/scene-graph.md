@@ -150,9 +150,11 @@ environment variable: no test hooks in production), removed in stage 6.
    anonymous memory at most +0.5 MiB at startup and no growth under sustained
    damage. Stages 4–6 are judged against the stage 0 baseline, and the final state
    (stage 6) must again be at or below it.
-4. **Clipping and primitives.** *Draft plan, 2026-10-09, nothing implemented:
-   [scene-graph-stage4.md](scene-graph-stage4.md), with sub-stages 4a to 4e and
-   five decisions to make (the legacy presenter's fate at the flip comes first).*
+4. **Clipping and primitives.** *4a to 4d on master, 4e on branch `stage4e`
+   until the stage 3 hardware checklist passes, 2026-10-10:
+   [scene-graph-stage4.md](scene-graph-stage4.md). The legacy presenter is gone;
+   CPU per frame is 3-36 % below the stage 0 baseline, memory 1.6-2.3 MiB above
+   it (a finding).*
    Clip groups on frames, analytic borders and
    shadows, shape-aware hit testing; delete the skirt, `probeClientEdge`,
    `side_fills`, the dual border path and `edge_sampling.py`; shrink the footer.

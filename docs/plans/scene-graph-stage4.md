@@ -1,6 +1,6 @@
 # Scene graph plan, stage 4: clipping and primitives
 
-Status: **4a to 4d done, 4e not started**, 2026-10-10. Stage 3 of
+Status: **4a to 4e done on branch `stage4e`, waiting on the stage 3 hardware checklist before it merges**, 2026-10-10. Stage 3 of
 [scene-graph.md](scene-graph.md) (the owned output pass, radius zero) is done
 apart from hardware qualification; this stage is why the plan exists: the user
 requires clipped client corners, and wlroots 0.20 cannot mask a client. The five
@@ -447,6 +447,73 @@ in `AGENTS.md`. The audit of the ~22 footer sites happens here for the legacy fl
 owned-only compositor (see **Measurement** and **Cost expectations**); it decides
 whether 4c's repaint cost (+10 to +14 % build CPU in `damage_full` and drag) and
 the `enable_shapes` memory came back.
+
+*Done on branch `stage4e`; merges once the stage 3 hardware checklist passes.*
+`owned` is the only presenter: `Server.init` refuses a renderer that is not
+GLES2 (llvmpipe through `WLR_RENDERER_ALLOW_SOFTWARE`, per the master plan's
+renderer policy) and the `scene_renderer` key is gone (an old config's key is
+ignored like any unknown one). Deleted: the footer `ChromeBuffer`, `FooterMemo`
+and the `Band` split, the CPU corner arcs and border coverage in
+`ChromeBuffer.rasterize`, all edge sampling (`probeClientEdge`, `EdgeMapping`,
+`decideEdgeSample`, `sampleEdge`, `readFormat`, the acquire wait, the skirt), the
+CPU `ShadowBuffer`, the patch set and its cache, border rects on decorated
+windows, the `sample_edge` argument of `syncChrome`, `footerAcceptsInput`,
+`chrome.footerHeight` (every site now reads `frame_border`), `edge_sampling.py`,
+`scene_ab.py` and its patch, `frame_parity` and `scene_baseline`'s paired mode.
+**One deviation:** `side_fills` were not deleted. The ring is composited over
+whatever body pixel is under it, so the 1 px band beside and below the client
+needs a body; the footer raster becomes a third rect (`frame_fills`, left, right,
+bottom, `fillColor()`), the same colour the analytic footer band had. The IPC
+`skirt_fill`, `edge_sample`, `footer_paints` and `edge_samples_*` fields stay in
+the wire format with constant values. `chrome.shapes` false (the programs did not
+link) now means square windows without ring or shadow, not CPU corners.
+
+Moving the tests off pixman found three GLES2 bugs the pixman default had hidden,
+all present on master too: `SamplePixels` returned ABGR as 0xAARRGGBB (red and
+blue swapped), `DumpBuffer` refused panels presented through their texture, and
+the greeter's Mesa shader cache wrote `~/.cache` under its home (now disabled in
+greeter mode). Tests run on GLES2: `ipc_client.py` defaults
+`WLR_RENDER_DRM_DEVICE` to renderD128, and every hard-coded pixman default became
+gles2.
+
+Gates: Debug and ReleaseSafe build, `zig build test` (785/785; the 16 removed
+tests went with their code), `test-projection`, `test-scene-pass` in both modes.
+A sweep of all 121 runnable suites (helpers, perf scripts and `brave_input`
+excluded): 87 pass; the other 34 fail identically on master run on GLES2 with the
+owned presenter (4d), so none comes from the deletions. They are the known HEAD
+failures (`animations`, `desktop_canvas`, `desktop_zoom`, `desktop_icons` and
+`files_decoration` without `REDIWM_IPC_AUTOMATION`, `glass_hold`, `mini_map*`,
+`screencast`, `window_titles`, `wlr_protocols`, the `workspace_focus` flake,
+stale-envelope `session_restart`) and suites that had only been run on pixman
+(`power_menu`, `power_profiles`, `hardware_keys`, `start_menu`, `switcher*`,
+`taskbar_peek`, `wifi_popup`, `files_*` timeouts, `night_light`, `polkit`,
+`screenshot_tool`, `startup_warmup`, `battery_popup`, `calendar_popup`,
+`client_cursor`, `appearance_wallpaper`). Whether each of those passes on pixman
+was not measured; making them pass on GLES2 is follow-up work, since pixman is no
+longer a renderer the session can use.
+
+**Stage cost gate** (`scene-graph-stage4e-cost.json`): ReleaseSafe stage 0 baseline
+(f6e7b24) against 4e, `scene_baseline.py` clean and stats sessions, interleaved
+stage 0, 4e, 4e, stage 0, AC power, P-cores pinned. In the clean sessions (no
+timers; pair spread 0 to 3 % on all but `fullscreen`):
+
+* **CPU: lower everywhere.** Instructions per second -3 to -36 % in every
+  scenario of every configuration (`damage_full` -27 to -36 %, `drag` -26 to
+  -31 %, `resize` -32 to -35 %, the zoom steps -4 to -17 %); commit counts match
+  within 2 %, so per frame too. Cycles are lower in most cells and within +7 % in
+  the rest. 4c's +10 to +14 % repaint finding is gone.
+* **Memory: higher, a finding.** Anonymous RSS is **+1.6 to +2.3 MiB** above stage
+  0 in every cell. The expected savings were small (a footer band is one row per
+  window), while the shaped programs (about 1.3 MiB in the compositor), stage 3's
+  0.44 MiB and the plain programs remain. The cheapest recovery is 4b's measured
+  option: the shaped programs with no shape equal the plain ones bit for bit, so
+  the three plain programs (about 410 KiB) can go if solid fills through the
+  shaped program cost nothing measurable.
+* **GPU and frame timers: inconclusive.** The stats sessions read +60 to +90 % at
+  scale 1.5 and mixed and -6 to -45 % at scale 1, but two identical 4e sessions
+  differ by up to 50 % there, and the timer itself is the owned pass's in one
+  binary and wlroots' in the other. Stage 3's in-process A/B (same timer, same
+  session) remains the reference for GPU: within +5 % at 1.5.
 
 ## Cost expectations
 
