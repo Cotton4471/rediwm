@@ -1180,11 +1180,10 @@ fn handleAction(
             const buf = target_buf orelse return .{ .err = "BufferNotAttached" };
             var data_ptr: *anyopaque = undefined;
             var format: u32 = 0;
-            var stride: usize = 0;
-            if (!buf.beginDataPtrAccess(0, &data_ptr, &format, &stride)) {
-                return .{ .err = "BufferAccessDenied" };
-            }
-            buf.endDataPtrAccess();
+            // A panel presented through its texture (`presentOwned`) is a client
+            // buffer with no CPU mapping on GLES2; its raster is packed ARGB8888.
+            var stride: usize = @as(usize, @intCast(buf.width)) * @sizeOf(u32);
+            if (buf.beginDataPtrAccess(0, &data_ptr, &format, &stride)) buf.endDataPtrAccess();
 
             return .{ .ok = .{ .dump_buffer = .{
                 .target = p.target,
@@ -1223,6 +1222,9 @@ fn handleAction(
                 .src_box = .{ .x = p.x, .y = p.y, .width = @intCast(p.width), .height = @intCast(p.height) },
             });
             if (!ok) return .{ .err = "ReadPixelsFailed" };
+            // The reply is packed 0xAARRGGBB whatever the renderer prefers to read
+            // (GLES2 reads ABGR8888, bytes R, G, B, A).
+            for (pixels) |*pixel| pixel.* = packedArgb(format, pixel.*) orelse return .{ .err = "ReadPixelsFailed: unsupported read format" };
 
             return .{ .ok = .{ .sample_pixels = .{
                 .output = std.mem.span(target_out.wlr_output.name),
@@ -1847,6 +1849,30 @@ pub const PanelRegistryEntry = struct {
     name: []const u8,
     resolve: *const fn (*Output) ?PanelRoot,
 };
+
+/// One pixel read in a little-endian 32-bit DRM `format`, as 0xAARRGGBB.
+fn packedArgb(format: u32, pixel: u32) ?u32 {
+    const argb8888: u32 = 0x34325241;
+    const xrgb8888: u32 = 0x34325258;
+    const abgr8888: u32 = 0x34324241;
+    const xbgr8888: u32 = 0x34324258;
+    const swapped = (pixel & 0xff00ff00) | ((pixel & 0xff) << 16) | ((pixel >> 16) & 0xff);
+    return switch (format) {
+        argb8888 => pixel,
+        xrgb8888 => pixel | 0xff000000,
+        abgr8888 => swapped,
+        xbgr8888 => swapped | 0xff000000,
+        else => null,
+    };
+}
+
+test "sampled pixels are reported as 0xAARRGGBB from every 8-bit read format" {
+    try std.testing.expectEqual(@as(?u32, 0x80112233), packedArgb(0x34325241, 0x80112233));
+    try std.testing.expectEqual(@as(?u32, 0xff112233), packedArgb(0x34325258, 0x00112233));
+    try std.testing.expectEqual(@as(?u32, 0x80112233), packedArgb(0x34324241, 0x80332211));
+    try std.testing.expectEqual(@as(?u32, 0xff112233), packedArgb(0x34324258, 0x00332211));
+    try std.testing.expectEqual(@as(?u32, null), packedArgb(0, 0));
+}
 
 /// `dump_buffer` targets; the panel tags double as `Output` field names.
 const DumpTarget = enum {

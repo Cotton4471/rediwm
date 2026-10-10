@@ -71,6 +71,8 @@ pub fn main(init: std.process.Init) void {
     }
 }
 
+extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
+
 fn start(init: std.process.Init) !bool {
     @import("startup.zig").initOrigin(init.minimal.environ);
     const theme_path = ui_theme.resolvePath(init.minimal.environ);
@@ -78,6 +80,9 @@ fn start(init: std.process.Init) !bool {
     // `rediwm --greeter` is rediwm-dm's greeter: no IPC, no autostart, no
     // command, and the lock screen stays up until rediwm-dm starts a session.
     const greeter = argv.len >= 2 and std.mem.eql(u8, std.mem.span(argv[1]), "--greeter");
+    // The greeter writes nothing under $HOME, and GLES2 drivers keep a shader
+    // cache in ~/.cache. Compiling a handful of shaders per start costs little.
+    if (greeter and setenv("MESA_SHADER_CACHE_DISABLE", "true", 0) != 0) return error.OutOfMemory;
 
     var server: Server = undefined;
     try server.init(

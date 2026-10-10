@@ -41,39 +41,25 @@ compiler, `wayland-scanner` and wayland-protocols; D-Bus suites need PyGObject,
   Files-launching suite sets `REDIWM_FILES_DEVICES=0`. Do the same in new ones.
 - Files records opened files in shared recent history; set a scratch
   `XDG_DATA_HOME` in suites that open files so they never update the host's history.
-- `REDIWM_TEST_RENDERER=gles2`: GPU rendering (needs a render node; pick one
-  with `WLR_RENDER_DRM_DEVICE=/dev/dri/renderD128` on multi-GPU machines).
-  GLES2 frees CPU scene buffers after upload, so `DumpBuffer` checks run on
-  pixman and GLES2 runs compare output screenshots instead.
+- The compositor requires GLES2 (the owned output pass, stage 4e of
+  `docs/plans/scene-graph-stage4.md`), so every suite runs on a render node:
+  `ipc_client.py` sets `WLR_RENDER_DRM_DEVICE=/dev/dri/renderD128` when it is
+  unset; suites that start the compositor without it need it in the environment
+  on multi-GPU machines. Without a GPU use Mesa's llvmpipe
+  (`WLR_RENDERER_ALLOW_SOFTWARE=1`). GLES2 frees CPU scene buffers after
+  upload, so `DumpBuffer` reads only what the compositor still holds; compare
+  output screenshots for pixels.
 - `REDIWM_TEST_SCALE=1.5` (or a `1.5` / `--scale 1.5` argument, per script):
   fractional scale. `REDIWM_TEST_OUTPUTS=2`: two outputs.
-- `REDIWM_TEST_SCENE_RENDERER=owned` with `REDIWM_TEST_RENDERER=gles2`: select
-  stage 3's owned output/capture path. Python fixtures write the temporary
-  `[compositor] scene_renderer` config key; production reads no test variable.
-  Use `legacy` for the comparison. Details and gate results:
-  `docs/plans/scene-graph-stage3.md`. With `owned` the compositor also draws
-  rounded window frames (stage 4c, `docs/plans/scene-graph-stage4.md`): the frame
-  is 9 px shorter at the default radius, so a pinned frame height differs by
-  presenter. Run a test under both before calling a failure a regression.
-- `python3 tests/scene_baseline.py --modes paired --configs scale1,scale1.5,mixed --out /tmp/scene-cost.json`:
-  run owned/legacy/legacy/owned in the same binary, with small repaints clear of
-  and under glass. Records instructions per committed frame, frame timers, RSS
-  and power conditions. Use a ReleaseSafe build and a render node; keep other
-  builds/tests stopped. Both counters and timers are enabled, so compare these
-  runs with each other, not the harness's `clean` mode. Read the saved results
-  with `--report /tmp/scene-cost.json`.
-- `python3 tests/scene_ab.py --binary <measurement build>`: the stage 3 cost
-  gate. One compositor alternates the legacy and owned output presenters every
-  32 frames, so both share clocks and thermal state; it reports legacy → owned
-  build CPU, build + commit and GPU time per scale and repaint and exits 1 if any
-  cell exceeds the tolerance (`--tolerance`, default +5 %). Needs a build with
-  `tests/scene_ab.patch` applied to a throwaway copy of the tree (the hook must
-  never ship); the docstring has the exact steps. Use it instead of the paired
-  mode for differences under about 10 %. Keep AC power and stop other work.
+- `python3 tests/scene_baseline.py --out /tmp/scene-cost.json`: clean and stats
+  sessions per scale (`--configs`), instructions, frame timers, RSS and power
+  conditions; compare with `--report new.json --against old.json`. Use a
+  ReleaseSafe build and a render node, keep other builds/tests stopped and AC
+  power on. `--report` still reads the stages 3 and 4 "paired" results.
 - `REDIWM_*_PREVIEW=/tmp/...` (lock, greeter, OSD, settings, switcher, tray,
   notification): keep the compositor's own screenshots.
 - GLES2 at a fractional scale can differ by one level depending on render
-  history. Compare pixman or integer scales exactly, or allow one level.
+  history. Compare integer scales exactly, or allow one level.
 
 ## The IPC socket is the test harness
 
@@ -110,12 +96,9 @@ origin), `zoom_osd.py` (shared zoom OSD,
 100% camera cap, pixels, timeout and input), `decorations.py`, `kde_decorations.py`, `window_corners.py`
 (border antialiasing and filled side edges on dark/light backgrounds at
 integer/fractional scales, plus workspace focus outlines on server/client
-decorations, mode transitions, fullscreen and default/explicit gaps; under
-`REDIWM_TEST_SCENE_RENDERER=owned` it also runs `frame_parity` (titlebar, sides,
-client bit-identical to the legacy frame at scales 1 to 2, the rightmost column
-excepted on fractional scales; the analytic shadow, corners included, within 2
-levels of the CPU one, apart from the legacy 9-slice's gap under the bottom arcs) and checks transparent client
-corners and that a click on a clipped corner reaches the window below), `switcher.py`,
+decorations, mode transitions, fullscreen and default/explicit gaps, transparent
+client corners and that a click on a clipped corner reaches the window below),
+`switcher.py`,
 `switcher_live.py`, `workspaces.py` (floating rules, Settings/IPC layout controls,
 versioned restart/named-save restoration, duplicate app occurrences, restored tab groups,
 saved canvas state and multi-window layout undo, both sides of tiled/floating

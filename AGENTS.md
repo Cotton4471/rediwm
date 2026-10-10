@@ -22,30 +22,23 @@ the one for the directory you work in: `src/files`, `src/editor`,
   `col.Straight`. Create/recolour rects only via `col.createRect`/`setRect`,
   pack pixels with `Straight.argb()`/`Premul.argb()`. Symptom of a mix-up:
   white border edges.
-* **Borders have three paths until stage 4e; change all that apply.** Legacy:
-  `chrome.ChromeBuffer` draws curved corners, `Toplevel.syncBorders` straight
-  `SceneRect`s inset by `ceil(frame_radius)`, `side_fills` behind them, and a
-  footer skirt under the client (wlroots 0.20 can't mask clients): check
-  `frame.band`, not `py`; `footerHeight()` keeps the skirt ≥ `ceil(frame_radius)`.
-  Owned (`chrome.analytic_frames`, set in `Server.init` once `enable_shapes`
-  worked): `Toplevel.applyShape` gives `frame_tree` one rounded clip carrying the
-  ring colour (× window opacity), the shader composites the ring over the body,
-  the chrome buffers are plain bands (`ChromeState.radius` 0), the footer is
-  `frame_border`, border rects are off, and `shadow_tree`, the resize-grab tree
-  and every xdg popup carry `setTreeUnclipped` (a new node that hangs outside the
-  window needs it too). The shadow is analytic (`setTreeShadow` on `shadow_tree`,
-  drawn by the pass with the CPU shadow's smoothstep); its leaf, `shadow_fallback`
-  without a buffer, carries footprint, opacity and input only, and the projection
-  damages that footprint itself, since wlroots damages nothing for a bufferless view. CSD windows have no shape and keep their rect outline.
-  A changed clip damages its rim itself (`projection.c`); a point the shape cuts
-  away is declined in `accepts()`, so the pick falls to what is below. Window
-  capture draws the client alone and is handed the shape explicitly.
-  The ring is one `max(1, round(border * scale))`, not the legacy snapped rect
-  width, so the two differ by a pixel on a fractional-scale edge.
-* **Skirt colour** (legacy frames only) comes from `probeClientEdge` (median of the last buffer
-  row; shm is premultiplied). Resample only on damage to that row or a
-  mapping change; pointer reuse proves nothing. `readFormat` stays memoized
-  per texture (it binds GL).
+* **Window frames are shapes** (`docs/plans/scene-graph-stage4.md`).
+  `Toplevel.applyShape` gives `frame_tree` one rounded clip carrying the ring
+  colour (× window opacity); the pass composites the ring over the body, so
+  something must be drawn under every ring pixel: the titlebar `ChromeBuffer`
+  (a plain band) on top and the three `frame_fills` rects beside and below the
+  client. The footer is `frame_border`. `shadow_tree`, the resize-grab tree and
+  every xdg popup carry `setTreeUnclipped` (a new node that hangs outside the
+  window needs it too). The shadow is analytic (`setTreeShadow` on
+  `shadow_tree`, the CPU formula's smoothstep); its leaf `shadow_node` has no
+  buffer and carries footprint, opacity and input only, so the projection
+  damages that footprint itself. CSD windows have no shape and keep the
+  `border_rects` outline. A changed clip damages its rim itself
+  (`projection.c`); a point the shape cuts away is declined in `accepts()`, so
+  the pick falls to what is below. Window capture draws the client alone and is
+  handed the shape explicitly. The ring is one `max(1, round(border * scale))`.
+  Without the shaped programs (`chrome.shapes` false) windows are square, with
+  no ring or shadow.
 * **Buffer size ≠ scene size** at fractional scale (`round(len*s)` vs
   `round((off+len)*s)-round(off*s)`). Chrome/panel buffers filter bilinearly:
   never re-raster per device-grid phase (`ChromeBuffer.create` costs 2–8 ms).
@@ -53,7 +46,7 @@ the one for the directory you work in: `src/files`, `src/editor`,
   `REDIWM_SCALE=1`, and debug visuals with IPC screenshots/buffer dumps, not
   host `grim`. Brief vanishing after a startup scale mismatch is not a bug.
 * **GLES can NULL `wlr_scene_buffer.buffer`** after upload (the texture
-  stays): persist raster sizes; test with `REDIWM_TEST_RENDERER=gles2`.
+  stays): persist raster sizes.
 * **Glass** samples `wlr_client_buffer_get(buffer)->texture` and tracks
   source-surface damage per effect. Empty commits and buffer rotation keep the
   blur. Drags may hold titlebar blur at ≥ 0.98 opacity (the default theme is
@@ -71,11 +64,11 @@ the one for the directory you work in: `src/files`, `src/editor`,
   `wlr_output_commit_state`. `commitIsRedundant` skips commits with no damage,
   colour change, attach-render lock or cursor change; register anything new
   there. Skipped frames get callbacks from `vblank_timer`, never immediately.
-  Build output state through `Server.buildOutputState`, including capture: it
-  selects the legacy or owned presenter and keeps one swapchain damage history.
-  The temporary `[compositor] scene_renderer = "owned"` requires GLES2 and a
-  restart. The owned pass reads graph geometry; scene nodes remain resource and
-  feedback transports until stage 6 (`docs/plans/scene-graph-stage3.md`).
+  Build output state through `Server.buildOutputState`, including capture: the
+  owned GLES2 pass is the only presenter (the session requires GLES2) and keeps
+  one swapchain damage history. It reads graph geometry; scene nodes remain
+  resource and feedback transports until stage 6
+  (`docs/plans/scene-graph-stage3.md`).
 * **Shapes in the owned pass** (`scene_pass.h`): a window's rounded clip, ring
   and shadow are `rediwm_scene_pass_add_*_shaped` calls, device pixels, snapped by
   the caller. The programs cost the driver about 430 KiB (a GL program costs
@@ -143,7 +136,7 @@ the one for the directory you work in: `src/files`, `src/editor`,
   changes wait for a restart once X11 surfaces exist.
 * Units: `clientSurfaceGeometry()` X units; `clientGeometry()`,
   `requestSize()`, `commitPosition()` world units (`ceil(surface/N)`);
-  `applySizeClip()`, `probeClientEdge()` surface units; `surfaceScale()` = N.
+  `applySizeClip()` surface units; `surfaceScale()` = N.
   Content trees use `rediwm_projection_set_tree_scale(1/N)`; X11 chrome
   density is 0.75.
 * Clamp stale off-screen geometry of new X11 windows in
@@ -155,7 +148,7 @@ the one for the directory you work in: `src/files`, `src/editor`,
 ## Security, lock and login
 
 * **Greeter** (`rediwm --greeter`) never unlocks (only `rediwm-dm` decides),
-  writes nothing under `$HOME`, and runs no Xwayland, autostart, IPC,
+  writes nothing under `$HOME` (it disables the GLES2 shader cache), and runs no Xwayland, autostart, IPC,
   notifications, tray, portal, polkit, services, audio, desktop or
   external-tool globals: skip anything new that owns a bus name, spawns or
   writes (`tests/greeter.py`). Secrets stay in mlocked, wiped buffers.
