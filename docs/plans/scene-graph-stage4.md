@@ -152,6 +152,16 @@ rest are untouched.
 
 Each leaves a working compositor and its own gates.
 
+**Measurement (decided 2026-10-10, after 4c).** The full cost gate runs once, on
+the finished stage after 4e, against the stage 0 baseline and the stage 3 figures
+(see **Cost expectations**). Between sub-stages both presenters are alive and the
+costs 4e removes (footer buffers, plain programs, probe state, shadow patch cache)
+are still paid, so a per-sub-stage A/B records a state about to be deleted, and its
+pair spread (up to 23 %) hides small changes anyway. A sub-stage's own gates are
+correctness ones; cost is at most one on/off pair of `damage_full` as a smoke test
+for gross mistakes (over about 20 %). Each sub-stage is its own commit, so a
+regression the final gate finds is bisected by rerunning the harness on them.
+
 **4a. Clip in the model (no visible change). Done.** `scene_graph.h` has
 `rediwm_clip_spec` (what a tree sets: size, four radii, border, in source units),
 `rediwm_clip` (the same in layout space), `rediwm_clip_resolve`, the per-corner
@@ -393,9 +403,14 @@ legacy presenter needed: `probeClientEdge` and the edge-sample machinery in
 `FooterMemo`, the CPU arcs, the shadow patch cache if 4d passed, and
 `edge_sampling.py`. Rewrite the "Borders have two paths" and "Skirt colour" notes
 in `AGENTS.md`. The audit of the ~22 footer sites happens here for the legacy flag
-(D1 decides whether it disappears).
+(D1 decides whether it disappears). The stage's cost gate runs after this, on the
+owned-only compositor (see **Measurement** and **Cost expectations**); it decides
+whether 4c's repaint cost (+10 to +14 % build CPU in `damage_full` and drag) and
+the `enable_shapes` memory came back.
 
 ## Cost expectations
+
+Judged once, after 4e (see **Measurement** under Sub-stages).
 
 | Area | Expectation |
 |---|---|
