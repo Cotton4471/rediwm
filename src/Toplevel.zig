@@ -3009,6 +3009,28 @@ fn syncShadow(toplevel: *Toplevel, width: i32, height: i32, radius: f32) !void {
     const offset_y: i32 = @intFromFloat(t.shadow_offset_y);
     const c_size: i32 = @intFromFloat(@ceil(radius + t.shadow_size));
 
+    if (chrome.analytic_frames) {
+        // The owned pass draws the shadow from the shape; the fallback node,
+        // without a buffer, only carries its footprint, opacity and input.
+        for (toplevel.shadow_corners) |node| node.node.setEnabled(false);
+        for (toplevel.shadow_edges) |node| node.node.setEnabled(false);
+        toplevel.shadow_fallback.node.setEnabled(true);
+        toplevel.shadow_fallback.node.setPosition(-margin, -margin + offset_y);
+        toplevel.shadow_fallback.setDestSize(width + 2 * margin, height + 2 * margin);
+        const r: f64 = radius;
+        if (!projection.setTreeShadow(&toplevel.shadow_tree.node, .{
+            .width = width,
+            .height = height,
+            .radii = .{ r, r, r, r },
+            .offset_x = 0,
+            .offset_y = @floatFromInt(offset_y),
+            .softness = t.shadow_size,
+            .color = col.Straight.fromRgba(t.shadow).premultiply().rgba,
+        })) log.warn("could not set the window shadow ({d}x{d})", .{ width, height });
+        toplevel.last_shadow = memo;
+        return;
+    }
+
     if (width < 2 * c_size or height < 2 * c_size) {
         for (toplevel.shadow_corners) |node| node.node.setEnabled(false);
         for (toplevel.shadow_edges) |node| node.node.setEnabled(false);

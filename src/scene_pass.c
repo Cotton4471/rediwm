@@ -22,7 +22,7 @@ struct program {
     unsigned bit; // which bit of pass.targets_set tracks this program's target size
     GLint target, dst, color, alpha, opaque, sampler, coords;
     // Shaped programs only (-1 elsewhere): the shape, and the shadow's own terms.
-    GLint mode, origin, size, radii, border, bcolor, offset, sigma, hide;
+    GLint mode, origin, size, radii, border, bcolor, offset, softness, hide;
 };
 struct attrib_state {
     GLint enabled, size, type, normalized, stride, buffer;
@@ -179,19 +179,16 @@ static const char shaped_vertex[] =
 // add up to the shape's, the spike's model. As two draws the coverages would
 // multiply, and a seam would show where each is partly covered.
 //
-// `mode` 0 draws the texture, 1 the solid colour, 2 the shape's shadow: a
-// Gaussian-blurred copy of the shape, offset, approximated through its distance
-// field (exact on straight edges, close at corners), kept out of the shape when
-// `hide` is set, which matters under translucent windows. One program for the
+// `mode` 0 draws the texture, 1 the solid colour, 2 the shape's shadow: the
+// shape moved by `offset`, falling off over `softness` outside it with the
+// smoothstep of the CPU chrome's shadow (`chrome.shadowCoverage`, the same
+// distance field, so corners match it as exactly as edges), kept out of the shape
+// when `hide` is set, which matters under translucent windows. One program for the
 // three because a program costs the driver 130-150 KiB however small it is.
 static const char shaped_fragment[] = SHAPED_HEAD
-    "uniform float alpha, opaque, mode, sigma, hide; uniform vec2 offset;"
-    // Abramowitz-Stegun 7.1.26, |error| < 1.5e-7.
-    "float erf1(float x){ float s=x<0.?-1.:1.; x=abs(x); float t=1./(1.+.3275911*x);"
-    "float y=1.-(((((1.061405429*t-1.453152027)*t)+1.421413741)*t-.284496736)*t+.254829592)*t*exp(-x*x);"
-    "return s*y; }"
+    "uniform float alpha, opaque, mode, softness, hide; uniform vec2 offset;"
     "void main(){"
-    "if(mode>1.5){ float s=.5*(1.-erf1(sdf(local-offset,radii)/(sigma*1.41421356)));"
+    "if(mode>1.5){ float s=clamp(1.-sdf(local-offset,radii)/softness,0.,1.); s=s*s*(3.-2.*s);"
     "if(hide>.5)s*=1.-cov(sdf(local,radii)); gl_FragColor=color*s; return; }"
     "vec4 c=color; if(mode<.5){ c=texture2D(tex,uv); if(opaque>.5)c.a=1.; c*=alpha; }"
     "float d=sdf(local,radii);"
@@ -255,7 +252,7 @@ static bool program_init(struct program *p, unsigned bit, const char *vertex_sou
     p->border = glGetUniformLocation(p->id, "border");
     p->bcolor = glGetUniformLocation(p->id, "bcolor");
     p->offset = glGetUniformLocation(p->id, "offset");
-    p->sigma = glGetUniformLocation(p->id, "sigma");
+    p->softness = glGetUniformLocation(p->id, "softness");
     p->hide = glGetUniformLocation(p->id, "hide");
     return true;
 }
@@ -571,15 +568,15 @@ void rediwm_scene_pass_add_shadow(struct wlr_render_pass *base,
     struct program *g = &p->renderer->shaped;
     if (p->failed || (shadow->clip && !pixman_region32_not_empty(shadow->clip))) return;
     if (!g->id || !shape_usable(shape) || !isfinite(shadow->offset_x) ||
-            !isfinite(shadow->offset_y) || !isfinite(shadow->sigma) || shadow->sigma > 1024 ||
+            !isfinite(shadow->offset_y) || !isfinite(shadow->softness) || shadow->softness > 4096 ||
             fabsf(shadow->offset_x) > 65536 || fabsf(shadow->offset_y) > 65536) {
         p->failed = true;
         return;
     }
     // A quarter pixel is a hard edge; zero would divide by it.
-    const float sigma = shadow->sigma < .25f ? .25f : shadow->sigma;
-    // The quad reaches three sigma past the shape, and as far again as the offset.
-    const int pad = (int)ceilf(3 * sigma) + (int)ceilf(fmaxf(fabsf(shadow->offset_x), fabsf(shadow->offset_y)));
+    const float softness = shadow->softness < .25f ? .25f : shadow->softness;
+    // The quad reaches the softness past the shape, and as far again as the offset.
+    const int pad = (int)ceilf(softness) + (int)ceilf(fmaxf(fabsf(shadow->offset_x), fabsf(shadow->offset_y)));
     const struct wlr_box box = {shape->box.x - pad, shape->box.y - pad,
         shape->box.width + 2 * pad, shape->box.height + 2 * pad};
     setup(p, g, box, WLR_RENDER_BLEND_MODE_PREMULTIPLIED);
@@ -589,7 +586,7 @@ void rediwm_scene_pass_add_shadow(struct wlr_render_pass *base,
     set_shape(g, &bare);
     glUniform1f(g->mode, 2.f);
     glUniform2f(g->offset, shadow->offset_x, shadow->offset_y);
-    glUniform1f(g->sigma, sigma);
+    glUniform1f(g->softness, softness);
     glUniform1f(g->hide, shadow->hide_inside ? 1.f : 0.f);
     draw(shadow->clip);
 }

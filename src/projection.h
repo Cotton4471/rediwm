@@ -40,6 +40,12 @@ double rediwm_projection_node_zoom(struct wlr_scene_node *);
 // units and anchored at its origin; NULL removes it. Returns false for a size
 // that is not positive or a radius or border that is negative or not finite.
 bool rediwm_projection_set_tree_clip(struct wlr_scene_node *, const struct rediwm_clip_spec *);
+// Every leaf under the tree draws the analytic shadow of this shape (see
+// rediwm_shadow_spec in scene_graph.h); its node supplies only the footprint,
+// opacity and input. NULL removes it. False for a size that is not positive, or a
+// radius or softness that is negative or not finite.
+struct rediwm_shadow_spec;
+bool rediwm_projection_set_tree_shadow(struct wlr_scene_node *, const struct rediwm_shadow_spec *);
 // Ends the clip inherited from an ancestor for this subtree (an xdg popup lives
 // under its parent's tree but is no part of the window's shape).
 bool rediwm_projection_set_tree_unclipped(struct wlr_scene_node *, bool);

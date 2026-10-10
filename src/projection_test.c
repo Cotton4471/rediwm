@@ -639,6 +639,66 @@ static void test_clip_output(struct wlr_scene *scene, struct wlr_scene_output *o
   wlr_buffer_drop(under_buffer);
   wlr_buffer_drop(client_buffer);
 }
+// Stage 4d: a shadow's view has no buffer, so wlroots damages nothing for it and the
+// projection damages the footprint itself: when it appears, moves, changes, is
+// hidden with its window, or goes away, and never when nothing changed.
+static void test_shadow_output(struct wlr_scene *scene, struct wlr_scene_output *out) {
+  struct wlr_scene_tree *source = wlr_scene_tree_create(&scene->tree);
+  struct wlr_scene_tree *view = wlr_scene_tree_create(&scene->tree);
+  struct rediwm_projection *p = rediwm_projection_create(source, view, scene);
+  assert(p);
+  struct wlr_scene_tree *frame = wlr_scene_tree_create(source);
+  struct wlr_scene_tree *shadow_tree = wlr_scene_tree_create(frame);
+  struct wlr_scene_buffer *footprint = wlr_scene_buffer_create(shadow_tree, NULL);
+  assert(frame && shadow_tree && footprint);
+  wlr_scene_node_set_position(&frame->node, 100, 100);
+  wlr_scene_node_set_position(&footprint->node, -16, -8);
+  wlr_scene_buffer_set_dest_size(footprint, 152, 112);
+  struct rediwm_shadow_spec spec = {.width = 120, .height = 80, .radii = {10, 10, 10, 10},
+      .offset_y = 8, .softness = 16, .color = {0, 0, 0, .4f}};
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  struct leaf *l = get_leaf(p, &footprint->node);
+  assert(l->item.kind == REDIWM_ITEM_BUFFER && !l->item.shadow);
+  clear_damage(out);
+
+  assert(rediwm_projection_set_tree_shadow(&shadow_tree->node, &spec));
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  assert(l->item.kind == REDIWM_ITEM_SHADOW && l->item.shadow);
+  assert(near(l->item.shadow->shape.edges.x1, 100) && near(l->item.shadow->shape.edges.y2, 180));
+  assert(near(l->item.shadow->offset_y, 8) && near(l->item.shadow->softness, 16));
+  assert(layout_damaged(out, 85, 93) && layout_damaged(out, 235, 203) && layout_damaged(out, 160, 140));
+  assert(!layout_damaged(out, 80, 140) && !layout_damaged(out, 160, 90));
+  clear_damage(out);
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0); // Nothing changed.
+  assert(!pixman_region32_not_empty(&out->damage_ring.current));
+  // A moved window damages where its shadow was and where it is.
+  wlr_scene_node_set_position(&frame->node, 140, 100);
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  assert(layout_damaged(out, 85, 140) && layout_damaged(out, 270, 140));
+  clear_damage(out);
+  // A different colour damages it in place.
+  spec.color[3] = .5f;
+  assert(rediwm_projection_set_tree_shadow(&shadow_tree->node, &spec));
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  assert(layout_damaged(out, 130, 140) && !layout_damaged(out, 100, 140));
+  clear_damage(out);
+  // Hidden with its window, shown again, and destroyed.
+  wlr_scene_node_set_enabled(&frame->node, false);
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  assert(layout_damaged(out, 130, 140));
+  clear_damage(out);
+  wlr_scene_node_set_enabled(&frame->node, true);
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  assert(layout_damaged(out, 130, 140));
+  clear_damage(out);
+  wlr_scene_node_destroy(&footprint->node);
+  assert(layout_damaged(out, 130, 140));
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+
+  wlr_scene_node_destroy(&view->node);
+  rediwm_projection_destroy(p);
+  wlr_scene_node_destroy(&source->node);
+}
 // A client surface's opaque region has to reach its view, or nothing below the
 // window is ever culled. The buffers here reveal no format, like a
 // wlr_client_buffer, so only the node's own region can say they are opaque.
@@ -1002,6 +1062,7 @@ int main(void) {
   test_clip_opaque();
   test_clip_projection(scene);
   test_clip_output(scene, out);
+  test_shadow_output(scene, out);
   test_opaque(scene);
   wlr_scene_node_destroy(&scene->tree.node);
   wlr_buffer_drop(a);

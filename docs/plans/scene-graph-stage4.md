@@ -1,6 +1,6 @@
 # Scene graph plan, stage 4: clipping and primitives
 
-Status: **4a to 4c done, 4d and 4e not started**, 2026-10-10. Stage 3 of
+Status: **4a to 4d done, 4e not started**, 2026-10-10. Stage 3 of
 [scene-graph.md](scene-graph.md) (the owned output pass, radius zero) is done
 apart from hardware qualification; this stage is why the plan exists: the user
 requires clipped client corners, and wlroots 0.20 cannot mask a client. The five
@@ -394,6 +394,46 @@ corners (the spike compared only straight edges: approximate at corners), within
 an agreed tolerance and no visible change in `appearance_chrome`. If the corners
 do not pass, keep the CPU patches and drop this sub-stage; it is not on the
 critical path.
+
+*Done, gate met.* The shadow is a property of the window's shadow tree
+(`rediwm_projection_set_tree_shadow`, `rediwm_shadow_spec` in `scene_graph.h`),
+resolved like the clip into `item.shadow` on a `REDIWM_ITEM_SHADOW` leaf. The leaf
+is the old fallback node without a buffer: it carries the footprint, the window's
+opacity and input (`chromeAcceptsInput`, as before), never pixels. Because wlroots
+damages nothing for a bufferless view, `present` damages the footprint it last
+drew and the new one when the box, the shadow, the opacity or visibility changes,
+and when the leaf is hidden, unreached or destroyed (`test_shadow_output`).
+`scene_output.c` draws it with `rediwm_scene_pass_add_shadow`, the offset taken to
+device pixels as the difference of two snapped boxes so output transforms turn it.
+
+The look did not come from the spike. The CPU shadow is not a Gaussian: it is full
+strength inside the moved shape and falls off with a smoothstep over
+`shadow_size` (`chrome.shadowCoverage`), so the shaped program's mode 2 now
+evaluates exactly that on the same distance field instead of the spike's erf.
+`rediwm_pass_shadow.sigma` became `softness`. Because both are functions of the
+one distance field, the corners match as well as the edges, which removes the
+plan's worry about the spike's corner approximation. Gates:
+
+* `test-scene-pass`: every pixel of a radius 10, softness 24, offset 8 shadow at
+  scales 1 and 1.5 is within **1 level** of the CPU formula, corners included.
+* `window_corners.py` `frame_parity` (owned against legacy, same binary, scales 1,
+  1.25, 1.5, 2): the shadow above, left of and at the top corners of the window,
+  and (at integer scales, where the 9 px taller legacy frame lands on whole pixels)
+  below it with both bottom corners, is within **0 to 1 level** of the CPU
+  patches. The one exception is a legacy defect the comparison found: the 9-slice
+  side patches treat the window's edge as straight down to the offset corner
+  patch, so a few pixels under each bottom arc showed bare wallpaper where the
+  shadow is at full strength (6 pixels at scale 1, 48 at scale 2). The analytic
+  shadow fills them; the test allows only those, and only under a bottom arc.
+* `appearance_chrome.py` passes under owned; `window_corners.py` passes apart
+  from the `workspace_focus` flake, which fails at the same rate on HEAD (1 of 3
+  runs at 1.5 on each).
+
+The CPU patch set is no longer built on the owned path, so its cache costs nothing
+there; its code goes in 4e. Cost was not measured here (see **Measurement**): one
+shaded quad per window replaces eight textured ones, and the collector already
+culls it under the window's opaque client, so it shades only the rim and the
+translucent titlebar.
 
 **4e. Flip and delete.** Make `owned` the default (it requires the stage 3 hardware
 checklist to have passed on a real KMS session), then delete the code only the

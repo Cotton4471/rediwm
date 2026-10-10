@@ -45,6 +45,26 @@ pub fn setTreeClip(node: *wlr.SceneNode, spec: ?ClipSpec) bool {
     if (spec) |value| return rediwm_projection_set_tree_clip(node, &value);
     return rediwm_projection_set_tree_clip(node, null);
 }
+/// The analytic drop shadow of a window's shape (see scene_graph.h): every leaf
+/// under the tree draws it in the owned pass. `width`, `height` and `radii` are
+/// the shape it is kept out of, in source units at the tree's origin; `color` is
+/// premultiplied.
+pub const ShadowSpec = extern struct {
+    width: c_int,
+    height: c_int,
+    radii: [4]f64,
+    offset_x: f64,
+    offset_y: f64,
+    softness: f64,
+    color: [4]f32,
+};
+extern fn rediwm_projection_set_tree_shadow(node: *wlr.SceneNode, spec: ?*const ShadowSpec) bool;
+/// A null spec removes the shadow. False for a size that is not positive or a
+/// radius or softness that is negative or not finite.
+pub fn setTreeShadow(node: *wlr.SceneNode, spec: ?ShadowSpec) bool {
+    if (spec) |value| return rediwm_projection_set_tree_shadow(node, &value);
+    return rediwm_projection_set_tree_shadow(node, null);
+}
 /// Ends the clip inherited from an ancestor for this subtree: an xdg popup or a
 /// window's shadow hangs under the window's tree but is no part of its shape.
 extern fn rediwm_projection_set_tree_unclipped(node: *wlr.SceneNode, unclipped: bool) bool;

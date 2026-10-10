@@ -33,7 +33,10 @@ the one for the directory you work in: `src/files`, `src/editor`,
   the chrome buffers are plain bands (`ChromeState.radius` 0), the footer is
   `frame_border`, border rects are off, and `shadow_tree`, the resize-grab tree
   and every xdg popup carry `setTreeUnclipped` (a new node that hangs outside the
-  window needs it too). CSD windows have no shape and keep their rect outline.
+  window needs it too). The shadow is analytic (`setTreeShadow` on `shadow_tree`,
+  drawn by the pass with the CPU shadow's smoothstep); its leaf, `shadow_fallback`
+  without a buffer, carries footprint, opacity and input only, and the projection
+  damages that footprint itself, since wlroots damages nothing for a bufferless view. CSD windows have no shape and keep their rect outline.
   A changed clip damages its rim itself (`projection.c`); a point the shape cuts
   away is declined in `accepts()`, so the pick falls to what is below. Window
   capture draws the client alone and is handed the shape explicitly.

@@ -42,7 +42,9 @@ struct rediwm_pass_shape {
 };
 struct rediwm_pass_shadow {
   float offset_x, offset_y; // how far the shadow is shifted from the shape
-  float sigma;              // Gaussian standard deviation; below 0.25 it is 0.25
+  // Full strength inside the moved shape, falling to nothing this far outside it
+  // with a smoothstep, as the CPU chrome's shadow does; below 0.25 it is 0.25.
+  float softness;
   float color[4];           // premultiplied, at full strength under the shape's edge
   // Keep the shadow out of the shape, so a translucent window does not show it.
   bool hide_inside;
@@ -67,6 +69,6 @@ void rediwm_scene_pass_add_rect_shaped(struct wlr_render_pass *,
     const struct wlr_render_rect_options *, const struct rediwm_pass_shape *);
 void rediwm_scene_pass_add_texture_shaped(struct wlr_render_pass *,
     const struct wlr_render_texture_options *, const struct rediwm_pass_shape *);
-// The shape's shadow. The quad reaches three sigma and the offset past the box.
+// The shape's shadow. The quad reaches the softness and the offset past the box.
 void rediwm_scene_pass_add_shadow(struct wlr_render_pass *, const struct rediwm_pass_shape *,
     const struct rediwm_pass_shadow *);

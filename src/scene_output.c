@@ -148,6 +148,9 @@ static bool collect(const struct rediwm_item *item, struct wlr_scene_node *trans
     if (!wlr_box_intersection(&intersection, &box, &collector->view->logical)) return true;
     if (item->kind == REDIWM_ITEM_RECT) {
         if (item->content.color[3] == 0) return true;
+    } else if (item->kind == REDIWM_ITEM_SHADOW) {
+        // No buffer: the pixels are the shadow's, and never opaque.
+        if (item->content.opacity == 0 || item->shadow->color[3] == 0) return true;
     } else {
         struct wlr_scene_buffer *b = wlr_scene_buffer_from_node(transport);
         if (item->content.opacity == 0 ||
@@ -166,7 +169,7 @@ static bool collect(const struct rediwm_item *item, struct wlr_scene_node *trans
         .box = box, .visible = visible};
     pixman_region32_init(&e->opaque);
     bool full = item->kind == REDIWM_ITEM_RECT && item->content.color[3] == 1;
-    if (item->kind != REDIWM_ITEM_RECT) {
+    if (item->kind != REDIWM_ITEM_RECT && item->kind != REDIWM_ITEM_SHADOW) {
         struct wlr_scene_buffer *b = wlr_scene_buffer_from_node(transport);
         // Match the surface adapter's opacity policy. A cached raster whose
         // buffer was released must not suddenly hide previously visible peers.
@@ -327,7 +330,24 @@ static bool render_entry(struct entry *e, struct wlr_scene_output *out,
         pixman_region32_subtract(&clip, &clip, &core);
     }
     const struct rediwm_content *c = &e->item.content;
-    if (e->item.kind == REDIWM_ITEM_RECT) {
+    if (e->item.kind == REDIWM_ITEM_SHADOW) {
+        // The offset is taken to device pixels as the difference of two snapped
+        // boxes, so an output transform turns it with them.
+        const struct rediwm_shadow *sh = e->item.shadow;
+        struct rediwm_clip moved = sh->shape;
+        moved.edges.x1 += sh->offset_x;
+        moved.edges.x2 += sh->offset_x;
+        moved.edges.y1 += sh->offset_y;
+        moved.edges.y2 += sh->offset_y;
+        struct rediwm_pass_shape at;
+        shape_for(&shape, &sh->shape, v);
+        shape_for(&at, &moved, v);
+        struct rediwm_pass_shadow shadow = {
+            .offset_x = (float)(at.box.x - shape.box.x), .offset_y = (float)(at.box.y - shape.box.y),
+            .softness = (float)(sh->softness * v->scale), .hide_inside = true, .clip = &clip};
+        for (int i = 0; i < 4; i++) shadow.color[i] = sh->color[i] * c->opacity;
+        rediwm_scene_pass_add_shadow(pass, &shape, &shadow);
+    } else if (e->item.kind == REDIWM_ITEM_RECT) {
         struct wlr_render_rect_options rect = {.box = dst,
             .color = {c->color[0], c->color[1], c->color[2], c->color[3]}};
         if (pixman_region32_not_empty(&core)) {

@@ -98,6 +98,14 @@ struct leaf {
   // geometry. Kept separately so an unchanged/held blur survives the next sync.
   struct rediwm_item effect_item;
   struct rediwm_clip effect_clip;
+  // `item.shadow` points at `shadow` when the leaf is under a shadow tree. A
+  // shadow's view has no buffer, so wlroots damages nothing for it: present()
+  // damages the footprint it last drew (`shadow_drawn`) and the new one.
+  struct rediwm_shadow shadow;
+  struct rediwm_shadow shadow_drawn_as;
+  struct rediwm_snap shadow_drawn;
+  float shadow_drawn_opacity;
+  bool has_shadow_drawn;
   struct wlr_buffer *last_buffer;
   // The client buffer whose view lock we told wlroots to ignore, if any.
   struct wlr_client_buffer *marked;
@@ -116,12 +124,15 @@ struct leaf {
 //  * unclipped: ends the inherited clip for the subtree. A popup's scene tree is a
 //    child of its parent surface's, so it sits under the window's clipped tree in
 //    the source graph while belonging to no window shape. The subtree's own clip,
-//    if it sets one, still applies.
+//    if it sets one, still applies;
+//  * shadow: every leaf under the tree is the analytic shadow of this shape
+//    (REDIWM_ITEM_SHADOW), resolved like the clip.
 struct tree_props {
   struct wlr_addon addon;
-  bool has_zoom, has_scale, has_clip, unclipped;
+  bool has_zoom, has_scale, has_clip, unclipped, has_shadow;
   double zoom, scale;
   struct rediwm_clip_spec clip;
+  struct rediwm_shadow_spec shadow;
   // The clip as the last resolve() saw it in layout space, to tell a changed
   // shape (to be damaged) from a moved window (whose views damage themselves).
   struct rediwm_clip applied;
@@ -177,6 +188,24 @@ bool rediwm_projection_set_tree_clip(struct wlr_scene_node *node,
   if (!props) return false;
   props->clip = *spec;
   props->has_clip = true;
+  return true;
+}
+bool rediwm_projection_set_tree_shadow(struct wlr_scene_node *node,
+                                       const struct rediwm_shadow_spec *spec) {
+  if (!spec) {
+    struct tree_props *props = tree_props_find(node);
+    if (props) props->has_shadow = false;
+    return true;
+  }
+  if (spec->width <= 0 || spec->height <= 0 || !finite_at_least_zero(spec->softness) ||
+      !isfinite(spec->offset_x) || !isfinite(spec->offset_y))
+    return false;
+  for (int i = 0; i < 4; i++)
+    if (!finite_at_least_zero(spec->radii[i]) || !isfinite(spec->color[i])) return false;
+  struct tree_props *props = tree_props_get(node);
+  if (!props) return false;
+  props->shadow = *spec;
+  props->has_shadow = true;
   return true;
 }
 bool rediwm_projection_set_tree_unclipped(struct wlr_scene_node *node, bool unclipped) {
@@ -328,7 +357,9 @@ static void mark_view_buffer(struct leaf *l, struct wlr_buffer *backing) {
   client->private.n_ignore_locks++;
   l->marked = client;
 }
+static void damage_shadow(struct leaf *l, bool show, struct rediwm_snap at);
 static void destroy_leaf(struct leaf *l) {
+  damage_shadow(l, false, (struct rediwm_snap){0});
   unmark_view_buffer(l);
   route_surface(l, l->surface ? l->surface->buffer : NULL);
   wl_list_remove(&l->commit.link);
@@ -564,12 +595,14 @@ static void damage_clip_change(struct rediwm_projection *p, const struct rediwm_
 static void resolve_node(struct rediwm_projection *p, struct group *g,
                          struct wlr_scene_node *node, double x, double y,
                          bool enabled, struct rediwm_xform t,
-                         const struct rediwm_clip *clip) {
+                         const struct rediwm_clip *clip,
+                         const struct rediwm_shadow *shadow) {
   x += node->x;
   y += node->y;
   enabled = enabled && node->enabled;
   if (node->type == WLR_SCENE_NODE_TREE) {
     struct rediwm_clip here;
+    struct rediwm_shadow cast;
     struct tree_props *props = tree_props_find(node);
     if (props) {
       // Window zoom composes with the camera, around the frame origin.
@@ -588,10 +621,14 @@ static void resolve_node(struct rediwm_projection *p, struct group *g,
         if (enabled) damage_clip_change(p, &props->applied, NULL);
         props->has_applied = false;
       }
+      if (props->has_shadow) {
+        cast = rediwm_shadow_resolve(t, x, y, &props->shadow);
+        shadow = &cast;
+      }
     }
     struct wlr_scene_node *child;
     wl_list_for_each(child, &wlr_scene_tree_from_node(node)->children, link)
-        resolve_node(p, g, child, x, y, enabled, t, clip);
+        resolve_node(p, g, child, x, y, enabled, t, clip, shadow);
     return;
   }
   struct leaf *l = get_leaf(p, node);
@@ -646,7 +683,39 @@ static void resolve_node(struct rediwm_projection *p, struct group *g,
     content->color_encoding = b->color_encoding;
     content->color_range = b->color_range;
   }
+  if (shadow && node->type == WLR_SCENE_NODE_BUFFER) {
+    item->kind = REDIWM_ITEM_SHADOW;
+    l->shadow = *shadow;
+    item->shadow = &l->shadow;
+  } else if (item->shadow) {
+    item->shadow = NULL;
+  }
   item->edges = rediwm_xform_rect(t, x, y, item->width, item->height);
+}
+
+// What a shadow draws changed, or it appeared or went: damage the footprint it
+// last drew and the one it draws now, in layout space.
+static void damage_shadow(struct leaf *l, bool show, struct rediwm_snap at) {
+  const float opacity = l->item.content.opacity;
+  if (show == l->has_shadow_drawn &&
+      (!show || (at.x == l->shadow_drawn.x && at.y == l->shadow_drawn.y &&
+                 at.width == l->shadow_drawn.width && at.height == l->shadow_drawn.height &&
+                 opacity == l->shadow_drawn_opacity &&
+                 rediwm_shadow_equal(&l->shadow, &l->shadow_drawn_as))))
+    return;
+  pixman_region32_t region;
+  pixman_region32_init(&region);
+  if (l->has_shadow_drawn)
+    pixman_region32_union_rect(&region, &region, l->shadow_drawn.x, l->shadow_drawn.y,
+                               l->shadow_drawn.width, l->shadow_drawn.height);
+  if (show) pixman_region32_union_rect(&region, &region, at.x, at.y, at.width, at.height);
+  if (pixman_region32_not_empty(&region))
+    rediwm_scene_damage_layout(l->projection->scene, &region);
+  pixman_region32_fini(&region);
+  l->has_shadow_drawn = show;
+  l->shadow_drawn = at;
+  l->shadow_drawn_as = l->shadow;
+  l->shadow_drawn_opacity = opacity;
 }
 
 // present(): graph -> view tree. Reads items and group origins, never the
@@ -743,6 +812,10 @@ static void present_leaf(struct group *g, struct leaf *l,
     }
     pixman_region32_fini(&mirrored);
   }
+  if (item->kind == REDIWM_ITEM_SHADOW || l->has_shadow_drawn)
+    damage_shadow(l, item->kind == REDIWM_ITEM_SHADOW && next.enabled &&
+                         item->content.opacity > 0 && item->shadow->color[3] > 0,
+                  snap);
   l->dirty = false;
   l->full_damage = false;
   l->owned_damage = false;
@@ -866,7 +939,7 @@ static void resolve(struct rediwm_projection *p, double z, double cx, double cy,
     rediwm_xform_point(t, node->x, node->y, &g->x, &g->y);
     g->enabled = node->enabled;
     wl_list_insert(p->paint.prev, &g->paint);
-    resolve_node(p, g, node, 0, 0, true, t, NULL);
+    resolve_node(p, g, node, 0, 0, true, t, NULL, NULL);
   }
 }
 // Graph -> view tree, then hide what the graph no longer reaches.
@@ -889,6 +962,7 @@ static void present(struct rediwm_projection *p) {
   }
   struct leaf *l;
   wl_list_for_each(l, &p->leaves, link) if (!l->seen) {
+    damage_shadow(l, false, (struct rediwm_snap){0});
     wlr_scene_node_set_enabled(l->view, false);
     // The cached state no longer describes the view; reapply on return.
     l->has_applied = false;

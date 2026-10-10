@@ -261,8 +261,8 @@ def _frame_screenshot(scale):
 
 def frame_parity(scale):
     """A shape changes the corners and the bottom band and nothing else: the
-    titlebar, the side borders, the client and the shadow match the legacy frame
-    pixel for pixel, at every scale."""
+    titlebar, the side borders and the client match the legacy frame pixel for
+    pixel, at every scale, and the analytic shadow matches the CPU one."""
     from PIL import ImageChops
     legacy, lwin, ldbg = frame_screenshot(scale, "legacy")
     owned, owin, odbg = frame_screenshot(scale, "owned")
@@ -284,15 +284,55 @@ def frame_parity(scale):
         "left and right side columns": (round(x * scale), round((y + titlebar) * scale),
                                         round((x + w) * scale) - (0 if scale == int(scale) else math.ceil(scale)),
                                         round((y + h) * scale) - arc),
-        "shadow left of the window": (round((x - 14) * scale), round((y + 20) * scale),
-                                      round(x * scale), round((y + h) * scale) - arc),
-        "shadow above the window": (round((x + 20) * scale), round((y - 14) * scale),
-                                    round((x + w - 20) * scale), round(y * scale)),
     }
     for name, box in regions.items():
         diff = ImageChops.difference(legacy.crop(box), owned.crop(box))
         assert diff.getbbox() is None, (name, scale, box, diff.getbbox(), diff.getextrema())
-    print(f"PASS scale {scale}: titlebar, sides, client and shadow identical to the legacy frame")
+    # Stage 4d: the owned pass draws the shadow from the shape, the legacy one from
+    # CPU patches of the same formula; they agree to a level or two, corners too.
+    # Only pixels clear of the window (one device pixel past its arc) are compared.
+    # The legacy frame is 9 px taller, so its bottom shadow is compared moved up by
+    # that, which lands on whole device pixels at integer scales only.
+    soft, radius = 16, 10
+    def outside(px, py):
+        lx, ly = (px + 0.5) / scale, (py + 0.5) / scale
+        qx = abs(lx - (x + w / 2)) - (w / 2 - radius)
+        qy = abs(ly - (y + h / 2)) - (h / 2 - radius)
+        d = math.hypot(max(qx, 0), max(qy, 0)) + min(max(qx, qy), 0) - radius
+        return d * scale > 1
+    shadow_regions = {
+        "shadow left of the window": ((x - soft, y + 20, x, y + h - radius - 2), 0),
+        "shadow above the window": ((x + 20, y - soft, x + w - 20, y), 0),
+        "shadow at the top corners": ((x - soft, y - soft, x + w + soft, y + radius + 2), 0),
+    }
+    if scale == int(scale):
+        shadow_regions["shadow below the window, corners included"] = (
+            (x - soft, y + h - radius - 2, x + w + soft, y + h + soft + 8), round(9 * scale))
+    # The legacy 9-slice has one known gap: its side patches take the window's edge
+    # as straight down to the offset corner patch, so a few pixels under each bottom
+    # arc show bare wallpaper where the shadow is at full strength. The owned shadow
+    # must fill them.
+    wallpaper = (48, 50, 56)
+    worst, gap = 0, 0
+    for name, (box, shift) in shadow_regions.items():
+        x1, y1, x2, y2 = (round(v * scale) for v in box)
+        for py in range(y1, y2):
+            for px in range(x1, x2):
+                if not outside(px, py):
+                    continue
+                a, b = legacy.getpixel((px, py + shift)), owned.getpixel((px, py))
+                level = max(abs(i - j) for i, j in zip(a, b))
+                if level > 2 and a == wallpaper and sum(b) < sum(wallpaper) - 30:
+                    # Only ever under a bottom arc.
+                    lx, ly = (px + 0.5) / scale, (py + 0.5) / scale
+                    assert y + h - radius <= ly <= y + h and (lx <= x + radius or lx >= x + w - radius), \
+                        ("the shadow differs outside the legacy corner gap", scale, (px, py), a, b)
+                    gap += 1
+                    continue
+                worst = max(worst, level)
+                assert level <= 2, (name, scale, (px, py), a, b)
+    print(f"PASS scale {scale}: titlebar, sides and client identical to the legacy frame, "
+          f"the analytic shadow within {worst} levels of the CPU one ({gap} legacy gap pixels filled)")
 
 
 def run(scale, background=(48, 50, 56), chrome_alpha=0.98):

@@ -771,36 +771,61 @@ static void gate_opaque_cover(struct rediwm_scene_renderer *r, struct wlr_buffer
 }
 
 // ---- Gate 6: analytic shadow ------------------------------------------------------------
+// The CPU chrome's shadow (chrome.zig: ShadowBuffer.rasterize, shadowCoverage,
+// edgeCoverage) at one pixel: smoothstep falloff from the moved shape, cut out of
+// the unmoved one with a one-pixel ramp. Every pixel is compared, corners too.
+static double cpu_shadow(double px, double py, const struct rediwm_pass_shape *s, double oy, double softness) {
+    const double radii[4] = {s->radii[0], s->radii[1], s->radii[2], s->radii[3]};
+    const double d = rediwm_sd_rounded_box(px, py, s->box.x, s->box.y + oy, s->box.width, s->box.height, radii);
+    const double frame_d = rediwm_sd_rounded_box(px, py, s->box.x, s->box.y, s->box.width, s->box.height, radii);
+    double t = 1 - d / softness;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    double inside = .5 - frame_d;
+    inside = inside < 0 ? 0 : inside > 1 ? 1 : inside;
+    return t * t * (3 - 2 * t) * (1 - inside);
+}
 static void gate_shadow(struct rediwm_scene_renderer *r, struct wlr_buffer *buf, struct image *img) {
     const float white[4] = {1, 1, 1, 1};
+    // The default theme: radius 10, softness 24, offset 8, at scale 1 and 1.5.
+    const float scales[] = {1, 1.5f};
+    int worst = 0;
+    for (int si = 0; si < 2; si++) {
+        const float k = scales[si];
+        const float softness = 24 * k, oy = roundf(8 * k), radius = 10 * k;
+        const struct rediwm_pass_shape s = {.box = {80, 60, 200, 120}, .radii = {radius, radius, radius, radius}};
+        struct wlr_render_pass *pass = begin_fill(r, buf, white, NULL);
+        rediwm_scene_pass_add_shadow(pass, &s, &(struct rediwm_pass_shadow){
+            .offset_y = oy, .softness = softness, .color = {0, 0, 0, .5f}, .hide_inside = true});
+        finish(pass);
+        read_image(r, buf, img);
+        for (int y = 0; y < img->h; y++)
+            for (int x = 0; x < img->w; x++) {
+                const int want = (int)lround(255 * (1 - .5 * cpu_shadow(x + .5, y + .5, &s, oy, softness)));
+                const int got = at(img, x, y)[0];
+                if (diff(got, want) > worst) worst = diff(got, want);
+            }
+        const int cx = s.box.x + s.box.width / 2, bottom = s.box.y + s.box.height;
+        int last = 255;
+        for (int dy = (int)oy; dy < 60; dy++) {
+            const int got = at(img, cx, bottom + dy)[0];
+            check(got >= last || dy == (int)oy, "shadow is not monotonic at %d px (%d after %d)", dy, got, last);
+            last = got;
+        }
+        check(at(img, 10, 10)[0] == 255 && at(img, cx, s.box.y + s.box.height / 2)[0] == 255,
+            "shadow reaches outside its footprint or inside the window");
+    }
+    check(worst <= 1, "shadow differs from the CPU chrome's by %d levels", worst);
+    // Not hidden inside: the same draw shows through the window.
     const struct rediwm_pass_shape s = {.box = {80, 60, 200, 120}};
-    const float sigma = 12, oy = 6;
     struct wlr_render_pass *pass = begin_fill(r, buf, white, NULL);
     rediwm_scene_pass_add_shadow(pass, &s, &(struct rediwm_pass_shadow){
-        .offset_y = oy, .sigma = sigma, .color = {0, 0, 0, .5f}, .hide_inside = true});
+        .offset_y = 6, .softness = 24, .color = {0, 0, 0, .5f}});
     finish(pass);
     read_image(r, buf, img);
-    int x = s.box.x + s.box.width / 2, bottom = s.box.y + s.box.height, worst = 0, last = 0;
-    for (int dy = 0; dy < 60; dy++) {
-        // Distance of the pixel centre below the offset shape's bottom edge.
-        double d = (dy + .5) - oy;
-        int want = (int)lround(255 * (1 - .5 * .5 * erfc(d / (sigma * 1.41421356237))));
-        int got = at(img, x, bottom + dy)[0];
-        if (diff(got, want) > worst) worst = diff(got, want);
-        check(got >= last, "shadow is not monotonic at %d px (%d after %d)", dy, got, last);
-        last = got;
-    }
-    check(worst <= 3, "shadow profile differs from the Gaussian edge by %d levels", worst);
-    check(at(img, 10, 10)[0] == 255 && at(img, x, s.box.y + s.box.height / 2)[0] == 255,
-        "shadow reaches outside its footprint or inside the window");
-    // Not hidden inside: the same draw shows through the window.
-    pass = begin_fill(r, buf, white, NULL);
-    rediwm_scene_pass_add_shadow(pass, &s, &(struct rediwm_pass_shadow){
-        .offset_y = oy, .sigma = sigma, .color = {0, 0, 0, .5f}});
-    finish(pass);
-    read_image(r, buf, img);
-    check(at(img, x, s.box.y + s.box.height / 2)[0] < 200, "an unhidden shadow does not show under the shape");
-    printf("PASS: analytic shadow follows the Gaussian edge (max diff %d) and stays out of the window\n", worst);
+    check(at(img, s.box.x + s.box.width / 2, s.box.y + s.box.height / 2)[0] < 200,
+        "an unhidden shadow does not show under the shape");
+    printf("PASS: analytic shadow equals the CPU chrome's at every pixel, corners included (max diff %d), "
+        "and stays out of the window\n", worst);
 }
 
 // ---- Gate 7: a partial repaint across a clip edge equals a full repaint -----------------
@@ -815,7 +840,7 @@ static void draw_scene(struct rediwm_scene_renderer *r, struct wlr_buffer *buf, 
     memcpy(s.border_color, rings[variant], sizeof(rings[variant]));
     struct wlr_render_pass *pass = begin_fill(r, buf, BG, clip);
     rediwm_scene_pass_add_shadow(pass, &s, &(struct rediwm_pass_shadow){
-        .offset_y = 12, .sigma = 12,
+        .offset_y = 12, .softness = 24,
         .color = {0, 0, 0, .4f}, .hide_inside = true, .clip = clip});
     piece(pass, &s, w->title, bodies[variant][0], clip);
     piece(pass, &s, w->client, bodies[variant][1], clip);

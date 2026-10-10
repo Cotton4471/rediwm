@@ -16,7 +16,7 @@ debugging on the host, see AGENTS.md, "Rendering".
 | `zig build test` | In-process unit tests: rasterizers vs. full rasters, UI, config, IPC parser/serializer fixtures, glass damage, projection damage and its typed graph (paint order, unrounded edges, list lifetime), lifecycle/allocation failures, Files/desktop logic. No compositor or bus. |
 | `zig build test-glass` | Real GLES2 pixels on a headless backend (needs a DRM render node). |
 | `zig build test-pass-spike` | The owned-pass spike of `docs/plans/scene-graph-stage1.md`: rounded clip, border, shadow, external-OES texture, backdrop blur, buffer-age damage and cost on headless GLES2 (needs a render node; `-Doptimize=ReleaseSafe` for cost). |
-| `zig build test-scene-pass` | Stage 3's owned GLES2 drawing backend against wlroots: transforms, crops, filters, premultiplied alpha, damage, external-OES (an RGB EGLImage and a linear NV12 dmabuf; needs gbm), GL/EGL state and acquire/release timelines. Needs a compatible render node (`WLR_RENDER_DRM_DEVICE` on multi-GPU machines); also run with `-Doptimize=ReleaseSafe`. The unavailable-acquire test intentionally logs `drmSyncobjTransfer failed`. Stage 4b's rounded-shape gates are in the same fixture: clip against a supersampled reference, piece joins, border/body, premultiplied edges, the opaque cover, shadow, and partial repaint across a clip edge; the 128 parity cases also run through the shaped programs. |
+| `zig build test-scene-pass` | Stage 3's owned GLES2 drawing backend against wlroots: transforms, crops, filters, premultiplied alpha, damage, external-OES (an RGB EGLImage and a linear NV12 dmabuf; needs gbm), GL/EGL state and acquire/release timelines. Needs a compatible render node (`WLR_RENDER_DRM_DEVICE` on multi-GPU machines); also run with `-Doptimize=ReleaseSafe`. The unavailable-acquire test intentionally logs `drmSyncobjTransfer failed`. Stage 4b's rounded-shape gates are in the same fixture: clip against a supersampled reference, piece joins, border/body, premultiplied edges, the opaque cover, shadow, and partial repaint across a clip edge; the 128 parity cases also run through the shaped programs. Stage 4d's shadow gate compares every pixel with the CPU chrome's shadow formula. |
 | `zig build test-lock` | Lock/greeter painter, password editing, PAM transitions (PAM is replaced at link time in test binaries only), greeter↔rediwm-dm conversation. |
 | `zig build test-dm` | rediwm-dm relay state machine and framing. |
 | `zig build test-dbus`, `test-polkit`, `test-polkit-ui`, `test-notifications`, `test-settings-portal`, `test-power`, `test-power-profiles`, `test-tray`, `test-app-activation`, `test-rediwm-session`, `test-layout-autosave`, `test-files`, `test-images` | Subsystem suites; the D-Bus ones re-exec under `dbus-run-session`. |
@@ -112,8 +112,9 @@ origin), `zoom_osd.py` (shared zoom OSD,
 integer/fractional scales, plus workspace focus outlines on server/client
 decorations, mode transitions, fullscreen and default/explicit gaps; under
 `REDIWM_TEST_SCENE_RENDERER=owned` it also runs `frame_parity` (titlebar, sides,
-client and shadow bit-identical to the legacy frame at scales 1 to 2, the
-rightmost column excepted on fractional scales) and checks transparent client
+client bit-identical to the legacy frame at scales 1 to 2, the rightmost column
+excepted on fractional scales; the analytic shadow, corners included, within 2
+levels of the CPU one, apart from the legacy 9-slice's gap under the bottom arcs) and checks transparent client
 corners and that a click on a clipped corner reaches the window below), `switcher.py`,
 `switcher_live.py`, `workspaces.py` (floating rules, Settings/IPC layout controls,
 versioned restart/named-save restoration, duplicate app occurrences, restored tab groups,

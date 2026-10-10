@@ -162,11 +162,54 @@ static inline int rediwm_clip_opaque(const struct rediwm_clip *clip,
   return n;
 }
 
+// Stage 4d: the analytic drop shadow of a window's shape, set on the tree that
+// holds the shadow's transport leaf. `width`, `height` and `radii` are the shape
+// the shadow is kept out of (the window's, at the tree's origin, in source
+// units); the shadow is that shape moved by the offset, at full strength inside
+// it and falling to nothing `softness` units outside with the smoothstep of the
+// CPU chrome (`chrome.shadowCoverage`). Colour premultiplied.
+struct rediwm_shadow_spec {
+  int width, height;
+  double radii[4];
+  double offset_x, offset_y, softness;
+  float color[4];
+};
+struct rediwm_shadow {
+  struct rediwm_clip shape; // in layout space; no border
+  double offset_x, offset_y, softness;
+  float color[4];
+};
+static inline struct rediwm_shadow rediwm_shadow_resolve(struct rediwm_xform t, double x,
+                                                         double y,
+                                                         const struct rediwm_shadow_spec *spec) {
+  struct rediwm_clip_spec shape = {.width = spec->width, .height = spec->height};
+  for (int i = 0; i < 4; i++) shape.radii[i] = spec->radii[i];
+  struct rediwm_shadow shadow = {.shape = rediwm_clip_resolve(t, x, y, &shape),
+                                 .offset_x = spec->offset_x * t.scale,
+                                 .offset_y = spec->offset_y * t.scale,
+                                 .softness = spec->softness * t.scale};
+  for (int i = 0; i < 4; i++) shadow.color[i] = spec->color[i];
+  return shadow;
+}
+static inline bool rediwm_shadow_equal(const struct rediwm_shadow *a,
+                                       const struct rediwm_shadow *b) {
+  if (a->shape.edges.x1 != b->shape.edges.x1 || a->shape.edges.y1 != b->shape.edges.y1 ||
+      a->shape.edges.x2 != b->shape.edges.x2 || a->shape.edges.y2 != b->shape.edges.y2 ||
+      a->offset_x != b->offset_x || a->offset_y != b->offset_y || a->softness != b->softness)
+    return false;
+  for (int i = 0; i < 4; i++)
+    if (a->shape.radii[i] != b->shape.radii[i] || a->color[i] != b->color[i]) return false;
+  return true;
+}
+
 enum rediwm_item_kind {
   REDIWM_ITEM_RECT,    // a solid colour
   REDIWM_ITEM_SURFACE, // the buffer of a client wl_surface
   REDIWM_ITEM_BUFFER,  // a compositor-owned raster: chrome, text, panels, shadows
   REDIWM_ITEM_EFFECT,  // a backdrop effect; its pixels belong to glass
+  // The analytic shadow of `item.shadow`; the leaf transports input, opacity and
+  // the footprint (its edges), never pixels.
+  REDIWM_ITEM_SHADOW,
 };
 // What a leaf draws, apart from where. `color` is premultiplied.
 struct rediwm_content {
@@ -216,4 +259,6 @@ struct rediwm_item {
   // The shape clipping this item with the rest of its tree, or NULL. Owned by the
   // leaf the item belongs to: valid for the callback, until the next resolve.
   const struct rediwm_clip *clip;
+  // Set exactly for REDIWM_ITEM_SHADOW, with the same lifetime as `clip`.
+  const struct rediwm_shadow *shadow;
 };
