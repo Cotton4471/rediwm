@@ -975,10 +975,7 @@ pub fn finishSettlement(input: *Input, generation: u64) void {
         if (session.generation == generation) {
             const toplevel = session.toplevel;
             input.resize_session = null;
-            // Invalidations during the grab were deferred; sample even if this
-            // settling commit reports no further edge damage.
-            toplevel.pending_edge_sample = true;
-            toplevel.syncChrome(true, false, Toplevel.nowMs()) catch {};
+            toplevel.syncChrome(false, Toplevel.nowMs()) catch {};
         }
     }
 }
@@ -1575,10 +1572,7 @@ fn passthroughMotion(input: *Input, time_msec: u32) void {
             const local = toplevel.frameLocal(input.cursor.x, input.cursor.y);
             const has_control = toplevel.controlAt(hit_chrome.sx, hit_chrome.sy) != null or toplevel.tabAt(hit_chrome.sx, hit_chrome.sy) != .none;
             toplevel.hoverTab(hit_chrome.sx, hit_chrome.sy);
-            const radius: f32 = toplevel.cornerRadius();
-            const footer = chrome.footerHeight(radius);
-
-            if (resize.detectResizeEdges(local.x, local.y, toplevel.chrome_width, toplevel.chrome_height, toplevel.titlebarHeight(), chrome.frame_border, footer, has_control)) |edges| {
+            if (resize.detectResizeEdges(local.x, local.y, toplevel.chrome_width, toplevel.chrome_height, toplevel.titlebarHeight(), chrome.frame_border, chrome.frame_border, has_control)) |edges| {
                 input.hovered_resize_edges = edges;
                 input.setHover(toplevel, null);
                 input.setNamedCursor(edges.cursorName());
@@ -2077,9 +2071,7 @@ fn processClientButton(
             if (button == btn_left) {
                 const local = res.toplevel.frameLocal(input.cursor.x, input.cursor.y);
                 const has_control = res.toplevel.controlAt(res.sx, res.sy) != null or res.toplevel.tabAt(res.sx, res.sy) != .none;
-                const radius: f32 = res.toplevel.cornerRadius();
-                const footer = chrome.footerHeight(radius);
-                if (resize.detectResizeEdges(local.x, local.y, res.toplevel.chrome_width, res.toplevel.chrome_height, res.toplevel.titlebarHeight(), chrome.frame_border, footer, has_control)) |edges| {
+                if (resize.detectResizeEdges(local.x, local.y, res.toplevel.chrome_width, res.toplevel.chrome_height, res.toplevel.titlebarHeight(), chrome.frame_border, chrome.frame_border, has_control)) |edges| {
                     input.startResize(res.toplevel, edges.toWlr(), device, button);
                     return;
                 }

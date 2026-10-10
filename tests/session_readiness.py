@@ -36,7 +36,7 @@ time.sleep(60)
         config.write_text('[compositor]\nxwayland = false\n' +
                           f'[[autostart]]\ncmd = "{command}"\n' * 2)
         env = dict(os.environ, XDG_RUNTIME_DIR=directory, WLR_BACKENDS='headless',
-                   WLR_RENDERER='pixman', WLR_HEADLESS_OUTPUTS='1', REDIWM_CONFIG=str(config),
+                   WLR_RENDERER='gles2', WLR_HEADLESS_OUTPUTS='1', REDIWM_CONFIG=str(config),
                    REDIWM_SESSION_FD=str(child.fileno()), REDIWM_LOGIN_SESSION='must-not-escape',
                    XDG_CACHE_HOME=str(tmp / 'cache'), DISPLAY=':host',
                    XDG_STATE_HOME=str(tmp / 'state'),
@@ -118,7 +118,7 @@ def test_restart_during_publication():
         config = tmp / 'config.toml'
         config.write_text('[compositor]\nxwayland = false\n')
         env = dict(os.environ, XDG_RUNTIME_DIR=directory, WLR_BACKENDS='headless',
-                   WLR_RENDERER='pixman', WLR_HEADLESS_OUTPUTS='1', REDIWM_CONFIG=str(config),
+                   WLR_RENDERER='gles2', WLR_HEADLESS_OUTPUTS='1', REDIWM_CONFIG=str(config),
                    REDIWM_SESSION_FD=str(child.fileno()), XDG_STATE_HOME=str(tmp / 'state'),
                    XDG_CACHE_HOME=str(tmp / 'cache'), PULSE_SERVER='unix:' + str(tmp / 'missing-pulse'),
                    DBUS_SYSTEM_BUS_ADDRESS='unix:path=/nonexistent-rediwm-system',
@@ -168,7 +168,7 @@ def test_restart_behind_lock():
         config = tmp / 'config.toml'
         config.write_text('[compositor]\nxwayland = false\n')
         env = dict(os.environ, XDG_RUNTIME_DIR=directory, WLR_BACKENDS='headless',
-                   WLR_RENDERER='pixman', WLR_HEADLESS_OUTPUTS='1', REDIWM_CONFIG=str(config),
+                   WLR_RENDERER='gles2', WLR_HEADLESS_OUTPUTS='1', REDIWM_CONFIG=str(config),
                    REDIWM_SESSION_FD=str(child.fileno()), XDG_STATE_HOME=str(tmp / 'state'),
                    XDG_CACHE_HOME=str(tmp / 'cache'), PULSE_SERVER='unix:' + str(tmp / 'missing-pulse'),
                    DBUS_SYSTEM_BUS_ADDRESS='unix:path=/nonexistent-rediwm-system',

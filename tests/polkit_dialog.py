@@ -22,7 +22,7 @@ from xwayland import wait_for, wayland_display_name
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def run(scale='1', renderer='pixman'):
+def run(scale='1', renderer='gles2'):
     with tempfile.TemporaryDirectory(prefix='rediwm-polkit-ui-') as directory:
         tmp = Path(directory)
         compile_client(tmp)

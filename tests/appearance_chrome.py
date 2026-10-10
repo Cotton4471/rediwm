@@ -41,7 +41,7 @@ def run(scale, external_theme=False):
             env_extra["REDIWM_THEME"] = str(theme_path)
         process, log = spawn_compositor(
             tmp, scale=str(scale), config_content=config,
-            renderer=os.environ.get("REDIWM_TEST_RENDERER", "pixman"),
+            renderer=os.environ.get("REDIWM_TEST_RENDERER", "gles2"),
             env_extra=env_extra)
         client = None
         focus_client = None

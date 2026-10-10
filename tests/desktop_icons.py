@@ -22,7 +22,7 @@ def run():
         tmp = Path(directory)
         desktop = tmp / 'Desktop'
         env = dict(os.environ, XDG_RUNTIME_DIR=directory, XDG_CONFIG_HOME=str(tmp/'config'), XDG_CACHE_HOME=str(tmp/'cache'), XDG_STATE_HOME=str(tmp/'state'),
-                   WLR_BACKENDS='headless', REDIWM_FILES_DEVICES='0', WLR_HEADLESS_OUTPUTS='1', WLR_RENDERER=os.getenv('REDIWM_TEST_RENDERER', 'pixman'),
+                   WLR_BACKENDS='headless', REDIWM_FILES_DEVICES='0', WLR_HEADLESS_OUTPUTS='1', WLR_RENDERER=os.getenv('REDIWM_TEST_RENDERER', 'gles2'),
                    REDIWM_SCALE='1', REDIWM_DESKTOP_BUILTINS="0", REDIWM_DESKTOP_DIR=str(desktop))
         config_path = tmp/'rediwm-config.toml'
         config_path.write_text('[compositor]\ndefault_file_manager = "rediwm-fixture-files.desktop"\n')

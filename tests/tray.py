@@ -116,7 +116,7 @@ def test(scale):
         events = runtime / 'events'
         # Start before the watcher to verify discovery when it appears.
         fixture = subprocess.Popen([sys.executable, __file__, '--service', str(events)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        proc, log = spawn_compositor(runtime, outputs='1', scale=scale, renderer=os.environ.get('REDIWM_TEST_RENDERER', 'pixman'),
+        proc, log = spawn_compositor(runtime, outputs='1', scale=scale, renderer=os.environ.get('REDIWM_TEST_RENDERER', 'gles2'),
             env_extra={'WLR_RENDERER_ALLOW_SOFTWARE': '1', 'REDIWM_FORCE_DBUS': '1', 'PULSE_SERVER': 'unix:/nonexistent/rediwm-test-audio'})
         try:
             with IPCClient(runtime) as ipc:
@@ -199,7 +199,7 @@ def test(scale):
                 second = runtime / 'second'
                 second.mkdir()
                 other, other_log = spawn_compositor(second, outputs='1', scale=scale,
-                    renderer=os.environ.get('REDIWM_TEST_RENDERER', 'pixman'),
+                    renderer=os.environ.get('REDIWM_TEST_RENDERER', 'gles2'),
                     env_extra={'WLR_RENDERER_ALLOW_SOFTWARE': '1', 'REDIWM_FORCE_DBUS': '1', 'PULSE_SERVER': 'unix:/nonexistent/rediwm-test-audio'})
                 try:
                     with IPCClient(second) as other_ipc:

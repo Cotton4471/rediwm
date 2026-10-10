@@ -50,7 +50,7 @@ def advance_idle_time(ipc, seconds):
 
 def run():
     scale = float(os.environ.get("REDIWM_TEST_SCALE", "1"))
-    renderer = os.environ.get("REDIWM_TEST_RENDERER", "pixman")
+    renderer = os.environ.get("REDIWM_TEST_RENDERER", "gles2")
     with tempfile.TemporaryDirectory(prefix="rediwm-idle-") as directory:
         tmp = Path(directory)
         build_client(tmp)

@@ -42,7 +42,7 @@ def run():
             config = config.replace('[compositor]\n', '[compositor]\ndesktop_mode = "workspaces"\n', 1)
         process, log = spawn_compositor(tmp, config_content=config,
             scale=os.environ.get("REDIWM_TEST_SCALE", "1"),
-            renderer=os.environ.get("REDIWM_TEST_RENDERER", "pixman"),
+            renderer=os.environ.get("REDIWM_TEST_RENDERER", "gles2"),
             env_extra={"DBUS_SESSION_BUS_ADDRESS": "", "XDG_DATA_HOME": str(tmp / "data"),
                        "REDIWM_NO_GLASS": "1"})
         clients = []

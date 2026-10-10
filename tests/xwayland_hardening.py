@@ -15,7 +15,7 @@ def run():
         build_client(tmp)
         compositor, log = spawn_compositor(
             tmp, config_content="[compositor]\nxwayland = true\nxwayland_scale = 1\n",
-            renderer=os.environ.get("REDIWM_TEST_RENDERER", "pixman"),
+            renderer=os.environ.get("REDIWM_TEST_RENDERER", "gles2"),
             env_extra={"DBUS_SESSION_BUS_ADDRESS": "", "DISPLAY": "",
                        "XAUTHORITY": "", "XDG_CACHE_HOME": str(tmp / "cache")})
         client = None

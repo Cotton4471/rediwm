@@ -37,7 +37,7 @@ def run(scale):
                    XDG_CONFIG_HOME=str(tmp / "config"), XDG_DATA_HOME=str(tmp / "data"),
                    XDG_CACHE_HOME=str(tmp / "cache"), XDG_STATE_HOME=str(tmp / "state"), REDIWM_CONFIG=str(config),
                    WLR_BACKENDS="headless", REDIWM_FILES_DEVICES="0", WLR_HEADLESS_OUTPUTS="1",
-                   WLR_RENDERER=os.environ.get("REDIWM_TEST_RENDERER", "pixman"),
+                   WLR_RENDERER=os.environ.get("REDIWM_TEST_RENDERER", "gles2"),
                    REDIWM_SCALE=str(scale), DBUS_SESSION_BUS_ADDRESS="")
         env.pop("WAYLAND_DISPLAY", None)
         env.pop("REDIWM_SOCKET", None)

@@ -116,7 +116,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=ROOT / "zig-out/bin/rediwm")
     parser.add_argument("--runs", type=int, default=7)
-    parser.add_argument("--renderer", choices=("pixman", "gles2"), default="pixman")
+    parser.add_argument("--renderer", choices=("pixman", "gles2"), default="gles2")
     parser.add_argument("--scale", default="1")
     parser.add_argument("--native-scaling", action="store_true")
     parser.add_argument("--cold-cache", action="store_true")

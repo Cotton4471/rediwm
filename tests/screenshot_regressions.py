@@ -17,7 +17,7 @@ def cpu_seconds(process):
 
 
 def selection_work(tmp):
-    renderer = os.environ.get("REDIWM_TEST_RENDERER", "pixman")
+    renderer = os.environ.get("REDIWM_TEST_RENDERER", "gles2")
     process, log = spawn_compositor(tmp, scale="1.5", renderer=renderer, config_content="[compositor]\nxwayland = false\n", env_extra={"HOME": str(tmp), "WLR_RENDERER_ALLOW_SOFTWARE": "1"})
     try:
         with IPCClient(tmp, timeout=15) as ipc:

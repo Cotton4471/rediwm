@@ -37,7 +37,7 @@ const chrome = @import("../chrome.zig");
 
 const DRM_FORMAT_ARGB8888: u32 = 0x34325241;
 
-/// The window's rounded shape in capture pixels (see `chrome.analytic_frames`
+/// The window's rounded shape in capture pixels (see `chrome.shapes`
 /// and scene_pass.h). The capture is of the client alone, so the shape only
 /// matters where it cuts the client: its two bottom corners, which stay
 /// transparent here as they are on screen.
@@ -171,7 +171,7 @@ pub const WindowCaptureSource = struct {
     /// The frame's shape relative to the capture: the frame's origin lies up and
     /// left of the content by the content's own offset in it.
     fn frameShape(self: *WindowCaptureSource, off_x: i32, off_y: i32) ?PassShape {
-        if (!chrome.analytic_frames) return null;
+        if (!chrome.shapes) return null;
         const toplevel = self.manager.server.findToplevelById(self.window_id) orelse return null;
         const radius = toplevel.cornerRadius();
         if (!toplevel.hasServerDecorations() or radius <= 0 or toplevel.chrome_width <= 0 or toplevel.chrome_height <= 0) return null;

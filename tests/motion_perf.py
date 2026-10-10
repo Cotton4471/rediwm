@@ -38,7 +38,7 @@ def run(args):
                    XDG_DATA_HOME=str(tmp / "data"), REDIWM_DESKTOP_DIR=str(desktop_dir),
                    REDIWM_CONFIG=str(tmp / "config.toml"), WLR_BACKENDS="headless",
                    WLR_HEADLESS_OUTPUTS="1", WLR_RENDERER_ALLOW_SOFTWARE="1",
-                   WLR_RENDERER=os.environ.get("REDIWM_TEST_RENDERER", "pixman"),
+                   WLR_RENDERER=os.environ.get("REDIWM_TEST_RENDERER", "gles2"),
                    REDIWM_SCALE=os.environ.get("REDIWM_TEST_SCALE", "1"),
                    REDIWM_TEST_DECORATION="server", DBUS_SESSION_BUS_ADDRESS="")
         env.pop("WAYLAND_DISPLAY", None)

@@ -14,7 +14,7 @@ def run(scale):
     with tempfile.TemporaryDirectory(prefix='rediwm-switcher-live-') as directory:
         tmp = Path(directory)
         build_client(tmp)
-        proc, log = spawn_compositor(tmp, scale=scale, renderer=os.environ.get('REDIWM_TEST_RENDERER', 'pixman'))
+        proc, log = spawn_compositor(tmp, scale=scale, renderer=os.environ.get('REDIWM_TEST_RENDERER', 'gles2'))
         clients = []
         try:
             with IPCClient(tmp) as ipc:

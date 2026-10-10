@@ -25,7 +25,7 @@ def run(browser=False, select=False, list_view=False):
         for name in names:
             (home / name).write_text("drag upload payload")
         comp, log = spawn_compositor(tmp, config_content="[compositor]\nxwayland = false\n",
-                                     renderer=os.environ.get("REDIWM_TEST_RENDERER", "pixman"),
+                                     renderer=os.environ.get("REDIWM_TEST_RENDERER", "gles2"),
                                      env_extra={"HOME": str(home)})
         peers = []
         try:
@@ -177,7 +177,7 @@ def run_pin():
         (home / "note.txt").write_text("pin me")
         state = tmp / "state/rediwm/files-places"
         comp, log = spawn_compositor(tmp, config_content="[compositor]\nxwayland = false\n",
-                                     renderer=os.environ.get("REDIWM_TEST_RENDERER", "pixman"),
+                                     renderer=os.environ.get("REDIWM_TEST_RENDERER", "gles2"),
                                      env_extra={"HOME": str(home)})
         files = None
         try:

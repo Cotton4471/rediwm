@@ -26,7 +26,7 @@ def run():
         font = subprocess.check_output(["fc-match", "-f", "%{file}", "sans"], text=True)
         compositor, log = spawn_compositor(
             tmp, config_content="[compositor]\nxwayland = false\n",
-            renderer=os.environ.get("REDIWM_TEST_RENDERER", "pixman"),
+            renderer=os.environ.get("REDIWM_TEST_RENDERER", "gles2"),
             env_extra={"DBUS_SESSION_BUS_ADDRESS": "", "XDG_CACHE_HOME": str(tmp / "cache")})
         viewer = None
         try:

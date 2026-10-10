@@ -13,7 +13,7 @@ def run():
         tmp = Path(directory)
         base = '[input]\ninvert_scroll = false\n[animations]\nenabled = false\n[compositor]\nxwayland = false\n'
         process, log = spawn_compositor(tmp, scale=os.getenv('REDIWM_TEST_SCALE', '1'),
-            renderer=os.getenv('REDIWM_TEST_RENDERER', 'pixman'), config_content=base,
+            renderer=os.getenv('REDIWM_TEST_RENDERER', 'gles2'), config_content=base,
             env_extra={'DBUS_SESSION_BUS_ADDRESS': '', 'XDG_CACHE_HOME': str(tmp/'cache'),
                        'XDG_CONFIG_HOME': str(tmp/'config'), 'REDIWM_DESKTOP_DIR': str(tmp/'Desktop')})
         try:

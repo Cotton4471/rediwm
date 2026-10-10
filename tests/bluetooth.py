@@ -112,7 +112,7 @@ def run(scale):
     fake = start_fake()
     with tempfile.TemporaryDirectory(prefix='rediwm-bluetooth-') as directory:
         tmp = Path(directory)
-        process, log = spawn_compositor(tmp, scale=scale, renderer=os.environ.get('REDIWM_TEST_RENDERER','pixman'), config_content='[compositor]\nxwayland = false\n', env_extra={
+        process, log = spawn_compositor(tmp, scale=scale, renderer=os.environ.get('REDIWM_TEST_RENDERER','gles2'), config_content='[compositor]\nxwayland = false\n', env_extra={
             'DBUS_SYSTEM_BUS_ADDRESS': os.environ['DBUS_SESSION_BUS_ADDRESS'], 'DBUS_SESSION_BUS_ADDRESS': '',
             'XDG_CACHE_HOME': str(tmp), 'PIPEWIRE_RUNTIME_DIR': str(tmp), 'PULSE_SERVER': 'unix:/nonexistent-rediwm-test-pulse',
         })

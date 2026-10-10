@@ -43,7 +43,7 @@ def run():
         config.write_text("")
         env = dict(os.environ, HOME=str(home), XDG_RUNTIME_DIR=directory,
                    REDIWM_CONFIG=str(config), WLR_BACKENDS="headless", REDIWM_FILES_DEVICES="0",
-                   WLR_HEADLESS_OUTPUTS="1", WLR_RENDERER="pixman",
+                   WLR_HEADLESS_OUTPUTS="1", WLR_RENDERER="gles2",
                    REDIWM_SCALE="1", XDG_STATE_HOME=str(tmp / "state"),
                    REDIWM_IPC_AUTOMATION="1")
         env.pop("WAYLAND_DISPLAY", None)

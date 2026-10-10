@@ -31,7 +31,7 @@ snap_to_edges = false
         if os.getenv("REDIWM_TEST_NEGATIVE") == "1":
             canvas += '\n[[outputs]]\nname = "HEADLESS-1"\nx = 0\ny = 0\n[[outputs]]\nname = "HEADLESS-2"\nx = -1280\ny = -120\n'
         process, log = spawn_compositor(tmp, outputs=str(outputs), config_content=canvas,
-            renderer=os.getenv("REDIWM_TEST_RENDERER", "pixman"), scale=os.getenv("REDIWM_TEST_SCALE", "1"),
+            renderer=os.getenv("REDIWM_TEST_RENDERER", "gles2"), scale=os.getenv("REDIWM_TEST_SCALE", "1"),
             env_extra={"DBUS_SESSION_BUS_ADDRESS": "", "REDIWM_FILES_DEVICES": "0"})
         clients = []
         try:
@@ -235,7 +235,7 @@ enabled = false
         if outputs > 1 and os.getenv("REDIWM_TEST_NEGATIVE") == "1":
             config += '\n[[outputs]]\nname = "HEADLESS-1"\nx = 0\ny = 0\n[[outputs]]\nname = "HEADLESS-2"\nx = -1280\ny = -120\n'
         process, log = spawn_compositor(tmp, outputs=str(outputs), config_content=config,
-            renderer=os.getenv("REDIWM_TEST_RENDERER", "pixman"), scale=os.getenv("REDIWM_TEST_SCALE", "1"),
+            renderer=os.getenv("REDIWM_TEST_RENDERER", "gles2"), scale=os.getenv("REDIWM_TEST_SCALE", "1"),
             env_extra={"DBUS_SESSION_BUS_ADDRESS": "", "XDG_DATA_HOME": str(tmp / "data")})
         clients = []
         try:
@@ -615,7 +615,7 @@ window_gap = 8
 "Super+Shift+Left" = "tile_left"
 '''
         process, log = spawn_compositor(tmp, config_content=config,
-            renderer=os.getenv("REDIWM_TEST_RENDERER", "pixman"), scale=os.getenv("REDIWM_TEST_SCALE", "1"),
+            renderer=os.getenv("REDIWM_TEST_RENDERER", "gles2"), scale=os.getenv("REDIWM_TEST_SCALE", "1"),
             env_extra={"DBUS_SESSION_BUS_ADDRESS": ""})
         clients = []
         try:
@@ -797,7 +797,7 @@ def rollout_acceptance():
                 value += '[[outputs]]\nname = "HEADLESS-2"\nscale = 1.5\nx = 1600\ny = -120\n'
             return value
         process, log = spawn_compositor(tmp, outputs=str(outputs), config_content=config(), scale="auto",
-            renderer=os.getenv("REDIWM_TEST_RENDERER", "pixman"),
+            renderer=os.getenv("REDIWM_TEST_RENDERER", "gles2"),
             env_extra={"DBUS_SESSION_BUS_ADDRESS": "", "XDG_CACHE_HOME": str(tmp / "cache")})
         clients = []
         try:
@@ -953,7 +953,7 @@ def xwayland_routing():
         if outputs > 1 and os.getenv("REDIWM_TEST_NEGATIVE") == "1":
             config += '\n[[outputs]]\nname = "HEADLESS-1"\nx = 0\ny = 0\n[[outputs]]\nname = "HEADLESS-2"\nx = -1280\ny = -120\n'
         process, log = spawn_compositor(tmp, outputs=str(outputs), config_content=config,
-            renderer=os.getenv("REDIWM_TEST_RENDERER", "pixman"),
+            renderer=os.getenv("REDIWM_TEST_RENDERER", "gles2"),
             scale=os.getenv("REDIWM_TEST_SCALE", "1"), env_extra={"DBUS_SESSION_BUS_ADDRESS": ""})
         children = []
         try:
@@ -1059,7 +1059,7 @@ def persistence_controls():
             runtime.mkdir()
             content = config if phase == 1 else config.replace('desktop_mode = "canvas"', 'desktop_mode = "workspaces"')
             process, log = spawn_compositor(runtime, outputs=outputs, config_content=content,
-                renderer=os.getenv("REDIWM_TEST_RENDERER", "pixman"), scale=os.getenv("REDIWM_TEST_SCALE", "1"),
+                renderer=os.getenv("REDIWM_TEST_RENDERER", "gles2"), scale=os.getenv("REDIWM_TEST_SCALE", "1"),
                 env_extra={"DBUS_SESSION_BUS_ADDRESS": "", "XDG_STATE_HOME": str(state), "XDG_DATA_HOME": str(tmp / "data"), "REDIWM_FILES_DEVICES": "0"})
             clients = []
             try:

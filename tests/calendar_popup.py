@@ -19,7 +19,7 @@ def run(scale):
     with tempfile.TemporaryDirectory(prefix="rediwm-calendar-") as directory:
         tmp = Path(directory)
         # Pixel equality checks need a settled popup, not its opening slide.
-        process, log = spawn_compositor(tmp, scale=scale, renderer=os.environ.get("REDIWM_TEST_RENDERER", "pixman"), config_content='[compositor]\nxwayland = false\n[animations]\nenabled = false\n',
+        process, log = spawn_compositor(tmp, scale=scale, renderer=os.environ.get("REDIWM_TEST_RENDERER", "gles2"), config_content='[compositor]\nxwayland = false\n[animations]\nenabled = false\n',
                                         env_extra={"DBUS_SESSION_BUS_ADDRESS": "", "XDG_CACHE_HOME": directory, "TZ": "Pacific/Auckland", "LC_ALL": "C", "LANGUAGE": "en"})
         try:
             with IPCClient(tmp, timeout=15) as ipc:

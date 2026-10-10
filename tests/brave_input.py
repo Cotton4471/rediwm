@@ -20,7 +20,7 @@ def run():
     browser = os.environ.get("REDIWM_TEST_BRAVE") or shutil.which("brave")
     if not browser:
         raise SystemExit("Brave not found; set REDIWM_TEST_BRAVE to its executable")
-    renderer = os.environ.get("REDIWM_TEST_RENDERER", "pixman")
+    renderer = os.environ.get("REDIWM_TEST_RENDERER", "gles2")
     with tempfile.TemporaryDirectory(prefix="rediwm-brave-input-") as directory:
         tmp = Path(directory)
         # Report DOM changes through the ordinary window title: no devtools

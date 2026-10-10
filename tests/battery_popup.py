@@ -26,7 +26,7 @@ def run(scale):
             (supply / "uevent").write_text(f"POWER_SUPPLY_TYPE=Battery\nPOWER_SUPPLY_CAPACITY={percent}\nPOWER_SUPPLY_STATUS={state}\n" + (
                 "POWER_SUPPLY_ENERGY_FULL=57000000\nPOWER_SUPPLY_ENERGY_FULL_DESIGN=90000000\nPOWER_SUPPLY_CYCLE_COUNT=482\n" if details else ""))
             fake = start_fake()
-            process, log = spawn_compositor(tmp, scale=scale, renderer=os.environ.get("REDIWM_TEST_RENDERER", "pixman"), config_content='[compositor]\nxwayland = false\n', env_extra={
+            process, log = spawn_compositor(tmp, scale=scale, renderer=os.environ.get("REDIWM_TEST_RENDERER", "gles2"), config_content='[compositor]\nxwayland = false\n', env_extra={
                 "LD_PRELOAD": str(hook), "REDIWM_TEST_BATTERY_DIR": str(supply.parent),
                 "DBUS_SYSTEM_BUS_ADDRESS": os.environ["DBUS_SESSION_BUS_ADDRESS"],
                 "DBUS_SESSION_BUS_ADDRESS": "", "XDG_CACHE_HOME": str(tmp),

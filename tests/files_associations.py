@@ -68,7 +68,7 @@ def run():
                    XDG_CONFIG_HOME=str(config), XDG_CONFIG_DIRS=str(config), XDG_STATE_HOME=str(tmp / "state"),
                    XDG_CURRENT_DESKTOP="RediWM", BROWSER="/bin/false", REDIWM_ICON_THEME="hicolor",
                    XDG_RUNTIME_DIR=str(tmp), REDIWM_CONFIG=str(tmp / "rediwm-config.toml"),
-                   WLR_BACKENDS="headless", REDIWM_FILES_DEVICES="0", WLR_RENDERER="pixman", WLR_HEADLESS_OUTPUTS="1", REDIWM_SCALE="1",
+                   WLR_BACKENDS="headless", REDIWM_FILES_DEVICES="0", WLR_RENDERER="gles2", WLR_HEADLESS_OUTPUTS="1", REDIWM_SCALE="1",
                    DBUS_SYSTEM_BUS_ADDRESS="unix:path=/nonexistent-rediwm-test-system-bus",
                    DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent-rediwm-associations")
         for key in ("WAYLAND_DISPLAY", "DISPLAY", "XAUTHORITY", "REDIWM_SOCKET", "WAYLAND_DEBUG"):

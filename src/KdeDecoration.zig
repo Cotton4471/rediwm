@@ -156,5 +156,5 @@ fn handleDestroy(_: *Resource, self: *Decoration) void {
     if (self.surface != null) self.surface_destroy.link.remove();
     self.link.remove();
     gpa.destroy(self);
-    if (toplevel) |top| top.syncChrome(true, true, Toplevel.nowMs()) catch {};
+    if (toplevel) |top| top.syncChrome(true, Toplevel.nowMs()) catch {};
 }

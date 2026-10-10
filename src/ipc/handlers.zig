@@ -161,7 +161,7 @@ pub fn handleRequest(
             const geometry_box = toplevel.clientGeometry();
             const decorated = toplevel.hasServerDecorations();
             const radius: f32 = toplevel.cornerRadius();
-            const footer = chrome.footerHeight(radius);
+            const footer = chrome.frame_border;
 
             const client_box: protocol.RectData = .{
                 .x = toplevel.x + if (decorated) chrome.frame_border else 0,
@@ -221,8 +221,10 @@ pub fn handleRequest(
                         .configure_serial = toplevel.scheduledSerial(),
                         .ack_serial = toplevel.ackSerial(),
                         .outputs = try out_names.toOwnedSlice(allocator),
-                        .skirt_fill = toplevel.skirt_fill,
-                        .edge_sample = @tagName(toplevel.edge_kind),
+                        // Kept for the wire format: frames have had no skirt to
+                        // sample since the window shapes (stage 4e).
+                        .skirt_fill = null,
+                        .edge_sample = "none",
                     },
                 },
             };
@@ -767,7 +769,7 @@ fn handleAction(
                     _ = toplevel.requestSize(saved.width, saved.height);
                 }
             }
-            toplevel.syncChrome(false, false, Toplevel.nowMs()) catch {};
+            toplevel.syncChrome(false, Toplevel.nowMs()) catch {};
             return .{ .ok = .handled };
         },
         .spawn => |p| {
@@ -1153,12 +1155,12 @@ fn handleAction(
 
             const target = std.meta.stringToEnum(DumpTarget, p.target) orelse return .{ .err = "UnknownTarget" };
             switch (target) {
-                .titlebar, .skirt => {
-                    const win_id = p.window_id orelse return .{ .err = "InvalidRequest: titlebar/skirt requires window_id" };
+                .titlebar => {
+                    const win_id = p.window_id orelse return .{ .err = "InvalidRequest: titlebar requires window_id" };
                     const toplevel = findToplevelById(server, win_id) orelse return .{ .err = "UnknownWindow" };
                     if (!toplevel.hasServerDecorations()) return .{ .err = "WindowHasNoServerDecorations" };
                     scale = toplevel.render_scale;
-                    target_buf = if (target == .titlebar) toplevel.titlebar_buffer.buffer else toplevel.footer_buffer.buffer;
+                    target_buf = toplevel.titlebar_buffer.buffer;
                 },
                 // Each tag names the Output field holding that panel.
                 .control_center => {
@@ -1849,7 +1851,6 @@ pub const PanelRegistryEntry = struct {
 /// `dump_buffer` targets; the panel tags double as `Output` field names.
 const DumpTarget = enum {
     titlebar,
-    skirt,
     taskbar,
     start_menu,
     control_center,
@@ -1861,7 +1862,7 @@ const DumpTarget = enum {
             .start_menu => "StartMenuNotOpen",
             .control_center => "ControlCenterNotOpen",
             .power_menu => "PowerMenuNotOpen",
-            .titlebar, .skirt => @compileError("window targets have no panel"),
+            .titlebar => @compileError("window targets have no panel"),
         };
     }
 };

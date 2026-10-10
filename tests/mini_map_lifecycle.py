@@ -14,7 +14,7 @@ def run():
         tmp = Path(directory)
         base = '[compositor]\nxwayland = false\nmini_map_hide_ms = 500\n'
         proc, log = spawn_compositor(tmp, outputs='2', config_content=base,
-            renderer=os.getenv('REDIWM_TEST_RENDERER', 'pixman'),
+            renderer=os.getenv('REDIWM_TEST_RENDERER', 'gles2'),
             env_extra={'DBUS_SESSION_BUS_ADDRESS':'', 'XDG_CACHE_HOME':str(tmp/'cache'), 'XDG_CONFIG_HOME':str(tmp/'config')})
         client = None
         try:

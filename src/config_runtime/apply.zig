@@ -23,8 +23,6 @@ const themeEql = loader.themeEql;
 const wheelAccel = loader.wheelAccel;
 pub const applyInactiveOpacity = applyWindowOpacity;
 pub fn applyDiff(server: *Server, old: Config, new: Config) void {
-    if (old.compositor.scene_renderer != new.compositor.scene_renderer)
-        log.warn("[compositor] scene_renderer takes effect after restart", .{});
     server.world.workspaces.setMode(server, new.compositor.desktop_mode == .workspaces);
     server.window_tabs.reconfigure(server);
     if (old.compositor.window_gap != new.compositor.window_gap) server.world.workspaces.tiler.schedule(server);
@@ -118,7 +116,7 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
         if (toplevel.live_rules.decorations != prev_rules.decorations) {
             if (toplevel.decoration) |d| d.applyMode();
             if (toplevel.kde_decoration) |d| d.applyMode(false);
-            toplevel.syncChrome(true, true, @import("../Toplevel.zig").nowMs()) catch {};
+            toplevel.syncChrome(true, @import("../Toplevel.zig").nowMs()) catch {};
         }
         if (toplevel.live_rules.skip_taskbar != prev_rules.skip_taskbar) {
             any_taskbar_changed = true;

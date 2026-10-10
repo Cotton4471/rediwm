@@ -142,14 +142,14 @@ backend: Backend,
 // Keeping it separate lets the client remain entirely undecorated.
 frame_tree: *wlr.SceneTree,
 shadow_tree: *wlr.SceneTree,
-shadow_corners: [4]*wlr.SceneBuffer,
-shadow_edges: [4]*wlr.SceneBuffer,
-shadow_fallback: *wlr.SceneBuffer,
+// The analytic shadow's leaf: no buffer, only footprint, opacity and input.
+shadow_node: *wlr.SceneBuffer,
 resize_grab: *wlr.SceneBuffer,
 glass_effect: ?*glass.Effect = null,
 titlebar_buffer: *wlr.SceneBuffer,
-footer_buffer: *wlr.SceneBuffer,
-side_fills: [2]*wlr.SceneRect,
+// Body under the border ring beside and below the client (left, right, bottom).
+frame_fills: [3]*wlr.SceneRect,
+// The outline of a window that draws its own decorations.
 border_rects: [4]*wlr.SceneRect,
 content_tree: *wlr.SceneTree,
 scene_tree: *wlr.SceneTree,
@@ -235,28 +235,13 @@ hover_anim: anim.Anim = .{},
 chip_pos: anim.Anim = .{},
 chip_alpha: anim.Anim = .{ .property = .opacity },
 last_painted_hover: f32 = 0,
-skirt_fill: ?[4]f32 = null,
 /// The window opacity the border colour of the shape was last given, so a
 /// hover or focus repaint keeps the ring as faded as the body.
 shape_opacity: f32 = 1,
-edge_kind: chrome.EdgeSampleKind = .uninitialized,
-edge_mapping: ?chrome.EdgeMapping = null,
-pending_edge_sample: bool = false,
-edge_sampled_seq: u32 = 0,
-// `wlr_texture_preferred_read_format` binds the GL context and an FBO, so
-// it is asked once per client texture rather than on every commit.
-edge_format_texture: ?*wlr.Texture = null,
-edge_format: u32 = 0,
-edge_row_scratch: []u32 = &.{},
-// Explicit-sync clients commit before their GPU finishes the buffer; a sample
-// of an unsignalled buffer is retried from here once it signals.
-edge_acquire_wait: ?*explicit_sync.AcquireWait = null,
 // Inputs that produced the buffers currently attached to the scene nodes.
 // syncChrome / syncShadow skip a re-raster when these still match.
 last_titlebar: ?chrome.TitlebarMemo = null,
-last_footer: ?chrome.FooterMemo = null,
 cached_titlebar: ?*chrome.ChromeBuffer = null,
-cached_footer: ?*chrome.ChromeBuffer = null,
 last_shadow: ?chrome.ShadowMemo = null,
 // xdg-shell has no minimized state of its own; this is purely a
 // compositor-side hint that hides the frame while the client stays mapped.
@@ -307,14 +292,11 @@ pub const RestoreGeometry = @import("undo.zig").Geometry;
 const ChromeNodes = struct {
     frame_tree: *wlr.SceneTree,
     shadow_tree: *wlr.SceneTree,
-    shadow_corners: [4]*wlr.SceneBuffer,
-    shadow_edges: [4]*wlr.SceneBuffer,
-    shadow_fallback: *wlr.SceneBuffer,
+    shadow_node: *wlr.SceneBuffer,
     resize_grab: *wlr.SceneBuffer,
     glass_effect: ?*glass.Effect,
     titlebar_buffer: *wlr.SceneBuffer,
-    footer_buffer: *wlr.SceneBuffer,
-    side_fills: [2]*wlr.SceneRect,
+    frame_fills: [3]*wlr.SceneRect,
     border_rects: [4]*wlr.SceneRect,
     content_tree: *wlr.SceneTree,
 };
@@ -341,33 +323,17 @@ fn createChromeNodes(server: *Server) !ChromeNodes {
     const shadow_tree = try frame_tree.createSceneTree();
     // The shadow is outside the shape by definition.
     _ = @import("projection.zig").setTreeUnclipped(&shadow_tree.node, true);
-    var shadow_corners: [4]*wlr.SceneBuffer = undefined;
-    for (&shadow_corners) |*buf| {
-        buf.* = try shadow_tree.createSceneBuffer(null);
-        buf.*.point_accepts_input = chromeAcceptsInput;
-    }
-
-    var shadow_edges: [4]*wlr.SceneBuffer = undefined;
-    for (&shadow_edges) |*buf| {
-        buf.* = try shadow_tree.createSceneBuffer(null);
-        buf.*.point_accepts_input = chromeAcceptsInput;
-        buf.*.setFilterMode(.bilinear);
-    }
-
-    const shadow_fallback = try shadow_tree.createSceneBuffer(null);
-    shadow_fallback.point_accepts_input = chromeAcceptsInput;
+    const shadow_node = try shadow_tree.createSceneBuffer(null);
+    shadow_node.point_accepts_input = chromeAcceptsInput;
 
     const titlebar_buffer = try frame_tree.createSceneBuffer(null);
     const glass_effect = glass.Engine.attach(server.glass_engine, titlebar_buffer, &shadow_tree.node, .titlebar);
     titlebar_buffer.setFilterMode(.bilinear);
 
-    const footer_buffer = try frame_tree.createSceneBuffer(null);
-    footer_buffer.setFilterMode(.nearest);
-
-    // The title/footer buffers already back their borders with a fill. Carry
-    // that same chrome underneath the stroke beside the client, too.
-    var side_fills: [2]*wlr.SceneRect = undefined;
-    for (&side_fills) |*rect| {
+    // The titlebar backs the ring at the top with its fill. Carry that same
+    // chrome under the ring beside and below the client.
+    var frame_fills: [3]*wlr.SceneRect = undefined;
+    for (&frame_fills) |*rect| {
         rect.* = try col.createRect(frame_tree, 1, 1, chrome.fillColor());
     }
     const border_color = chrome.borderColor(0);
@@ -380,14 +346,11 @@ fn createChromeNodes(server: *Server) !ChromeNodes {
     return .{
         .frame_tree = frame_tree,
         .shadow_tree = shadow_tree,
-        .shadow_corners = shadow_corners,
-        .shadow_edges = shadow_edges,
-        .shadow_fallback = shadow_fallback,
+        .shadow_node = shadow_node,
         .resize_grab = resize_grab,
         .glass_effect = glass_effect,
         .titlebar_buffer = titlebar_buffer,
-        .footer_buffer = footer_buffer,
-        .side_fills = side_fills,
+        .frame_fills = frame_fills,
         .border_rects = border_rects,
         .content_tree = content_tree,
     };
@@ -396,20 +359,16 @@ fn createChromeNodes(server: *Server) !ChromeNodes {
 fn finishCreate(toplevel: *Toplevel, nodes: ChromeNodes, scene_tree: *wlr.SceneTree) void {
     toplevel.frame_tree = nodes.frame_tree;
     toplevel.shadow_tree = nodes.shadow_tree;
-    toplevel.shadow_corners = nodes.shadow_corners;
-    toplevel.shadow_edges = nodes.shadow_edges;
-    toplevel.shadow_fallback = nodes.shadow_fallback;
+    toplevel.shadow_node = nodes.shadow_node;
     toplevel.resize_grab = nodes.resize_grab;
     toplevel.glass_effect = nodes.glass_effect;
     toplevel.titlebar_buffer = nodes.titlebar_buffer;
-    toplevel.footer_buffer = nodes.footer_buffer;
-    toplevel.side_fills = nodes.side_fills;
+    toplevel.frame_fills = nodes.frame_fills;
     toplevel.border_rects = nodes.border_rects;
     toplevel.content_tree = nodes.content_tree;
     toplevel.scene_tree = scene_tree;
     toplevel.attachSceneData();
     nodes.titlebar_buffer.point_accepts_input = chromeAcceptsInput;
-    nodes.footer_buffer.point_accepts_input = footerAcceptsInput;
 }
 
 pub fn create(server: *Server, xdg_toplevel: *wlr.XdgToplevel) !void {
@@ -431,14 +390,11 @@ pub fn create(server: *Server, xdg_toplevel: *wlr.XdgToplevel) !void {
         } },
         .frame_tree = nodes.frame_tree,
         .shadow_tree = nodes.shadow_tree,
-        .shadow_corners = nodes.shadow_corners,
-        .shadow_edges = nodes.shadow_edges,
-        .shadow_fallback = nodes.shadow_fallback,
+        .shadow_node = nodes.shadow_node,
         .resize_grab = nodes.resize_grab,
         .glass_effect = nodes.glass_effect,
         .titlebar_buffer = nodes.titlebar_buffer,
-        .footer_buffer = nodes.footer_buffer,
-        .side_fills = nodes.side_fills,
+        .frame_fills = nodes.frame_fills,
         .border_rects = nodes.border_rects,
         .content_tree = nodes.content_tree,
         .scene_tree = scene_tree,
@@ -476,14 +432,11 @@ pub fn createXwayland(server: *Server, xsurface: *wlr.XwaylandSurface) !void {
         .fullscreen = xsurface.fullscreen,
         .frame_tree = nodes.frame_tree,
         .shadow_tree = nodes.shadow_tree,
-        .shadow_corners = nodes.shadow_corners,
-        .shadow_edges = nodes.shadow_edges,
-        .shadow_fallback = nodes.shadow_fallback,
+        .shadow_node = nodes.shadow_node,
         .resize_grab = nodes.resize_grab,
         .glass_effect = nodes.glass_effect,
         .titlebar_buffer = nodes.titlebar_buffer,
-        .footer_buffer = nodes.footer_buffer,
-        .side_fills = nodes.side_fills,
+        .frame_fills = nodes.frame_fills,
         .border_rects = nodes.border_rects,
         .content_tree = nodes.content_tree,
         .scene_tree = scene_tree,
@@ -611,14 +564,11 @@ pub fn createPlaceholder(
         .rules_resolved = true,
         .frame_tree = nodes.frame_tree,
         .shadow_tree = nodes.shadow_tree,
-        .shadow_corners = nodes.shadow_corners,
-        .shadow_edges = nodes.shadow_edges,
-        .shadow_fallback = nodes.shadow_fallback,
+        .shadow_node = nodes.shadow_node,
         .resize_grab = nodes.resize_grab,
         .glass_effect = nodes.glass_effect,
         .titlebar_buffer = nodes.titlebar_buffer,
-        .footer_buffer = nodes.footer_buffer,
-        .side_fills = nodes.side_fills,
+        .frame_fills = nodes.frame_fills,
         .border_rects = nodes.border_rects,
         .content_tree = nodes.content_tree,
         .scene_tree = scene_tree,
@@ -643,7 +593,7 @@ pub fn createPlaceholder(
         toplevel.maximized = true;
         if (target_out) |out| {
             const usable = out.usableBox();
-            const footer = chrome.footerHeight(0);
+            const footer = chrome.frame_border;
             const mw = usable.width - 2 * chrome.frame_border;
             const mh = usable.height - toplevel.titlebarHeight() - footer;
             toplevel.backend.placeholder.client_width = @max(1, mw);
@@ -654,8 +604,7 @@ pub fn createPlaceholder(
             toplevel.placed = true;
         }
     } else if (target_out) |out| {
-        const radius: f32 = toplevel.cornerRadius();
-        const footer = chrome.footerHeight(radius);
+        const footer = chrome.frame_border;
         const natural_w = init_w + 2 * chrome.frame_border;
         const natural_h = init_h + toplevel.titlebarHeight() + footer;
         const geom = pickInitialPlacement(server, out, open_rules, null, natural_w, natural_h);
@@ -663,7 +612,7 @@ pub fn createPlaceholder(
         toplevel.placed = true;
     }
 
-    try toplevel.syncChrome(false, true, nowMs());
+    try toplevel.syncChrome(true, nowMs());
 
     server.world.toplevels.prepend(toplevel);
     toplevel.in_world = true;
@@ -724,14 +673,11 @@ pub fn createShell(server: *Server, cc: *ControlCenter, width: i32, height: i32)
         } },
         .frame_tree = nodes.frame_tree,
         .shadow_tree = nodes.shadow_tree,
-        .shadow_corners = nodes.shadow_corners,
-        .shadow_edges = nodes.shadow_edges,
-        .shadow_fallback = nodes.shadow_fallback,
+        .shadow_node = nodes.shadow_node,
         .resize_grab = nodes.resize_grab,
         .glass_effect = nodes.glass_effect,
         .titlebar_buffer = nodes.titlebar_buffer,
-        .footer_buffer = nodes.footer_buffer,
-        .side_fills = nodes.side_fills,
+        .frame_fills = nodes.frame_fills,
         .border_rects = nodes.border_rects,
         .content_tree = nodes.content_tree,
         .scene_tree = scene_tree,
@@ -1154,7 +1100,7 @@ pub fn setActivated(toplevel: *Toplevel, activated: bool) void {
         .placeholder => {},
         .shell => |*sw| if (sw.control_center) |cc| cc.setActivated(activated),
     }
-    if (changed and toplevel.in_world) toplevel.syncChrome(false, false, nowMs()) catch |err| {
+    if (changed and toplevel.in_world) toplevel.syncChrome(false, nowMs()) catch |err| {
         log.warn("activation: could not repaint title: {}", .{err});
     };
 }
@@ -1218,7 +1164,7 @@ pub fn requestSize(toplevel: *Toplevel, width: i32, height: i32) ConfigureWait {
         .placeholder => |*ph| {
             ph.client_width = width;
             ph.client_height = height;
-            toplevel.syncChrome(false, true, nowMs()) catch {};
+            toplevel.syncChrome(true, nowMs()) catch {};
             return .none;
         },
         .shell => |*sw| {
@@ -1227,7 +1173,7 @@ pub fn requestSize(toplevel: *Toplevel, width: i32, height: i32) ConfigureWait {
             if (sw.control_center) |cc| cc.resize(sw.client_width, sw.client_height);
             toplevel.positionDuringResize();
             // Shell windows have no client commit to update their shadow.
-            toplevel.syncChrome(false, true, nowMs()) catch {};
+            toplevel.syncChrome(true, nowMs()) catch {};
             return .none;
         },
     };
@@ -1301,17 +1247,10 @@ fn attachSceneData(toplevel: *Toplevel) void {
     toplevel.chrome_data = .{ .role = .{ .chrome = toplevel } };
     scene_data.SceneData.attach(&toplevel.frame_data, &toplevel.frame_tree.node);
     scene_data.SceneData.attach(&toplevel.chrome_data, &toplevel.shadow_tree.node);
-    for (toplevel.shadow_corners) |buf| {
-        scene_data.SceneData.attach(&toplevel.chrome_data, &buf.node);
-    }
-    for (toplevel.shadow_edges) |buf| {
-        scene_data.SceneData.attach(&toplevel.chrome_data, &buf.node);
-    }
-    scene_data.SceneData.attach(&toplevel.chrome_data, &toplevel.shadow_fallback.node);
+    scene_data.SceneData.attach(&toplevel.chrome_data, &toplevel.shadow_node.node);
     scene_data.SceneData.attach(&toplevel.chrome_data, &toplevel.resize_grab.node);
     scene_data.SceneData.attach(&toplevel.chrome_data, &toplevel.titlebar_buffer.node);
-    scene_data.SceneData.attach(&toplevel.chrome_data, &toplevel.footer_buffer.node);
-    for (toplevel.side_fills) |rect| {
+    for (toplevel.frame_fills) |rect| {
         scene_data.SceneData.attach(&toplevel.chrome_data, &rect.node);
     }
     for (toplevel.border_rects) |rect| {
@@ -1561,7 +1500,7 @@ pub fn requestSizeAnimated(toplevel: *Toplevel, width: i32, height: i32) Configu
 
 fn chromeSizeForClient(toplevel: *const Toplevel, client_w: i32, client_h: i32) struct { w: i32, h: i32 } {
     if (!toplevel.hasServerDecorations()) return .{ .w = client_w, .h = client_h };
-    const footer = chrome.footerHeight(toplevel.cornerRadius());
+    const footer = chrome.frame_border;
     return .{
         .w = client_w + 2 * chrome.frame_border,
         .h = client_h + toplevel.titlebarHeight() + footer,
@@ -1655,7 +1594,7 @@ pub fn tickSize(toplevel: *Toplevel, now_ms: i64) bool {
     const w_changed = toplevel.size_w.sampleChanged(now_ms, quantum);
     const h_changed = toplevel.size_h.sampleChanged(now_ms, quantum);
     if (w_changed or h_changed) {
-        toplevel.syncChrome(false, true, now_ms) catch |err| {
+        toplevel.syncChrome(true, now_ms) catch |err| {
             log.err("tickSize: could not update window decoration: {}", .{err});
         };
     }
@@ -1736,7 +1675,7 @@ fn applySizeClip(toplevel: *Toplevel) void {
     const decorated = toplevel.hasServerDecorations();
     const cw = if (decorated) @max(toplevel.chrome_width - 2 * chrome.frame_border, 0) else toplevel.chrome_width;
     const ch = if (decorated)
-        @max(toplevel.chrome_height - toplevel.titlebarHeight() - chrome.footerHeight(toplevel.cornerRadius()), 0)
+        @max(toplevel.chrome_height - toplevel.titlebarHeight() - chrome.frame_border, 0)
     else
         toplevel.chrome_height;
     const n = toplevel.surfaceScale();
@@ -1888,7 +1827,7 @@ fn borderColor(toplevel: *const Toplevel) col.Premul {
 
 pub fn footerHeight(toplevel: *const Toplevel) i32 {
     if (!toplevel.hasServerDecorations()) return 0;
-    return chrome.footerHeight(toplevel.cornerRadius());
+    return chrome.frame_border;
 }
 
 pub fn frameLocal(toplevel: *const Toplevel, lx: f64, ly: f64) geometry.Vec2 {
@@ -1969,7 +1908,7 @@ pub fn finishZoomAnimation(toplevel: *Toplevel) void {
     const target_x = toplevel.zoom_anchor.x - toplevel.zoom_local.x * target_ws;
     const target_y = toplevel.zoom_anchor.y - toplevel.zoom_local.y * target_ws;
     toplevel.setPosition(@intFromFloat(@round(target_x)), @intFromFloat(@round(target_y)));
-    toplevel.syncChrome(false, false, nowMs()) catch {};
+    toplevel.syncChrome(false, nowMs()) catch {};
 }
 
 pub fn tickZoom(toplevel: *Toplevel, now_ms: i64) bool {
@@ -1991,7 +1930,7 @@ pub fn tickZoom(toplevel: *Toplevel, now_ms: i64) bool {
     if (settled) {
         toplevel.zoom_anim = .{ .from = @floatCast(target_scale), .to = @floatCast(target_scale) };
         toplevel.setPosition(@intFromFloat(@round(nx)), @intFromFloat(@round(ny)));
-        toplevel.syncChrome(false, false, now_ms) catch {};
+        toplevel.syncChrome(false, now_ms) catch {};
         toplevel.server.input.processCursorMotion(0);
         return false;
     } else {
@@ -2131,7 +2070,7 @@ pub fn handleSurfaceCommit(toplevel: *Toplevel) void {
         }
     }
 
-    toplevel.syncChrome(true, true, nowMs()) catch |err| {
+    toplevel.syncChrome(true, nowMs()) catch |err| {
         log.err("handleCommit: could not update window decoration: {}", .{err});
     };
     if (toplevel.in_world) if (toplevel.server.layout_autosave) |autosave| {
@@ -2141,7 +2080,7 @@ pub fn handleSurfaceCommit(toplevel: *Toplevel) void {
     @import("auto_tiling.zig").observe(toplevel);
     toplevel.server.window_tabs.reconcile(toplevel);
     if (toplevel.tab_hidden) {
-        if (@import("window_tabs.zig").active(toplevel.server, toplevel.tab_group)) |active_tab| active_tab.syncChrome(false, false, nowMs()) catch {};
+        if (@import("window_tabs.zig").active(toplevel.server, toplevel.tab_group)) |active_tab| active_tab.syncChrome(false, nowMs()) catch {};
     }
     if (toplevel.isMapped()) {
         toplevel.syncForeign();
@@ -2158,8 +2097,7 @@ pub fn handleMapped(toplevel: *Toplevel) void {
     if (toplevel.closing) toplevel.cancelClose();
     toplevel.minimized = false;
     toplevel.needs_attention = false;
-    toplevel.pending_edge_sample = true;
-    toplevel.syncChrome(true, true, nowMs()) catch |err| {
+    toplevel.syncChrome(true, nowMs()) catch |err| {
         log.err("handleMap: could not update window decoration: {}", .{err});
     };
 
@@ -2312,7 +2250,7 @@ pub fn handleMapped(toplevel: *Toplevel) void {
     toplevel.server.window_tabs.mapped(toplevel);
     toplevel.server.window_tabs.mappedToken(toplevel);
     if (toplevel.server.layout_autosave) |autosave| autosave.finishMapped(toplevel);
-    toplevel.syncChrome(false, false, nowMs()) catch {};
+    toplevel.syncChrome(false, nowMs()) catch {};
     toplevel.frame_tree.node.setEnabled(@import("window_tabs.zig").visible(toplevel));
     // A newly focused app must not open behind the camera's current depth.
     if (want_focus and toplevel.server.config.compositor.focus_zoom == .camera) {
@@ -2338,7 +2276,6 @@ pub fn handleUnmapped(toplevel: *Toplevel) void {
     toplevel.in_world = false;
     toplevel.needs_attention = false;
     toplevel.detachInput();
-    toplevel.resetEdgeSample();
     const keep_scene = if (was_tab or !@import("workspaces.zig").visible(toplevel)) false else toplevel.beginCloseAnimation();
     if (!keep_scene) {
         toplevel.clearChromeCache();
@@ -2487,15 +2424,12 @@ pub fn destroyNow(toplevel: *Toplevel) void {
     }
     toplevel.clearChromeCache();
     toplevel.frame_tree.node.destroy();
-    if (toplevel.edge_row_scratch.len != 0) gpa.free(toplevel.edge_row_scratch);
-    explicit_sync.AcquireWait.destroy(toplevel.edge_acquire_wait);
     toplevel.releaseIcon();
     gpa.destroy(toplevel);
 }
 
-// Both chrome bands are cut from the same rounded rectangle, so a point is
-// theirs only if it falls inside the frame's shape. The coordinates are
-// frame-local: the skirt's node knows its own offset.
+// A point is the frame's only if it falls inside the window's shape. The
+// coordinates are frame-local.
 fn insideFrame(toplevel: *Toplevel, px: f32, py: f32) bool {
     if (!toplevel.hasServerDecorations()) return false;
     const width = toplevel.chrome_width;
@@ -2539,11 +2473,8 @@ pub fn chromeAcceptsInput(buffer: *wlr.SceneBuffer, sx: *f64, sy: *f64) callconv
     var fy: i32 = 0;
     _ = toplevel.frame_tree.node.coords(&fx, &fy);
     const local = geometry.toLocal(@as(f64, @floatFromInt(ox)) + sx.*, @as(f64, @floatFromInt(oy)) + sy.*, fx, fy);
-    const radius: f32 = toplevel.cornerRadius();
-    const footer = chrome.footerHeight(radius);
-
     const has_control = toplevel.controlAt(local.x, local.y) != null or toplevel.tabAt(local.x, local.y) != .none;
-    if (resize.detectResizeEdges(local.x, local.y, toplevel.chrome_width, toplevel.chrome_height, toplevel.titlebarHeight(), chrome.frame_border, footer, has_control) != null) {
+    if (resize.detectResizeEdges(local.x, local.y, toplevel.chrome_width, toplevel.chrome_height, toplevel.titlebarHeight(), chrome.frame_border, chrome.frame_border, has_control) != null) {
         return true;
     }
 
@@ -2554,212 +2485,7 @@ pub fn chromeAcceptsInput(buffer: *wlr.SceneBuffer, sx: *f64, sy: *f64) callconv
     return local.y < @as(f64, @floatFromInt(toplevel.titlebarHeight()));
 }
 
-pub fn footerAcceptsInput(buffer: *wlr.SceneBuffer, sx: *f64, sy: *f64) callconv(.c) bool {
-    const data = scene_data.SceneData.fromNode(&buffer.node) orelse return false;
-    if (data.role == .chrome and data.role.chrome.closing) return false;
-    const toplevel = switch (data.role) {
-        .chrome => |t| t,
-        else => return false,
-    };
-    const radius: f32 = toplevel.cornerRadius();
-    const footer_top: f32 = @floatFromInt(toplevel.chrome_height - chrome.footerHeight(radius));
-    const px = @as(f32, @floatCast(sx.*)) + 0.5;
-    const py = footer_top + @as(f32, @floatCast(sy.*)) + 0.5;
-    return toplevel.insideFrame(px, py);
-}
-
-const EdgeProbe = struct {
-    mapping: chrome.EdgeMapping,
-    texture: ?*wlr.Texture,
-    row: wlr.Box,
-};
-
-fn resetEdgeSample(toplevel: *Toplevel) void {
-    toplevel.skirt_fill = null;
-    toplevel.edge_kind = .uninitialized;
-    toplevel.edge_mapping = null;
-    toplevel.pending_edge_sample = true;
-    toplevel.edge_sampled_seq = 0;
-    toplevel.edge_format_texture = null;
-    explicit_sync.AcquireWait.cancel(toplevel.edge_acquire_wait);
-}
-
-// glReadPixels does not wait for the client's acquire point, so reading an
-// explicit-sync buffer early samples stale or half-drawn pixels.
-fn edgeAcquireReady(toplevel: *Toplevel, owned: *wlr.Surface) bool {
-    if (!explicit_sync.surfaceUsesIt(owned)) {
-        explicit_sync.AcquireWait.cancel(toplevel.edge_acquire_wait);
-        return true;
-    }
-    if (toplevel.edge_acquire_wait == null) {
-        toplevel.edge_acquire_wait = explicit_sync.AcquireWait.create(toplevel.server.wl_server.getEventLoop(), handleEdgeAcquired, toplevel);
-    }
-    return explicit_sync.AcquireWait.ready(toplevel.edge_acquire_wait, owned);
-}
-
-fn handleEdgeAcquired(data: ?*anyopaque) callconv(.c) void {
-    const toplevel: *Toplevel = @ptrCast(@alignCast(data.?));
-    if (!toplevel.in_world or toplevel.backend_gone) return;
-    toplevel.pending_edge_sample = true;
-    toplevel.syncChrome(true, false, nowMs()) catch {};
-}
-
-// A client texture keeps its format for its lifetime: a buffer that changes
-// format gets a new texture, created before the old one is released, so two
-// consecutive commits never see different textures at one address.
-fn readFormat(toplevel: *Toplevel, texture: *wlr.Texture) u32 {
-    if (toplevel.edge_format_texture != texture) {
-        toplevel.edge_format_texture = texture;
-        toplevel.edge_format = texture.preferredReadFormat();
-    }
-    return toplevel.edge_format;
-}
-
-// Locates the client's last row of pixels in its buffer. The surface's logical
-// size, its buffer size and the window's geometry can all differ (buffer scale,
-// a viewport, a geometry that is a sub-box of the surface), so the row is
-// derived from the surface's own source box rather than assumed.
-fn probeClientEdge(toplevel: *Toplevel) EdgeProbe {
-    const owned = toplevel.surface() orelse return .{
-        .mapping = .{},
-        .texture = null,
-        .row = .{ .x = 0, .y = 0, .width = 0, .height = 0 },
-    };
-    const state = &owned.current;
-    const texture = if (@import("extra_protocols.zig").rediwm_surface_edge_is_srgb(owned)) owned.getTexture() else null;
-    const geometry_box = toplevel.clientSurfaceGeometry();
-
-    var source: wlr.FBox = .{ .x = 0, .y = 0, .width = 0, .height = 0 };
-    owned.getBufferSourceBox(&source);
-
-    var mapping = chrome.EdgeMapping{
-        .source_x = source.x,
-        .source_y = source.y,
-        .source_w = source.width,
-        .source_h = source.height,
-        .scale = state.scale,
-        .transform_normal = state.transform == .normal,
-        .buffer_width = state.buffer_width,
-        .buffer_height = state.buffer_height,
-        .format = if (texture) |tex| toplevel.readFormat(tex) else 0,
-        .surface_width = state.width,
-        .surface_height = state.height,
-        .geom_x = geometry_box.x,
-        .geom_y = geometry_box.y,
-        .geom_w = geometry_box.width,
-        .geom_h = geometry_box.height,
-        .has_texture = texture != null,
-    };
-
-    var row = wlr.Box{ .x = 0, .y = 0, .width = 0, .height = 0 };
-    // A rotated or flipped buffer has no "bottom row" to speak of; those
-    // windows keep the glass fill.
-    if (mapping.transform_normal and texture != null and state.width > 0 and state.height > 0 and
-        source.width > 0 and source.height > 0)
-    {
-        const tex = texture.?;
-        const per_x = source.width / @as(f64, @floatFromInt(state.width));
-        const per_y = source.height / @as(f64, @floatFromInt(state.height));
-
-        const left = source.x + @as(f64, @floatFromInt(geometry_box.x)) * per_x;
-        const right = left + @as(f64, @floatFromInt(geometry_box.width)) * per_x;
-        const bottom = source.y + @as(f64, @floatFromInt(geometry_box.y + geometry_box.height)) * per_y;
-
-        const max_x: i32 = @intCast(tex.width);
-        const max_y: i32 = @intCast(tex.height);
-        if (max_x > 0 and max_y > 0) {
-            const x0 = std.math.clamp(@as(i32, @intFromFloat(@floor(left))), 0, max_x - 1);
-            const x1 = std.math.clamp(@as(i32, @intFromFloat(@ceil(right))), x0 + 1, max_x);
-            const y = std.math.clamp(@as(i32, @intFromFloat(@ceil(bottom))) - 1, 0, max_y - 1);
-            row = .{ .x = x0, .y = y, .width = x1 - x0, .height = 1 };
-            mapping.row_x = row.x;
-            mapping.row_y = row.y;
-            mapping.row_w = row.width;
-            mapping.row_h = row.height;
-            mapping.row_valid = row.width > 0 and row.height > 0;
-        }
-    }
-
-    return .{ .mapping = mapping, .texture = texture, .row = row };
-}
-
-fn classifyEdgeDamage(toplevel: *Toplevel, row: wlr.Box, row_valid: bool) chrome.EdgeDamage {
-    if (!row_valid) return .unknown;
-    const owned = toplevel.surface() orelse return .unknown;
-    const region = &owned.buffer_damage;
-    if (!region.notEmpty()) return .none;
-    for (region.rectangles()) |box| {
-        if (chrome.rectsOverlap(box.x1, box.y1, box.x2 - box.x1, box.y2 - box.y1, row.x, row.y, row.width, row.height)) {
-            return .intersects_row;
-        }
-    }
-    return .misses_row;
-}
-
-fn applyEdgeSample(toplevel: *Toplevel) void {
-    const owned = toplevel.surface() orelse return;
-    const seq = owned.current.seq;
-    if (seq != 0 and toplevel.edge_sampled_seq == seq) return;
-
-    const probe = toplevel.probeClientEdge();
-    const damage = toplevel.classifyEdgeDamage(probe.row, probe.mapping.row_valid);
-    const action = chrome.decideEdgeSample(
-        toplevel.edge_kind,
-        toplevel.edge_mapping,
-        probe.mapping,
-        damage,
-        toplevel.pending_edge_sample,
-    );
-
-    if (toplevel.isResizing()) {
-        if (action != .skip) {
-            toplevel.pending_edge_sample = true;
-            stats.recordEdgeSampleSkip();
-        }
-        return;
-    }
-
-    switch (action) {
-        .skip => stats.recordEdgeSampleSkip(),
-        .fallback => {
-            toplevel.skirt_fill = null;
-            toplevel.edge_kind = .fallback;
-            toplevel.edge_mapping = probe.mapping;
-            toplevel.pending_edge_sample = false;
-            toplevel.edge_sampled_seq = seq;
-        },
-        .sample => {
-            if (!toplevel.edgeAcquireReady(owned)) {
-                toplevel.pending_edge_sample = true;
-                stats.recordEdgeSampleSkip();
-                return;
-            }
-            stats.recordEdgeSampleAttempt();
-            const started = stats.nowNs();
-            const color = if (probe.texture) |tex|
-                chrome.sampleEdge(tex, probe.row, &toplevel.edge_row_scratch)
-            else
-                null;
-            const elapsed = stats.nowNs() -% started;
-            if (color) |fill| {
-                stats.recordEdgeSampleSuccess(elapsed);
-                toplevel.skirt_fill = fill;
-                toplevel.edge_kind = .color;
-            } else {
-                // Transient read failure: show glass, retry on the next
-                // invalidating commit rather than every frame.
-                toplevel.skirt_fill = null;
-                toplevel.edge_kind = .fallback;
-            }
-            toplevel.edge_mapping = probe.mapping;
-            toplevel.pending_edge_sample = false;
-            toplevel.edge_sampled_seq = seq;
-        },
-    }
-}
-
-/// Repaint theme-dependent chrome without reading the client texture again.
-/// `rebuild_shadow` is true here: a theme edit can change the shadow's
+/// Repaint theme-dependent chrome. `rebuild_shadow` is true here: a theme edit can change the shadow's
 /// color/size, so already-open windows must pick it up immediately, same as
 /// border/titlebar colors already do.
 pub fn refreshTheme(toplevel: *Toplevel) void {
@@ -2770,7 +2496,7 @@ pub fn refreshTheme(toplevel: *Toplevel) void {
         .shell => |*sw| if (sw.control_center) |cc| cc.requestRepaint(),
         else => {},
     }
-    syncChrome(toplevel, false, true, nowMs()) catch |err| {
+    syncChrome(toplevel, true, nowMs()) catch |err| {
         log.warn("refreshTheme: could not rebuild chrome: {}", .{err});
     };
     // A changed titlebar height must keep tiled frames inside their tile.
@@ -2781,10 +2507,6 @@ pub fn refreshTheme(toplevel: *Toplevel) void {
     }
 }
 
-// `rebuild_shadow` is kept separate from `sample_edge`: both are false on a
-// pure hover repaint, but a theme refresh needs sample_edge=false (no new
-// client content to sample) and rebuild_shadow=true (theme may have
-// changed) — the two aren't the same signal.
 /// Keeps `IconService`'s refcount in sync with whatever icon this titlebar
 /// last displayed (`toplevel.last_titlebar.?.icon`), so a future eviction
 /// pass can tell a live titlebar's icon apart from an unreferenced one.
@@ -2828,37 +2550,33 @@ pub fn syncOutputScale(toplevel: *Toplevel) void {
     }
     if (scale == 0 or scale == toplevel.render_scale) return;
     toplevel.render_scale = scale;
-    toplevel.syncChrome(false, true, nowMs()) catch |err| {
+    toplevel.syncChrome(true, nowMs()) catch |err| {
         log.warn("output scale: could not rebuild chrome: {}", .{err});
     };
 }
 
 fn clearChromeCache(toplevel: *Toplevel) void {
     if (toplevel.cached_titlebar) |buffer| buffer.base.drop();
-    if (toplevel.cached_footer) |buffer| buffer.base.drop();
     toplevel.cached_titlebar = null;
-    toplevel.cached_footer = null;
 }
 
-pub fn syncChrome(toplevel: *Toplevel, sample_edge: bool, rebuild_shadow: bool, now_ms: i64) !void {
+/// `rebuild_shadow` is false on a pure hover repaint, which cannot change the
+/// shadow; geometry and theme changes pass true.
+pub fn syncChrome(toplevel: *Toplevel, rebuild_shadow: bool, now_ms: i64) !void {
     defer toplevel.server.scheduleFrames();
     const geometry_box = toplevel.clientGeometry();
     if (geometry_box.width <= 0 or geometry_box.height <= 0) return;
 
     const decorated = toplevel.hasServerDecorations();
     toplevel.titlebar_buffer.node.setEnabled(decorated);
-    toplevel.footer_buffer.node.setEnabled(decorated);
-    for (toplevel.side_fills) |rect| rect.node.setEnabled(decorated);
-    // With a shape the border is the shader's; the rects only outline windows
-    // that draw their own decorations.
-    const shaped = chrome.analytic_frames and decorated;
-    for (toplevel.border_rects) |rect| rect.node.setEnabled(!shaped and (decorated or toplevel.hasWorkspaceFocusBorder()));
+    for (toplevel.frame_fills) |rect| rect.node.setEnabled(decorated);
+    // A decorated window's border is the shape's ring; the rects only outline
+    // windows that draw their own decorations.
+    for (toplevel.border_rects) |rect| rect.node.setEnabled(!decorated and toplevel.hasWorkspaceFocusBorder());
     if (!decorated) {
-        toplevel.resetEdgeSample();
         toplevel.releaseIcon();
         toplevel.clearChromeCache();
         toplevel.last_titlebar = null;
-        toplevel.last_footer = null;
         toplevel.shadow_tree.node.setEnabled(false);
         toplevel.resize_grab.node.setEnabled(false);
         toplevel.content_tree.node.setPosition(0, 0);
@@ -2877,9 +2595,8 @@ pub fn syncChrome(toplevel: *Toplevel, sample_edge: bool, rebuild_shadow: bool, 
     }
 
     const radius: f32 = toplevel.cornerRadius();
-    const footer = chrome.footerHeight(radius);
     const natural_w = geometry_box.width + 2 * chrome.frame_border;
-    const natural_h = geometry_box.height + toplevel.titlebarHeight() + footer;
+    const natural_h = geometry_box.height + toplevel.titlebarHeight() + chrome.frame_border;
     const animated = visualChromeSize(toplevel, now_ms, natural_w, natural_h);
     const width = animated.w;
     const height = animated.h;
@@ -2891,23 +2608,16 @@ pub fn syncChrome(toplevel: *Toplevel, sample_edge: bool, rebuild_shadow: bool, 
         .pending, .missing => null,
     };
     toplevel.updateHeldIcon(icon);
-    // A shape clips the client itself, so there is no skirt to colour.
-    if (sample_edge and !chrome.analytic_frames) toplevel.applyEdgeSample();
-    // The settings body is one opaque colour: the skirt continues it exactly.
-    if (toplevel.backend == .shell and !chrome.analytic_frames) toplevel.skirt_fill = @import("control_center/panel.zig").bodyColor();
     const hover = toplevel.hover_anim.value(now_ms);
     const chip_alpha = toplevel.chip_alpha.value(now_ms);
     var tab_storage: [@import("window_tabs.zig").max_tabs]@import("chrome_tabs.zig").Tab = undefined;
     const state: chrome.ChromeState = .{
         .tabs = toplevel.tabStrip(&tab_storage),
-        // The shader draws the corners and the border; the raster is a plain band.
-        .radius = if (chrome.analytic_frames) 0 else radius,
         .active = toplevel.activated,
         .workspace_focus = toplevel.hasWorkspaceFocusBorder(),
         .maximized = toplevel.isMaximized(),
         .density = toplevel.chromeDensity(),
         .title = window_title,
-        .skirt_fill = toplevel.skirt_fill,
         .scale = toplevel.render_scale,
         .hover = hover,
         // An invisible chip has no position: keeps the raster memo stable.
@@ -2920,38 +2630,21 @@ pub fn syncChrome(toplevel: *Toplevel, sample_edge: bool, rebuild_shadow: bool, 
     toplevel.chrome_height = height;
 
     const title_memo = chrome.TitlebarMemo.capture(width, height, toplevel.titlePtr(), state);
-    const footer_memo = chrome.FooterMemo.capture(width, height, state);
     const skip_titlebar = if (toplevel.last_titlebar) |prev| prev.eql(title_memo) else false;
-    const skip_footer = if (toplevel.last_footer) |prev| prev.eql(footer_memo) else false;
     if (!skip_titlebar) {
         const titlebar = if (toplevel.cached_titlebar != null and toplevel.last_titlebar != null and toplevel.last_titlebar.?.reusableFor(title_memo))
             try chrome.ChromeBuffer.createUpdated(toplevel.cached_titlebar.?, state, toplevel.last_titlebar.?.title_ptr != title_memo.title_ptr)
         else
-            try chrome.ChromeBuffer.create(width, height, .titlebar, state);
+            try chrome.ChromeBuffer.create(width, state);
         toplevel.titlebar_buffer.setBuffer(&titlebar.base);
         if (toplevel.cached_titlebar) |previous| previous.base.drop();
         toplevel.cached_titlebar = titlebar;
         stats.recordTitlebarPaint();
         toplevel.last_titlebar = title_memo;
     }
-    if (!skip_footer) {
-        // The skirt carries the bottom corner arcs: the client's own surface has
-        // square corners, so the frame keeps this band of chrome below it.
-        const skirt = if (toplevel.cached_footer != null and toplevel.last_footer != null and toplevel.last_footer.?.stableEql(footer_memo))
-            try chrome.ChromeBuffer.createUpdated(toplevel.cached_footer.?, state, false)
-        else
-            try chrome.ChromeBuffer.create(width, height, .footer, state);
-        toplevel.footer_buffer.setBuffer(&skirt.base);
-        if (toplevel.cached_footer) |previous| previous.base.drop();
-        toplevel.cached_footer = skirt;
-        stats.recordFooterPaint();
-        toplevel.last_footer = footer_memo;
-    }
 
     toplevel.titlebar_buffer.setDestSize(width, toplevel.titlebarHeight());
     glass.Effect.configure(toplevel.glass_effect, radius, 1);
-    toplevel.footer_buffer.node.setPosition(0, height - footer);
-    toplevel.footer_buffer.setDestSize(width, footer);
 
     toplevel.syncBorders(width, height);
     toplevel.applyShape();
@@ -2981,14 +2674,12 @@ fn visualChromeSize(toplevel: *Toplevel, now_ms: i64, natural_w: i32, natural_h:
     return .{ .w = @max(w, 1), .h = @max(h, 1) };
 }
 
-// Not tied to the hover-repaint path (applyHover/tickHover): the shadow
-// canvas covers the whole frame rather than a thin band, so re-rasterizing
-// it on every hover-animation frame would be wasteful and the shadow
-// doesn't change with hover anyway. Only called where geometry or theme may
-// actually have changed.
+// The output pass draws the shadow from the window's shape; the node, without a
+// buffer, carries only its footprint, the window's opacity and input. Called
+// where geometry or theme may have changed, never on a hover repaint.
 fn syncShadow(toplevel: *Toplevel, width: i32, height: i32, radius: f32) !void {
     const t = theme.global;
-    const disabled = toplevel.isMaximized() or t.shadow[3] <= 0 or t.shadow_size <= 0;
+    const disabled = !chrome.shapes or toplevel.isMaximized() or t.shadow[3] <= 0 or t.shadow_size <= 0;
     const memo = chrome.ShadowMemo.capture(width, height, radius, toplevel.render_scale, disabled);
 
     if (disabled) {
@@ -2998,101 +2689,25 @@ fn syncShadow(toplevel: *Toplevel, width: i32, height: i32, radius: f32) !void {
     }
 
     toplevel.shadow_tree.node.setEnabled(true);
-    // Every client commit lands here. The memo holds everything the shadow
-    // nodes' buffers and geometry derive from, so an unchanged one means
-    // nothing to redo; the nodes keep their own locks on the buffers.
+    // Every client commit lands here; an unchanged memo means nothing to redo.
     if (toplevel.last_shadow) |prev| {
         if (prev.eql(memo)) return;
     }
 
     const margin: i32 = @intFromFloat(@ceil(t.shadow_size));
     const offset_y: i32 = @intFromFloat(t.shadow_offset_y);
-    const c_size: i32 = @intFromFloat(@ceil(radius + t.shadow_size));
-
-    if (chrome.analytic_frames) {
-        // The owned pass draws the shadow from the shape; the fallback node,
-        // without a buffer, only carries its footprint, opacity and input.
-        for (toplevel.shadow_corners) |node| node.node.setEnabled(false);
-        for (toplevel.shadow_edges) |node| node.node.setEnabled(false);
-        toplevel.shadow_fallback.node.setEnabled(true);
-        toplevel.shadow_fallback.node.setPosition(-margin, -margin + offset_y);
-        toplevel.shadow_fallback.setDestSize(width + 2 * margin, height + 2 * margin);
-        const r: f64 = radius;
-        if (!projection.setTreeShadow(&toplevel.shadow_tree.node, .{
-            .width = width,
-            .height = height,
-            .radii = .{ r, r, r, r },
-            .offset_x = 0,
-            .offset_y = @floatFromInt(offset_y),
-            .softness = t.shadow_size,
-            .color = col.Straight.fromRgba(t.shadow).premultiply().rgba,
-        })) log.warn("could not set the window shadow ({d}x{d})", .{ width, height });
-        toplevel.last_shadow = memo;
-        return;
-    }
-
-    if (width < 2 * c_size or height < 2 * c_size) {
-        for (toplevel.shadow_corners) |node| node.node.setEnabled(false);
-        for (toplevel.shadow_edges) |node| node.node.setEnabled(false);
-        toplevel.shadow_fallback.node.setEnabled(true);
-
-        const skip_raster = if (toplevel.last_shadow) |prev| prev.eql(memo) else false;
-        if (!skip_raster) {
-            const shadow = try chrome.ShadowBuffer.create(width, height, .{
-                .radius = radius,
-                .scale = toplevel.render_scale,
-                .color = t.shadow,
-                .softness = t.shadow_size,
-                .offset_y = @floatFromInt(offset_y),
-            });
-            toplevel.shadow_fallback.setBuffer(&shadow.base);
-            shadow.base.drop();
-        }
-        toplevel.shadow_fallback.node.setPosition(-margin, -margin + offset_y);
-        toplevel.shadow_fallback.setDestSize(width + 2 * margin, height + 2 * margin);
-        toplevel.last_shadow = memo;
-        return;
-    }
-
-    toplevel.shadow_fallback.node.setEnabled(false);
-    for (toplevel.shadow_corners) |node| node.node.setEnabled(true);
-    for (toplevel.shadow_edges) |node| node.node.setEnabled(true);
-
-    const patch_set = try chrome.getOrMakeShadowPatchSet(.{
-        .radius = radius,
-        .scale = toplevel.render_scale,
-        .color = t.shadow,
-        .softness = t.shadow_size,
+    toplevel.shadow_node.node.setPosition(-margin, -margin + offset_y);
+    toplevel.shadow_node.setDestSize(width + 2 * margin, height + 2 * margin);
+    const r: f64 = radius;
+    if (!projection.setTreeShadow(&toplevel.shadow_tree.node, .{
+        .width = width,
+        .height = height,
+        .radii = .{ r, r, r, r },
+        .offset_x = 0,
         .offset_y = @floatFromInt(offset_y),
-    });
-
-    for (toplevel.shadow_corners, 0..) |node, i| node.setBuffer(&patch_set.corners[i].base);
-    for (toplevel.shadow_edges, 0..) |node, i| node.setBuffer(&patch_set.edges[i].base);
-
-    toplevel.shadow_corners[0].node.setPosition(-margin, -margin + offset_y);
-    toplevel.shadow_corners[0].setDestSize(c_size, c_size);
-
-    toplevel.shadow_corners[1].node.setPosition(width + margin - c_size, -margin + offset_y);
-    toplevel.shadow_corners[1].setDestSize(c_size, c_size);
-
-    toplevel.shadow_corners[2].node.setPosition(-margin, height + margin - c_size + offset_y);
-    toplevel.shadow_corners[2].setDestSize(c_size, c_size);
-
-    toplevel.shadow_corners[3].node.setPosition(width + margin - c_size, height + margin - c_size + offset_y);
-    toplevel.shadow_corners[3].setDestSize(c_size, c_size);
-
-    toplevel.shadow_edges[0].node.setPosition(-margin + c_size, -margin + offset_y);
-    toplevel.shadow_edges[0].setDestSize(width + 2 * margin - 2 * c_size, c_size);
-
-    toplevel.shadow_edges[1].node.setPosition(-margin + c_size, height + margin - c_size + offset_y);
-    toplevel.shadow_edges[1].setDestSize(width + 2 * margin - 2 * c_size, c_size);
-
-    toplevel.shadow_edges[2].node.setPosition(-margin, -margin + offset_y + c_size);
-    toplevel.shadow_edges[2].setDestSize(c_size, height + 2 * margin - 2 * c_size);
-
-    toplevel.shadow_edges[3].node.setPosition(width + margin - c_size, -margin + offset_y + c_size);
-    toplevel.shadow_edges[3].setDestSize(c_size, height + 2 * margin - 2 * c_size);
-
+        .softness = t.shadow_size,
+        .color = col.Straight.fromRgba(t.shadow).premultiply().rgba,
+    })) log.warn("could not set the window shadow ({d}x{d})", .{ width, height });
     toplevel.last_shadow = memo;
 }
 
@@ -3106,11 +2721,11 @@ fn syncResizeGrab(toplevel: *Toplevel, width: i32, height: i32) void {
 }
 
 /// The shape that clips the whole window, titlebar, client and subsurfaces, in
-/// the output pass (see `chrome.analytic_frames`). Windows that draw their own
+/// the output pass (see `chrome.shapes`). Windows that draw their own
 /// decorations, and fullscreen ones, have none; a maximized one has a square one,
 /// for its border. Nothing changes if the shape is the one already set.
 fn applyShape(toplevel: *Toplevel) void {
-    if (!chrome.analytic_frames) return;
+    if (!chrome.shapes) return;
     const node = &toplevel.frame_tree.node;
     if (!toplevel.hasServerDecorations() or toplevel.chrome_width <= 0 or toplevel.chrome_height <= 0) {
         _ = projection.setTreeClip(node, null);
@@ -3130,11 +2745,11 @@ fn applyShape(toplevel: *Toplevel) void {
 }
 
 fn syncBorders(toplevel: *Toplevel, width: i32, height: i32) void {
-    const color = toplevel.borderColor();
-    for (toplevel.border_rects) |rect| col.setRect(rect, color);
     if (!toplevel.hasServerDecorations()) {
         // Outline CSD frames outside their content. Client geometry and input
         // coordinates stay unchanged, and the content remains above the stroke.
+        const color = toplevel.borderColor();
+        for (toplevel.border_rects) |rect| col.setRect(rect, color);
         const edge = chrome.frame_border;
         toplevel.border_rects[0].node.setPosition(-edge, -edge);
         toplevel.border_rects[0].setSize(width + 2 * edge, edge);
@@ -3146,33 +2761,19 @@ fn syncBorders(toplevel: *Toplevel, width: i32, height: i32) void {
         toplevel.border_rects[3].setSize(width + 2 * edge, edge);
         return;
     }
-    const inset: i32 = if (toplevel.isMaximized())
-        0
-    else
-        @intFromFloat(@ceil(toplevel.cornerRadius()));
-
-    // Only back the client-height gap: overlapping the retained bands would
-    // apply the translucent chrome twice at the joins.
+    // Only back the gap the titlebar leaves: overlapping it would apply the
+    // translucent chrome twice at the joins. The ring over the fills, the
+    // titlebar and the client's edge is the shape's.
     const body_top = toplevel.titlebarHeight();
-    const body_height = @max(0, height - body_top - chrome.footerHeight(toplevel.cornerRadius()));
-    for (toplevel.side_fills, 0..) |rect, i| {
-        col.setRect(rect, chrome.fillColor());
-        rect.node.setPosition(if (i == 0) 0 else width - chrome.frame_border, body_top);
-        rect.setSize(chrome.frame_border, body_height);
-    }
-    // The ring over the fills, the titlebar and the client's edge is the shape's.
-    if (chrome.analytic_frames) return;
-
-    // Every straight edge runs between two rasterized corner arcs, so all four
-    // are inset at both ends.
-    toplevel.border_rects[0].node.setPosition(inset, 0);
-    toplevel.border_rects[0].setSize(@max(1, width - 2 * inset), chrome.frame_border);
-    toplevel.border_rects[1].node.setPosition(0, inset);
-    toplevel.border_rects[1].setSize(chrome.frame_border, @max(1, height - 2 * inset));
-    toplevel.border_rects[2].node.setPosition(width - chrome.frame_border, inset);
-    toplevel.border_rects[2].setSize(chrome.frame_border, @max(1, height - 2 * inset));
-    toplevel.border_rects[3].node.setPosition(inset, height - chrome.frame_border);
-    toplevel.border_rects[3].setSize(@max(1, width - 2 * inset), chrome.frame_border);
+    const edge = chrome.frame_border;
+    const body_height = @max(0, height - body_top - edge);
+    for (toplevel.frame_fills) |rect| col.setRect(rect, chrome.fillColor());
+    toplevel.frame_fills[0].node.setPosition(0, body_top);
+    toplevel.frame_fills[0].setSize(edge, body_height);
+    toplevel.frame_fills[1].node.setPosition(width - edge, body_top);
+    toplevel.frame_fills[1].setSize(edge, body_height);
+    toplevel.frame_fills[2].node.setPosition(0, height - edge);
+    toplevel.frame_fills[2].setSize(width, edge);
 }
 
 pub fn detachInput(toplevel: *Toplevel) void {
@@ -3206,7 +2807,7 @@ pub fn applyOpacity(toplevel: *Toplevel, now_ms: i64) void {
     }.iter, &opacity);
     const color = toplevel.borderColor().scale(opacity);
     for (toplevel.border_rects) |rect| col.setRect(rect, color);
-    for (toplevel.side_fills) |rect| col.setRect(rect, chrome.fillColor().scale(opacity));
+    for (toplevel.frame_fills) |rect| col.setRect(rect, chrome.fillColor().scale(opacity));
     toplevel.shape_opacity = opacity;
     toplevel.applyShape();
     glass.Effect.configure(toplevel.glass_effect, toplevel.cornerRadius(), opacity);
@@ -3219,7 +2820,7 @@ pub fn applyOpacity(toplevel: *Toplevel, now_ms: i64) void {
 pub fn applyHover(toplevel: *Toplevel, hovered: bool, control: ?chrome.ControlKind) void {
     if (!hovered and toplevel.tab_hover != 0) {
         toplevel.tab_hover = 0;
-        toplevel.syncChrome(false, false, nowMs()) catch {};
+        toplevel.syncChrome(false, nowMs()) catch {};
     }
     const hover_changed = toplevel.hovered != hovered;
     const control_changed = toplevel.hovered_control != control;
@@ -3236,7 +2837,7 @@ pub fn applyHover(toplevel: *Toplevel, hovered: bool, control: ?chrome.ControlKi
         toplevel.server.scheduleFrames();
     }
     if (control_changed or !hover_changed) {
-        toplevel.syncChrome(false, false, nowMs()) catch |err| {
+        toplevel.syncChrome(false, nowMs()) catch |err| {
             log.err("applyHover: could not update window decoration: {}", .{err});
         };
     }
@@ -3270,7 +2871,7 @@ pub fn tickHover(toplevel: *Toplevel, now_ms: i64) bool {
     const glide = toplevel.chip_pos.sampleChanged(now_ms, anim.rasterPixelQuantum(toplevel.render_scale) / chip_slot_px);
     const fade = toplevel.chip_alpha.sampleChanged(now_ms, anim.rasterAlphaQuantum());
     if (border or glide or fade) {
-        toplevel.syncChrome(false, false, now_ms) catch |err| {
+        toplevel.syncChrome(false, now_ms) catch |err| {
             log.err("tickHover: could not update window decoration: {}", .{err});
         };
     }
@@ -3647,7 +3248,7 @@ pub fn configureInitialXdgState(toplevel: *Toplevel) void {
         toplevel.maximized = true;
         if (target_out) |out| {
             const usable = out.usableBox();
-            const footer = if (toplevel.hasServerDecorations()) chrome.footerHeight(0) else 0;
+            const footer = if (toplevel.hasServerDecorations()) chrome.frame_border else 0;
             const mw = usable.width - 2 * toplevel.borderWidth();
             const mh = usable.height - toplevel.titlebarHeight() - footer;
             _ = adapter.xdg_toplevel.setSize(@max(1, mw), @max(1, mh));
@@ -3692,7 +3293,7 @@ pub fn setMaximizedOn(toplevel: *Toplevel, output: *Output) void {
     const usable = output.usableBox();
     if (usable.width <= 0 or usable.height <= 0) return;
 
-    const footer = if (toplevel.hasServerDecorations()) chrome.footerHeight(0) else 0;
+    const footer = if (toplevel.hasServerDecorations()) chrome.frame_border else 0;
     const scale = toplevel.zoom();
     const width = @as(i32, @intFromFloat(@floor(@as(f64, @floatFromInt(usable.width)) / scale))) - 2 * toplevel.borderWidth();
     const height = @as(i32, @intFromFloat(@floor(@as(f64, @floatFromInt(usable.height)) / scale))) - toplevel.titlebarHeight() - footer;
@@ -3823,7 +3424,7 @@ pub fn setTiledOn(toplevel: *Toplevel, output: *Output, tile: tiling.Tile) void 
 
     const rect = tiling.tileRect(usable, tile, toplevel.server.config.compositor.windowGap());
     // cornerRadius() still reads maximized until an xdg client acks leaving it.
-    const footer = if (toplevel.hasServerDecorations()) chrome.footerHeight(chrome.frameRadius() * toplevel.chromeDensity()) else 0;
+    const footer = if (toplevel.hasServerDecorations()) chrome.frame_border else 0;
     const scale = toplevel.zoom();
     const width = @as(i32, @intFromFloat(@floor(@as(f64, @floatFromInt(rect.width)) / scale))) - 2 * toplevel.borderWidth();
     const height = @as(i32, @intFromFloat(@floor(@as(f64, @floatFromInt(rect.height)) / scale))) - toplevel.titlebarHeight() - footer;
@@ -3852,7 +3453,7 @@ pub fn setTiledOn(toplevel: *Toplevel, output: *Output, tile: tiling.Tile) void 
 /// replies to an earlier configure never trigger another layout pass.
 pub fn setAutoTile(toplevel: *Toplevel, rect: wlr.Box) void {
     if (!toplevel.in_world or toplevel.fullscreen or toplevel.maximized) return;
-    const footer = if (toplevel.hasServerDecorations()) chrome.footerHeight(chrome.frameRadius() * toplevel.chromeDensity()) else 0;
+    const footer = if (toplevel.hasServerDecorations()) chrome.frame_border else 0;
     const target: RestoreGeometry = .{
         .x = rect.x,
         .y = rect.y,
@@ -4048,7 +3649,7 @@ pub fn handleIdentityChanged(toplevel: *Toplevel) void {
     if (toplevel.live_rules.decorations != prev_rules.decorations) {
         if (toplevel.decoration) |d| d.applyMode();
         if (toplevel.kde_decoration) |d| d.applyMode(false);
-        toplevel.syncChrome(true, true, nowMs()) catch {};
+        toplevel.syncChrome(true, nowMs()) catch {};
     }
 
     if (toplevel.in_world) if (toplevel.server.layout_autosave) |autosave| {
@@ -4058,9 +3659,9 @@ pub fn handleIdentityChanged(toplevel: *Toplevel) void {
     @import("auto_tiling.zig").observe(toplevel);
     toplevel.server.window_tabs.reconcile(toplevel);
     if (toplevel.tab_hidden) {
-        if (@import("window_tabs.zig").active(toplevel.server, toplevel.tab_group)) |active_tab| active_tab.syncChrome(false, false, nowMs()) catch {};
+        if (@import("window_tabs.zig").active(toplevel.server, toplevel.tab_group)) |active_tab| active_tab.syncChrome(false, nowMs()) catch {};
     }
-    toplevel.syncChrome(false, true, nowMs()) catch |err| {
+    toplevel.syncChrome(true, nowMs()) catch |err| {
         log.err("handleIdentityChanged: could not update window title: {}", .{err});
     };
     if (toplevel.foreign_handle) |handle| {
@@ -4105,7 +3706,7 @@ pub fn hoverTab(toplevel: *Toplevel, x: f64, y: f64) void {
     const next = @import("chrome_tabs.zig").key(toplevel.tabAt(x, y));
     if (next == toplevel.tab_hover) return;
     toplevel.tab_hover = next;
-    toplevel.syncChrome(false, false, nowMs()) catch {};
+    toplevel.syncChrome(false, nowMs()) catch {};
 }
 
 pub fn stepTab(toplevel: *Toplevel, forward: bool) void {

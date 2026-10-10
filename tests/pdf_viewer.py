@@ -166,7 +166,7 @@ def run(scale: int = 1):
             REDIWM_CONFIG=str(config),
             WLR_BACKENDS="headless", REDIWM_FILES_DEVICES="0",
             WLR_HEADLESS_OUTPUTS="1",
-            WLR_RENDERER=os.environ.get("REDIWM_TEST_RENDERER", "pixman"),
+            WLR_RENDERER=os.environ.get("REDIWM_TEST_RENDERER", "gles2"),
             REDIWM_SCALE=str(scale),
             DBUS_SESSION_BUS_ADDRESS="",
             DBUS_SYSTEM_BUS_ADDRESS="unix:path=/nonexistent-rediwm-test-system-bus",

@@ -14,7 +14,6 @@ import tempfile
 import time
 
 from PIL import Image
-from ipc_client import scene_renderer_config
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -44,12 +43,12 @@ def run():
     with tempfile.TemporaryDirectory(prefix="rediwm-zoom-test-") as tmp:
         tmp = Path(tmp)
         build_client(tmp)
-        env = dict(os.environ, XDG_RUNTIME_DIR=str(tmp), WLR_BACKENDS="headless", WLR_HEADLESS_OUTPUTS=os.environ.get("REDIWM_TEST_OUTPUTS", "1"), WLR_RENDERER=os.environ.get("REDIWM_TEST_RENDERER", "pixman"), WLR_RENDERER_ALLOW_SOFTWARE="1", REDIWM_SCALE=os.environ.get("REDIWM_TEST_SCALE", "1"), REDIWM_IPC_AUTOMATION="1")
+        env = dict(os.environ, XDG_RUNTIME_DIR=str(tmp), WLR_BACKENDS="headless", WLR_HEADLESS_OUTPUTS=os.environ.get("REDIWM_TEST_OUTPUTS", "1"), WLR_RENDERER=os.environ.get("REDIWM_TEST_RENDERER", "gles2"), WLR_RENDERER_ALLOW_SOFTWARE="1", REDIWM_SCALE=os.environ.get("REDIWM_TEST_SCALE", "1"), REDIWM_IPC_AUTOMATION="1")
         config_path = tmp / "rediwm-config.toml"
         # Protocol deltas below deliberately use the non-inverted direction.
         # pan_speed = 1.0 keeps pan assertions below at raw screen-space motion
         # (see the default 2x pan_speed in config/loader.zig's InputConfig).
-        config_path.write_text(scene_renderer_config("[input]\ninvert_scroll = false\npan_speed = 1.0\n"))
+        config_path.write_text("[input]\ninvert_scroll = false\npan_speed = 1.0\n")
         env["REDIWM_CONFIG"] = str(config_path)
         env.pop("WAYLAND_DISPLAY", None)
         env.pop("REDIWM_SOCKET", None)

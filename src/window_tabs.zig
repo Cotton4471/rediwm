@@ -168,7 +168,7 @@ pub fn reconfigure(self: *Self, server: *Server) void {
     var it = server.world.toplevels.iterator(.forward);
     while (it.next()) |top| {
         self.reconcile(top);
-        top.syncChrome(false, false, Top.nowMs()) catch {};
+        top.syncChrome(false, Top.nowMs()) catch {};
     }
     var pending_index: usize = 0;
     while (pending_index < self.pending.items.len) {
@@ -276,7 +276,7 @@ pub fn select(self: *Self, top: *Top) void {
     top.minimized = minimized;
     top.map_motion.cancel(1);
     top.map_opacity.cancel(1);
-    top.syncChrome(false, false, Top.nowMs()) catch {};
+    top.syncChrome(false, Top.nowMs()) catch {};
     old.syncForeign();
     top.syncForeign();
     if (top.server.ipc) |ipc| {
@@ -325,7 +325,7 @@ pub fn remove(self: *Self, top: *Top, restore: bool) void {
         const focused = top.server.world.toplevels.first();
         if (focused == top or (focused != null and focused.?.parentWindow() == top)) top.server.world.focus(other);
     };
-    if (active(top.server, group)) |other| other.syncChrome(false, false, Top.nowMs()) catch {};
+    if (active(top.server, group)) |other| other.syncChrome(false, Top.nowMs()) catch {};
     refreshVisibility(top.server);
 }
 
@@ -339,7 +339,7 @@ pub fn closeGroup(top: *Top) void {
 fn notice(server: *Server, group: u64, value: Notice) void {
     if (active(server, group)) |top| {
         top.tab_notice = value;
-        top.syncChrome(false, false, Top.nowMs()) catch {};
+        top.syncChrome(false, Top.nowMs()) catch {};
     }
 }
 

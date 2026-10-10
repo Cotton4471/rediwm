@@ -36,6 +36,8 @@ pub const PerformanceStats = struct {
     /// Frames whose output commit was skipped because nothing on screen changed.
     output_skipped_commits: u64 = 0,
     titlebar_paints: u64 = 0,
+    // Always 0 since the window shapes (no footer raster, no edge sample); kept
+    // so the PerformanceStats wire format and its readers stay unchanged.
     footer_paints: u64 = 0,
     edge_samples_attempted: u64 = 0,
     edge_samples_succeeded: u64 = 0,
@@ -226,10 +228,6 @@ pub fn recordTitlebarPaint() void {
     global_stats.titlebar_paints +%= 1;
 }
 
-pub fn recordFooterPaint() void {
-    global_stats.footer_paints +%= 1;
-}
-
 pub const TaskbarPaintCause = struct {
     pub const start: u8 = 1 << 0;
     pub const chip: u8 = 1 << 1;
@@ -263,19 +261,6 @@ pub fn recordTaskbarAudioPaint() void {
 
 pub fn recordTaskbarClockFrameRequest() void {
     global_stats.taskbar_clock_frame_requests +%= 1;
-}
-
-pub fn recordEdgeSampleAttempt() void {
-    global_stats.edge_samples_attempted +%= 1;
-}
-
-pub fn recordEdgeSampleSuccess(ns: u64) void {
-    global_stats.edge_samples_succeeded +%= 1;
-    global_stats.edge_sample_ns +%= ns;
-}
-
-pub fn recordEdgeSampleSkip() void {
-    global_stats.edge_samples_skipped +%= 1;
 }
 
 pub fn recordIconCacheHit() void {

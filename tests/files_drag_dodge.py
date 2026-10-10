@@ -39,7 +39,7 @@ def run(scenario):
         if scenario == "off":
             config += "dodge_file_drags = false\n"
         comp, log = spawn_compositor(tmp, config_content=config,
-                                     renderer=os.environ.get("REDIWM_TEST_RENDERER", "pixman"),
+                                     renderer=os.environ.get("REDIWM_TEST_RENDERER", "gles2"),
                                      env_extra={"HOME": str(home)})
         peers = []
         try:

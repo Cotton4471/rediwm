@@ -53,7 +53,7 @@ def run_case(name, *, zoom, window_x, pan_dx, popup_at):
         config_path.write_text("[input]\ninvert_scroll = false\npan_speed = 1.0\n")
         env = dict(
             os.environ, XDG_RUNTIME_DIR=str(tmp), XDG_STATE_HOME=str(tmp / "state"), WLR_BACKENDS="headless", WLR_HEADLESS_OUTPUTS="1",
-            WLR_RENDERER=os.environ.get("REDIWM_TEST_RENDERER", "pixman"), WLR_RENDERER_ALLOW_SOFTWARE="1", REDIWM_SCALE="1",
+            WLR_RENDERER=os.environ.get("REDIWM_TEST_RENDERER", "gles2"), WLR_RENDERER_ALLOW_SOFTWARE="1", REDIWM_SCALE="1",
             REDIWM_IPC_AUTOMATION="1", REDIWM_CONFIG=str(config_path), REDIWM_TEST_POPUP_SLIDE="1",
         )
         if popup_at:

@@ -46,7 +46,7 @@ scale = {scale}
 def run_case(binary, override='auto'):
     with tempfile.TemporaryDirectory(prefix='rediwm-output-scale-') as directory:
         tmp = Path(directory)
-        renderer = os.environ.get('REDIWM_TEST_RENDERER', 'pixman')
+        renderer = os.environ.get('REDIWM_TEST_RENDERER', 'gles2')
         compositor, log = spawn_compositor(tmp, scale=override, outputs='2', config_content=config(1.5),
                                            renderer=renderer,
                                            env_extra={'XDG_CACHE_HOME': str(tmp / 'cache')})

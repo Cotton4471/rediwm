@@ -163,7 +163,7 @@ def context_menu():
         tmp = Path(directory)
         build_client(tmp)
         process, log = spawn_compositor(tmp, scale=float(os.environ.get("REDIWM_TEST_SCALE", "1")),
-            renderer=os.environ.get("REDIWM_TEST_RENDERER", "pixman"),
+            renderer=os.environ.get("REDIWM_TEST_RENDERER", "gles2"),
             config_content='[compositor]\nxwayland = false\n[animations]\nenabled = false\n', env_extra={
                 "DBUS_SESSION_BUS_ADDRESS": "", "XDG_CACHE_HOME": str(tmp / "cache"),
                 "XDG_CONFIG_HOME": str(tmp / "config"), "XDG_DATA_HOME": str(tmp / "data")})

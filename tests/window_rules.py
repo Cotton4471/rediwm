@@ -187,7 +187,7 @@ def run():
             XDG_RUNTIME_DIR=str(tmp),
             WLR_BACKENDS="headless",
             WLR_HEADLESS_OUTPUTS="2",
-            WLR_RENDERER="pixman",
+            WLR_RENDERER="gles2",
             REDIWM_SCALE="1",
             REDIWM_CONFIG=str(config_file),
         )

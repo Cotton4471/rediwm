@@ -19,7 +19,7 @@ def run():
         tmp = Path(directory)
         build_client(tmp)
         compositor, log = spawn_compositor(
-            tmp, renderer=os.environ.get("REDIWM_TEST_RENDERER", "pixman"),
+            tmp, renderer=os.environ.get("REDIWM_TEST_RENDERER", "gles2"),
             env_extra={"DBUS_SESSION_BUS_ADDRESS": ""})
         client = None
         try:

@@ -120,8 +120,6 @@ pub const TaskbarItems = @import("taskbar_items.zig").Config;
 pub const DesktopMode = enum { canvas, workspaces };
 
 pub const CompositorConfig = struct {
-    /// Temporary stage 3 comparison switch; takes effect after restart.
-    scene_renderer: enum { legacy, owned } = .legacy,
     desktop_mode: DesktopMode = .canvas,
     floating_apps: []const []const u8 = &.{},
     default_file_manager: []const u8 = "",
@@ -984,7 +982,6 @@ const region_rules: std.enums.EnumFieldStruct(std.meta.FieldEnum(RegionConfig), 
 };
 
 const compositor_rules: std.enums.EnumFieldStruct(std.meta.FieldEnum(CompositorConfig), FieldRule, null) = .{
-    .scene_renderer = .enumeration,
     .desktop_mode = .enumeration,
     .floating_apps = .json_string_list,
     .taskbar_items = .taskbar_items,
@@ -1486,7 +1483,6 @@ test "documented default parses all sections" {
     try std.testing.expectEqual(@as(f32, 10.0), cfg.input.accel_max_speed);
     try std.testing.expectEqual(@as(u32, 10), cfg.compositor.border_radius);
     try std.testing.expect(cfg.compositor.xwayland);
-    try std.testing.expectEqual(.legacy, cfg.compositor.scene_renderer);
     try std.testing.expectEqualStrings("Manrope", cfg.theme.font);
 
     const q = try keybinds.parseKeybind("super+q");

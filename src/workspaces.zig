@@ -169,7 +169,7 @@ pub fn setMode(self: *Self, server: *Server, enabled: bool) void {
     self.refresh(server);
     focusFallback(server, null);
     var tops = server.world.toplevels.iterator(.forward);
-    while (tops.next()) |top| if (top.in_world) top.syncChrome(false, false, Top.nowMs()) catch {};
+    while (tops.next()) |top| if (top.in_world) top.syncChrome(false, Top.nowMs()) catch {};
     server.world.applyCamera();
     if (server.input.open_control_center) |cc| {
         cc.shortcuts.cancel();

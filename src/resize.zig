@@ -187,9 +187,9 @@ pub fn selectEdgesFromQuadrant(
 /// How far a grab reaches past the frame. `Toplevel.resize_grab` covers this
 /// band whether or not a shadow is drawn there.
 pub const reach_outside: f64 = 10.0;
-/// How far it reaches into the frame, where chrome (titlebar, footer skirt)
-/// is exposed. Beside the client the frame border is 1 px and the client
-/// surface is above it, so `inside_client` keeps those pixels the client's.
+/// How far it reaches into the frame, where the titlebar is exposed. Beside and
+/// below the client the frame border is 1 px and the client surface is above
+/// it, so `inside_client` keeps those pixels the client's.
 pub const reach_inside: f64 = 4.0;
 
 pub fn detectResizeEdges(

@@ -82,7 +82,7 @@ def run():
         env = dict(os.environ, HOME=str(home), XDG_RUNTIME_DIR=directory,
                    XDG_DATA_HOME=str(tmp / "data"), XDG_CONFIG_HOME=str(config_home),
                    REDIWM_CONFIG=str(config), WLR_BACKENDS="headless", REDIWM_FILES_DEVICES="0",
-                   WLR_HEADLESS_OUTPUTS="1", WLR_RENDERER=os.environ.get("REDIWM_TEST_RENDERER", "pixman"),
+                   WLR_HEADLESS_OUTPUTS="1", WLR_RENDERER=os.environ.get("REDIWM_TEST_RENDERER", "gles2"),
                    REDIWM_SCALE="1", XDG_STATE_HOME=str(tmp / "state"), PATH=str(helpers) + ":" + os.environ["PATH"],
                    REDIWM_IPC_AUTOMATION="1")
         env.pop("WAYLAND_DISPLAY", None)

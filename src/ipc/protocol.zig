@@ -659,7 +659,7 @@ pub const WaitForFrameResult = struct {
 };
 
 pub const DumpBufferParams = struct {
-    target: []const u8, // "titlebar", "skirt", "start_menu", "control_center", "power_menu", "taskbar"
+    target: []const u8, // "titlebar", "start_menu", "control_center", "power_menu", "taskbar"
     window_id: ?u64 = null,
     output: ?[]const u8 = null,
 };

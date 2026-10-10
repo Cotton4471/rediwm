@@ -14,7 +14,7 @@ def run():
         tmp = Path(directory)
         scale = float(os.getenv('REDIWM_TEST_SCALE', '1'))
         proc, log = spawn_compositor(tmp, scale=str(scale),
-            renderer=os.getenv('REDIWM_TEST_RENDERER', 'pixman'),
+            renderer=os.getenv('REDIWM_TEST_RENDERER', 'gles2'),
             config_content='''[compositor]
 xwayland = false
 mini_map_enabled = false

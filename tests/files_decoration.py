@@ -46,7 +46,7 @@ def run():
             XDG_STATE_HOME=str(tmp / "state"),
             WLR_BACKENDS='headless', REDIWM_FILES_DEVICES='0',
             WLR_HEADLESS_OUTPUTS='1',
-            WLR_RENDERER='pixman',
+            WLR_RENDERER='gles2',
             REDIWM_SCALE='1',
             PATH=os.environ.get('PATH', ''),
         )

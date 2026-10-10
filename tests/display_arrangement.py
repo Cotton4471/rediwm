@@ -58,7 +58,7 @@ def run_two_outputs():
     with tempfile.TemporaryDirectory(prefix="rediwm-arrangement-") as directory:
         tmp = Path(directory)
         process, log = spawn_compositor(tmp, outputs="2", config_content=CONFIG,
-                                        renderer=os.environ.get("REDIWM_TEST_RENDERER", "pixman"))
+                                        renderer=os.environ.get("REDIWM_TEST_RENDERER", "gles2"))
         try:
             with IPCClient(tmp, timeout=15) as ipc:
                 ipc.wait_for("wallpaper_presented", timeout_ms=10000)

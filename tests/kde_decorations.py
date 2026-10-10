@@ -33,7 +33,7 @@ def run():
         tmp = Path(directory)
         build_client(tmp)
         base_config = '[animations]\nreduced_motion = "on"\n'
-        compositor, compositor_log = spawn_compositor(tmp, config_content=base_config, renderer=os.environ.get("REDIWM_TEST_RENDERER", "pixman"),
+        compositor, compositor_log = spawn_compositor(tmp, config_content=base_config, renderer=os.environ.get("REDIWM_TEST_RENDERER", "gles2"),
             env_extra={"DBUS_SESSION_BUS_ADDRESS": "unix:path=/nonexistent-rediwm-test-session-bus"})
         clients = []
         try:

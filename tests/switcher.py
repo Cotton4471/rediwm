@@ -14,7 +14,7 @@ def run(scale, modifier=56):
     with tempfile.TemporaryDirectory(prefix='rediwm-switcher-') as directory:
         tmp = Path(directory)
         build_client(tmp)
-        proc, log = spawn_compositor(tmp, scale=scale, renderer=os.environ.get('REDIWM_TEST_RENDERER', 'pixman'), config_content=f'[compositor]\nswitcher_opacity = {os.environ.get("REDIWM_TEST_SWITCHER_OPACITY", "1.0")}\n[input]\nkey_repeat_delay = 200\nkey_repeat_rate = 5\n[keybinds]\n\"alt+tab\" = \"focus_next\"\n\"alt+shift+tab\" = \"focus_prev\"\n')
+        proc, log = spawn_compositor(tmp, scale=scale, renderer=os.environ.get('REDIWM_TEST_RENDERER', 'gles2'), config_content=f'[compositor]\nswitcher_opacity = {os.environ.get("REDIWM_TEST_SWITCHER_OPACITY", "1.0")}\n[input]\nkey_repeat_delay = 200\nkey_repeat_rate = 5\n[keybinds]\n\"alt+tab\" = \"focus_next\"\n\"alt+shift+tab\" = \"focus_prev\"\n')
         clients = []
         try:
             with IPCClient(tmp) as ipc:

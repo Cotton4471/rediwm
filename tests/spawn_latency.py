@@ -217,7 +217,7 @@ def compositor_env(tmp: Path, backend: str, renderer: str, scale: str, config: s
 
 def run_isolated(args) -> None:
     backend = os.environ.get("REDIWM_TEST_BACKEND", "headless")
-    renderer = os.environ.get("REDIWM_TEST_RENDERER", "pixman")
+    renderer = os.environ.get("REDIWM_TEST_RENDERER", "gles2")
     scale = os.environ.get("REDIWM_TEST_SCALE", "1")
     host_display = os.environ.get("WAYLAND_DISPLAY")
     if backend == "wayland" and not host_display:

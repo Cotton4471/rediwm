@@ -99,7 +99,7 @@ gpu_timer_used_ns: u64 = 0,
 allocator: *wlr.Allocator,
 scene: *wlr.Scene,
 glass_engine: ?*glass.Engine = null,
-output_renderer: ?*scene_output_mod.Renderer = null,
+output_renderer: *scene_output_mod.Renderer = undefined,
 // Set when wp_linux_drm_syncobj_v1 is advertised: release points for client
 // buffers the glass and window capture passes read (see explicit_sync.c).
 read_fence: ?*explicit_sync.ReadFence = null,
@@ -338,8 +338,17 @@ pub fn init(server: *Server, scale: ?f32, icon_theme_cfg: icon_theme.Config, io:
     const backend = wlr.Backend.autocreate(wl_server.getEventLoop(), &session) catch return error.BackendCreateFailed;
     errdefer backend.destroy();
 
-    const renderer = wlr.Renderer.autocreate(backend) catch return error.RendererInitFailed;
+    const renderer = wlr.Renderer.autocreate(backend) catch {
+        log.err("init: no renderer (GLES2 is required; with several GPUs pick one with WLR_RENDER_DRM_DEVICE=/dev/dri/renderD*)", .{});
+        return error.RendererInitFailed;
+    };
     errdefer renderer.destroy();
+    // The output pass is GLES2 only (docs/plans/scene-graph.md, renderer policy).
+    // A machine without a GPU runs Mesa's llvmpipe: WLR_RENDERER_ALLOW_SOFTWARE=1.
+    if (!renderer.isGles2()) {
+        log.err("init: RediWM needs the GLES2 renderer (set WLR_RENDERER=gles2; without a GPU also WLR_RENDERER_ALLOW_SOFTWARE=1)", .{});
+        return error.RendererInitFailed;
+    }
     const renderer_name: []const u8 = if (renderer.isGles2()) "gles2" else if (renderer.isPixman()) "pixman" else "unknown";
     startup.markRendererReady(renderer_name, scale orelse 1);
 
@@ -458,20 +467,16 @@ pub fn init(server: *Server, scale: ?f32, icon_theme_cfg: icon_theme.Config, io:
     // measurements; every glass call already accepts a null engine.
     server.glass_engine = if (environ.getPosix("REDIWM_NO_GLASS") != null) null else glass.Engine.create(renderer, wlr_allocator, scene, server.read_fence);
     errdefer glass.Engine.destroy(server.glass_engine);
-    if (loaded.compositor.scene_renderer == .owned) {
-        server.output_renderer = scene_output_mod.Renderer.create(renderer) orelse return error.RendererInitFailed;
-        log.info("scene renderer: owned GLES2 output pass", .{});
-        // Rounded shapes are what lets the frame drop its CPU corners, skirt and
-        // border rects. Decided here, before any window exists: the height of
-        // every frame depends on it.
-        if (server.output_renderer.?.enableShapes()) {
-            @import("chrome.zig").analytic_frames = true;
-            log.info("window frames: rounded shapes drawn by the output pass", .{});
-        } else {
-            log.warn("window frames: shaped programs unavailable, keeping CPU corners", .{});
-        }
-    }
+    server.output_renderer = scene_output_mod.Renderer.create(renderer) orelse return error.RendererInitFailed;
     errdefer scene_output_mod.Renderer.destroy(server.output_renderer);
+    log.info("scene renderer: owned GLES2 output pass", .{});
+    // The window shapes: rounded clip, ring and shadow. Built here, before any
+    // window exists. Without them windows are square, with no ring or shadow.
+    if (server.output_renderer.enableShapes()) {
+        @import("chrome.zig").shapes = true;
+    } else {
+        log.err("window frames: shaped programs unavailable, windows are drawn square", .{});
+    }
     server.outputs.init();
     server.layer_surfaces.init();
     try server.world.init(server, world_tree, world_view);
@@ -1047,18 +1052,14 @@ pub fn deinit(server: *Server) void {
     log.info("compositor session teardown complete", .{});
 }
 
-/// All output builds, including capture between frames, use the selected
-/// presenter and the same swapchain/damage history. Commits stay on Output.
+/// All output builds, including capture between frames, use the owned pass and
+/// the same swapchain/damage history. Commits stay on Output.
 pub fn buildOutputState(server: *Server, output: *wlr.SceneOutput, state: *wlr.Output.State) bool {
-    if (server.output_renderer) |renderer|
-        return renderer.buildState(server.world.projection, output, state);
-    return output.buildState(state, null);
+    return server.output_renderer.buildState(server.world.projection, output, state);
 }
 
 pub fn beginRenderPass(server: *Server, buffer: *wlr.Buffer, options: ?*const wlr.Renderer.BufferPassOptions) !*wlr.RenderPass {
-    if (server.output_renderer) |renderer|
-        return renderer.beginPass(buffer, options) orelse error.RenderPassFailed;
-    return server.renderer.beginBufferPass(buffer, options);
+    return server.output_renderer.beginPass(buffer, options) orelse error.RenderPassFailed;
 }
 
 pub fn maxOutputScale(server: *Server) f32 {
@@ -1659,7 +1660,7 @@ fn handleIconWake(fd: c_int, mask: wl.EventMask, server: *Server) c_int {
     const now = @import("Toplevel.zig").nowMs();
     var toplevel_it = server.world.toplevels.iterator(.forward);
     while (toplevel_it.next()) |toplevel| {
-        toplevel.syncChrome(false, false, now) catch |err| {
+        toplevel.syncChrome(false, now) catch |err| {
             log.warn("handleIconWake: syncChrome failed: {}", .{err});
         };
     }

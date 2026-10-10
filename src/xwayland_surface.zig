@@ -456,7 +456,7 @@ fn handleSetSizeHints(listener: *wl.Listener(void)) void {
 
 fn handleSetDecorations(listener: *wl.Listener(void)) void {
     const adapter: *Adapter = @fieldParentPtr("set_decorations", listener);
-    adapter.window.syncChrome(false, true, Toplevel.nowMs()) catch {};
+    adapter.window.syncChrome(true, Toplevel.nowMs()) catch {};
 }
 
 fn handleSetOverrideRedirect(listener: *wl.Listener(void)) void {

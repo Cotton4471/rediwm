@@ -357,7 +357,7 @@ def test_real_greeter_connects():
         home = Path(runtime) / "home"
         home.mkdir()
         env = {
-            "WLR_BACKENDS": "headless", "WLR_HEADLESS_OUTPUTS": "1", "WLR_RENDERER": "pixman", "REDIWM_SCALE": "1",
+            "WLR_BACKENDS": "headless", "WLR_HEADLESS_OUTPUTS": "1", "WLR_RENDERER": "gles2", "REDIWM_SCALE": "1",
             "XDG_RUNTIME_DIR": runtime, "HOME": str(home),
             "DBUS_SYSTEM_BUS_ADDRESS": "unix:path=/nonexistent-rediwm-test-system-bus",
             "DBUS_SESSION_BUS_ADDRESS": "unix:path=/nonexistent-rediwm-test-session-bus",

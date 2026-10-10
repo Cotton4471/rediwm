@@ -16,7 +16,7 @@ def run():
         build_client(tmp)
         (tmp / "config.toml").write_text("")
         env = dict(os.environ, XDG_RUNTIME_DIR=str(tmp), WLR_BACKENDS="headless",
-                   WLR_HEADLESS_OUTPUTS="1", WLR_RENDERER="pixman", REDIWM_SCALE="1",
+                   WLR_HEADLESS_OUTPUTS="1", WLR_RENDERER="gles2", REDIWM_SCALE="1",
                    REDIWM_CONFIG=str(tmp / "config.toml"), REDIWM_IPC_AUTOMATION="1")
         env.pop("WAYLAND_DISPLAY", None)
         env.pop("REDIWM_SOCKET", None)

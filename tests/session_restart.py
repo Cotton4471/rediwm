@@ -24,7 +24,7 @@ def run():
         config = tmp / 'config.toml'
         config.write_text('[compositor]\nxwayland = false\n[autostart]\n')
         env = dict(os.environ, XDG_RUNTIME_DIR=str(tmp), WLR_BACKENDS='headless',
-                   WLR_HEADLESS_OUTPUTS='1', WLR_RENDERER='pixman',
+                   WLR_HEADLESS_OUTPUTS='1', WLR_RENDERER='gles2',
                    REDIWM_CONFIG=str(config), XDG_CACHE_HOME=str(tmp / 'cache'),
                    REDIWM_SOCKET=str(tmp / 'rediwm-test.sock'))
         env.pop('WAYLAND_DISPLAY', None)

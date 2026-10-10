@@ -45,7 +45,7 @@ def run_case(binary, version, scale, full):
             config_content="[compositor]\nxwayland = false\n",
             env_extra={"XDG_CACHE_HOME": str(tmp / "cache"),
                        "WLR_RENDERER_ALLOW_SOFTWARE": "1",
-                       "WLR_RENDERER": os.environ.get("REDIWM_TEST_RENDERER", "pixman")})
+                       "WLR_RENDERER": os.environ.get("REDIWM_TEST_RENDERER", "gles2")})
         client = None
         client_log = tmp / "client.log"
         try:

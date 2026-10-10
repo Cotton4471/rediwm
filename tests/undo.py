@@ -74,7 +74,7 @@ def run():
             XDG_RUNTIME_DIR=str(tmp),
             WLR_BACKENDS="headless",
             WLR_HEADLESS_OUTPUTS=os.environ.get("REDIWM_TEST_OUTPUTS", "1"),
-            WLR_RENDERER=os.environ.get("REDIWM_TEST_RENDERER", "pixman"),
+            WLR_RENDERER=os.environ.get("REDIWM_TEST_RENDERER", "gles2"),
             WLR_RENDERER_ALLOW_SOFTWARE="1",
             REDIWM_SCALE=os.environ.get("REDIWM_TEST_SCALE", "1"),
             REDIWM_IPC_AUTOMATION="1",

@@ -14,7 +14,7 @@ def run():
         # A 100 ms desktop slide settles well inside the 0.25 s waits below.
         original = '# keep me\n[input]\ninvert_scroll = false\npan_speed = 1.0\n[compositor]\nxwayland = false\ndesktop_switch_ms = 100\n'
         process, log = spawn_compositor(
-            tmp, config_content=original, renderer=os.getenv("REDIWM_TEST_RENDERER", "pixman"),
+            tmp, config_content=original, renderer=os.getenv("REDIWM_TEST_RENDERER", "gles2"),
             env_extra={"DBUS_SESSION_BUS_ADDRESS": ""})
         try:
             with IPCClient(tmp, timeout=20) as ipc:

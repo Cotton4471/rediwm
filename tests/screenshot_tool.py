@@ -33,7 +33,7 @@ def assert_pixels(actual, expected, message):
 def run(scale, displays="1"):
     with tempfile.TemporaryDirectory(prefix="rediwm-screenshot-") as directory:
         tmp = Path(directory)
-        process, log = spawn_compositor(tmp, scale=str(scale), outputs=displays, renderer=os.environ.get("REDIWM_TEST_RENDERER", "pixman"), env_extra={"HOME": str(tmp), "WLR_RENDERER_ALLOW_SOFTWARE": "1"})
+        process, log = spawn_compositor(tmp, scale=str(scale), outputs=displays, renderer=os.environ.get("REDIWM_TEST_RENDERER", "gles2"), env_extra={"HOME": str(tmp), "WLR_RENDERER_ALLOW_SOFTWARE": "1"})
         try:
             with IPCClient(socket_path=tmp, timeout=15) as ipc:
                 ipc.wait_for("wallpaper_presented", timeout_ms=10000)

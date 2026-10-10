@@ -101,7 +101,7 @@ def summarize(label, stats):
 
 
 def run(binary=None):
-    renderer = os.environ.get("REDIWM_TEST_RENDERER", "pixman")
+    renderer = os.environ.get("REDIWM_TEST_RENDERER", "gles2")
     backend = os.environ.get("REDIWM_TEST_BACKEND", "headless")
     seconds = float(os.environ.get("REDIWM_TEST_PERF_SECONDS", "2"))
     if not math.isfinite(seconds) or seconds <= 0:

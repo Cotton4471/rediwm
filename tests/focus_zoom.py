@@ -23,7 +23,7 @@ def run():
         base = '[input]\ninvert_scroll = false\n[keybinds]\n"alt+tab" = "focus_next"\n"super+5" = "set_depth 4"\n'
         process, log = spawn_compositor(
             tmp, scale=os.environ.get("REDIWM_TEST_SCALE", "1"),
-            renderer=os.environ.get("REDIWM_TEST_RENDERER", "pixman"),
+            renderer=os.environ.get("REDIWM_TEST_RENDERER", "gles2"),
             config_content=base, env_extra={"DBUS_SESSION_BUS_ADDRESS": ""})
         clients = []
         handles = []

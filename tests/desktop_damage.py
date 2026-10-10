@@ -16,7 +16,7 @@ import time
 
 from PIL import Image, ImageChops
 
-from ipc_client import IPCClient, ROOT, scene_renderer_config
+from ipc_client import IPCClient, ROOT
 
 
 def run(args):
@@ -29,8 +29,8 @@ def run(args):
             (desktop_dir / name).write_text("desktop damage fixture")
         config = tmp / "config.toml"
         def configure_scale(scale, desktop=True):
-            config.write_text(scene_renderer_config(f'[compositor]\nxwayland = false\n[desktop]\nenabled = {str(desktop).lower()}\n'
-                              f'[[outputs]]\nname = "HEADLESS-1"\nscale = {scale}\n'))
+            config.write_text(f'[compositor]\nxwayland = false\n[desktop]\nenabled = {str(desktop).lower()}\n'
+                              f'[[outputs]]\nname = "HEADLESS-1"\nscale = {scale}\n')
 
         configure_scale(args.scale)
         env = dict(os.environ, XDG_RUNTIME_DIR=directory,
@@ -286,7 +286,7 @@ if __name__ == "__main__":
     parser.add_argument("--bin-dir", type=Path, default=ROOT / "zig-out/bin")
     parser.add_argument("--scale", type=float, choices=(1, 1.5, 2), default=1)
     parser.add_argument("--rename-only", action="store_true", help="Check the inline rename overlay and cancellation only")
-    parser.add_argument("--renderer", choices=("pixman", "gles2"), default=os.environ.get("REDIWM_TEST_RENDERER", "pixman"),
+    parser.add_argument("--renderer", choices=("pixman", "gles2"), default=os.environ.get("REDIWM_TEST_RENDERER", "gles2"),
                         help="gles2 also requires in-place texture updates (set WLR_RENDER_DRM_DEVICE)")
     parser.add_argument("--capture-dir", type=Path, help="Save screenshots for before/after comparison")
     run(parser.parse_args())
