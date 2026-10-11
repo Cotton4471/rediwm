@@ -1,6 +1,6 @@
 # Scene graph plan, stage 3: owned output pass
 
-Status: **done**, 2026-10-09; hardware checklist passed 2026-10-11 (scanout unconfirmed, see the checklist). Stages 0–2 are
+Status: **done**, 2026-10-09; hardware checklist passed 2026-10-11 except hotplug, not run (no second display), and scanout unconfirmed; see the checklist. Stages 0–2 are
 complete. The owned radius-zero pass renders real outputs and captures and meets
 the stage 3 cost tolerance (see **Gate decision**). The legacy presenter remains
 the default; only a real KMS session can still qualify plane scanout, out-timeline
@@ -437,8 +437,12 @@ Record the result here when done. Any failure on the owned path that the legacy
 path does not show blocks making `owned` the default.
 
 **Run 2026-10-11, passed** (the user, from a spare VT, on the stage 4e ReleaseSafe
-build, laptop with Intel iris driving eDP-1 at scale 1.5 and an NVIDIA dGPU): all
-six steps passed by observation, with no tearing, freeze or crash. The log of the
+build, laptop with Intel iris driving eDP-1 at scale 1.5 and an NVIDIA dGPU): steps
+1, 2, 3, 5 and 6 passed by observation, with no tearing, freeze or crash. Step 4
+(hotplug) was **not run**: no external display was available. Output add, remove
+and scale changes are covered headless by `output_destroy.py`, `output_scale.py`,
+`display_arrangement.py` and `xdg_output.py`, all passing on 4e, but not on a
+real KMS backend; run step 4 when a second display is at hand. The log of the
 last run (`~/rediwm-vt/rediwm.log`) has the owned pass, no `scene commit failed`
 and no compositor errors. It does not show `Direct scan-out enabled`: scanout did
 not engage in that run, plausibly because the fullscreen clients rendered on the
