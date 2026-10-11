@@ -1,6 +1,6 @@
 # Scene graph plan, stage 3: owned output pass
 
-Status: **done except hardware qualification**, 2026-10-09. Stages 0–2 are
+Status: **done**, 2026-10-09; hardware checklist passed 2026-10-11 (scanout unconfirmed, see the checklist). Stages 0–2 are
 complete. The owned radius-zero pass renders real outputs and captures and meets
 the stage 3 cost tolerance (see **Gate decision**). The legacy presenter remains
 the default; only a real KMS session can still qualify plane scanout, out-timeline
@@ -435,3 +435,14 @@ copy). Logs are at debug level, so everything below is in the compositor log.
 
 Record the result here when done. Any failure on the owned path that the legacy
 path does not show blocks making `owned` the default.
+
+**Run 2026-10-11, passed** (the user, from a spare VT, on the stage 4e ReleaseSafe
+build, laptop with Intel iris driving eDP-1 at scale 1.5 and an NVIDIA dGPU): all
+six steps passed by observation, with no tearing, freeze or crash. The log of the
+last run (`~/rediwm-vt/rediwm.log`) has the owned pass, no `scene commit failed`
+and no compositor errors. It does not show `Direct scan-out enabled`: scanout did
+not engage in that run, plausibly because the fullscreen clients rendered on the
+NVIDIA GPU while the panel scans out from the Intel one. Plane scanout on this
+machine is therefore unconfirmed rather than failed; check it with a client
+forced onto the Intel GPU (`DRI_PRIME=0`, `__GLX_VENDOR_LIBRARY_NAME=mesa`) when
+convenient.

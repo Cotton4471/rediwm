@@ -1,6 +1,6 @@
 # Scene graph plan, stage 4: clipping and primitives
 
-Status: **4a to 4e done on branch `stage4e`, waiting on the stage 3 hardware checklist before it merges**, 2026-10-10. Stage 3 of
+Status: **4a to 4e done**, 2026-10-11 (the stage 3 hardware checklist passed before 4e merged). Stage 3 of
 [scene-graph.md](scene-graph.md) (the owned output pass, radius zero) is done
 apart from hardware qualification; this stage is why the plan exists: the user
 requires clipped client corners, and wlroots 0.20 cannot mask a client. The five
@@ -448,7 +448,7 @@ owned-only compositor (see **Measurement** and **Cost expectations**); it decide
 whether 4c's repaint cost (+10 to +14 % build CPU in `damage_full` and drag) and
 the `enable_shapes` memory came back.
 
-*Done on branch `stage4e`; merges once the stage 3 hardware checklist passes.*
+*Done; merged 2026-10-11 after the stage 3 hardware checklist passed.*
 `owned` is the only presenter: `Server.init` refuses a renderer that is not
 GLES2 (llvmpipe through `WLR_RENDERER_ALLOW_SOFTWARE`, per the master plan's
 renderer policy) and the `scene_renderer` key is gone (an old config's key is

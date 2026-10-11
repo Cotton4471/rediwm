@@ -150,8 +150,8 @@ environment variable: no test hooks in production), removed in stage 6.
    anonymous memory at most +0.5 MiB at startup and no growth under sustained
    damage. Stages 4–6 are judged against the stage 0 baseline, and the final state
    (stage 6) must again be at or below it.
-4. **Clipping and primitives.** *4a to 4d on master, 4e on branch `stage4e`
-   until the stage 3 hardware checklist passes, 2026-10-10:
+4. **Clipping and primitives.** *Done 2026-10-11 (4e merged after the stage 3
+   hardware checklist passed):
    [scene-graph-stage4.md](scene-graph-stage4.md). The legacy presenter is gone;
    CPU per frame is 3-36 % below the stage 0 baseline, memory 1.6-2.3 MiB above
    it (a finding).*
