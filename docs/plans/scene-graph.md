@@ -158,7 +158,8 @@ environment variable: no test hooks in production), removed in stage 6.
    Clip groups on frames, analytic borders and
    shadows, shape-aware hit testing; delete the skirt, `probeClientEdge`,
    `side_fills`, the dual border path and `edge_sampling.py`; shrink the footer.
-5. **Backdrop effects in the pass.** Delete `glass.c`'s prefix capture,
+5. **Backdrop effects in the pass.** *Draft plan, 2026-10-11, decisions open:
+   [scene-graph-stage5.md](scene-graph-stage5.md).* Delete `glass.c`'s prefix capture,
    per-effect contexts, dependency hashing and the drag hold; keep glass pixel
    tests, converted.
 6. **Delete.** `wlr_scene` output rendering, the projection view tree, the
