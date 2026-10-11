@@ -23,6 +23,14 @@ struct program {
     GLint target, dst, color, alpha, opaque, sampler, coords;
     // Shaped programs only (-1 elsewhere): the shape, and the shadow's own terms.
     GLint mode, origin, size, radii, border, bcolor, offset, softness, hide;
+    // The backdrop composite (shaped mode 3) and the blur program.
+    GLint bmap, fmap, saturation, front, front_alpha, has_front;
+    GLint step_uv, sigma, limits, src_scale;
+};
+struct rediwm_backdrop {
+    GLuint tex, fbo;
+    int width, height;    // quarter size
+    struct wlr_box region; // device pixels the blur covers
 };
 struct attrib_state {
     GLint enabled, size, type, normalized, stride, buffer;
@@ -45,6 +53,12 @@ struct rediwm_scene_renderer {
     // a 2D texture, a solid colour and the shape's shadow (they differ in a mode
     // uniform, which every fragment of a draw reads the same), one for external.
     struct program shaped, shaped_external;
+    // Backdrops (stage 5b), built by enable_backdrops: the blur, and scratch the
+    // size of the largest region so far: the copy, and the horizontal pass.
+    struct program blur;
+    GLuint copy_tex, small_tex, small_fbo;
+    int copy_w, copy_h, small_w, small_h;
+    bool has_backdrops, backdrops_tried;
     bool active, has_external, has_sync, has_vao, has_shapes, shapes_tried;
     GLuint vertex_array, vertices;
     PFNGLGENVERTEXARRAYSOESPROC gen_vertex_arrays;
@@ -179,7 +193,8 @@ static const char shaped_vertex[] =
 // add up to the shape's, the spike's model. As two draws the coverages would
 // multiply, and a seam would show where each is partly covered.
 //
-// `mode` 0 draws the texture, 1 the solid colour, 2 the shape's shadow: the
+// `mode` 0 draws the texture, 1 the solid colour, 3 a backdrop composite (see
+// add_backdrop), 2 the shape's shadow: the
 // shape moved by `offset`, falling off over `softness` outside it with the
 // smoothstep of the CPU chrome's shadow (`chrome.shadowCoverage`, the same
 // distance field, so corners match it as exactly as edges), kept out of the shape
@@ -187,13 +202,36 @@ static const char shaped_vertex[] =
 // three because a program costs the driver 130-150 KiB however small it is.
 static const char shaped_fragment[] = SHAPED_HEAD
     "uniform float alpha, opaque, mode, softness, hide; uniform vec2 offset;"
+    "uniform sampler2D front; uniform vec4 bmap, fmap; uniform float saturation, front_alpha, has_front;"
     "void main(){"
+    // 3: a backdrop composite (stage 5b). `tex` is the kept blur; the alpha is
+    // chosen against the surface drawn over it, so the pair has the coverage.
+    "if(mode>2.5){ vec3 rgb=texture2D(tex,(local+bmap.xy)*bmap.zw).rgb;"
+    "float l=dot(rgb,vec3(.213,.715,.072)); rgb=clamp(vec3(l)+(rgb-vec3(l))*saturation,0.,1.);"
+    "float c=cov(sdf(local,radii))*alpha;"
+    "float f=has_front>.5?texture2D(front,(local+fmap.xy)*fmap.zw).a*front_alpha:0.;"
+    "float a=f>=.99999?0.:clamp((c-f)/(1.-f),0.,1.); gl_FragColor=vec4(rgb*a,a); return; }"
     "if(mode>1.5){ float s=clamp(1.-sdf(local-offset,radii)/softness,0.,1.); s=s*s*(3.-2.*s);"
     "if(hide>.5)s*=1.-cov(sdf(local,radii)); gl_FragColor=color*s; return; }"
     "vec4 c=color; if(mode<.5){ c=texture2D(tex,uv); if(opaque>.5)c.a=1.; c*=alpha; }"
     "float d=sdf(local,radii);"
     "float w=border>0.?1.-cov(d+border):0.;"
     "gl_FragColor=(c*(1.-bcolor.a*w)+bcolor*w)*cov(d); }";
+
+// The backdrop blur (stage 5b): glass.c's kernel, 49 taps, sigma in texels of the
+// target, reading a source texture that may be larger than the region (scratch),
+// clamped to the texels that were really copied, so an edge replicates.
+static const char blur_vertex[] =
+    "attribute vec2 position; varying vec2 uv;"
+    "void main(){ uv=position; gl_Position=vec4(position*2.-1.,0.,1.); }";
+static const char blur_fragment[] =
+    "#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n"
+    "varying vec2 uv; uniform sampler2D tex;"
+    "uniform vec2 step_uv, src_scale; uniform float sigma; uniform vec4 limits;"
+    "void main(){ vec4 sum=vec4(0.); float weight=0.; vec2 at=uv*src_scale;"
+    "for(int i=-24;i<=24;i++){ float x=float(i); float w=exp(-.5*x*x/(sigma*sigma));"
+    "sum+=texture2D(tex,clamp(at+x*step_uv,limits.xy,limits.zw))*w; weight+=w; }"
+    "gl_FragColor=vec4(sum.rgb/weight,1.); }";
 
 static GLuint shader(GLenum type, const char *prefix, const char *source) {
     GLuint id = glCreateShader(type);
@@ -254,6 +292,22 @@ static bool program_init(struct program *p, unsigned bit, const char *vertex_sou
     p->offset = glGetUniformLocation(p->id, "offset");
     p->softness = glGetUniformLocation(p->id, "softness");
     p->hide = glGetUniformLocation(p->id, "hide");
+    p->bmap = glGetUniformLocation(p->id, "bmap");
+    p->fmap = glGetUniformLocation(p->id, "fmap");
+    p->saturation = glGetUniformLocation(p->id, "saturation");
+    p->front = glGetUniformLocation(p->id, "front");
+    p->front_alpha = glGetUniformLocation(p->id, "front_alpha");
+    p->has_front = glGetUniformLocation(p->id, "has_front");
+    p->step_uv = glGetUniformLocation(p->id, "step_uv");
+    p->sigma = glGetUniformLocation(p->id, "sigma");
+    p->limits = glGetUniformLocation(p->id, "limits");
+    p->src_scale = glGetUniformLocation(p->id, "src_scale");
+    // Samplers default to unit 0, and two of different types there (the external
+    // program's `tex` and `front`) make every draw invalid: `front` is unit 1.
+    if (p->front >= 0) {
+        glUseProgram(p->id);
+        glUniform1i(p->front, 1);
+    }
     return true;
 }
 static const char ext_prefix[] =
@@ -314,6 +368,10 @@ void rediwm_scene_renderer_destroy(struct rediwm_scene_renderer *r) {
         glDeleteProgram(r->external.id);
         glDeleteProgram(r->shaped.id);
         glDeleteProgram(r->shaped_external.id);
+        glDeleteProgram(r->blur.id);
+        glDeleteTextures(1, &r->copy_tex);
+        glDeleteTextures(1, &r->small_tex);
+        glDeleteFramebuffers(1, &r->small_fbo);
         leave(r, &state);
     }
     free(r);
@@ -590,3 +648,180 @@ void rediwm_scene_pass_add_shadow(struct wlr_render_pass *base,
     glUniform1f(g->hide, shadow->hide_inside ? 1.f : 0.f);
     draw(shadow->clip);
 }
+
+// ---- Backdrops (stage 5b) -------------------------------------------------------
+bool rediwm_scene_renderer_enable_backdrops(struct rediwm_scene_renderer *r) {
+    assert(!r->active);
+    if (r->backdrops_tried) return r->has_backdrops;
+    r->backdrops_tried = true;
+    if (!r->has_shapes) return false;
+    struct gl_state state;
+    if (!enter(r, &state)) return false;
+    r->has_backdrops = program_init(&r->blur, 32, blur_vertex, "", blur_fragment);
+    if (!r->has_backdrops) {
+        wlr_log(WLR_ERROR, "scene pass: blur program failed to build, glass is a plain tint");
+        glDeleteProgram(r->blur.id);
+        r->blur.id = 0;
+    }
+    leave(r, &state);
+    return r->has_backdrops;
+}
+static void texture_storage(GLuint tex, GLenum format, int w, int h) {
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, format, w, h, 0, format, GL_UNSIGNED_BYTE, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+}
+static bool attach(GLuint fbo, GLuint tex) {
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+    return glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+}
+// Scratch grows to the largest region seen; it is shared by every effect.
+static bool scratch(struct rediwm_scene_renderer *r, int copy_w, int copy_h, int small_w, int small_h) {
+    if (!r->copy_tex) glGenTextures(1, &r->copy_tex);
+    if (!r->small_tex) glGenTextures(1, &r->small_tex);
+    if (!r->small_fbo) glGenFramebuffers(1, &r->small_fbo);
+    if (copy_w > r->copy_w || copy_h > r->copy_h) {
+        r->copy_w = copy_w > r->copy_w ? copy_w : r->copy_w;
+        r->copy_h = copy_h > r->copy_h ? copy_h : r->copy_h;
+        // RGB: a scanout buffer may have no alpha, and GLES2 copies an alpha-less
+        // framebuffer only into a texture without one. The backdrop is opaque.
+        texture_storage(r->copy_tex, GL_RGB, r->copy_w, r->copy_h);
+    }
+    if (small_w > r->small_w || small_h > r->small_h) {
+        r->small_w = small_w > r->small_w ? small_w : r->small_w;
+        r->small_h = small_h > r->small_h ? small_h : r->small_h;
+        texture_storage(r->small_tex, GL_RGBA, r->small_w, r->small_h);
+        if (!attach(r->small_fbo, r->small_tex)) return false;
+    }
+    return true;
+}
+void rediwm_scene_renderer_destroy_backdrop(struct rediwm_scene_renderer *r, struct rediwm_backdrop *b) {
+    if (!b) return;
+    assert(!r->active);
+    struct gl_state state;
+    if (enter(r, &state)) {
+        glDeleteTextures(1, &b->tex);
+        glDeleteFramebuffers(1, &b->fbo);
+        leave(r, &state);
+    }
+    free(b);
+}
+void rediwm_scene_pass_capture_backdrop(struct wlr_render_pass *base, struct rediwm_backdrop **out,
+        struct wlr_box region, float sigma) {
+    struct pass *p = owned_pass(base);
+    struct rediwm_scene_renderer *r = p->renderer;
+    if (p->failed) return;
+    if (!r->has_backdrops || region.width <= 0 || region.height <= 0 || !isfinite(sigma) ||
+            sigma <= 0 || sigma > 1024 || region.width > 16384 || region.height > 16384) {
+        p->failed = true;
+        return;
+    }
+    struct rediwm_backdrop *b = *out;
+    if (!b) {
+        b = calloc(1, sizeof(*b));
+        if (!b) { p->failed = true; return; }
+        glGenTextures(1, &b->tex);
+        glGenFramebuffers(1, &b->fbo);
+        *out = b;
+    }
+    const int small_w = (region.width + 3) / 4, small_h = (region.height + 3) / 4;
+    if (b->width != small_w || b->height != small_h) {
+        texture_storage(b->tex, GL_RGBA, small_w, small_h);
+        if (!attach(b->fbo, b->tex)) { p->failed = true; return; }
+        b->width = small_w;
+        b->height = small_h;
+    }
+    b->region = region;
+    if (!scratch(r, region.width, region.height, small_w, small_h)) { p->failed = true; return; }
+    // 1. Copy what lies in the buffer; texels outside are clamped away below.
+    const int x0 = region.x, y0 = region.y;
+    const int cx0 = x0 < 0 ? 0 : x0, cy0 = y0 < 0 ? 0 : y0;
+    const int cx1 = x0 + region.width > p->buffer->width ? p->buffer->width : x0 + region.width;
+    const int cy1 = y0 + region.height > p->buffer->height ? p->buffer->height : y0 + region.height;
+    if (cx1 <= cx0 || cy1 <= cy0) { p->failed = true; return; }
+    GLuint pass_fbo = wlr_gles2_renderer_get_buffer_fbo(r->renderer, p->buffer);
+    glBindFramebuffer(GL_FRAMEBUFFER, pass_fbo);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_BLEND);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, r->copy_tex);
+    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, cx0 - x0, cy0 - y0, cx0, cy0, cx1 - cx0, cy1 - cy0);
+    // 2. Horizontal at quarter size into scratch, vertical into the backdrop.
+    struct program *g = &r->blur;
+    glUseProgram(g->id);
+    glUniform1i(g->sampler, 0);
+    const float cw = r->copy_w, ch = r->copy_h, aw = r->small_w, ah = r->small_h;
+    glBindFramebuffer(GL_FRAMEBUFFER, r->small_fbo);
+    glViewport(0, 0, small_w, small_h);
+    glUniform2f(g->src_scale, region.width / cw, region.height / ch);
+    glUniform2f(g->step_uv, (float)region.width / small_w / cw, 0);
+    glUniform1f(g->sigma, sigma * small_w / region.width);
+    glUniform4f(g->limits, (cx0 - x0 + .5f) / cw, (cy0 - y0 + .5f) / ch,
+        (cx1 - x0 - .5f) / cw, (cy1 - y0 - .5f) / ch);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    glBindFramebuffer(GL_FRAMEBUFFER, b->fbo);
+    glBindTexture(GL_TEXTURE_2D, r->small_tex);
+    glUniform2f(g->src_scale, small_w / aw, small_h / ah);
+    glUniform2f(g->step_uv, 0, 1.f / ah);
+    glUniform1f(g->sigma, sigma * small_h / region.height);
+    glUniform4f(g->limits, .5f / aw, .5f / ah, (small_w - .5f) / aw, (small_h - .5f) / ah);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    // Back to the pass: its buffer, viewport and blending; the next draw sets the
+    // program and the scissor again.
+    glBindFramebuffer(GL_FRAMEBUFFER, pass_fbo);
+    glViewport(0, 0, p->buffer->width, p->buffer->height);
+    p->program = 0;
+    p->blend_mode = -1;
+}
+void rediwm_scene_pass_add_backdrop(struct wlr_render_pass *base, const struct rediwm_pass_shape *shape,
+        struct wlr_box box, const struct rediwm_pass_backdrop *o) {
+    struct pass *p = owned_pass(base);
+    struct program *g = &p->renderer->shaped;
+    if (p->failed || (o->clip && !pixman_region32_not_empty(o->clip))) return;
+    const struct rediwm_backdrop *b = o->backdrop;
+    if (!g->id || !shape_usable(shape) || !b || !b->width || !isfinite(o->saturation) ||
+            !isfinite(o->opacity) || !isfinite(o->front_opacity)) {
+        p->failed = true;
+        return;
+    }
+    struct wlr_gles2_texture_attribs front = {0};
+    if (o->front) {
+        if (!wlr_texture_is_gles2(o->front) || o->front_box.width <= 0 || o->front_box.height <= 0) {
+            p->failed = true;
+            return;
+        }
+        wlr_gles2_texture_get_attribs(o->front, &front);
+    }
+    const bool has_front = o->front && front.target == GL_TEXTURE_2D;
+    setup(p, g, box, WLR_RENDER_BLEND_MODE_PREMULTIPLIED);
+    struct rediwm_pass_shape bare = *shape; // the ring belongs to the surface over it
+    bare.border = 0;
+    set_shape(g, &bare);
+    glUniform1f(g->mode, 3.f);
+    glUniform1f(g->alpha, o->opacity);
+    glUniform1f(g->saturation, o->saturation);
+    glUniform4f(g->bmap, shape->box.x - b->region.x, shape->box.y - b->region.y,
+        1.f / b->region.width, 1.f / b->region.height);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, has_front ? front.tex : 0);
+    if (has_front) {
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    }
+    glUniform1f(g->has_front, has_front ? 1.f : 0.f);
+    glUniform1f(g->front_alpha, o->front_opacity);
+    glUniform4f(g->fmap, shape->box.x - o->front_box.x, shape->box.y - o->front_box.y,
+        has_front ? 1.f / o->front_box.width : 0, has_front ? 1.f / o->front_box.height : 0);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, b->tex);
+    glUniform1i(g->sampler, 0);
+    draw(o->clip);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glActiveTexture(GL_TEXTURE0);
+}
+

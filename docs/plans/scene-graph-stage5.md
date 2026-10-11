@@ -1,6 +1,6 @@
 # Scene graph plan, stage 5: backdrop effects in the pass
 
-Status: **5a done, 5b next**, 2026-10-11. Decisions taken (all as recommended). Stage 4 of
+Status: **5a and 5b done, 5c next**, 2026-10-11. Decisions taken (all as recommended). Stage 4 of
 [scene-graph.md](scene-graph.md) is done (window shapes, analytic shadows, the
 owned pass as the only presenter). This stage moves glass, the blurred backdrop
 behind titlebars, the taskbar and the start and power menus, from its side
@@ -147,6 +147,18 @@ once, after 5e (see [scene-graph-stage4.md](scene-graph-stage4.md), Measurement)
   result equals `glass.c`'s finish for the same input within tolerance; edge
   replication at the buffer edge; a partial repaint with damage expansion equals
   a full repaint (spike gate 8); no seam between composite and target.
+  *Done.* `rediwm_scene_renderer_enable_backdrops`, `rediwm_scene_pass_capture_backdrop`
+  (copy into an RGB scratch texture, so an alpha-less scanout buffer can be
+  copied; horizontal pass at quarter size into scratch, vertical into the
+  caller's `rediwm_backdrop`), `rediwm_scene_pass_add_backdrop` (shaped program
+  mode 3: saturation, coverage, the front's alpha made up to the coverage) and
+  `rediwm_scene_renderer_destroy_backdrop`. Gates: within **1 level** of an exact
+  full-resolution Gaussian on ARGB and XRGB buffers; a step mixes evenly and
+  monotonically; the buffer edge replicates; saturation matches glass.c's
+  formula; the front's alpha is made up exactly, and an opaque front gets
+  nothing; a clipped composite equals the full one. The shaped programs' `front`
+  sampler is fixed to unit 1 at link time: two sampler types on unit 0 (the
+  external program's) made every shaped draw invalid.
 * **5c. Output pass integration behind `glass.c`.** `scene_output.c` draws effect
   items itself: un-cover the padded extent below an effect while collecting,
   expand damage per D1, keep the per-effect, per-output cache, apply holds per D2.

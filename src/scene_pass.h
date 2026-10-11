@@ -72,3 +72,39 @@ void rediwm_scene_pass_add_texture_shaped(struct wlr_render_pass *,
 // The shape's shadow. The quad reaches the softness and the offset past the box.
 void rediwm_scene_pass_add_shadow(struct wlr_render_pass *, const struct rediwm_pass_shape *,
     const struct rediwm_pass_shadow *);
+
+// Stage 5b of docs/plans/scene-graph.md: backdrop effects (glass). An effect
+// blurs what the pass has drawn so far under a region and composites it through
+// its shape, under the surface it backs. The blur is kept between frames in a
+// `rediwm_backdrop`, owned by the caller, so an effect is re-blurred only when
+// what lies below it changed (stage 5, D1); compositing a kept blur is cheap.
+struct rediwm_backdrop;
+// Builds the blur program (about 140 KiB), outside a pass. Requires
+// rediwm_scene_renderer_enable_shapes, whose program composites. Later calls
+// return the first result; without it, backdrop calls fail the pass.
+bool rediwm_scene_renderer_enable_backdrops(struct rediwm_scene_renderer *);
+// Frees a backdrop's GL resources; outside a pass. NULL is a no-op.
+void rediwm_scene_renderer_destroy_backdrop(struct rediwm_scene_renderer *, struct rediwm_backdrop *);
+// Copies `region` (device pixels of this pass's buffer; the part outside the
+// buffer replicates its edge) as drawn so far and blurs it at quarter size with
+// a Gaussian of `sigma` device pixels into `*backdrop`, creating it if NULL. Not
+// limited by any clip: the caller must have drawn everything below the effect
+// in the whole region first (with buffer age, that means damaging all of it).
+void rediwm_scene_pass_capture_backdrop(struct wlr_render_pass *, struct rediwm_backdrop **,
+    struct wlr_box region, float sigma);
+struct rediwm_pass_backdrop {
+  const struct rediwm_backdrop *backdrop;
+  float saturation; // 1 leaves colours as they are
+  float opacity;    // the effect's, times the shape's coverage
+  // The surface drawn over the effect, whose alpha the effect makes up to the
+  // coverage (its alpha a: the effect draws (coverage - a) / (1 - a)), so the pair
+  // is exactly as opaque as the shape and a curved edge is not covered twice.
+  // NULL when nothing is drawn over it.
+  struct wlr_texture *front;
+  struct wlr_box front_box; // where `front` is drawn, whole texture, untransformed
+  float front_opacity;
+  const pixman_region32_t *clip;
+};
+// Composites `backdrop` through `shape` over `box` (device pixels).
+void rediwm_scene_pass_add_backdrop(struct wlr_render_pass *, const struct rediwm_pass_shape *,
+    struct wlr_box box, const struct rediwm_pass_backdrop *);

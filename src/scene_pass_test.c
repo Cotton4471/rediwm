@@ -905,6 +905,172 @@ static void shaped_gates(struct rediwm_scene_renderer *r, struct wlr_allocator *
     free(ref.p);
     wlr_buffer_drop(buf);
 }
+// ---- Stage 5b: backdrops ------------------------------------------------------------
+static struct wlr_buffer *target_format(struct wlr_allocator *allocator, int w, int h, uint32_t fmt) {
+    uint64_t modifier = DRM_FORMAT_MOD_INVALID;
+    struct wlr_drm_format format = {.format = fmt, .len = 1, .capacity = 1, .modifiers = &modifier};
+    struct wlr_buffer *b = wlr_allocator_create_buffer(allocator, w, h, &format);
+    assert(b);
+    return b;
+}
+static const float BANDS[5][4] = {{1, 0, 0, 1}, {0, .8f, 0, 1}, {0, 0, 1, 1}, {1, 1, 1, 1}, {.1f, .1f, .1f, 1}};
+// Vertical bands 40 px wide, then a backdrop of `region` composited over `box`.
+static struct rediwm_backdrop *draw_backdrop(struct rediwm_scene_renderer *r, struct wlr_buffer *buf,
+        struct rediwm_backdrop *b, struct wlr_box region, struct wlr_box box, float sigma,
+        const struct rediwm_pass_backdrop *opts, const pixman_region32_t *clip) {
+    struct wlr_render_pass *pass = begin_fill(r, buf, BG, NULL);
+    for (int x = 0, i = 0; x < buf->width; x += 40, i++)
+        wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options){
+            .box = {x, 0, 40, buf->height}, .color = {BANDS[i % 5][0], BANDS[i % 5][1], BANDS[i % 5][2], 1}});
+    rediwm_scene_pass_capture_backdrop(pass, &b, region, sigma);
+    struct rediwm_pass_backdrop o = opts ? *opts : (struct rediwm_pass_backdrop){.saturation = 1, .opacity = 1};
+    o.backdrop = b;
+    o.clip = clip;
+    rediwm_scene_pass_add_backdrop(pass, &(struct rediwm_pass_shape){.box = box}, box, &o);
+    finish(pass);
+    return b;
+}
+// The exact full-resolution Gaussian of the bands, clamped at the buffer edge, as
+// the reference the quarter-size blur approximates.
+static double band_channel(int x, int width, int c) {
+    x = x < 0 ? 0 : x >= width ? width - 1 : x;
+    return BANDS[(x / 40) % 5][c];
+}
+static void gate_backdrop_blur(struct rediwm_scene_renderer *r, struct wlr_allocator *allocator, struct image *img) {
+    const float sigma = 16;
+    const struct wlr_box region = {100, 100, 400, 200}, box = {148, 148, 304, 104};
+    int worst = 0;
+    for (int f = 0; f < 2; f++) {
+        struct wlr_buffer *buf = target_format(allocator, GW, GH, f ? DRM_FORMAT_XRGB8888 : DRM_FORMAT_ARGB8888);
+        struct rediwm_backdrop *b = draw_backdrop(r, buf, NULL, region, box, sigma, NULL, NULL);
+        read_image(r, buf, img);
+        for (int x = box.x; x < box.x + box.width; x++) {
+            double want[3] = {0};
+            double weight = 0;
+            for (int k = -96; k <= 96; k++) {
+                const double w = exp(-.5 * k * k / (sigma * sigma));
+                // Clamped to the copied region, as the blur's limits are.
+                int sx = x + k;
+                sx = sx < region.x ? region.x : sx >= region.x + region.width ? region.x + region.width - 1 : sx;
+                for (int c = 0; c < 3; c++) want[c] += w * band_channel(sx, GW, c);
+                weight += w;
+            }
+            for (int y = box.y; y < box.y + box.height; y += 13)
+                for (int c = 0; c < 3; c++) {
+                    const int d = diff(at(img, x, y)[c], (int)lround(255 * want[c] / weight));
+                    if (d > worst) worst = d;
+                }
+        }
+        rediwm_scene_renderer_destroy_backdrop(r, b);
+        wlr_buffer_drop(buf);
+    }
+    check(worst <= 6, "the quarter-size blur differs from the exact Gaussian by %d levels", worst);
+    printf("PASS: backdrop blur within %d levels of the exact Gaussian, ARGB and XRGB buffers\n", worst);
+}
+static void gate_backdrop_properties(struct rediwm_scene_renderer *r, struct wlr_allocator *allocator, struct image *img) {
+    struct wlr_buffer *buf = target_sized(allocator, GW, GH);
+    struct rediwm_backdrop *b = NULL;
+    // A red/blue step at x = 320 blurs to an even mix there, monotonic across,
+    // unchanged far from it.
+    struct wlr_render_pass *pass = begin_fill(r, buf, (float[4]){1, 0, 0, 1}, NULL);
+    wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options){.box = {320, 0, 320, GH}, .color = {0, 0, 1, 1}});
+    const struct wlr_box region = {120, 100, 400, 200}, box = {168, 148, 304, 104};
+    rediwm_scene_pass_capture_backdrop(pass, &b, region, 16);
+    rediwm_scene_pass_add_backdrop(pass, &(struct rediwm_pass_shape){.box = box}, box,
+        &(struct rediwm_pass_backdrop){.backdrop = b, .saturation = 1, .opacity = 1});
+    finish(pass);
+    read_image(r, buf, img);
+    const int y = 200;
+    check(diff(at(img, 320, y)[0], 128) <= 12 && diff(at(img, 320, y)[2], 128) <= 12,
+        "the step does not blur to an even mix (%d, %d)", at(img, 320, y)[0], at(img, 320, y)[2]);
+    for (int x = box.x + 1; x < box.x + box.width; x++)
+        check(at(img, x, y)[0] <= at(img, x - 1, y)[0] + 1, "the blurred step is not monotonic at %d", x);
+    check(at(img, box.x, y)[0] >= 250 && at(img, box.x + box.width - 1, y)[2] >= 250,
+        "the blur reaches too far (%d, %d)", at(img, box.x, y)[0], at(img, box.x + box.width - 1, y)[2]);
+    // At the buffer edge the blur replicates it: no black comes in.
+    pass = begin_fill(r, buf, (float[4]){0, 1, 0, 1}, NULL);
+    const struct wlr_box edge_region = {-60, 100, 200, 200}, edge_box = {0, 148, 92, 104};
+    rediwm_scene_pass_capture_backdrop(pass, &b, edge_region, 16);
+    rediwm_scene_pass_add_backdrop(pass, &(struct rediwm_pass_shape){.box = edge_box}, edge_box,
+        &(struct rediwm_pass_backdrop){.backdrop = b, .saturation = 1, .opacity = 1});
+    finish(pass);
+    read_image(r, buf, img);
+    for (int x = 0; x < 92; x++)
+        check(at(img, x, 200)[1] >= 253 && at(img, x, 200)[0] <= 2, "the buffer edge darkens the blur at %d", x);
+    // Saturation as glass.c applies it, on a uniform colour the blur keeps.
+    const float c[3] = {.2f, .4f, .6f};
+    pass = begin_fill(r, buf, (float[4]){c[0], c[1], c[2], 1}, NULL);
+    rediwm_scene_pass_capture_backdrop(pass, &b, region, 16);
+    rediwm_scene_pass_add_backdrop(pass, &(struct rediwm_pass_shape){.box = box}, box,
+        &(struct rediwm_pass_backdrop){.backdrop = b, .saturation = 1.5f, .opacity = 1});
+    finish(pass);
+    read_image(r, buf, img);
+    const double l = .213 * c[0] + .715 * c[1] + .072 * c[2];
+    for (int i = 0; i < 3; i++) {
+        const int want = (int)lround(255 * (l + (c[i] - l) * 1.5));
+        check(diff(at(img, 300, 200)[i], want) <= 2, "saturation: channel %d is %d, not %d", i, at(img, 300, 200)[i], want);
+    }
+    rediwm_scene_renderer_destroy_backdrop(r, b);
+    wlr_buffer_drop(buf);
+    puts("PASS: a blurred step mixes evenly and monotonically, the buffer edge replicates, saturation matches glass");
+}
+static void gate_backdrop_front(struct rediwm_scene_renderer *r, struct wlr_allocator *allocator, struct image *img) {
+    struct wlr_buffer *buf = target_sized(allocator, GW, GH);
+    uint32_t half[16 * 16];
+    for (int i = 0; i < 16 * 16; i++) half[i] = 0x80000000; // alpha 128, premultiplied black
+    struct wlr_texture *front = wlr_texture_from_pixels(r->renderer, DRM_FORMAT_ARGB8888, 16 * 4, 16, 16, half);
+    assert(front);
+    struct rediwm_backdrop *b = NULL;
+    const struct wlr_box region = {100, 100, 200, 200}, box = {150, 150, 100, 100};
+    // On a transparent buffer the composite's alpha is what it adds to the front.
+    struct wlr_render_pass *pass = begin_fill(r, buf, (float[4]){1, 1, 1, 1}, NULL);
+    rediwm_scene_pass_capture_backdrop(pass, &b, region, 8);
+    wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options){.box = {0, 0, GW, GH},
+        .color = {0, 0, 0, 0}, .blend_mode = WLR_RENDER_BLEND_MODE_NONE});
+    rediwm_scene_pass_add_backdrop(pass, &(struct rediwm_pass_shape){.box = box}, box,
+        &(struct rediwm_pass_backdrop){.backdrop = b, .saturation = 1, .opacity = .5f,
+            .front = front, .front_box = box, .front_opacity = .5f});
+    finish(pass);
+    read_image(r, buf, img);
+    const double f = 128 / 255.0 * .5, want = (.5 - f) / (1 - f);
+    check(diff(at(img, 200, 200)[3], (int)lround(255 * want)) <= 1, "front alpha: %d, not %d",
+        at(img, 200, 200)[3], (int)lround(255 * want));
+    // An opaque front leaves nothing for the effect to add.
+    pass = begin_fill(r, buf, (float[4]){1, 1, 1, 1}, NULL);
+    rediwm_scene_pass_capture_backdrop(pass, &b, region, 8);
+    wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options){.box = {0, 0, GW, GH},
+        .color = {0, 0, 0, 0}, .blend_mode = WLR_RENDER_BLEND_MODE_NONE});
+    rediwm_scene_pass_add_backdrop(pass, &(struct rediwm_pass_shape){.box = box}, box,
+        &(struct rediwm_pass_backdrop){.backdrop = b, .saturation = 1, .opacity = 1,
+            .front = front, .front_box = box, .front_opacity = 2.f});
+    finish(pass);
+    read_image(r, buf, img);
+    check(at(img, 200, 200)[3] == 0, "an opaque front still gets a backdrop (%d)", at(img, 200, 200)[3]);
+    // A clipped composite equals that part of a full one: the copy and the blur
+    // ignore the clip.
+    struct image full = {0};
+    b = draw_backdrop(r, buf, b, (struct wlr_box){100, 100, 400, 200}, (struct wlr_box){148, 148, 304, 104}, 16, NULL, NULL);
+    read_image(r, buf, &full);
+    pixman_region32_t clip;
+    pixman_region32_init_rect(&clip, 148, 148, 150, 104);
+    b = draw_backdrop(r, buf, b, (struct wlr_box){100, 100, 400, 200}, (struct wlr_box){148, 148, 304, 104}, 16, NULL, &clip);
+    read_image(r, buf, img);
+    for (int y = 148; y < 252; y++) for (int x = 148; x < 298; x++) for (int c = 0; c < 4; c++)
+        check(at(img, x, y)[c] == at(&full, x, y)[c], "a clipped composite differs at %d,%d", x, y);
+    pixman_region32_fini(&clip);
+    free(full.p);
+    wlr_texture_destroy(front);
+    rediwm_scene_renderer_destroy_backdrop(r, b);
+    wlr_buffer_drop(buf);
+    puts("PASS: the backdrop makes up the front's alpha to the coverage; a clipped composite equals a full one");
+}
+static void backdrop_gates(struct rediwm_scene_renderer *r, struct wlr_allocator *allocator) {
+    struct image img = {0};
+    gate_backdrop_blur(r, allocator, &img);
+    gate_backdrop_properties(r, allocator, &img);
+    gate_backdrop_front(r, allocator, &img);
+    free(img.p);
+}
 int main(void) {
     wlr_log_init(WLR_ERROR, NULL);
     struct wl_display *display = wl_display_create();
@@ -929,6 +1095,9 @@ int main(void) {
     external_yuv(r, actual, expected);
     synchronization(r, actual);
     shaped_gates(r, allocator);
+    assert(rediwm_scene_renderer_enable_backdrops(r));
+    assert(rediwm_scene_renderer_enable_backdrops(r)); // idempotent
+    backdrop_gates(r, allocator);
     // The ordinary wlroots pass must still work after owned GL has run.
     parity(r, actual, expected, false);
     if (r->has_vao) {
