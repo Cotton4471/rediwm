@@ -126,10 +126,12 @@ static void parity(struct rediwm_scene_renderer *r, struct wlr_buffer *actual,
     printf("PASS: %d texture/transform/crop/filter/alpha/damage cases%s (max difference %d)\n", cases,
         shaped ? " through the shaped programs" : "", worst);
 }
-// Before enable_shapes there are no shaped programs: a shaped draw must fail the
-// pass at submit, not draw something else, and the next pass must work.
+// The shaped programs are built with the renderer (stage 5, D4). A bad shape is
+// the caller's bug: it must fail the pass at submit, not draw something else,
+// and the next pass must work.
 static void shapes_fail_closed(struct rediwm_scene_renderer *r, struct wlr_buffer *buffer) {
-    const struct rediwm_pass_shape shape = {.box = {10, 10, 50, 50}, .radii = {5, 5, 5, 5}};
+    assert(rediwm_scene_renderer_enable_shapes(r));
+    const struct rediwm_pass_shape shape = {.box = {10, 10, 50, 50}, .radii = {5, -1, 5, 5}};
     struct wlr_render_pass *pass = rediwm_scene_pass_begin(r, buffer, NULL);
     assert(pass);
     rediwm_scene_pass_add_rect_shaped(pass, &(struct wlr_render_rect_options){
@@ -137,7 +139,7 @@ static void shapes_fail_closed(struct rediwm_scene_renderer *r, struct wlr_buffe
     assert(!wlr_render_pass_submit(pass));
     pass = rediwm_scene_pass_begin(r, buffer, NULL);
     assert(pass && wlr_render_pass_submit(pass));
-    puts("PASS: a shaped draw before enable_shapes fails the pass and the next pass works");
+    puts("PASS: shapes are built with the renderer; a bad shape fails the pass and the next pass works");
 }
 static void damage(struct rediwm_scene_renderer *r, struct wlr_buffer *actual,
         struct wlr_buffer *expected) {

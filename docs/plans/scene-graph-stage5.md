@@ -203,6 +203,12 @@ once, after 5e (see [scene-graph-stage4.md](scene-graph-stage4.md), Measurement)
   re-taken once the hold ends (`glass_hold.py`'s held case passes: frozen while
   dragged, equal to the reference after release). 5c's `glass_reblurs` field also
   needed the populated serializer fixture.
+  D4's last part, also here: the plain solid, texture and external programs are
+  gone. The shaped programs are built with the renderer, and a draw without a
+  shape skips the distance field on a `use_shape` uniform branch; the 128 parity
+  cases through them still equal wlroots exactly (max difference 0), plain and
+  without vertex arrays. The pass holds three programs (shaped, shaped external,
+  blur) where stage 4 held five and glass.c two more.
 * **5e. Stage cost gate** against stage 4 (and the stage 0 baseline): the same
   harness as 4e, clean sessions for CPU and memory; a same-session GPU
   comparison if the stats timers stay too noisy across builds.

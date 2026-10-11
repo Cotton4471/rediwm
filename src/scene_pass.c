@@ -22,7 +22,7 @@ struct program {
     unsigned bit; // which bit of pass.targets_set tracks this program's target size
     GLint target, dst, color, alpha, opaque, sampler, coords;
     // Shaped programs only (-1 elsewhere): the shape, and the shadow's own terms.
-    GLint mode, origin, size, radii, border, bcolor, offset, softness, hide;
+    GLint mode, origin, size, radii, border, bcolor, offset, softness, hide, use_shape;
     // The backdrop composite (shaped mode 3) and the blur program.
     GLint bmap, fmap, saturation, front, front_alpha, has_front;
     GLint step_uv, sigma, limits, src_scale;
@@ -48,7 +48,6 @@ struct gl_state {
 };
 struct rediwm_scene_renderer {
     struct wlr_renderer *renderer;
-    struct program solid, texture, external;
     // Rounded-rectangle shapes (stage 4b), built by enable_shapes: one program for
     // a 2D texture, a solid colour and the shape's shadow (they differ in a mode
     // uniform, which every fragment of a draw reads the same), one for external.
@@ -150,19 +149,6 @@ static void leave(struct rediwm_scene_renderer *r, struct gl_state *s) {
         eglMakeCurrent(s->display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
 }
 
-static const char vertex[] =
-    "attribute vec2 position; uniform vec2 target; uniform vec4 dst, coords[2];"
-    // Select the exact supplied corner, avoiding cancellation in a UV matrix
-    // at nearest-filter half-texel boundaries. Only four vertices run this.
-    "varying vec2 uv; void main(){ vec4 row=position.y<.5?coords[0]:coords[1];"
-    "uv=position.x<.5?row.xy:row.zw; vec2 p=dst.xy+position*dst.zw;"
-    "gl_Position=vec4(p/target*2.-1.,0.,1.); }";
-static const char solid[] =
-    "precision mediump float; uniform vec4 color; void main(){gl_FragColor=color;}";
-static const char fragment[] =
-    "precision mediump float; varying vec2 uv; uniform float alpha, opaque;"
-    "void main(){vec4 c=texture2D(tex,uv); if(opaque>0.5)c.a=1.; gl_FragColor=c*alpha;}";
-
 // Shaped draws (stage 4b): the same quad and texture coordinates, plus the
 // position relative to the shape's corner, evaluated in the vertex stage so the
 // fragment's distance function works on window-sized numbers, not on output ones.
@@ -202,7 +188,7 @@ static const char shaped_vertex[] =
 // three because a program costs the driver 130-150 KiB however small it is.
 static const char shaped_fragment[] = SHAPED_HEAD
     "uniform float alpha, opaque, mode, softness, hide; uniform vec2 offset;"
-    "uniform sampler2D front; uniform vec4 bmap, fmap; uniform float saturation, front_alpha, has_front;"
+    "uniform sampler2D front; uniform vec4 bmap, fmap; uniform float saturation, front_alpha, has_front, use_shape;"
     "void main(){"
     // 3: a backdrop composite (stage 5b). `tex` is the kept blur; the alpha is
     // chosen against the surface drawn over it, so the pair has the coverage.
@@ -214,6 +200,9 @@ static const char shaped_fragment[] = SHAPED_HEAD
     "if(mode>1.5){ float s=clamp(1.-sdf(local-offset,radii)/softness,0.,1.); s=s*s*(3.-2.*s);"
     "if(hide>.5)s*=1.-cov(sdf(local,radii)); gl_FragColor=color*s; return; }"
     "vec4 c=color; if(mode<.5){ c=texture2D(tex,uv); if(opaque>.5)c.a=1.; c*=alpha; }"
+    // Without a shape (every plain draw) the colour is written as it is: the
+    // plain programs are gone (stage 5, D4), and this costs one uniform branch.
+    "if(use_shape<.5){ gl_FragColor=c; return; }"
     "float d=sdf(local,radii);"
     "float w=border>0.?1.-cov(d+border):0.;"
     "gl_FragColor=(c*(1.-bcolor.a*w)+bcolor*w)*cov(d); }";
@@ -292,6 +281,7 @@ static bool program_init(struct program *p, unsigned bit, const char *vertex_sou
     p->offset = glGetUniformLocation(p->id, "offset");
     p->softness = glGetUniformLocation(p->id, "softness");
     p->hide = glGetUniformLocation(p->id, "hide");
+    p->use_shape = glGetUniformLocation(p->id, "use_shape");
     p->bmap = glGetUniformLocation(p->id, "bmap");
     p->fmap = glGetUniformLocation(p->id, "fmap");
     p->saturation = glGetUniformLocation(p->id, "saturation");
@@ -332,9 +322,12 @@ struct rediwm_scene_renderer *rediwm_scene_renderer_create(struct wlr_renderer *
         r->destroy_sync && r->wait_sync && r->dup_fence;
     struct gl_state state;
     if (!enter(r, &state)) { free(r); return NULL; }
-    bool ok = program_init(&r->solid, 1, vertex, "", solid) &&
-        program_init(&r->texture, 2, vertex, "uniform sampler2D tex;", fragment) &&
-        (!r->has_external || program_init(&r->external, 4, vertex, ext_prefix, fragment));
+    // Every draw goes through the shaped programs; one without a shape costs a
+    // uniform branch. A GL program costs the driver 130-150 KiB however small,
+    // so the plain ones are gone (stage 5, D4 of docs/plans/scene-graph-stage5.md).
+    bool ok = program_init(&r->shaped, 8, shaped_vertex, "uniform sampler2D tex;\n", shaped_fragment) &&
+        (!r->has_external || program_init(&r->shaped_external, 16, shaped_vertex, ext_prefix, shaped_fragment));
+    r->has_shapes = r->shapes_tried = ok;
     if (ok && r->has_vao) {
         r->gen_vertex_arrays(1, &r->vertex_array);
         r->bind_vertex_array(r->vertex_array);
@@ -348,9 +341,8 @@ struct rediwm_scene_renderer *rediwm_scene_renderer_create(struct wlr_renderer *
     if (!ok) {
         if (r->vertex_array) r->delete_vertex_arrays(1, &r->vertex_array);
         glDeleteBuffers(1, &r->vertices);
-        glDeleteProgram(r->solid.id);
-        glDeleteProgram(r->texture.id);
-        glDeleteProgram(r->external.id);
+        glDeleteProgram(r->shaped.id);
+        glDeleteProgram(r->shaped_external.id);
     }
     leave(r, &state);
     if (!ok) { free(r); return NULL; }
@@ -363,9 +355,6 @@ void rediwm_scene_renderer_destroy(struct rediwm_scene_renderer *r) {
     if (enter(r, &state)) {
         if (r->vertex_array) r->delete_vertex_arrays(1, &r->vertex_array);
         glDeleteBuffers(1, &r->vertices);
-        glDeleteProgram(r->solid.id);
-        glDeleteProgram(r->texture.id);
-        glDeleteProgram(r->external.id);
         glDeleteProgram(r->shaped.id);
         glDeleteProgram(r->shaped_external.id);
         glDeleteProgram(r->blur.id);
@@ -416,6 +405,7 @@ static bool shape_usable(const struct rediwm_pass_shape *s) {
     return true;
 }
 static void set_shape(const struct program *g, const struct rediwm_pass_shape *s) {
+    glUniform1f(g->use_shape, 1.f);
     glUniform2f(g->origin, s->box.x, s->box.y);
     glUniform2f(g->size, s->box.width, s->box.height);
     glUniform4f(g->radii, s->radii[0], s->radii[1], s->radii[2], s->radii[3]);
@@ -428,8 +418,11 @@ static void add_rect(struct wlr_render_pass *base, const struct wlr_render_rect_
     if (p->failed || (o->clip && !pixman_region32_not_empty(o->clip))) return;
     struct wlr_box box;
     wlr_render_rect_options_get_box(o, p->buffer, &box);
-    setup(p, &p->renderer->solid, box, o->blend_mode);
-    glUniform4f(p->renderer->solid.color, o->color.r, o->color.g, o->color.b, o->color.a);
+    struct program *g = &p->renderer->shaped;
+    setup(p, g, box, o->blend_mode);
+    glUniform4f(g->color, o->color.r, o->color.g, o->color.b, o->color.a);
+    glUniform1f(g->mode, 1.f);
+    glUniform1f(g->use_shape, 0.f);
     draw(o->clip);
 }
 static void rect_shaped(struct pass *p, const struct wlr_render_rect_options *o,
@@ -462,8 +455,8 @@ static bool wait_point(struct pass *p, struct wlr_drm_syncobj_timeline *timeline
 static void texture_draw(struct pass *p, const struct wlr_render_texture_options *o,
         struct wlr_gles2_texture_attribs a, const struct rediwm_pass_shape *shape) {
     struct rediwm_scene_renderer *r = p->renderer;
-    struct program *program = a.target == GL_TEXTURE_2D ? (shape ? &r->shaped : &r->texture) :
-        a.target == GL_TEXTURE_EXTERNAL_OES ? (shape ? &r->shaped_external : &r->external) : NULL;
+    struct program *program = a.target == GL_TEXTURE_2D ? &r->shaped :
+        a.target == GL_TEXTURE_EXTERNAL_OES ? &r->shaped_external : NULL;
     if (!program || !program->id || (shape && !shape_usable(shape))) { p->failed = true; return; }
     struct wlr_box dst;
     struct wlr_fbox src;
@@ -497,10 +490,9 @@ static void texture_draw(struct pass *p, const struct wlr_render_texture_options
         uv[2 * i + 1] = (src.y + v * src.height) / o->texture->height;
     }
     glUniform4fv(program->coords, 2, uv);
-    if (shape) {
-        glUniform1f(program->mode, 0.f);
-        set_shape(program, shape);
-    }
+    glUniform1f(program->mode, 0.f);
+    if (shape) set_shape(program, shape);
+    else glUniform1f(program->use_shape, 0.f);
     draw(o->clip);
 }
 static void texture_add(struct wlr_render_pass *base, const struct wlr_render_texture_options *o,
@@ -585,23 +577,10 @@ struct wlr_render_pass *rediwm_scene_pass_begin(struct rediwm_scene_renderer *r,
     return &p->base;
 }
 
+// The shaped programs are built with the renderer (stage 5, D4): every draw uses
+// them. Kept so callers need not know.
 bool rediwm_scene_renderer_enable_shapes(struct rediwm_scene_renderer *r) {
     assert(!r->active);
-    if (r->shapes_tried) return r->has_shapes;
-    r->shapes_tried = true;
-    struct gl_state state;
-    if (!enter(r, &state)) return false;
-    r->has_shapes = program_init(&r->shaped, 8, shaped_vertex, "uniform sampler2D tex;\n",
-            shaped_fragment) &&
-        (!r->has_external || program_init(&r->shaped_external, 16, shaped_vertex, ext_prefix,
-            shaped_fragment));
-    if (!r->has_shapes) {
-        wlr_log(WLR_ERROR, "scene pass: shaped programs failed to build, windows stay square");
-        glDeleteProgram(r->shaped.id);
-        glDeleteProgram(r->shaped_external.id);
-        r->shaped.id = r->shaped_external.id = 0;
-    }
-    leave(r, &state);
     return r->has_shapes;
 }
 // Only a pass from rediwm_scene_pass_begin carries these: handing in a wlroots
