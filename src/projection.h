@@ -17,8 +17,6 @@ struct rediwm_clip_spec;
 typedef bool (*rediwm_item_iterator)(const struct rediwm_item *,
                                     struct wlr_scene_node *transport, void *);
 bool rediwm_projection_for_each_item(struct rediwm_projection *, bool reverse, rediwm_item_iterator, void *);
-// Glass publishes its current raster against the resolved target geometry.
-void rediwm_projection_effect_updated(struct wlr_scene_buffer *, struct wlr_scene_buffer *);
 // Whether a commit changed how buffer pixels map onto the surface, so damage
 // from before it cannot be combined with damage after it.
 bool rediwm_surface_state_remapped(const struct wlr_surface_state *);

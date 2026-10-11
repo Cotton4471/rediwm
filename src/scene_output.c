@@ -32,6 +32,8 @@ struct effect_cache {
     struct wlr_box region;         // device pixels the blur covers
     float sigma;                   // device pixels
     bool valid, seen;
+    // A hold moved the blur without re-taking it: re-take it once released.
+    bool carried;
 };
 struct output_state {
     struct wl_list link;
@@ -459,11 +461,15 @@ static bool decide_effects(struct rediwm_output_renderer *r, struct output_state
         const float sigma = e->sigma * v->scale;
         const bool same_size = c->valid && c->sigma == sigma && c->region.width == region.width &&
             c->region.height == region.height;
-        bool reblur = !same_size || !complete;
+        bool reblur = !same_size || !complete || (c->carried && !e->glass.held);
         if (!reblur && (c->region.x != region.x || c->region.y != region.y)) {
             // A held effect carries its last blur along; otherwise a move re-blurs.
-            if (e->glass.held) c->region = region;
-            else reblur = true;
+            if (e->glass.held) {
+                c->region = region;
+                c->carried = true;
+            } else {
+                reblur = true;
+            }
         }
         if (!reblur && !e->glass.held) {
             const long here = (long)(i - 1);
@@ -507,6 +513,7 @@ static void render_effect(struct entry *e, struct wlr_render_pass *pass, const s
         c->sigma = e->sigma * v->scale;
         rediwm_scene_pass_capture_backdrop(pass, &c->backdrop, c->region, c->sigma);
         c->valid = true;
+        c->carried = false;
         rediwm_scene_output_reblurs++;
     }
     if (!c->valid || !c->backdrop || !pixman_region32_not_empty((pixman_region32_t *)clip)) return;

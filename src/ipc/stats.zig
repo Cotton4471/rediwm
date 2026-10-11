@@ -26,6 +26,8 @@ pub const PerformanceStats = struct {
     panels_cpu: metrics.Window = .{},
     anim_cpu: metrics.Window = .{},
     projection_cpu: metrics.Window = .{},
+    // Not recorded since the output pass draws glass (stage 5d); kept so the
+    // frame_work wire format and its readers stay unchanged.
     glass_cpu: metrics.Window = .{},
     scene_commit_cpu: metrics.Window = .{},
     gpu_elapsed: metrics.Window = .{},

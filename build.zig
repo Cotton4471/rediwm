@@ -682,16 +682,15 @@ pub fn build(b: *std.Build) void {
         .name = "glass-tests",
         .root_module = b.createModule(.{ .target = target, .optimize = .Debug, .link_libc = true }),
     });
-    glass_tests.root_module.addCSourceFile(.{ .file = b.path("src/glass_test.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra" } });
+    glass_tests.root_module.addCSourceFile(.{ .file = b.path("src/glass_test.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     inline for (.{ "wlroots-0.20", "wayland-server", "pixman-1", "egl", "glesv2" }) |lib| {
         glass_tests.root_module.linkSystemLibrary(lib, .{});
     }
     glass_tests.root_module.addCSourceFile(.{ .file = b.path("src/projection.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra" } });
     glass_tests.root_module.addCSourceFile(.{ .file = b.path("src/scene_damage.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    glass_tests.root_module.addCSourceFile(.{ .file = b.path("src/explicit_sync.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     const run_glass_tests = b.addRunArtifact(glass_tests);
     run_glass_tests.setEnvironmentVariable("WLR_RENDERER", "gles2");
-    b.step("test-glass", "Run backdrop pixel checks with a headless GLES2 renderer").dependOn(&run_glass_tests.step);
+    b.step("test-glass", "Test the glass registry and its geometry in the graph (no GPU)").dependOn(&run_glass_tests.step);
     // Stage 1 spike of docs/plans/scene-graph.md: the owned pass's primitives, pixel-tested.
     const pass_spike_tests = b.addExecutable(.{
         .name = "pass-spike-tests",
@@ -716,8 +715,7 @@ pub fn build(b: *std.Build) void {
     run_scene_pass_tests.setEnvironmentVariable("WLR_RENDERER", "gles2");
     b.step("test-scene-pass", "Compare the owned GLES2 pass with wlroots on a headless renderer").dependOn(&run_scene_pass_tests.step);
     const run_glass_damage_tests = b.addRunArtifact(glass_tests);
-    run_glass_damage_tests.addArg("--damage-only");
-    b.step("test-glass-damage", "Test backdrop invalidation without a GPU").dependOn(&run_glass_damage_tests.step);
+    b.step("test-glass-damage", "Same as test-glass (kept for scripts)").dependOn(&run_glass_damage_tests.step);
     test_step.dependOn(&run_glass_damage_tests.step);
 
     const run_cmd = b.addRunArtifact(compositor);

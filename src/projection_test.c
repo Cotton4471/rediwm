@@ -11,6 +11,12 @@ static struct wlr_scene_node *effect_node;
 bool rediwm_glass_is_effect_node(struct wlr_scene_node *node) {
   return node == effect_node;
 }
+// glass.c is not linked here: the stub effect keeps its own box.
+bool rediwm_glass_effect_info(struct wlr_scene_node *node, struct rediwm_glass_info *out) {
+  (void)node;
+  (void)out;
+  return false;
+}
 static void buffer_destroy(struct wlr_buffer *buffer) { free(buffer); }
 static const struct wlr_buffer_impl buffer_impl = {.destroy = buffer_destroy};
 static struct wlr_buffer *buffer_create(void) {
@@ -456,16 +462,6 @@ static void test_clip_projection(struct wlr_scene *scene) {
          near(client_leaf->item.clip->edges.y2, want_moved.edges.y2) &&
          near(client_leaf->item.clip->radii[0], 10 * .85 * .5));
   resolve(p, 1, 0, 0, 0, 0, NULL);
-
-  // The graph consumer sees the pointer too, and a glass effect takes the shape
-  // of the titlebar it sits under, in storage of its own.
-  // Glass works on the projected nodes, as the compositor calls it.
-  rediwm_projection_effect_updated(wlr_scene_buffer_from_node(glass_leaf->view),
-                                   wlr_scene_buffer_from_node(title_leaf->view));
-  assert(glass_leaf->effect_item.clip == &glass_leaf->effect_clip);
-  assert(glass_leaf->effect_item.clip != title_leaf->item.clip);
-  assert(near(glass_leaf->effect_item.clip->edges.x1, want.edges.x1) &&
-         near(glass_leaf->effect_item.clip->radii[1], 10 * .85));
 
   // A popup lives under its parent's tree but is no part of the window's shape;
   // its siblings, such as subsurfaces, still are. The barrier can be lifted.

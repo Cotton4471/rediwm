@@ -103,10 +103,6 @@ struct leaf {
   // points at `clip` when the leaf is under a clipped tree.
   struct rediwm_item item;
   struct rediwm_clip clip;
-  // Glass's raster is published after resolve; its target still supplies the
-  // geometry. Kept separately so an unchanged/held blur survives the next sync.
-  struct rediwm_item effect_item;
-  struct rediwm_clip effect_clip;
   // `item.shadow` points at `shadow` when the leaf is under a shadow tree. A
   // shadow's view has no buffer, so wlroots damages nothing for it: present()
   // damages the footprint it last drew (`shadow_drawn`) and the new one.
@@ -1124,17 +1120,6 @@ static struct rediwm_item layout_item(struct wlr_scene_node *node, int x, int y)
   }
   item.edges = rediwm_xform_rect((struct rediwm_xform){1, 0, 0}, x, y, item.width, item.height);
   return item;
-}
-void rediwm_projection_effect_updated(struct wlr_scene_buffer *effect, struct wlr_scene_buffer *target) {
-  struct leaf *l = lookup(&effect->node), *t = lookup(&target->node);
-  if (!l || !t) return;
-  const struct rediwm_snap snap = rediwm_edges_snap(t->item.edges);
-  l->effect_item = layout_item(&effect->node, snap.x, snap.y);
-  // The blur takes the shape of the titlebar it sits under.
-  if (t->item.clip) {
-    l->effect_clip = *t->item.clip;
-    l->effect_item.clip = &l->effect_clip;
-  }
 }
 static bool visit_items(struct rediwm_projection *p, struct wlr_scene_node *node,
                        int x, int y, bool reverse, rediwm_item_iterator iterator, void *data) {

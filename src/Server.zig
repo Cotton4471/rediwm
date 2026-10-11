@@ -465,7 +465,7 @@ pub fn init(server: *Server, scale: ?f32, icon_theme_cfg: icon_theme.Config, io:
 
     // REDIWM_NO_GLASS=1 skips the backdrop blur for A/B frame-cost
     // measurements; every glass call already accepts a null engine.
-    server.glass_engine = if (environ.getPosix("REDIWM_NO_GLASS") != null) null else glass.Engine.create(renderer, wlr_allocator, scene, server.read_fence);
+    server.glass_engine = if (environ.getPosix("REDIWM_NO_GLASS") != null) null else glass.Engine.create();
     errdefer glass.Engine.destroy(server.glass_engine);
     server.output_renderer = scene_output_mod.Renderer.create(renderer) orelse return error.RendererInitFailed;
     errdefer scene_output_mod.Renderer.destroy(server.output_renderer);

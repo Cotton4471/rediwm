@@ -488,7 +488,6 @@ pub fn syncPresentation(world: *World) void {
         toplevel.syncOutputScale();
     }
     Projection.syncFixed(world.projection, world.camera.zoom(), world.camera.offset_x, world.camera.offset_y, world.bounds.origin_x, world.bounds.origin_y, if (world.server.config.compositor.desktop_icons_fixed) world.server.world_desktop_tree else null);
-    glass.Engine.project(world.server.glass_engine, world.projection, @floatCast(world.camera.zoom()));
     if (world.server.text_input) |relay| relay.updatePopups();
     if (world.server.desktop) |desktop| desktop.syncOverlayPosition();
 }

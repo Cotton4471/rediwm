@@ -1,6 +1,6 @@
 # Scene graph plan, stage 5: backdrop effects in the pass
 
-Status: **5a and 5b done, 5c next**, 2026-10-11. Decisions taken (all as recommended). Stage 4 of
+Status: **5a to 5d done, 5e (the stage cost gate) next**, 2026-10-11. Decisions taken (all as recommended). Stage 4 of
 [scene-graph.md](scene-graph.md) is done (window shapes, analytic shadows, the
 owned pass as the only presenter). This stage moves glass, the blurred backdrop
 behind titlebars, the taskbar and the start and power menus, from its side
@@ -165,10 +165,44 @@ once, after 5e (see [scene-graph-stage4.md](scene-graph-stage4.md), Measurement)
   `glass.c` stops rendering but still owns attach/configure. Gates: `glass_test`
   converted to the pass, `glass_hold.py`, appearance and window suites, IPC
   screenshots against stage 4 glass within tolerance at 1, 1.5 and mixed.
+  *Done.* An effect's box is its target's, derived in resolve (`effect_geometry`
+  in `projection.c`, from `rediwm_glass_effect_info`, `glass.h`); collect lifts
+  culling inside its padded extent; `decide_effects` reads the output's damage
+  events before the damage is handed on and re-takes a blur only for a change
+  below it, damage no event explains, a changed region or sigma, or the end of a
+  hold that carried it (a moved held blur would otherwise stay frozen after
+  release). A re-blur reports the effect box as changed (the damage ring and the
+  commit) and repaints the padded extent in this buffer. `glass_reblurs` in the
+  performance stats counts re-blurs.
+  Gates: `tests/glass_reblur.py` at scales 1 and 1.5: a window's own client
+  repainting at full rate under its titlebar re-blurs nothing; a window below
+  inside the extent re-blurs it every frame; moved out of it, nothing; moving the
+  window re-blurs. Glass against `glass.c` (the 5b binary, IPC screenshots over a
+  busy wallpaper): titlebar within **5 levels**, taskbar within **3**, the start
+  menu within 3 except its outermost right column (up to **17 levels**, 0.08 to
+  0.14 % of the menu's pixels, where it borders a bright window), at scales 1 and
+  1.5. `glass_hold.py`: mixed-scale idle passes; the drag comparison fails as on
+  HEAD before this stage (the drag frame differs by up to 10 levels across the
+  titlebar, the released frame matches exactly). The other glass, window, panel,
+  damage and capture suites fail only where they did before stage 5.
+  Known limit: a software cursor's damage is unexplained, so moving it near glass
+  re-blurs (nested and headless sessions only; on KMS the cursor is a plane).
 * **5d. Delete.** The capture walk, dependencies, contexts, effect output
   buffers, intermediate textures, `effect_scale`, `rediwm_glass_project` and the
   effect scene nodes; the Zig `glass.Effect` API shrinks to attach/configure.
   Rewrite the Glass notes in `AGENTS.md`.
+  *Done.* `glass.c` is a registry of about 150 lines (attach, configure, holds,
+  `rediwm_glass_effect_info`), with no GL, allocator, read fence or projection;
+  `rediwm_glass_update`, `rediwm_glass_project` and
+  `rediwm_projection_effect_updated` are gone, and `glass_cpu` is no longer
+  recorded (the field stays for readers; the work is in `scene_commit_cpu`).
+  `glass_test.c` now tests the registry (info, serials, holds, target lifetime,
+  allocation failure) and an effect's geometry in the graph at every zoom, with
+  no GPU. Writing it found a 5c bug, fixed here: a blur carried by a hold kept
+  its moved position after release and was never re-taken; a carried blur is now
+  re-taken once the hold ends (`glass_hold.py`'s held case passes: frozen while
+  dragged, equal to the reference after release). 5c's `glass_reblurs` field also
+  needed the populated serializer fixture.
 * **5e. Stage cost gate** against stage 4 (and the stage 0 baseline): the same
   harness as 4e, clean sessions for CPU and memory; a same-session GPU
   comparison if the stats timers stay too noisy across builds.

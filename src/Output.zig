@@ -1278,10 +1278,9 @@ fn runFrame(output: *Output) void {
     stats.global_stats.projection_cpu.record(stats.nowNs() -% projection_started);
     output.server.world.flushCameraEvent();
     const mini_map_animating = output.server.world.mini_map.tick(output, now_ms);
-    // GPU timestamps enclose glass capture/blur plus the scene submission.
-    // Polling happens later; no glFinish or synchronous query-result reads.
+    // GPU timestamps enclose the scene submission, glass included (the output
+    // pass blurs it). Polling happens later; no glFinish or synchronous reads.
     const gpu_active = if (output.server.gpu_timer) |timer| timer.begin() else false;
-    const glass_started = stats.nowNs();
     const lock_animating = output.lock_view.sync(output);
     const polkit_animating = if (output.server.polkit_dialog) |dialog|
         dialog.output == output.wlr_output and dialog.frame(now_ms)
@@ -1289,8 +1288,6 @@ fn runFrame(output: *Output) void {
         false;
     glass.Engine.hold(output.server.glass_engine, output.server.input.heldGlass());
     glass.Engine.holdAll(output.server.glass_engine, output.server.world.holdingGlass());
-    glass.Engine.update(output.server.glass_engine, scene_output);
-    stats.global_stats.glass_cpu.record(stats.nowNs() -% glass_started);
     var captured = false;
     if (output.server.screenshot_mgr) |sm| {
         captured = sm.handleOutputFrame(output);

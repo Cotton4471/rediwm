@@ -14,7 +14,7 @@ debugging on the host, see AGENTS.md, "Rendering".
 | Command | What it checks |
 | --- | --- |
 | `zig build test` | In-process unit tests: rasterizers vs. full rasters, UI, config, IPC parser/serializer fixtures, glass damage, projection damage and its typed graph (paint order, unrounded edges, list lifetime), lifecycle/allocation failures, Files/desktop logic. No compositor or bus. |
-| `zig build test-glass` | Real GLES2 pixels on a headless backend (needs a DRM render node). |
+| `zig build test-glass` | The glass registry and an effect's geometry in the graph at every zoom (no GPU). Glass pixels are gated in `test-scene-pass` (stage 5b) and by `tests/glass_reblur.py`. |
 | `zig build test-pass-spike` | The owned-pass spike of `docs/plans/scene-graph-stage1.md`: rounded clip, border, shadow, external-OES texture, backdrop blur, buffer-age damage and cost on headless GLES2 (needs a render node; `-Doptimize=ReleaseSafe` for cost). |
 | `zig build test-scene-pass` | Stage 3's owned GLES2 drawing backend against wlroots: transforms, crops, filters, premultiplied alpha, damage, external-OES (an RGB EGLImage and a linear NV12 dmabuf; needs gbm), GL/EGL state and acquire/release timelines. Needs a compatible render node (`WLR_RENDER_DRM_DEVICE` on multi-GPU machines); also run with `-Doptimize=ReleaseSafe`. The unavailable-acquire test intentionally logs `drmSyncobjTransfer failed`. Stage 4b's rounded-shape gates are in the same fixture: clip against a supersampled reference, piece joins, border/body, premultiplied edges, the opaque cover, shadow, and partial repaint across a clip edge; the 128 parity cases also run through the shaped programs. Stage 4d's shadow gate compares every pixel with the CPU chrome's shadow formula. |
 | `zig build test-lock` | Lock/greeter painter, password editing, PAM transitions (PAM is replaced at link time in test binaries only), greeter↔rediwm-dm conversation. |
@@ -122,8 +122,9 @@ Network settings, password/hidden forms, saved and open joins, radio, wired
 details, connect/disconnect and permission errors, service restart and scrolling;
 `--settings-only` runs just the settings checks), `battery_popup.py` (fake sysfs and private power-profile
 service; charge states, missing details, selection and dismissal),
-`keyboard_shortcuts.py`, `panel_damage.py`, `glass_hold.py` (defaults to
-gles2), `animations.py`, `hotspots.py`, `launch_feedback.py`,
+`keyboard_shortcuts.py`, `panel_damage.py`, `glass_hold.py` (holds and
+mixed-scale idle), `glass_reblur.py` (glass re-blurs for changes below it,
+never for its own client), `animations.py`, `hotspots.py`, `launch_feedback.py`,
 `launch_placeholder.py`, `appearance_*.py`, `desktop_canvas.py`,
 `layout_autosave.py`, `mini_map.py` (settings, pixels, timeout and dragging),
 `mini_map_lifecycle.py` (focus, multiple outputs, cancellation and idle wakeups),
@@ -350,7 +351,9 @@ scale, input rate and compiler backend identical across comparisons.
 - `GetPerformanceStats.frame_time_ms` is the interval between commits, not
   frame cost. `frame_work` has per-stage wall times over the last 512 samples
   (`cpu_frame`, `taskbar_cpu`, `chrome_cpu`, `panels_cpu`, `projection_cpu`,
-  `glass_cpu`, `scene_commit_cpu`, `gpu_elapsed`). CPU and GPU overlap; don't
+  `glass_cpu`, `scene_commit_cpu`, `gpu_elapsed`; `glass_cpu` stays empty since
+  the output pass draws glass, which `scene_commit_cpu` now includes, and
+  `glass_reblurs` counts the blurs it re-took). CPU and GPU overlap; don't
   add them or invert them into FPS.
 - The GPU timer starts on the first stats request and stops after five idle
   minutes; it costs CPU per frame. For CPU A/B runs, make no stats requests and

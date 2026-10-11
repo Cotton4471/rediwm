@@ -1,5 +1,5 @@
-// The scene API has no backdrop-filter primitive. Keep the GLES/EGL bridge
-// in C, using wlroots' installed headers for its renderer and scene ABI.
+// Glass effects are registered here and drawn by the owned output pass
+// (scene_output.c); see glass.c.
 const wlr = @import("wlroots");
 
 pub const Kind = enum(c_int) { titlebar, taskbar, panel };
@@ -8,7 +8,7 @@ pub const Effect = opaque {
     pub const configure = rediwm_glass_configure;
 };
 pub const Engine = opaque {
-    extern fn rediwm_glass_create(renderer: *wlr.Renderer, allocator: *wlr.Allocator, scene: *wlr.Scene, read_fence: ?*@import("explicit_sync.zig").ReadFence) ?*Engine;
+    extern fn rediwm_glass_create() ?*Engine;
     pub const create = rediwm_glass_create;
     extern fn rediwm_glass_destroy(engine: ?*Engine) void;
     pub const destroy = rediwm_glass_destroy;
@@ -18,8 +18,4 @@ pub const Engine = opaque {
     pub const hold = rediwm_glass_hold;
     extern fn rediwm_glass_hold_all(engine: ?*Engine, hold: bool) void;
     pub const holdAll = rediwm_glass_hold_all;
-    extern fn rediwm_glass_update(engine: ?*Engine, output: *wlr.SceneOutput) void;
-    pub const update = rediwm_glass_update;
-    extern fn rediwm_glass_project(engine: ?*Engine, projection: ?*anyopaque, zoom: f32) void;
-    pub const project = rediwm_glass_project;
 };

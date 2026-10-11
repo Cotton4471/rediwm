@@ -47,17 +47,23 @@ the one for the directory you work in: `src/files`, `src/editor`,
   host `grim`. Brief vanishing after a startup scale mismatch is not a bug.
 * **GLES can NULL `wlr_scene_buffer.buffer`** after upload (the texture
   stays): persist raster sizes.
-* **Glass** samples `wlr_client_buffer_get(buffer)->texture` and tracks
-  source-surface damage per effect. Empty commits and buffer rotation keep the
-  blur. Drags may hold titlebar blur at ≥ 0.98 opacity (the default theme is
-  0.80, so it follows), so every path ending a move schedules a frame. An
-  effect's scale comes from the outputs its target overlaps (`effect_scale`),
-  never from the output being updated: it is in the effect's hash, and an
-  output-dependent value made outputs of different scales re-blur and damage
-  each other forever (`glass_hold.py`).
+* **Glass is drawn by the output pass** (stage 5, `docs/plans/scene-graph-stage5.md`).
+  `glass.c` only registers effects: a bufferless node just below its target, to
+  which resolve gives the target's box. `scene_output.c` copies the framebuffer
+  under the effect's padded extent (target + 3 sigma), blurs it at quarter size
+  and composites it through the shape (shaped program mode 3), keeping one blur
+  per effect and output. A kept blur is re-taken only when a damage event from a
+  leaf painted *below* the effect, or damage no event explains, meets that
+  extent, or the region or sigma changed; a re-blur repaints the whole extent
+  first (with buffer age, pixels outside damage are last frame's final image),
+  and collect never culls items below an effect inside it. Damage a new kind of
+  change through the projection's events or it counts as below (safe, slower).
+  Holds (a dragged titlebar at ≥ 0.98 opacity, camera motion) carry the blur and
+  re-take it once released. Per output, so mixed scales stay idle
+  (`glass_hold.py`); attribution is checked by `glass_reblur.py`.
 * **Owned GL beside wlroots:** wlroots draws with client-side vertex arrays, so
   any GL work of ours must put `GL_ARRAY_BUFFER` (and the rest of the state it
-  touched) back before a wlroots pass runs, as `glass.c`'s `leave()` does; a quad
+  touched) back before a wlroots pass runs, as `scene_pass.c`'s `leave()` does; a quad
   VBO left bound makes wlroots draw half a rectangle. A border is drawn in the
   same pass as its body, never over it (`docs/plans/scene-graph-stage1.md`).
 * **Commit only via `Output.commitFrameState`**, never
