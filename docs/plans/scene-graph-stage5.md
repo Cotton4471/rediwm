@@ -1,6 +1,6 @@
 # Scene graph plan, stage 5: backdrop effects in the pass
 
-Status: **draft, decisions open**, 2026-10-11. Stage 4 of
+Status: **planned, decisions taken (all as recommended), nothing implemented**, 2026-10-11. Stage 4 of
 [scene-graph.md](scene-graph.md) is done (window shapes, analytic shadows, the
 owned pass as the only presenter). This stage moves glass, the blurred backdrop
 behind titlebars, the taskbar and the start and power menus, from its side
@@ -76,7 +76,11 @@ That is correct but, applied to every damage, it re-blurs a titlebar whenever
 its own client commits (the client lies inside the titlebar's padding): every
 keystroke, every video frame. Today's dependency tracking avoids that. Hence D1.
 
-## Decisions to take
+## Decisions (taken 2026-10-11, all as recommended)
+
+Taken: D1 (B) re-blur only on below-damage with a cached blur per effect and
+output; D2 (A) holds kept as cache reuse; D3 (A) per output; D4 (A) composite as
+a shaped-program mode, one blur program, plain programs dropped if free.
 
 * **D1. When an effect is re-blurred.**
   * (A) Whenever any damage touches its padded extent. Simplest; deletes all
