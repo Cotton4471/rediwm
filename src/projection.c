@@ -589,7 +589,20 @@ static uint64_t mirror_opaque(pixman_region32_t *out, const pixman_region32_t *s
   return hash;
 }
 // Glass writes its own projected buffers after this synchronization pass.
-extern bool rediwm_glass_is_effect_node(struct wlr_scene_node *node);
+#include "glass.h"
+// A glass effect covers its target exactly: the box is the target's (same
+// parent), and it is shown only with it. The pass draws the blur (stage 5c).
+static void effect_geometry(struct wlr_scene_node *node, int *x, int *y, int *width,
+                            int *height, bool *enabled) {
+  struct rediwm_glass_info info;
+  if (!rediwm_glass_effect_info(node, &info)) return;
+  struct wlr_scene_buffer *t = info.target;
+  *x += t->node.x - node->x;
+  *y += t->node.y - node->y;
+  *enabled = *enabled && t->node.enabled;
+  *width = t->dst_width ? t->dst_width : t->private.buffer_width;
+  *height = t->dst_height ? t->dst_height : t->private.buffer_height;
+}
 
 // A clip's size, radii, border or colour changed: its views did not move, so
 // nothing else tells wlroots that the corner arcs and the ring need repainting.
@@ -706,7 +719,12 @@ static void resolve_node(struct rediwm_projection *p, struct group *g,
                                                    : REDIWM_ITEM_BUFFER;
     item->width = b->dst_width;
     item->height = b->dst_height;
-    if (!item->width || !item->height) {
+    if (item->kind == REDIWM_ITEM_EFFECT) {
+      int ex = 0, ey = 0;
+      effect_geometry(node, &ex, &ey, &item->width, &item->height, &item->enabled);
+      x += ex;
+      y += ey;
+    } else if (!item->width || !item->height) {
       item->width = b->private.buffer_width;
       item->height = b->private.buffer_height;
       if (b->transform & 1) {
@@ -1091,7 +1109,9 @@ static struct rediwm_item layout_item(struct wlr_scene_node *node, int x, int y)
         wlr_scene_surface_try_from_buffer(b) ? REDIWM_ITEM_SURFACE : REDIWM_ITEM_BUFFER;
     item.width = b->dst_width;
     item.height = b->dst_height;
-    if (!item.width || !item.height) {
+    if (item.kind == REDIWM_ITEM_EFFECT) {
+      effect_geometry(node, &x, &y, &item.width, &item.height, &item.enabled);
+    } else if (!item.width || !item.height) {
       item.width = b->private.buffer_width;
       item.height = b->private.buffer_height;
       if (b->transform & 1) { int tmp = item.width; item.width = item.height; item.height = tmp; }
@@ -1127,8 +1147,7 @@ static bool visit_items(struct rediwm_projection *p, struct wlr_scene_node *node
       for (struct wl_list *leaf_link = reverse ? g->items.prev : g->items.next;
            leaf_link != &g->items; leaf_link = reverse ? leaf_link->prev : leaf_link->next) {
         struct leaf *l = wl_container_of(leaf_link, l, paint);
-        const struct rediwm_item *item = l->item.kind == REDIWM_ITEM_EFFECT ? &l->effect_item : &l->item;
-        if (item->enabled && l->item.enabled && !iterator(item, l->view, data)) return false;
+        if (l->item.enabled && !iterator(&l->item, l->view, data)) return false;
       }
     }
     return true;

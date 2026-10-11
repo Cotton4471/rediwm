@@ -23,6 +23,8 @@
 #include <wlr/util/log.h>
 #include <wlr/util/transform.h>
 #include "explicit_sync.h"
+#include "glass.h"
+#include <wlr/util/addon.h>
 #include "projection.h"
 
 enum glass_kind { GLASS_TITLEBAR, GLASS_TASKBAR, GLASS_PANEL };
@@ -36,6 +38,8 @@ struct glass_effect {
 	struct wl_listener destroy, target_destroy;
 	struct wl_list dependencies;
 	enum glass_kind kind;
+	struct wlr_addon addon; // on `node`, for rediwm_glass_effect_info
+	uint64_t serial;
 	float radius, opacity;
 	uint64_t hash, revision;
 	bool valid;
@@ -63,6 +67,7 @@ struct glass_engine {
 	// Camera motion holds every effect; dropping it forces one update.
 	bool hold_all;
 	struct wlr_box bounds;
+	uint64_t next_serial;
 };
 
 // Each effect observes the source damage independently. Scene output damage is
@@ -403,6 +408,7 @@ static void handle_destroy(struct wl_listener *listener, void *data)
 {
 	(void)data;
 	struct glass_effect *effect = wl_container_of(listener, effect, destroy);
+	wlr_addon_finish(&effect->addon);
 	if (effect->engine->held == effect)
 		effect->engine->held = NULL;
 	wl_list_remove(&effect->destroy.link);
@@ -428,6 +434,26 @@ static void handle_target_destroy(struct wl_listener *listener, void *data)
 	(void)data;
 	struct glass_effect *effect = wl_container_of(listener, effect, target_destroy);
 	wlr_scene_node_destroy(&effect->node->node);
+}
+static void addon_destroy(struct wlr_addon *addon) { wlr_addon_finish(addon); }
+static const struct wlr_addon_interface effect_addon = {.name = "rediwm glass effect",
+							  .destroy = addon_destroy};
+bool rediwm_glass_effect_info(struct wlr_scene_node *node, struct rediwm_glass_info *out)
+{
+	struct wlr_addon *addon = wlr_addon_find(&node->addons, NULL, &effect_addon);
+	if (!addon)
+		return false;
+	struct glass_effect *effect = wl_container_of(addon, effect, addon);
+	*out = (struct rediwm_glass_info){
+	    .target = effect->target,
+	    .sigma = effect->kind == GLASS_TITLEBAR ? 22 : effect->kind == GLASS_TASKBAR ? 24 : 26,
+	    .saturation = effect->kind == GLASS_PANEL ? 1.6f : 1.5f,
+	    .opacity = effect->opacity,
+	    .radius = effect->radius,
+	    .serial = effect->serial,
+	    .held = effect->engine->hold_all || effect->engine->held == effect,
+	};
+	return true;
 }
 static bool accepts_input(struct wlr_scene_buffer *buffer, double *x, double *y)
 {
@@ -457,6 +483,8 @@ struct glass_effect *rediwm_glass_attach(struct glass_engine *engine,
 	effect->opacity = 1;
     effect->zoom = 1;
 	effect->node->point_accepts_input = accepts_input;
+	effect->serial = ++engine->next_serial;
+	wlr_addon_init(&effect->addon, &effect->node->node.addons, NULL, &effect_addon);
 	wlr_scene_buffer_set_filter_mode(effect->node, WLR_SCALE_FILTER_NEAREST);
 	wlr_scene_node_place_below(&effect->node->node, before);
 	effect->destroy.notify = handle_destroy;
@@ -1068,33 +1096,10 @@ static void update_tree(struct glass_engine *engine, struct wlr_scene_tree *tree
 			update_tree(engine, wlr_scene_tree_from_node(node));
 	}
 }
+// Stage 5c: the owned output pass draws glass (scene_output.c); effects are only
+// registered here. The capture machinery above goes in 5d.
 void rediwm_glass_update(struct glass_engine *engine, struct wlr_scene_output *output)
 {
-	if (!engine || engine->failed)
-		return;
-	if (!engine->resync && !pixman_region32_not_empty(&output->damage_ring.current))
-		return;
-	engine->resync = false;
-	engine->bounds = (struct wlr_box){0};
-	struct wlr_scene_output *scene_output;
-	wl_list_for_each(scene_output, &engine->scene->outputs, link)
-	{
-		int width, height;
-		wlr_output_effective_resolution(scene_output->output, &width, &height);
-		struct wlr_box box = {scene_output->x, scene_output->y, width, height};
-		if (wlr_box_empty(&engine->bounds))
-			engine->bounds = box;
-		else {
-			int x = engine->bounds.x < box.x ? engine->bounds.x : box.x;
-			int y = engine->bounds.y < box.y ? engine->bounds.y : box.y;
-			int right = engine->bounds.x + engine->bounds.width > box.x + box.width
-					? engine->bounds.x + engine->bounds.width
-					: box.x + box.width;
-			int bottom = engine->bounds.y + engine->bounds.height > box.y + box.height
-					 ? engine->bounds.y + engine->bounds.height
-					 : box.y + box.height;
-			engine->bounds = (struct wlr_box){x, y, right - x, bottom - y};
-		}
-	}
-	update_tree(engine, &engine->scene->tree);
+	(void)engine;
+	(void)output;
 }

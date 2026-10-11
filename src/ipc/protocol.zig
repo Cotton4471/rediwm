@@ -749,6 +749,8 @@ pub const PerformanceStatsResult = struct {
     desktop: ?DesktopStats = null,
     // Optional so older producers and fixtures omit it.
     output_skipped_commits: ?u64 = null,
+    /// Glass blurs re-taken by the output pass (stage 5c), all outputs.
+    glass_reblurs: ?u64 = null,
 };
 
 /// The compositor-drawn desktop's repaint work since the last reset.
@@ -3006,6 +3008,9 @@ fn stringifyPerformanceStats(res: PerformanceStatsResult, writer: anytype) !void
     }
     if (res.output_skipped_commits) |skipped| {
         try writer.print("\"output_skipped_commits\":{d},", .{skipped});
+    }
+    if (res.glass_reblurs) |reblurs| {
+        try writer.print("\"glass_reblurs\":{d},", .{reblurs});
     }
     try writer.print("\"output_commits\":{d},\"output_failed_commits\":{d},\"fps\":{d:.1},\"frame_time_ms\":{d:.1},\"missed_frames\":{d},\"refresh_hz\":{d:.1},\"titlebar_paints\":{d},\"footer_paints\":{d},\"edge_samples_attempted\":{d},\"edge_samples_succeeded\":{d},\"edge_samples_skipped\":{d},\"edge_sample_ns\":{d},\"panel_paints\":{d},\"panel_allocated_bytes\":{d},\"panel_reused_bytes\":{d},\"icon_cache_hits\":{d},\"icon_cache_misses\":{d},\"icon_decode_ns\":{d},\"icon_decode_count\":{d},\"icon_decoded_bytes\":{d},\"icon_queue_depth_max\":{d},", .{
         res.output_commits,

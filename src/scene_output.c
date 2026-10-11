@@ -7,6 +7,7 @@
 #include "scene_pass.h"
 #include "scene_graph.h"
 #include "projection.h"
+#include "glass.h"
 #include <math.h>
 #include <stdlib.h>
 #include <wlr/render/drm_syncobj.h>
@@ -21,16 +22,48 @@
 #include <wlr/util/region.h>
 #include <wlr/util/transform.h>
 
+// Stage 5c: a glass effect's blur, kept per effect and output between frames
+// (D1, D3 of docs/plans/scene-graph-stage5.md) and re-taken only when something
+// below the effect changed in the region it reads.
+struct effect_cache {
+    struct wl_list link;
+    uint64_t serial;               // rediwm_glass_info.serial
+    struct rediwm_backdrop *backdrop;
+    struct wlr_box region;         // device pixels the blur covers
+    float sigma;                   // device pixels
+    bool valid, seen;
+};
+struct output_state {
+    struct wl_list link;
+    struct rediwm_output_renderer *renderer;
+    struct wlr_output *output;
+    struct wl_listener destroy;
+    uint64_t cursor;               // into the projection's damage events
+    bool started;
+    struct wl_list caches;
+};
 struct entry {
     struct rediwm_item item;
     struct wlr_scene_node *transport;
     struct wlr_box box; // snap of item edges in layout space
     pixman_region32_t visible, opaque;
     bool sampled;
+    // Effects only: what glass registered, the box the blur reads (layout, the
+    // target's grown by three sigma), the surface drawn over it, and whether
+    // this frame takes a new blur.
+    struct rediwm_glass_info glass;
+    struct wlr_box padded;
+    float sigma; // layout pixels
+    struct wlr_scene_node *front;
+    struct effect_cache *cache;
+    bool reblur;
 };
 struct rediwm_output_renderer {
     struct rediwm_scene_renderer *pass;
     struct wl_array entries; // reusable scratch; no retained resource references
+    struct wl_list outputs;  // output_state
+    struct rediwm_projection *projection; // of the frame being built
+    bool has_backdrops;
 };
 struct rediwm_output_renderer *rediwm_output_renderer_create(struct wlr_renderer *renderer) {
     struct rediwm_output_renderer *r = calloc(1, sizeof(*r));
@@ -38,13 +71,50 @@ struct rediwm_output_renderer *rediwm_output_renderer_create(struct wlr_renderer
     r->pass = rediwm_scene_renderer_create(renderer);
     if (!r->pass) { free(r); return NULL; }
     wl_array_init(&r->entries);
+    wl_list_init(&r->outputs);
     return r;
 }
 bool rediwm_output_renderer_enable_shapes(struct rediwm_output_renderer *r) {
     return rediwm_scene_renderer_enable_shapes(r->pass);
 }
+bool rediwm_output_renderer_enable_backdrops(struct rediwm_output_renderer *r) {
+    r->has_backdrops = rediwm_scene_renderer_enable_backdrops(r->pass);
+    return r->has_backdrops;
+}
+static void cache_destroy(struct rediwm_output_renderer *r, struct effect_cache *c) {
+    rediwm_scene_renderer_destroy_backdrop(r->pass, c->backdrop);
+    wl_list_remove(&c->link);
+    free(c);
+}
+static void output_state_destroy(struct output_state *os) {
+    struct effect_cache *c, *next;
+    wl_list_for_each_safe(c, next, &os->caches, link) cache_destroy(os->renderer, c);
+    wl_list_remove(&os->destroy.link);
+    wl_list_remove(&os->link);
+    free(os);
+}
+static void output_destroyed(struct wl_listener *listener, void *data) {
+    (void)data;
+    struct output_state *os = wl_container_of(listener, os, destroy);
+    output_state_destroy(os);
+}
+static struct output_state *output_state_get(struct rediwm_output_renderer *r, struct wlr_output *output) {
+    struct output_state *os;
+    wl_list_for_each(os, &r->outputs, link) if (os->output == output) return os;
+    os = calloc(1, sizeof(*os));
+    if (!os) return NULL;
+    os->renderer = r;
+    os->output = output;
+    wl_list_init(&os->caches);
+    os->destroy.notify = output_destroyed;
+    wl_signal_add(&output->events.destroy, &os->destroy);
+    wl_list_insert(&r->outputs, &os->link);
+    return os;
+}
 void rediwm_output_renderer_destroy(struct rediwm_output_renderer *r) {
     if (!r) return;
+    struct output_state *os, *next;
+    wl_list_for_each_safe(os, next, &r->outputs, link) output_state_destroy(os);
     rediwm_scene_renderer_destroy(r->pass);
     wl_array_release(&r->entries);
     free(r);
@@ -146,8 +216,15 @@ static bool collect(const struct rediwm_item *item, struct wlr_scene_node *trans
     if (s.width <= 0 || s.height <= 0) return true;
     struct wlr_box box = {s.x, s.y, s.width, s.height}, intersection;
     if (!wlr_box_intersection(&intersection, &box, &collector->view->logical)) return true;
+    struct rediwm_glass_info glass = {0};
     if (item->kind == REDIWM_ITEM_RECT) {
         if (item->content.color[3] == 0) return true;
+    } else if (item->kind == REDIWM_ITEM_EFFECT) {
+        // Glass is drawn here (stage 5c); without the blur program there is none,
+        // and the surface's own tint shows, as glass.c's fallback did.
+        if (!r->has_backdrops || item->content.opacity == 0 ||
+            !rediwm_glass_effect_info(rediwm_projection_source(transport), &glass) || glass.opacity <= 0)
+            return true;
     } else if (item->kind == REDIWM_ITEM_SHADOW) {
         // No buffer: the pixels are the shadow's, and never opaque.
         if (item->content.opacity == 0 || item->shadow->color[3] == 0) return true;
@@ -168,6 +245,22 @@ static bool collect(const struct rediwm_item *item, struct wlr_scene_node *trans
     *e = (struct entry){.item = *item, .transport = transport,
         .box = box, .visible = visible};
     pixman_region32_init(&e->opaque);
+    if (item->kind == REDIWM_ITEM_EFFECT) {
+        // The blur reads three sigma around the surface, below the effect in
+        // paint order, including what opaque surfaces above hide on screen: those
+        // pixels must not be culled (a re-blur repaints them first).
+        e->glass = glass;
+        e->sigma = glass.sigma * item->scale;
+        const int pad = (int)ceil(3 * e->sigma);
+        e->padded = (struct wlr_box){box.x - pad, box.y - pad, box.width + 2 * pad, box.height + 2 * pad};
+        pixman_region32_t read;
+        pixman_region32_init_rect(&read, e->padded.x, e->padded.y, e->padded.width, e->padded.height);
+        pixman_region32_subtract(&collector->covered, &collector->covered, &read);
+        pixman_region32_fini(&read);
+        struct wlr_scene_node *front = rediwm_projection_node(r->projection, &glass.target->node);
+        e->front = front ? front : &glass.target->node;
+        return true;
+    }
     bool full = item->kind == REDIWM_ITEM_RECT && item->content.color[3] == 1;
     if (item->kind != REDIWM_ITEM_RECT && item->kind != REDIWM_ITEM_SHADOW) {
         struct wlr_scene_buffer *b = wlr_scene_buffer_from_node(transport);
@@ -293,7 +386,157 @@ static bool misses_damage(const struct wlr_box *dst, pixman_region32_t *damage) 
     return dst->x - 2 >= extents->x2 || dst->x + dst->width + 2 <= extents->x1 ||
         dst->y - 2 >= extents->y2 || dst->y + dst->height + 2 <= extents->y1;
 }
-static bool render_entry(struct entry *e, struct wlr_scene_output *out,
+// ---- Effects: which blurs this frame re-takes (D1) ---------------------------------
+uint64_t rediwm_scene_output_reblurs; // read and reset by the performance stats
+struct attribution {
+    const struct output_view *view;
+    struct entry *entries;
+    size_t len;
+    struct wl_array events;          // struct seen_event
+    pixman_region32_t explained;     // device pixels events account for
+};
+struct seen_event { uint64_t leaf; struct wlr_box box; }; // device pixels
+static void note_event(const struct rediwm_damage_event *ev, void *data) {
+    struct attribution *a = data;
+    struct wlr_box box = device_box((struct wlr_box){ev->box.x, ev->box.y, ev->box.width, ev->box.height}, a->view);
+    // wlroots widens a scaled buffer's damage for filtering; so does this.
+    box = (struct wlr_box){box.x - 2, box.y - 2, box.width + 4, box.height + 4};
+    struct seen_event *se = wl_array_add(&a->events, sizeof(*se));
+    if (se) *se = (struct seen_event){ev->leaf, box};
+    pixman_region32_union_rect(&a->explained, &a->explained, box.x, box.y, box.width, box.height);
+}
+// Paint position of a leaf in this frame (0 = top), or -1 when it is not drawn.
+static long position_of(const struct attribution *a, uint64_t leaf) {
+    if (!leaf) return -1;
+    for (size_t i = 0; i < a->len; i++) if (a->entries[i].item.id == leaf) return (long)i;
+    return -1;
+}
+static bool boxes_meet(const struct wlr_box *a, const struct wlr_box *b) {
+    struct wlr_box out;
+    return wlr_box_intersection(&out, a, b);
+}
+static struct effect_cache *cache_for(struct output_state *os, uint64_t serial) {
+    struct effect_cache *c;
+    wl_list_for_each(c, &os->caches, link) if (c->serial == serial) return c;
+    c = calloc(1, sizeof(*c));
+    if (!c) return NULL;
+    c->serial = serial;
+    wl_list_insert(&os->caches, &c->link);
+    return c;
+}
+// Decides, bottom to top, which effects re-blur: a blur is kept unless something
+// painted below the effect, or something no event explains, changed in the region
+// it reads, or the region or sigma changed (a held effect keeps it while moving).
+// A re-blur repaints that whole region from the bottom (`expand`) and changes the
+// effect's own pixels (`changed`). Returns false on allocation failure.
+static bool decide_effects(struct rediwm_output_renderer *r, struct output_state *os,
+        struct wlr_scene_output *out, const struct output_view *v,
+        pixman_region32_t *expand, pixman_region32_t *changed) {
+    struct entry *entries = r->entries.data;
+    const size_t len = r->entries.size / sizeof(*entries);
+    struct attribution a = {.view = v, .entries = entries, .len = len};
+    wl_array_init(&a.events);
+    pixman_region32_init(&a.explained);
+    bool complete = os->started && rediwm_projection_damage_events(r->projection, &os->cursor, note_event, &a);
+    if (!os->started) {
+        os->cursor = rediwm_projection_damage_cursor(r->projection);
+        os->started = true;
+    }
+    pixman_region32_t unexplained;
+    pixman_region32_init(&unexplained);
+    pixman_region32_subtract(&unexplained, &out->private.pending_commit_damage, &a.explained);
+    struct effect_cache *c;
+    wl_list_for_each(c, &os->caches, link) c->seen = false;
+    bool ok = true;
+    for (size_t i = len; i > 0; i--) {
+        struct entry *e = &entries[i - 1];
+        if (e->item.kind != REDIWM_ITEM_EFFECT) continue;
+        e->cache = cache_for(os, e->glass.serial);
+        if (!e->cache) { ok = false; continue; }
+        c = e->cache;
+        c->seen = true;
+        const struct wlr_box region = device_box(e->padded, v);
+        const float sigma = e->sigma * v->scale;
+        const bool same_size = c->valid && c->sigma == sigma && c->region.width == region.width &&
+            c->region.height == region.height;
+        bool reblur = !same_size || !complete;
+        if (!reblur && (c->region.x != region.x || c->region.y != region.y)) {
+            // A held effect carries its last blur along; otherwise a move re-blurs.
+            if (e->glass.held) c->region = region;
+            else reblur = true;
+        }
+        if (!reblur && !e->glass.held) {
+            const long here = (long)(i - 1);
+            struct seen_event *se;
+            wl_array_for_each(se, &a.events) {
+                if (!boxes_meet(&se->box, &region)) continue;
+                const long at = position_of(&a, se->leaf);
+                if (at < 0 || at > here) { reblur = true; break; }
+            }
+            if (!reblur && pixman_region32_contains_rectangle(&unexplained,
+                    &(pixman_box32_t){region.x, region.y, region.x + region.width, region.y + region.height}) != PIXMAN_REGION_OUT)
+                reblur = true;
+            // An effect below that re-blurs changes what this one reads.
+            for (size_t j = len; !reblur && j > i; j--) {
+                const struct entry *below = &entries[j - 1];
+                if (below->item.kind == REDIWM_ITEM_EFFECT && below->reblur) {
+                    const struct wlr_box bb = device_box(below->box, v);
+                    if (boxes_meet(&bb, &region)) reblur = true;
+                }
+            }
+        }
+        e->reblur = reblur;
+        if (reblur) {
+            pixman_region32_union_rect(expand, expand, region.x, region.y, region.width, region.height);
+            const struct wlr_box own = device_box(e->box, v);
+            pixman_region32_union_rect(changed, changed, own.x, own.y, own.width, own.height);
+        }
+    }
+    pixman_region32_fini(&unexplained);
+    pixman_region32_fini(&a.explained);
+    wl_array_release(&a.events);
+    return ok;
+}
+static void render_effect(struct entry *e, struct wlr_render_pass *pass, const struct output_view *v,
+        struct rediwm_output_renderer *r, struct wlr_renderer *renderer, const pixman_region32_t *clip) {
+    struct effect_cache *c = e->cache;
+    if (!c) return;
+    if (e->reblur) {
+        // The whole region was damaged and everything below is drawn: take it.
+        c->region = device_box(e->padded, v);
+        c->sigma = e->sigma * v->scale;
+        rediwm_scene_pass_capture_backdrop(pass, &c->backdrop, c->region, c->sigma);
+        c->valid = true;
+        rediwm_scene_output_reblurs++;
+    }
+    if (!c->valid || !c->backdrop || !pixman_region32_not_empty((pixman_region32_t *)clip)) return;
+    const struct wlr_box dst = device_box(e->box, v);
+    struct rediwm_pass_shape shape = {.box = dst};
+    if (e->item.clip) {
+        shape_for(&shape, e->item.clip, v);
+    } else {
+        const float radius = e->glass.radius * e->item.scale * v->scale;
+        for (int i = 0; i < 4; i++) shape.radii[i] = radius;
+    }
+    shape.border = 0;
+    struct rediwm_pass_backdrop o = {.backdrop = c->backdrop, .saturation = e->glass.saturation,
+        .opacity = e->glass.opacity * e->item.content.opacity, .clip = clip};
+    // The surface over the effect: its alpha is made up to the coverage.
+    struct entry *entries = r->entries.data;
+    const size_t len = r->entries.size / sizeof(*entries);
+    for (size_t i = 0; i < len; i++) {
+        struct entry *f = &entries[i];
+        if (f->transport != e->front || f->item.kind == REDIWM_ITEM_RECT) continue;
+        struct wlr_scene_buffer *b = wlr_scene_buffer_from_node(f->transport);
+        if (b->private.is_single_pixel_buffer || b->transform != WL_OUTPUT_TRANSFORM_NORMAL) break;
+        o.front = buffer_texture(b, renderer);
+        o.front_box = device_box(f->box, v);
+        o.front_opacity = f->item.content.opacity;
+        break;
+    }
+    rediwm_scene_pass_add_backdrop(pass, &shape, dst, &o);
+}
+static bool render_entry(struct rediwm_output_renderer *r, struct entry *e, struct wlr_scene_output *out,
         struct wlr_render_pass *pass, const struct output_view *v, pixman_region32_t *damage) {
     struct wlr_box dst = device_box(e->box, v);
     if (misses_damage(&dst, damage)) return true;
@@ -305,6 +548,11 @@ static bool render_entry(struct entry *e, struct wlr_scene_output *out,
     device_region(&clip, v, true);
     pixman_region32_intersect(&clip, &clip, damage);
     bool ok = true;
+    if (e->item.kind == REDIWM_ITEM_EFFECT) {
+        // A re-blur takes its blur even where the effect itself is hidden.
+        render_effect(e, pass, v, r, out->output->renderer, &clip);
+        goto done;
+    }
     if (!pixman_region32_not_empty(&clip)) goto done;
     // A clipped item is drawn in two parts: `core` (its interior, which the model
     // proves fully covered and opaque) as before, without the shape, and the rest
@@ -430,6 +678,7 @@ bool rediwm_scene_output_build_state(struct rediwm_output_renderer *r,
     if (v.scale != output->scale || v.transform != output->transform ||
         v.width != output->width || v.height != output->height)
         rediwm_scene_output_damage_whole(out);
+    r->projection = projection;
     struct collector collector = {.renderer = r, .view = &v};
     pixman_region32_init(&collector.covered);
     bool collected = rediwm_projection_for_each_item(projection, true, collect, &collector);
@@ -441,6 +690,27 @@ bool rediwm_scene_output_build_state(struct rediwm_output_renderer *r,
     }
     struct entry *entries = r->entries.data;
     size_t len = r->entries.size / sizeof(*entries);
+    // Effects decide before the damage is handed on: a re-blur changes the
+    // effect's pixels (reported and kept in the ring for the other buffers) and
+    // repaints the whole region it reads (this buffer only).
+    pixman_region32_t expand, changed;
+    pixman_region32_init(&expand);
+    pixman_region32_init(&changed);
+    struct output_state *os = r->has_backdrops ? output_state_get(r, output) : NULL;
+    if (os && !decide_effects(r, os, out, &v, &expand, &changed)) {
+        pixman_region32_fini(&expand);
+        pixman_region32_fini(&changed);
+        pixman_region32_fini(&collector.covered);
+        clear_entries(r);
+        return false;
+    }
+    if (pixman_region32_not_empty(&changed)) {
+        pixman_region32_intersect_rect(&changed, &changed, 0, 0, v.width, v.height);
+        wlr_damage_ring_add(&out->damage_ring, &changed);
+        pixman_region32_union(&out->private.pending_commit_damage,
+            &out->private.pending_commit_damage, &changed);
+    }
+    pixman_region32_fini(&changed);
     wlr_output_state_set_damage(state, &out->private.pending_commit_damage);
     bool scanout = len == 1 && try_scanout(&entries[0], out, state, &v);
     if (out->private.prev_scanout != scanout) {
@@ -461,6 +731,7 @@ bool rediwm_scene_output_build_state(struct rediwm_output_renderer *r,
     pixman_region32_init(&damage);
     pixman_region32_init(&background);
     wlr_damage_ring_rotate_buffer(&out->damage_ring, buffer, &damage);
+    pixman_region32_union(&damage, &damage, &expand);
     pixman_region32_intersect_rect(&damage, &damage, 0, 0, v.width, v.height);
     device_region(&collector.covered, &v, false);
     pixman_region32_subtract(&background, &damage, &collector.covered);
@@ -472,7 +743,7 @@ bool rediwm_scene_output_build_state(struct rediwm_output_renderer *r,
         .box = {0, 0, buffer->width, buffer->height}, .color = {0, 0, 0, 1}, .clip = &background});
     ok = true;
     for (size_t i = len; i > 0; i--)
-        if (!render_entry(&entries[i - 1], out, pass, &v, &damage)) ok = false;
+        if (!render_entry(r, &entries[i - 1], out, pass, &v, &damage)) ok = false;
     wlr_output_add_software_cursors_to_render_pass(output, pass, &damage);
     bool submitted = wlr_render_pass_submit(pass);
     // Successful reads still need release points when another item failed to
@@ -491,7 +762,17 @@ bool rediwm_scene_output_build_state(struct rediwm_output_renderer *r,
 done:
     if (buffer) wlr_buffer_unlock(buffer);
     if (!ok) rediwm_scene_output_damage_whole(out);
+    pixman_region32_fini(&expand);
     pixman_region32_fini(&collector.covered);
+    if (os) {
+        // Outside the pass: drop the blurs of effects this output no longer shows;
+        // after a failed frame, trust none of them.
+        struct effect_cache *c, *next;
+        wl_list_for_each_safe(c, next, &os->caches, link) {
+            if (!ok) c->valid = false;
+            if (!c->seen) cache_destroy(r, c);
+        }
+    }
     clear_entries(r);
     return ok;
 }

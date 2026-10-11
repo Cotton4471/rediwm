@@ -12,6 +12,8 @@ struct rediwm_output_renderer *rediwm_output_renderer_create(struct wlr_renderer
 // Builds the programs that draw rounded shapes (see scene_pass.h); false if they
 // did not build, in which case no window may be given a shape.
 bool rediwm_output_renderer_enable_shapes(struct rediwm_output_renderer *);
+// Glass in the pass (stage 5c); requires shapes. False: glass is the surface's own tint.
+bool rediwm_output_renderer_enable_backdrops(struct rediwm_output_renderer *);
 void rediwm_output_renderer_destroy(struct rediwm_output_renderer *);
 // Node-subset capture uses the same drawing backend with its own swapchain
 // and ReadFence; it must not inherit output culling or screen geometry.

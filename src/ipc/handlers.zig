@@ -1286,12 +1286,14 @@ fn handleAction(
                 .startup = startupStats(),
                 .desktop = stats.global_stats.desktop,
                 .output_skipped_commits = stats.global_stats.output_skipped_commits,
+                .glass_reblurs = @import("../scene_output.zig").reblurs.*,
             } } };
         },
         .reset_performance_stats => {
             server.ensureGpuTimer();
             stats.global_stats.reset();
             @import("../panel_present.zig").reset();
+            @import("../scene_output.zig").reblurs.* = 0;
             return .{ .ok = .handled };
         },
 

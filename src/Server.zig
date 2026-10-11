@@ -474,6 +474,10 @@ pub fn init(server: *Server, scale: ?f32, icon_theme_cfg: icon_theme.Config, io:
     // window exists. Without them windows are square, with no ring or shadow.
     if (server.output_renderer.enableShapes()) {
         @import("chrome.zig").shapes = true;
+        // Glass (stage 5c of docs/plans/scene-graph.md); without the blur program
+        // each glass surface shows its own tint.
+        if (server.glass_engine != null and !server.output_renderer.enableBackdrops())
+            log.err("glass: blur program unavailable, glass surfaces show their tint", .{});
     } else {
         log.err("window frames: shaped programs unavailable, windows are drawn square", .{});
     }

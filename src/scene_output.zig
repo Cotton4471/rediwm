@@ -1,11 +1,17 @@
 const wlr = @import("wlroots");
 const Projection = @import("projection.zig").Projection;
 
+extern var rediwm_scene_output_reblurs: u64;
+/// Glass blurs the output pass re-took (stage 5c), for the performance stats.
+pub const reblurs: *u64 = &rediwm_scene_output_reblurs;
+
 pub const Renderer = opaque {
     extern fn rediwm_output_renderer_create(renderer: *wlr.Renderer) ?*Renderer;
     pub const create = rediwm_output_renderer_create;
     extern fn rediwm_output_renderer_enable_shapes(renderer: *Renderer) bool;
     pub const enableShapes = rediwm_output_renderer_enable_shapes;
+    extern fn rediwm_output_renderer_enable_backdrops(renderer: *Renderer) bool;
+    pub const enableBackdrops = rediwm_output_renderer_enable_backdrops;
     extern fn rediwm_output_renderer_destroy(renderer: ?*Renderer) void;
     pub const destroy = rediwm_output_renderer_destroy;
     extern fn rediwm_scene_output_build_state(renderer: *Renderer, projection: *Projection, output: *wlr.SceneOutput, state: *wlr.Output.State) bool;
