@@ -21,6 +21,12 @@
 // content the source still owns: buffers, wait points, opaque regions), rounds,
 // and applies the result to the view tree. The graph is the one place geometry
 // is computed; present() may not derive any of its own.
+// Damage events: which leaf changed which layout-space box, for consumers that
+// must tell what lies below a point in paint order from what lies above it
+// (backdrop effects, stage 5 of docs/plans/scene-graph.md). A ring: each consumer
+// keeps its own cursor, and one that falls behind by more than the ring holds is
+// told so and must treat everything as changed.
+enum { DAMAGE_EVENTS = 4096 };
 struct rediwm_projection {
   struct wlr_scene_tree *source, *view;
   struct wlr_scene *scene;
@@ -29,6 +35,9 @@ struct rediwm_projection {
   struct wl_list leaves, groups, paint;
   struct wl_listener new_surface;
   struct wl_list surfaces;
+  uint64_t next_leaf_id;
+  struct rediwm_damage_event events[DAMAGE_EVENTS];
+  uint64_t next_event; // sequence number of the next event; 0 is never used
 };
 // Source top-level subtrees are contiguous in paint order. Moving their
 // presentation tree updates wlroots visibility once for the whole window,
@@ -102,6 +111,10 @@ struct leaf {
   // shadow's view has no buffer, so wlroots damages nothing for it: present()
   // damages the footprint it last drew (`shadow_drawn`) and the new one.
   struct rediwm_shadow shadow;
+  // The box present() last showed the leaf in, for its damage events.
+  struct rediwm_snap shown;
+  struct rediwm_content shown_content;
+  bool has_shown;
   struct rediwm_shadow shadow_drawn_as;
   struct rediwm_snap shadow_drawn;
   float shadow_drawn_opacity;
@@ -357,8 +370,36 @@ static void mark_view_buffer(struct leaf *l, struct wlr_buffer *backing) {
   client->private.n_ignore_locks++;
   l->marked = client;
 }
+static void emit(struct rediwm_projection *p, uint64_t leaf, int x, int y, int width, int height) {
+  if (width <= 0 || height <= 0) return;
+  if (!p->next_event) p->next_event = 1;
+  p->events[p->next_event % DAMAGE_EVENTS] =
+      (struct rediwm_damage_event){.leaf = leaf, .box = {x, y, width, height}};
+  p->next_event++;
+}
+static void emit_snap(struct leaf *l, struct rediwm_snap s) {
+  emit(l->projection, l->item.id, s.x, s.y, s.width, s.height);
+}
+bool rediwm_projection_damage_events(struct rediwm_projection *p, uint64_t *cursor,
+                                     rediwm_damage_event_iterator fn, void *data) {
+  const uint64_t end = p->next_event ? p->next_event : 1;
+  const uint64_t oldest = end > DAMAGE_EVENTS ? end - DAMAGE_EVENTS : 1;
+  bool complete = *cursor >= oldest;
+  for (uint64_t seq = complete ? *cursor : oldest; seq < end; seq++)
+    fn(&p->events[seq % DAMAGE_EVENTS], data);
+  *cursor = end;
+  return complete;
+}
+uint64_t rediwm_projection_damage_cursor(struct rediwm_projection *p) {
+  return p->next_event ? p->next_event : 1;
+}
 static void damage_shadow(struct leaf *l, bool show, struct rediwm_snap at);
+static void forget_shown(struct leaf *l) {
+  if (l->has_shown) emit_snap(l, l->shown);
+  l->has_shown = false;
+}
 static void destroy_leaf(struct leaf *l) {
+  forget_shown(l);
   damage_shadow(l, false, (struct rediwm_snap){0});
   unmark_view_buffer(l);
   route_surface(l, l->surface ? l->surface->buffer : NULL);
@@ -462,6 +503,7 @@ static struct leaf *get_leaf(struct rediwm_projection *p,
     return NULL;
   l->source = source;
   l->projection = p;
+  l->item.id = ++p->next_leaf_id;
   l->dirty = true;
   l->full_damage = true;
   pixman_region32_init(&l->damage);
@@ -709,8 +751,11 @@ static void damage_shadow(struct leaf *l, bool show, struct rediwm_snap at) {
     pixman_region32_union_rect(&region, &region, l->shadow_drawn.x, l->shadow_drawn.y,
                                l->shadow_drawn.width, l->shadow_drawn.height);
   if (show) pixman_region32_union_rect(&region, &region, at.x, at.y, at.width, at.height);
-  if (pixman_region32_not_empty(&region))
+  if (pixman_region32_not_empty(&region)) {
     rediwm_scene_damage_layout(l->projection->scene, &region);
+    const pixman_box32_t *b = pixman_region32_extents(&region);
+    emit(l->projection, l->item.id, b->x1, b->y1, b->x2 - b->x1, b->y2 - b->y1);
+  }
   pixman_region32_fini(&region);
   l->has_shadow_drawn = show;
   l->shadow_drawn = at;
@@ -718,6 +763,34 @@ static void damage_shadow(struct leaf *l, bool show, struct rediwm_snap at) {
   l->shadow_drawn_opacity = opacity;
 }
 
+// The layout box a buffer-local damage region covers: its bounding box through
+// the source box onto the item's edges, one pixel wider for filtering. The whole
+// box without damage, or under a transform (conservative, like glass.c was).
+static void damage_event_for_buffer(struct leaf *l, const pixman_region32_t *damage,
+                                    int buffer_width, int buffer_height,
+                                    struct rediwm_snap snap) {
+  const struct rediwm_item *item = &l->item;
+  if (!damage || item->content.transform != WL_OUTPUT_TRANSFORM_NORMAL ||
+      buffer_width <= 0 || buffer_height <= 0) {
+    emit_snap(l, snap);
+    return;
+  }
+  if (!pixman_region32_not_empty(damage)) return;
+  const pixman_box32_t *b = pixman_region32_extents(damage);
+  struct wlr_fbox src = item->content.src_box;
+  if (wlr_fbox_empty(&src)) src = (struct wlr_fbox){0, 0, buffer_width, buffer_height};
+  const struct rediwm_edges *e = &item->edges;
+  const double sx = (e->x2 - e->x1) / src.width, sy = (e->y2 - e->y1) / src.height;
+  const int x1 = (int)floor(e->x1 + (b->x1 - src.x) * sx) - 1;
+  const int y1 = (int)floor(e->y1 + (b->y1 - src.y) * sy) - 1;
+  const int x2 = (int)ceil(e->x1 + (b->x2 - src.x) * sx) + 1;
+  const int y2 = (int)ceil(e->y1 + (b->y2 - src.y) * sy) + 1;
+  // Never beyond the leaf: damage outside its source box shows nowhere.
+  const int cx1 = x1 > snap.x ? x1 : snap.x, cy1 = y1 > snap.y ? y1 : snap.y;
+  const int cx2 = x2 < snap.x + snap.width ? x2 : snap.x + snap.width;
+  const int cy2 = y2 < snap.y + snap.height ? y2 : snap.y + snap.height;
+  emit(l->projection, item->id, cx1, cy1, cx2 - cx1, cy2 - cy1);
+}
 // present(): graph -> view tree. Reads items and group origins, never the
 // source's geometry; rounds, orders and applies, and tells wlroots about the
 // buffers and damage that changed.
@@ -744,6 +817,21 @@ static void present_leaf(struct group *g, struct leaf *l,
   next.height = snap.height;
   next.enabled = item->enabled && snap.width > 0 && snap.height > 0;
   next.content = item->content;
+  // Damage events: a moved, resized, shown, hidden or restyled leaf changes its
+  // old and its new box; otherwise only what a new buffer or commit damaged.
+  const bool restyled = !l->has_shown || !next.enabled || snap.x != l->shown.x ||
+                        snap.y != l->shown.y || snap.width != l->shown.width ||
+                        snap.height != l->shown.height ||
+                        !rediwm_content_equal(&item->content, &l->shown_content);
+  if (restyled) {
+    forget_shown(l);
+    if (next.enabled) {
+      emit_snap(l, snap);
+      l->shown = snap;
+      l->shown_content = item->content;
+      l->has_shown = true;
+    }
+  }
   if (item->kind == REDIWM_ITEM_RECT) {
     if (!l->has_applied || !view_state_equal(&next, &l->applied)) {
       struct wlr_scene_rect *v = wlr_scene_rect_from_node(l->view);
@@ -771,6 +859,10 @@ static void present_leaf(struct group *g, struct leaf *l,
           .wait_timeline = b->private.wait_timeline,
           .wait_point = b->private.wait_point,
       };
+      if (!restyled && l->has_shown)
+        damage_event_for_buffer(l, options.damage,
+                                l->surface ? l->damage_width : backing ? backing->width : 0,
+                                l->surface ? l->damage_height : backing ? backing->height : 0, snap);
       unmark_view_buffer(l);
       wlr_scene_buffer_set_buffer_with_options(v, backing, &options);
       mark_view_buffer(l, backing);
@@ -962,6 +1054,7 @@ static void present(struct rediwm_projection *p) {
   }
   struct leaf *l;
   wl_list_for_each(l, &p->leaves, link) if (!l->seen) {
+    forget_shown(l);
     damage_shadow(l, false, (struct rediwm_snap){0});
     wlr_scene_node_set_enabled(l->view, false);
     // The cached state no longer describes the view; reapply on return.

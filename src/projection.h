@@ -1,5 +1,6 @@
 #pragma once
 #include <stdbool.h>
+#include <stdint.h>
 struct wlr_scene_node;
 struct wlr_scene_tree;
 struct wlr_scene;
@@ -27,6 +28,19 @@ struct rediwm_projection *rediwm_projection_create(struct wlr_scene_tree *,
 void rediwm_projection_destroy(struct rediwm_projection *);
 void rediwm_projection_sync(struct rediwm_projection *, double, double, double,
                             double, double);
+// A leaf's pixels changed in `box` (layout space) during a sync. `leaf` is the
+// item's `id`; a leaf that is gone or hidden reports its last box.
+struct rediwm_damage_event {
+  uint64_t leaf;
+  struct { int x, y, width, height; } box;
+};
+typedef void (*rediwm_damage_event_iterator)(const struct rediwm_damage_event *, void *);
+// Calls `fn` for every event since `*cursor` and moves the cursor past them. A
+// consumer starts from rediwm_projection_damage_cursor(). Returns false when
+// events were lost (the cursor fell behind the ring): treat everything as changed.
+bool rediwm_projection_damage_events(struct rediwm_projection *, uint64_t *cursor,
+                                     rediwm_damage_event_iterator, void *);
+uint64_t rediwm_projection_damage_cursor(struct rediwm_projection *);
 // Optional root subtree presented in layout coordinates, independent of the camera.
 void rediwm_projection_sync_fixed(struct rediwm_projection *, double, double, double,
                                   double, double, struct wlr_scene_tree *);

@@ -1,6 +1,6 @@
 # Scene graph plan, stage 5: backdrop effects in the pass
 
-Status: **planned, decisions taken (all as recommended), nothing implemented**, 2026-10-11. Stage 4 of
+Status: **5a done, 5b next**, 2026-10-11. Decisions taken (all as recommended). Stage 4 of
 [scene-graph.md](scene-graph.md) is done (window shapes, analytic shadows, the
 owned pass as the only presenter). This stage moves glass, the blurred backdrop
 behind titlebars, the taskbar and the start and power menus, from its side
@@ -121,11 +121,26 @@ a shaped-program mode, one blur program, plain programs dropped if free.
 Each leaves a working compositor and its own correctness gates; cost is judged
 once, after 5e (see [scene-graph-stage4.md](scene-graph-stage4.md), Measurement).
 
-* **5a. Effect items and damage attribution in the graph.** An effect item carries
-  its kind, sigma, saturation, opacity, target link and padded extent; resolve
-  records per-item damage in layout space (the input to D1 (B)). Pure tests in
-  `projection_test.c`: below/above attribution, geometry changes, hidden and
-  destroyed items.
+* **5a. Damage attribution in the graph.** Every leaf has a stable id
+  (`item.id`). `present` appends a damage event (leaf id, layout-space box) to a
+  ring the projection owns whenever a leaf's pixels change: commit or owned-buffer
+  damage (mapped from buffer coordinates; the whole box under a non-normal
+  transform or without damage), a changed box, content or visibility (old and new
+  box), a shadow footprint, an unreached or destroyed leaf (its last box). Each
+  consumer, one per output, reads the events since its own cursor
+  (`rediwm_projection_damage_events`); a cursor older than the ring reports the
+  loss, and the consumer treats everything as changed. In 5c an output attributes
+  an event to "below an effect" when its leaf is painted below the effect or is
+  no longer in the frame, and treats damage no event explains (the taskbar,
+  wallpaper, overlays, clip rims) as below too, so attribution can only err
+  towards re-blurring. Pure tests in `projection_test.c`.
+  Effect items gain their parameters (kind, sigma, saturation, target) in 5c,
+  where they stop being glass-rendered buffers.
+  *Done.* `item.id`, the event ring (4096 events) and
+  `rediwm_projection_damage_events`/`_cursor`; `test_damage_events` covers
+  appearance, mapped and unreported buffer damage, moves, hiding, restyles,
+  destruction, two consumers and a consumer that falls behind. Content is
+  compared per leaf per sync to tell a restyle (about fifteen field compares).
 * **5b. Backdrop primitives in `scene_pass`.** Region copy from the pass's
   framebuffer, the two quarter-size blur passes (unscissored), the composite
   through the shape with the target's alpha. Gates in `test-scene-pass`: the

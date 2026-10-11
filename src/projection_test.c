@@ -699,6 +699,109 @@ static void test_shadow_output(struct wlr_scene *scene, struct wlr_scene_output 
   rediwm_projection_destroy(p);
   wlr_scene_node_destroy(&source->node);
 }
+// Stage 5a: damage events name the leaf and the layout box its pixels changed in,
+// for consumers that must tell what lies below a backdrop effect from what lies
+// above it. Each consumer reads through its own cursor.
+struct events_seen { int count; struct rediwm_damage_event last[16]; };
+static void collect_event(const struct rediwm_damage_event *e, void *data) {
+  struct events_seen *seen = data;
+  if (seen->count < 16) seen->last[seen->count] = *e;
+  seen->count++;
+}
+static struct events_seen events_since(struct rediwm_projection *p, uint64_t *cursor, bool *complete) {
+  struct events_seen seen = {0};
+  bool ok = rediwm_projection_damage_events(p, cursor, collect_event, &seen);
+  if (complete) *complete = ok;
+  return seen;
+}
+static bool event_is(const struct rediwm_damage_event *e, uint64_t leaf, int x, int y, int w, int h) {
+  return e->leaf == leaf && e->box.x == x && e->box.y == y && e->box.width == w && e->box.height == h;
+}
+static void test_damage_events(struct wlr_scene *scene) {
+  struct wlr_scene_tree *source = wlr_scene_tree_create(&scene->tree);
+  struct wlr_scene_tree *view = wlr_scene_tree_create(&scene->tree);
+  struct rediwm_projection *p = rediwm_projection_create(source, view, scene);
+  assert(p);
+  uint64_t cursor = rediwm_projection_damage_cursor(p), other = cursor;
+  struct wlr_scene_tree *window = wlr_scene_tree_create(source);
+  struct wlr_buffer *buffer = buffer_create(); // 200x120
+  struct wlr_scene_buffer *a = wlr_scene_buffer_create(window, buffer);
+  struct wlr_scene_buffer *b = wlr_scene_buffer_create(window, buffer);
+  wlr_scene_node_set_position(&window->node, 40, 30);
+  wlr_scene_buffer_set_dest_size(a, 100, 60); // half size: one buffer px = 0.5
+  wlr_scene_node_set_position(&b->node, 0, 100);
+  wlr_scene_buffer_set_dest_size(b, 20, 20);
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  struct leaf *la = get_leaf(p, &a->node), *lb = get_leaf(p, &b->node);
+  assert(la->item.id && lb->item.id && la->item.id != lb->item.id);
+
+  // Appearing: each leaf's whole box.
+  struct events_seen seen = events_since(p, &cursor, NULL);
+  assert(seen.count == 2);
+  assert(event_is(&seen.last[0], la->item.id, 40, 30, 100, 60));
+  assert(event_is(&seen.last[1], lb->item.id, 40, 130, 20, 20));
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0); // Nothing changed.
+  assert(events_since(p, &cursor, NULL).count == 0);
+
+  // Reported buffer damage maps through the scale, a pixel wider for filtering.
+  pixman_region32_t damage;
+  pixman_region32_init_rect(&damage, 20, 40, 10, 10);
+  rediwm_projection_damage_buffer(p, &a->node, &damage);
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  seen = events_since(p, &cursor, NULL);
+  assert(seen.count == 1 && event_is(&seen.last[0], la->item.id, 49, 49, 7, 7));
+  // Unreported damage is the whole box.
+  rediwm_projection_damage_buffer(p, &a->node, NULL);
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  seen = events_since(p, &cursor, NULL);
+  assert(seen.count == 1 && event_is(&seen.last[0], la->item.id, 40, 30, 100, 60));
+
+  // A move changes the old and the new box; a hidden leaf its last one.
+  wlr_scene_node_set_position(&b->node, 10, 100);
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  seen = events_since(p, &cursor, NULL);
+  assert(seen.count == 2);
+  assert(event_is(&seen.last[0], lb->item.id, 40, 130, 20, 20));
+  assert(event_is(&seen.last[1], lb->item.id, 50, 130, 20, 20));
+  wlr_scene_node_set_enabled(&b->node, false);
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  seen = events_since(p, &cursor, NULL);
+  assert(seen.count == 1 && event_is(&seen.last[0], lb->item.id, 50, 130, 20, 20));
+  wlr_scene_node_set_enabled(&b->node, true);
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  seen = events_since(p, &cursor, NULL);
+  assert(seen.count == 1 && event_is(&seen.last[0], lb->item.id, 50, 130, 20, 20));
+  // A changed opacity is a restyle of the whole box.
+  wlr_scene_buffer_set_opacity(a, .5f);
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  seen = events_since(p, &cursor, NULL);
+  assert(seen.count == 2 && event_is(&seen.last[1], la->item.id, 40, 30, 100, 60));
+  // A destroyed leaf reports its last box at once.
+  const uint64_t gone = lb->item.id;
+  wlr_scene_node_destroy(&b->node);
+  seen = events_since(p, &cursor, NULL);
+  assert(seen.count == 1 && event_is(&seen.last[0], gone, 50, 130, 20, 20));
+
+  // A second consumer read nothing yet and sees everything since its cursor.
+  bool complete = false;
+  seen = events_since(p, &other, &complete);
+  assert(complete && seen.count == 11);
+  // One that falls behind the ring is told so.
+  uint64_t stale = rediwm_projection_damage_cursor(p);
+  for (int i = 0; i < 2100; i++) {
+    wlr_scene_node_set_position(&window->node, 40 + i % 2, 30);
+    rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  }
+  events_since(p, &stale, &complete);
+  assert(!complete);
+  assert(events_since(p, &stale, &complete).count == 0 && complete);
+
+  pixman_region32_fini(&damage);
+  wlr_scene_node_destroy(&view->node);
+  rediwm_projection_destroy(p);
+  wlr_scene_node_destroy(&source->node);
+  wlr_buffer_drop(buffer);
+}
 // A client surface's opaque region has to reach its view, or nothing below the
 // window is ever culled. The buffers here reveal no format, like a
 // wlr_client_buffer, so only the node's own region can say they are opaque.
@@ -1063,6 +1166,7 @@ int main(void) {
   test_clip_projection(scene);
   test_clip_output(scene, out);
   test_shadow_output(scene, out);
+  test_damage_events(scene);
   test_opaque(scene);
   wlr_scene_node_destroy(&scene->tree.node);
   wlr_buffer_drop(a);
