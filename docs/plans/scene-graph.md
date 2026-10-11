@@ -162,7 +162,7 @@ environment variable: no test hooks in production), removed in stage 6.
    [scene-graph-stage5.md](scene-graph-stage5.md).* Delete `glass.c`'s prefix capture,
    per-effect contexts, dependency hashing and the drag hold; keep glass pixel
    tests, converted.
-6. **Delete.** *Draft plan, 2026-10-11, decisions open:
+6. **Delete.** *Planned 2026-10-11, D1 to D4 taken:
    [scene-graph-stage6.md](scene-graph-stage6.md); the legacy presenter and the
    temporary config key already went in stage 4e.* `wlr_scene` output rendering, the projection view tree, the
    legacy presenter and the temporary config key. Update `AGENTS.md`

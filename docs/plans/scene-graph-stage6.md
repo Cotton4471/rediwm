@@ -1,6 +1,6 @@
 # Scene graph plan, stage 6: one tree
 
-Status: **draft, decisions open**, 2026-10-11. Stages 0 to 5 of
+Status: **planned, D1 to D4 taken (all as recommended), nothing implemented**, 2026-10-11. Stages 0 to 5 of
 [scene-graph.md](scene-graph.md) are done: the owned output pass is the only
 presenter and draws window shapes, shadows and glass from the typed graph. This
 stage removes the last mirror: the projection's **view tree**, a second copy of
@@ -83,7 +83,7 @@ The pass already walks the graph per output. Each of the four jobs moves to it:
   single-pixel colour and wait points are already there, and with one lock per
   client buffer the in-place upload rule needs no marking.
 
-## Decisions to take
+## Decisions (D1 to D4 taken 2026-10-11, as recommended)
 
 * **D1. Scope.** (A) **Recommended**: the world only. Background, desktop,
   taskbar, overlays, IME and lock stay ordinary scene nodes with wlroots' own
@@ -106,7 +106,8 @@ The pass already walks the graph per output. Each of the four jobs moves to it:
   against what wlroots computes on the views), then delete the views once all
   three agree. (B) Switch each job directly: faster, but a mismatch shows as a
   client bug rather than an assertion.
-* **D5. Per-surface dmabuf feedback** (scanout tranches), absent in both presenters
+* **D5. Per-surface dmabuf feedback** (not asked yet; (A) assumed unless the user
+  says otherwise) (scanout tranches), absent in both presenters
   since stage 0: (A) **Recommended**: not in this stage; it is a feature, and the
   feedback paths built here make it a small follow-up. (B) Add it here.
 
