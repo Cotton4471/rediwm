@@ -29,8 +29,9 @@ struct program {
 };
 struct rediwm_backdrop {
     GLuint tex, fbo;
-    int width, height;    // quarter size
-    struct wlr_box region; // device pixels the blur covers
+    int width, height;     // the reduced size
+    int x, y;              // device pixel the image starts at
+    float extent_w, extent_h; // device pixels it covers (width * factor)
 };
 struct attrib_state {
     GLint enabled, size, type, normalized, stride, buffer;
@@ -55,8 +56,8 @@ struct rediwm_scene_renderer {
     // Backdrops (stage 5b), built by enable_backdrops: the blur, and scratch the
     // size of the largest region so far: the copy, and the horizontal pass.
     struct program blur;
-    GLuint copy_tex, small_tex, small_fbo;
-    int copy_w, copy_h, small_w, small_h;
+    GLuint prefix_tex, prefix_fbo, small_tex, small_fbo;
+    int small_w, small_h;
     bool has_backdrops, backdrops_tried;
     bool active, has_external, has_sync, has_vao, has_shapes, shapes_tried;
     GLuint vertex_array, vertices;
@@ -79,6 +80,12 @@ struct pass {
     GLuint program;
     unsigned targets_set;
     int blend_mode;
+    // Between begin_backdrop and end_backdrop draws land in a quarter-size image
+    // of `region` (stage 5f): boxes move by its origin, scissors shrink by four.
+    bool redirected;
+    struct wlr_box region, valid; // device pixels; `valid` is the part in the buffer
+    float factor;                 // device pixels per pixel of the image
+    int small_w, small_h;
 };
 
 static bool enter(struct rediwm_scene_renderer *r, struct gl_state *s) {
@@ -358,7 +365,8 @@ void rediwm_scene_renderer_destroy(struct rediwm_scene_renderer *r) {
         glDeleteProgram(r->shaped.id);
         glDeleteProgram(r->shaped_external.id);
         glDeleteProgram(r->blur.id);
-        glDeleteTextures(1, &r->copy_tex);
+        glDeleteTextures(1, &r->prefix_tex);
+        glDeleteFramebuffers(1, &r->prefix_fbo);
         glDeleteTextures(1, &r->small_tex);
         glDeleteFramebuffers(1, &r->small_fbo);
         leave(r, &state);
@@ -373,8 +381,13 @@ static void setup(struct pass *p, struct program *program, struct wlr_box box,
         p->program = program->id;
     }
     if (!(p->targets_set & program->bit)) {
-        glUniform2f(program->target, p->buffer->width, p->buffer->height);
+        if (p->redirected) glUniform2f(program->target, p->small_w * p->factor, p->small_h * p->factor);
+        else glUniform2f(program->target, p->buffer->width, p->buffer->height);
         p->targets_set |= program->bit;
+    }
+    if (p->redirected) {
+        box.x -= p->region.x;
+        box.y -= p->region.y;
     }
     glUniform4f(program->dst, box.x, box.y, box.width, box.height);
     if (p->blend_mode != (int)blend) {
@@ -382,7 +395,7 @@ static void setup(struct pass *p, struct program *program, struct wlr_box box,
         p->blend_mode = blend;
     }
 }
-static void draw(const pixman_region32_t *clip) {
+static void draw(const struct pass *p, const pixman_region32_t *clip) {
     if (!clip) {
         glDisable(GL_SCISSOR_TEST);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -392,7 +405,16 @@ static void draw(const pixman_region32_t *clip) {
     const pixman_box32_t *boxes = pixman_region32_rectangles((pixman_region32_t *)clip, &n);
     glEnable(GL_SCISSOR_TEST);
     for (int i = 0; i < n; i++) {
-        glScissor(boxes[i].x1, boxes[i].y1, boxes[i].x2 - boxes[i].x1, boxes[i].y2 - boxes[i].y1);
+        if (p->redirected) {
+            // Outward to whole small pixels; the region's origin is a multiple of none.
+            const int x1 = (int)floorf((boxes[i].x1 - p->region.x) / p->factor);
+            const int y1 = (int)floorf((boxes[i].y1 - p->region.y) / p->factor);
+            const int x2 = (int)ceilf((boxes[i].x2 - p->region.x) / p->factor);
+            const int y2 = (int)ceilf((boxes[i].y2 - p->region.y) / p->factor);
+            glScissor(x1, y1, x2 - x1, y2 - y1);
+        } else {
+            glScissor(boxes[i].x1, boxes[i].y1, boxes[i].x2 - boxes[i].x1, boxes[i].y2 - boxes[i].y1);
+        }
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     }
 }
@@ -404,9 +426,10 @@ static bool shape_usable(const struct rediwm_pass_shape *s) {
     for (int i = 0; i < 4; i++) if (!isfinite(s->border_color[i])) return false;
     return true;
 }
-static void set_shape(const struct program *g, const struct rediwm_pass_shape *s) {
+static void set_shape(const struct pass *p, const struct program *g, const struct rediwm_pass_shape *s) {
     glUniform1f(g->use_shape, 1.f);
-    glUniform2f(g->origin, s->box.x, s->box.y);
+    if (p->redirected) glUniform2f(g->origin, s->box.x - p->region.x, s->box.y - p->region.y);
+    else glUniform2f(g->origin, s->box.x, s->box.y);
     glUniform2f(g->size, s->box.width, s->box.height);
     glUniform4f(g->radii, s->radii[0], s->radii[1], s->radii[2], s->radii[3]);
     glUniform1f(g->border, s->border);
@@ -423,7 +446,7 @@ static void add_rect(struct wlr_render_pass *base, const struct wlr_render_rect_
     glUniform4f(g->color, o->color.r, o->color.g, o->color.b, o->color.a);
     glUniform1f(g->mode, 1.f);
     glUniform1f(g->use_shape, 0.f);
-    draw(o->clip);
+    draw(p, o->clip);
 }
 static void rect_shaped(struct pass *p, const struct wlr_render_rect_options *o,
         const struct rediwm_pass_shape *shape) {
@@ -435,8 +458,8 @@ static void rect_shaped(struct pass *p, const struct wlr_render_rect_options *o,
     setup(p, g, box, o->blend_mode);
     glUniform4f(g->color, o->color.r, o->color.g, o->color.b, o->color.a);
     glUniform1f(g->mode, 1.f);
-    set_shape(g, shape);
-    draw(o->clip);
+    set_shape(p, g, shape);
+    draw(p, o->clip);
 }
 static bool wait_point(struct pass *p, struct wlr_drm_syncobj_timeline *timeline, uint64_t point) {
     if (!timeline) return true;
@@ -491,9 +514,9 @@ static void texture_draw(struct pass *p, const struct wlr_render_texture_options
     }
     glUniform4fv(program->coords, 2, uv);
     glUniform1f(program->mode, 0.f);
-    if (shape) set_shape(program, shape);
+    if (shape) set_shape(p, program, shape);
     else glUniform1f(program->use_shape, 0.f);
-    draw(o->clip);
+    draw(p, o->clip);
 }
 static void texture_add(struct wlr_render_pass *base, const struct wlr_render_texture_options *o,
         const struct rediwm_pass_shape *shape) {
@@ -620,12 +643,12 @@ void rediwm_scene_pass_add_shadow(struct wlr_render_pass *base,
     glUniform4f(g->color, shadow->color[0], shadow->color[1], shadow->color[2], shadow->color[3]);
     struct rediwm_pass_shape bare = *shape; // the shadow has no border of its own
     bare.border = 0;
-    set_shape(g, &bare);
+    set_shape(p, g, &bare);
     glUniform1f(g->mode, 2.f);
     glUniform2f(g->offset, shadow->offset_x, shadow->offset_y);
     glUniform1f(g->softness, softness);
     glUniform1f(g->hide, shadow->hide_inside ? 1.f : 0.f);
-    draw(shadow->clip);
+    draw(p, shadow->clip);
 }
 
 // ---- Backdrops (stage 5b) -------------------------------------------------------
@@ -658,23 +681,19 @@ static bool attach(GLuint fbo, GLuint tex) {
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
     return glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
 }
-// Scratch grows to the largest region seen; it is shared by every effect.
-static bool scratch(struct rediwm_scene_renderer *r, int copy_w, int copy_h, int small_w, int small_h) {
-    if (!r->copy_tex) glGenTextures(1, &r->copy_tex);
+// Two quarter-size scratch images shared by every effect, grown to the largest
+// so far: what lies below the effect, and the horizontal blur pass.
+static bool scratch(struct rediwm_scene_renderer *r, int small_w, int small_h) {
+    if (!r->prefix_tex) glGenTextures(1, &r->prefix_tex);
+    if (!r->prefix_fbo) glGenFramebuffers(1, &r->prefix_fbo);
     if (!r->small_tex) glGenTextures(1, &r->small_tex);
     if (!r->small_fbo) glGenFramebuffers(1, &r->small_fbo);
-    if (copy_w > r->copy_w || copy_h > r->copy_h) {
-        r->copy_w = copy_w > r->copy_w ? copy_w : r->copy_w;
-        r->copy_h = copy_h > r->copy_h ? copy_h : r->copy_h;
-        // RGB: a scanout buffer may have no alpha, and GLES2 copies an alpha-less
-        // framebuffer only into a texture without one. The backdrop is opaque.
-        texture_storage(r->copy_tex, GL_RGB, r->copy_w, r->copy_h);
-    }
     if (small_w > r->small_w || small_h > r->small_h) {
         r->small_w = small_w > r->small_w ? small_w : r->small_w;
         r->small_h = small_h > r->small_h ? small_h : r->small_h;
+        texture_storage(r->prefix_tex, GL_RGBA, r->small_w, r->small_h);
         texture_storage(r->small_tex, GL_RGBA, r->small_w, r->small_h);
-        if (!attach(r->small_fbo, r->small_tex)) return false;
+        if (!attach(r->prefix_fbo, r->prefix_tex) || !attach(r->small_fbo, r->small_tex)) return false;
     }
     return true;
 }
@@ -689,14 +708,47 @@ void rediwm_scene_renderer_destroy_backdrop(struct rediwm_scene_renderer *r, str
     }
     free(b);
 }
-void rediwm_scene_pass_capture_backdrop(struct wlr_render_pass *base, struct rediwm_backdrop **out,
-        struct wlr_box region, float sigma) {
+void rediwm_scene_pass_begin_backdrop(struct wlr_render_pass *base, struct wlr_box region, float factor) {
     struct pass *p = owned_pass(base);
     struct rediwm_scene_renderer *r = p->renderer;
     if (p->failed) return;
-    if (!r->has_backdrops || region.width <= 0 || region.height <= 0 || !isfinite(sigma) ||
-            sigma <= 0 || sigma > 1024 || region.width > 16384 || region.height > 16384) {
+    if (!r->has_backdrops || p->redirected || region.width <= 0 || region.height <= 0 ||
+            region.width > 16384 || region.height > 16384 || !isfinite(factor) || factor < 1 || factor > 64) {
         p->failed = true;
+        return;
+    }
+    // Whole pixels of the image: it covers a little more than the region.
+    const int small_w = (int)ceilf(region.width / factor), small_h = (int)ceilf(region.height / factor);
+    if (!scratch(r, small_w, small_h)) { p->failed = true; return; }
+    p->factor = factor;
+    p->small_w = small_w;
+    p->small_h = small_h;
+    struct wlr_box buffer = {0, 0, p->buffer->width, p->buffer->height};
+    if (!wlr_box_intersection(&p->valid, &region, &buffer)) { p->failed = true; return; }
+    p->region = region;
+    p->redirected = true;
+    p->targets_set = 0;
+    glBindFramebuffer(GL_FRAMEBUFFER, r->prefix_fbo);
+    glViewport(0, 0, small_w, small_h);
+    // Black where nothing is drawn, as the output is; the blur never reads
+    // outside the buffer (see end_backdrop).
+    glDisable(GL_SCISSOR_TEST);
+    glClearColor(0, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+}
+void rediwm_scene_pass_end_backdrop(struct wlr_render_pass *base, struct rediwm_backdrop **out, float sigma) {
+    struct pass *p = owned_pass(base);
+    struct rediwm_scene_renderer *r = p->renderer;
+    if (!p->redirected) { p->failed = true; return; }
+    p->redirected = false;
+    p->targets_set = 0;
+    p->program = 0;
+    p->blend_mode = -1;
+    GLuint pass_fbo = wlr_gles2_renderer_get_buffer_fbo(r->renderer, p->buffer);
+    if (p->failed || !isfinite(sigma) || sigma <= 0 || sigma > 1024) {
+        p->failed = true;
+        glBindFramebuffer(GL_FRAMEBUFFER, pass_fbo);
+        glViewport(0, 0, p->buffer->width, p->buffer->height);
         return;
     }
     struct rediwm_backdrop *b = *out;
@@ -707,54 +759,44 @@ void rediwm_scene_pass_capture_backdrop(struct wlr_render_pass *base, struct red
         glGenFramebuffers(1, &b->fbo);
         *out = b;
     }
-    const int small_w = (region.width + 3) / 4, small_h = (region.height + 3) / 4;
+    const int small_w = p->small_w, small_h = p->small_h;
     if (b->width != small_w || b->height != small_h) {
         texture_storage(b->tex, GL_RGBA, small_w, small_h);
         if (!attach(b->fbo, b->tex)) { p->failed = true; return; }
         b->width = small_w;
         b->height = small_h;
     }
-    b->region = region;
-    if (!scratch(r, region.width, region.height, small_w, small_h)) { p->failed = true; return; }
-    // 1. Copy what lies in the buffer; texels outside are clamped away below.
-    const int x0 = region.x, y0 = region.y;
-    const int cx0 = x0 < 0 ? 0 : x0, cy0 = y0 < 0 ? 0 : y0;
-    const int cx1 = x0 + region.width > p->buffer->width ? p->buffer->width : x0 + region.width;
-    const int cy1 = y0 + region.height > p->buffer->height ? p->buffer->height : y0 + region.height;
-    if (cx1 <= cx0 || cy1 <= cy0) { p->failed = true; return; }
-    GLuint pass_fbo = wlr_gles2_renderer_get_buffer_fbo(r->renderer, p->buffer);
-    glBindFramebuffer(GL_FRAMEBUFFER, pass_fbo);
+    b->x = p->region.x;
+    b->y = p->region.y;
+    b->extent_w = small_w * p->factor;
+    b->extent_h = small_h * p->factor;
+    // Separable blur: horizontal into scratch, vertical into the backdrop. Only
+    // what lies in the buffer is read: beyond it the edge is replicated.
+    struct program *g = &r->blur;
     glDisable(GL_SCISSOR_TEST);
     glDisable(GL_BLEND);
     glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, r->copy_tex);
-    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, cx0 - x0, cy0 - y0, cx0, cy0, cx1 - cx0, cy1 - cy0);
-    // 2. Horizontal at quarter size into scratch, vertical into the backdrop.
-    struct program *g = &r->blur;
     glUseProgram(g->id);
     glUniform1i(g->sampler, 0);
-    const float cw = r->copy_w, ch = r->copy_h, aw = r->small_w, ah = r->small_h;
+    const float aw = r->small_w, ah = r->small_h;
+    const float vx1 = (p->valid.x - p->region.x) / p->factor, vy1 = (p->valid.y - p->region.y) / p->factor;
+    const float vx2 = fminf(small_w, (p->valid.x + p->valid.width - p->region.x) / p->factor);
+    const float vy2 = fminf(small_h, (p->valid.y + p->valid.height - p->region.y) / p->factor);
+    glUniform2f(g->src_scale, small_w / aw, small_h / ah);
+    glUniform1f(g->sigma, sigma / p->factor);
     glBindFramebuffer(GL_FRAMEBUFFER, r->small_fbo);
     glViewport(0, 0, small_w, small_h);
-    glUniform2f(g->src_scale, region.width / cw, region.height / ch);
-    glUniform2f(g->step_uv, (float)region.width / small_w / cw, 0);
-    glUniform1f(g->sigma, sigma * small_w / region.width);
-    glUniform4f(g->limits, (cx0 - x0 + .5f) / cw, (cy0 - y0 + .5f) / ch,
-        (cx1 - x0 - .5f) / cw, (cy1 - y0 - .5f) / ch);
+    glBindTexture(GL_TEXTURE_2D, r->prefix_tex);
+    glUniform2f(g->step_uv, 1.f / aw, 0);
+    glUniform4f(g->limits, (vx1 + .5f) / aw, (vy1 + .5f) / ah, (vx2 - .5f) / aw, (vy2 - .5f) / ah);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     glBindFramebuffer(GL_FRAMEBUFFER, b->fbo);
     glBindTexture(GL_TEXTURE_2D, r->small_tex);
-    glUniform2f(g->src_scale, small_w / aw, small_h / ah);
     glUniform2f(g->step_uv, 0, 1.f / ah);
-    glUniform1f(g->sigma, sigma * small_h / region.height);
-    glUniform4f(g->limits, .5f / aw, .5f / ah, (small_w - .5f) / aw, (small_h - .5f) / ah);
+    glUniform4f(g->limits, .5f / aw, (vy1 + .5f) / ah, (small_w - .5f) / aw, (vy2 - .5f) / ah);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-    // Back to the pass: its buffer, viewport and blending; the next draw sets the
-    // program and the scissor again.
     glBindFramebuffer(GL_FRAMEBUFFER, pass_fbo);
     glViewport(0, 0, p->buffer->width, p->buffer->height);
-    p->program = 0;
-    p->blend_mode = -1;
 }
 void rediwm_scene_pass_add_backdrop(struct wlr_render_pass *base, const struct rediwm_pass_shape *shape,
         struct wlr_box box, const struct rediwm_pass_backdrop *o) {
@@ -779,12 +821,11 @@ void rediwm_scene_pass_add_backdrop(struct wlr_render_pass *base, const struct r
     setup(p, g, box, WLR_RENDER_BLEND_MODE_PREMULTIPLIED);
     struct rediwm_pass_shape bare = *shape; // the ring belongs to the surface over it
     bare.border = 0;
-    set_shape(g, &bare);
+    set_shape(p, g, &bare);
     glUniform1f(g->mode, 3.f);
     glUniform1f(g->alpha, o->opacity);
     glUniform1f(g->saturation, o->saturation);
-    glUniform4f(g->bmap, shape->box.x - b->region.x, shape->box.y - b->region.y,
-        1.f / b->region.width, 1.f / b->region.height);
+    glUniform4f(g->bmap, shape->box.x - b->x, shape->box.y - b->y, 1.f / b->extent_w, 1.f / b->extent_h);
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, has_front ? front.tex : 0);
     if (has_front) {
@@ -798,7 +839,7 @@ void rediwm_scene_pass_add_backdrop(struct wlr_render_pass *base, const struct r
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, b->tex);
     glUniform1i(g->sampler, 0);
-    draw(o->clip);
+    draw(p, o->clip);
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, 0);
     glActiveTexture(GL_TEXTURE0);

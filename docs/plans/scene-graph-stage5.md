@@ -1,6 +1,6 @@
 # Scene graph plan, stage 5: backdrop effects in the pass
 
-Status: **5a to 5e done; the gate leaves one finding open (GPU at fractional scale)**, 2026-10-11. Decisions taken (all as recommended). Stage 4 of
+Status: **done**, 2026-10-11: 5a to 5f; 5f resolved the stage gate's GPU finding. Decisions taken (all as recommended). Stage 4 of
 [scene-graph.md](scene-graph.md) is done (window shapes, analytic shadows, the
 owned pass as the only presenter). This stage moves glass, the blurred backdrop
 behind titlebars, the taskbar and the start and power menus, from its side
@@ -249,6 +249,44 @@ once, after 5e (see [scene-graph-stage4.md](scene-graph-stage4.md), Measurement)
   without its scene walk or context switch, as a second draw of the items below
   the effect into the small target.
 * glass_hold.py's drag comparison and the start menu's outer column (5c).
+
+## 5f. Quarter-size backdrops (decided 2026-10-11: fix the GPU finding)
+
+A re-blur draws the items below the effect, bottom up, straight into a
+quarter-size image of its padded extent inside the pass (a redirect: between
+`rediwm_scene_pass_begin_backdrop` and `_end_backdrop` every draw lands in the
+small image, boxes and scissors scaled by a quarter), then blurs that image. No
+framebuffer copy, no repaint of the extent at full resolution, no damage
+expansion: a re-blur changes only the effect's own box. Collect keeps items an
+effect reads even where opaque surfaces above hide them, as backdrop-only
+entries the main pass does not draw. Gates: the 5b pixel gates on the new
+capture, `glass_reblur.py`, the glass comparison against glass.c, and a
+same-day GPU comparison against 5e at scale 1.5.
+
+*Done.* Three changes, each measured in a same-session A/B against stage 4
+(ReleaseSafe, performance profile, `scene_baseline.py`, which now records
+`glass_reblurs`):
+* **Draw below, at reduced size.** `rediwm_scene_pass_begin_backdrop`/`_end_backdrop`
+  redirect the pass (boxes, shape origins and scissors move into the image) and
+  `render_entry` draws the items below in a backdrop mode (whole box, not what is
+  visible on screen), skipping items that opaque items below the effect hide.
+  `capture_backdrop`, the framebuffer copy and the damage expansion are gone.
+* **A quarter of the logical size**, as glass.c blurred (factor 4 times the
+  output scale): a quarter of the device size cost 2.25 times the pixels at 1.5.
+  At factor 6 a band edge moves by up to half a reduced pixel, so the blur gate
+  bounds it at 15 levels there (2 where the grid aligns); glass.c had the same.
+* **Damage events only for leaves that paint.** A drag re-blurred 2.74 effects
+  a frame: the dragged window's resize grab, an input-only node, moved with it,
+  was in no frame's list and so read as a change below two other titlebars. Now
+  a drag re-blurs once a frame (its own titlebar), a resize 1.28 times.
+Result (final run): against stage 4, GPU in the glass cells -3 to -38 % except
+`drag` (+1 % at scale 1, -7 % at 1.5, +4 % mixed) and `zoom_70` at scale 1
+(+11 %, within its stage 4 pair's 50 % spread); whole-frame CPU -8 to -43 %; anonymous memory
+0.05 to 0.6 MiB below stage 4 in every cell; idle zero. The fullscreen cell is
+not comparable across sessions (the client's own rate varied from 118 to 229
+commits). Glass against glass.c: titlebar within 5 levels, taskbar within 1,
+start menu as in 5c. The software cursor's boxes now count as explained damage
+(it is drawn over everything), which keeps headless and nested runs honest.
 
 ## Risks
 

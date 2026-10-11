@@ -49,18 +49,21 @@ the one for the directory you work in: `src/files`, `src/editor`,
   stays): persist raster sizes.
 * **Glass is drawn by the output pass** (stage 5, `docs/plans/scene-graph-stage5.md`).
   `glass.c` only registers effects: a bufferless node just below its target, to
-  which resolve gives the target's box. `scene_output.c` copies the framebuffer
-  under the effect's padded extent (target + 3 sigma), blurs it at quarter size
-  and composites it through the shape (shaped program mode 3), keeping one blur
-  per effect and output. A kept blur is re-taken only when a damage event from a
-  leaf painted *below* the effect, or damage no event explains, meets that
-  extent, or the region or sigma changed; a re-blur repaints the whole extent
-  first (with buffer age, pixels outside damage are last frame's final image),
-  and collect never culls items below an effect inside it. Damage a new kind of
-  change through the projection's events or it counts as below (safe, slower).
-  Holds (a dragged titlebar at ≥ 0.98 opacity, camera motion) carry the blur and
-  re-take it once released. Per output, so mixed scales stay idle
-  (`glass_hold.py`); attribution is checked by `glass_reblur.py`.
+  which resolve gives the target's box. When an effect re-blurs, `scene_output.c`
+  redirects the pass (`rediwm_scene_pass_begin_backdrop`) and draws the items
+  below it into an image a quarter of the logical size of its padded extent
+  (target + 3 sigma), blurs that and composites it through the shape (shaped
+  program mode 3), keeping one blur per effect and output. A kept blur is
+  re-taken only when a damage event from a leaf painted *below* the effect, or
+  damage no event explains, meets that extent, or the region or sigma changed.
+  Only leaves that put pixels on screen have damage events (an input-only node
+  must not, or it reads as a change below glass), and the software cursor's
+  damage counts as explained. Damage a new kind of change through the
+  projection's events or it counts as below (safe, slower). Collect keeps items an
+  effect reads even where surfaces above hide them (`reads`). Holds (a dragged
+  titlebar at ≥ 0.98 opacity, camera motion) carry the blur and re-take it once
+  released. Per output, so mixed scales stay idle (`glass_hold.py`); attribution
+  is checked by `glass_reblur.py`.
 * **Owned GL beside wlroots:** wlroots draws with client-side vertex arrays, so
   any GL work of ours must put `GL_ARRAY_BUFFER` (and the rest of the state it
   touched) back before a wlroots pass runs, as `scene_pass.c`'s `leave()` does; a quad

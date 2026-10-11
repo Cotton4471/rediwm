@@ -833,13 +833,26 @@ static void present_leaf(struct group *g, struct leaf *l,
   next.content = item->content;
   // Damage events: a moved, resized, shown, hidden or restyled leaf changes its
   // old and its new box; otherwise only what a new buffer or commit damaged.
-  const bool restyled = !l->has_shown || !next.enabled || snap.x != l->shown.x ||
+  // Only a leaf that puts pixels on screen has them: an input-only node (a
+  // resize grab) moving with its window must not read as a change below glass,
+  // and the pass draws effects itself (shadows report in damage_shadow).
+  bool paints = next.enabled;
+  if (item->kind == REDIWM_ITEM_RECT) {
+    paints = paints && item->content.color[3] > 0;
+  } else if (item->kind == REDIWM_ITEM_EFFECT || item->kind == REDIWM_ITEM_SHADOW) {
+    paints = false;
+  } else {
+    const struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(l->source);
+    paints = paints && item->content.opacity > 0 &&
+             (sb->buffer || (l->surface && l->surface->surface->buffer));
+  }
+  const bool restyled = !l->has_shown || !paints || snap.x != l->shown.x ||
                         snap.y != l->shown.y || snap.width != l->shown.width ||
                         snap.height != l->shown.height ||
                         !rediwm_content_equal(&item->content, &l->shown_content);
   if (restyled) {
     forget_shown(l);
-    if (next.enabled) {
+    if (paints) {
       emit_snap(l, snap);
       l->shown = snap;
       l->shown_content = item->content;

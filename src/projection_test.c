@@ -778,6 +778,16 @@ static void test_damage_events(struct wlr_scene *scene) {
   seen = events_since(p, &cursor, NULL);
   assert(seen.count == 1 && event_is(&seen.last[0], gone, 50, 130, 20, 20));
 
+  // A leaf that draws nothing (an input-only node such as a resize grab) has no
+  // events, however it moves: glass would otherwise take it for a change below.
+  struct wlr_scene_buffer *grab = wlr_scene_buffer_create(window, NULL);
+  wlr_scene_buffer_set_dest_size(grab, 300, 300);
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  wlr_scene_node_set_position(&grab->node, 5, 5);
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  wlr_scene_node_destroy(&grab->node);
+  assert(events_since(p, &cursor, NULL).count == 0);
+
   // A second consumer read nothing yet and sees everything since its cursor.
   bool complete = false;
   seen = events_since(p, &other, &complete);

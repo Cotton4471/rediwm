@@ -85,13 +85,17 @@ struct rediwm_backdrop;
 bool rediwm_scene_renderer_enable_backdrops(struct rediwm_scene_renderer *);
 // Frees a backdrop's GL resources; outside a pass. NULL is a no-op.
 void rediwm_scene_renderer_destroy_backdrop(struct rediwm_scene_renderer *, struct rediwm_backdrop *);
-// Copies `region` (device pixels of this pass's buffer; the part outside the
-// buffer replicates its edge) as drawn so far and blurs it at quarter size with
-// a Gaussian of `sigma` device pixels into `*backdrop`, creating it if NULL. Not
-// limited by any clip: the caller must have drawn everything below the effect
-// in the whole region first (with buffer age, that means damaging all of it).
-void rediwm_scene_pass_capture_backdrop(struct wlr_render_pass *, struct rediwm_backdrop **,
-    struct wlr_box region, float sigma);
+// Draws what lies below an effect into an image of `region` (device pixels of
+// this pass's buffer) reduced by `factor` (at least 1; glass uses 4 times the
+// output scale, a quarter of the logical size, as glass.c did): from here to
+// rediwm_scene_pass_end_backdrop every draw of this pass lands in that image,
+// which starts black. The caller draws the items below the effect, bottom up,
+// clipped as it likes; nothing reaches the buffer meanwhile.
+void rediwm_scene_pass_begin_backdrop(struct wlr_render_pass *, struct wlr_box region, float factor);
+// Blurs that image with a Gaussian of `sigma` device pixels into `*backdrop`
+// (created if NULL) and returns drawing to the buffer. Beyond the buffer's edge
+// the blur replicates it.
+void rediwm_scene_pass_end_backdrop(struct wlr_render_pass *, struct rediwm_backdrop **, float sigma);
 struct rediwm_pass_backdrop {
   const struct rediwm_backdrop *backdrop;
   float saturation; // 1 leaves colours as they are

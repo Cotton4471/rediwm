@@ -349,7 +349,7 @@ def condense(perf):
            for name in STAGES if name in work}
     flat = {"output_commits": perf["output_commits"], "output_skipped_commits": perf.get("output_skipped_commits"),
             "output_failed_commits": perf["output_failed_commits"], "missed_frames": perf.get("missed_frames"),
-            "gpu_timing_available": work["gpu_timing_available"], "titlebar_paints": perf.get("titlebar_paints"),
+            "gpu_timing_available": work["gpu_timing_available"], "titlebar_paints": perf.get("titlebar_paints"), "glass_reblurs": perf.get("glass_reblurs"),
             "footer_paints": perf.get("footer_paints"), "edge_samples_attempted": perf.get("edge_samples_attempted"),
             "edge_samples_succeeded": perf.get("edge_samples_succeeded"), "frame_work": out}
     for name in STAGES:
