@@ -158,7 +158,7 @@ environment variable: no test hooks in production), removed in stage 6.
    Clip groups on frames, analytic borders and
    shadows, shape-aware hit testing; delete the skirt, `probeClientEdge`,
    `side_fills`, the dual border path and `edge_sampling.py`; shrink the footer.
-5. **Backdrop effects in the pass.** *Planned 2026-10-11, decisions taken:
+5. **Backdrop effects in the pass.** *Done 2026-10-11 apart from one gate finding (GPU at fractional scale while glass re-blurs):
    [scene-graph-stage5.md](scene-graph-stage5.md).* Delete `glass.c`'s prefix capture,
    per-effect contexts, dependency hashing and the drag hold; keep glass pixel
    tests, converted.

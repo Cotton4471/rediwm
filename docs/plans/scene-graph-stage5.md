@@ -1,6 +1,6 @@
 # Scene graph plan, stage 5: backdrop effects in the pass
 
-Status: **5a to 5d done, 5e (the stage cost gate) next**, 2026-10-11. Decisions taken (all as recommended). Stage 4 of
+Status: **5a to 5e done; the gate leaves one finding open (GPU at fractional scale)**, 2026-10-11. Decisions taken (all as recommended). Stage 4 of
 [scene-graph.md](scene-graph.md) is done (window shapes, analytic shadows, the
 owned pass as the only presenter). This stage moves glass, the blurred backdrop
 behind titlebars, the taskbar and the start and power menus, from its side
@@ -212,6 +212,43 @@ once, after 5e (see [scene-graph-stage4.md](scene-graph-stage4.md), Measurement)
 * **5e. Stage cost gate** against stage 4 (and the stage 0 baseline): the same
   harness as 4e, clean sessions for CPU and memory; a same-session GPU
   comparison if the stats timers stay too noisy across builds.
+  *Run* (`scene-graph-stage5-cost.json`): ReleaseSafe stage 0 (f6e7b24), stage 4
+  (7e7d981) and stage 5 (760f774), interleaved s0, s4, 5e, 5e, s4, s0 on AC power in
+  the performance profile (a first run, half in balanced, was discarded). The
+  stage 5 pair agrees within 3 % in every clean cell; the stage 4 pair once did
+  not (scale-1 fullscreen, a run whose client committed 39 frames instead of
+  about 225), and that cell is read against the good run only.
+  * **CPU, against stage 4: lower.** Whole-frame CPU (`cpu_frame`, stats
+    sessions) is lower in every glass cell: -15 to -57 % at scale 1, -9 to -40 %
+    at 1.5, -10 to -46 % mixed; glass plus commit time -16 to -70 %. Instructions
+    (clean sessions) are -10 to -36 % wherever glass re-blurs and within ±2 %
+    without glass; `drag` reads +4 to +7 % instructions with 5 to 11 % fewer
+    cycles. Against stage 0: instructions -2 to -54 %, never higher.
+  * **GPU: lower at scale 1 and mixed, higher at 1.5, a finding.** Against stage
+    4, `gpu_elapsed` is -4 to -53 % at scale 1 and mostly lower mixed, but at
+    scale 1.5 it rises in the cells that re-blur: `spinner_glass` +23 %,
+    `damage_full` +24 %, `drag` +62 % (0.87, 0.97 and 1.64 ms against about 0.71,
+    0.79 and 1.01; both stage 5 runs within 1 %), and `drag` mixed +14 %. Glass
+    that does not re-blur costs less (`spinner_clear` -14 %). The cause is the
+    design of D1: a re-blur repaints the padded extent at full resolution and
+    copies it, where glass.c rendered the scene behind an effect at quarter
+    resolution, a sixteenth of the pixels; at 1.5 the extent has 2.25 times the
+    device pixels of scale 1. Options are in the decision below.
+  * **Memory: about level with stage 4**, -0.1 to -0.4 MiB at scales 1 and 1.5,
+    +0.3 to +0.5 MiB mixed (per-output blurs and the shared scratch on two
+    outputs), so the four programs D4 removed did not show as the 0.5 MiB they
+    cost in isolation. Against stage 0: +1.3 to +2.3 MiB, as after stage 4.
+  * **Idle**: 0.00 to 0.11 % CPU on every build and configuration.
+
+## Open after the gate
+
+* **GPU at fractional scale while glass re-blurs** (above). Either accept it
+  (CPU is far lower, idle and still glass are unaffected), or render what lies
+  below an effect into the quarter-size blur input directly inside the pass,
+  instead of repainting the extent at full resolution and copying it: D1 (C)
+  without its scene walk or context switch, as a second draw of the items below
+  the effect into the small target.
+* glass_hold.py's drag comparison and the start menu's outer column (5c).
 
 ## Risks
 
