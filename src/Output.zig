@@ -1274,6 +1274,7 @@ fn runFrame(output: *Output) void {
         return;
     };
     const projection_started = stats.nowNs();
+    output.server.world.refreshBounds();
     output.server.world.syncPresentation();
     stats.global_stats.projection_cpu.record(stats.nowNs() -% projection_started);
     output.server.world.flushCameraEvent();
@@ -1548,13 +1549,6 @@ pub fn recomputeWorldBounds(server: *Server) void {
     const w = max_x - min_x;
     const h = max_y - min_y;
     server.world.initBounds(min_x, min_y, w, h);
-
-    // Expand bounds if necessary to retain existing window frames
-    var it_top = server.world.toplevels.iterator(.forward);
-    while (it_top.next()) |top| {
-        if (top.tab_hidden) continue;
-        server.world.ensureInBounds(top.x, top.y, top.chrome_width, top.chrome_height);
-    }
 
     if (first) {
         // No remaining outputs: drop an in-progress pan rather than rebase it

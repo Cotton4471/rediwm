@@ -195,6 +195,12 @@ audio_muted: bool = false,
 // NetworkManager reports no connection: the wifi icon is drawn in the danger
 // colour, like a muted speaker. Pushed by `network.Manager`, never polled.
 network_offline: bool = false,
+// While offline the wifi icon also blinks (one cycle a second) so a dropped
+// connection stands out. A real deadline only while offline: the timer is
+// created on first need, disarmed on reconnect, and each tick repaints just
+// that icon. Reduced motion keeps the icon solid.
+blink_timer: ?*wl.EventSource = null,
+blink_dim: bool = false,
 
 clock_time: [16]u8 = [_]u8{0} ** 16,
 clock_date: [128]u8 = [_]u8{0} ** 128,
@@ -416,6 +422,7 @@ pub fn create(server: *Server, wlr_output: *wlr.Output) !*Taskbar {
     bar.updateClockLocale();
     _ = bar.updateClockStrings();
     bar.scheduleClockTick();
+    bar.syncBlink();
     return bar;
 }
 
@@ -423,6 +430,7 @@ pub fn destroy(bar: *Taskbar) void {
     if (bar.server.tray) |tray_mgr| tray_mgr.closeMenu();
     bar.server.input.detachTaskbar(bar);
     bar.timer.remove();
+    if (bar.blink_timer) |timer| timer.remove();
     if (bar.clock_locale) |locale| c_time.freelocale(locale);
     if (bar.start_logo) |e| bar.server.iconRelease(e.id);
     for (bar.chips.items) |chip| {
@@ -459,6 +467,45 @@ pub fn applyBattery(bar: *Taskbar, next: battery.State) void {
 pub fn applyNetwork(bar: *Taskbar, offline: bool) void {
     if (offline == bar.network_offline) return;
     bar.network_offline = offline;
+    bar.blink_dim = false;
+    bar.syncBlink();
+    bar.tray_dirty[@intFromEnum(TrayKind.wifi)] = true;
+    bar.markDirty(paint_tray);
+    bar.wlr_output.scheduleFrame();
+}
+
+const blink_half_ms = 500;
+
+/// Arm the blink timer while offline, disarm it otherwise.
+fn syncBlink(bar: *Taskbar) void {
+    if (bar.network_offline and !anim.reducedMotion()) {
+        if (bar.blink_timer == null) {
+            bar.blink_timer = bar.server.wl_server.getEventLoop().addTimer(*Taskbar, onBlink, bar) catch |err| {
+                log.err("syncBlink: could not create blink timer: {}", .{err});
+                return;
+            };
+        }
+        bar.blink_timer.?.timerUpdate(blink_half_ms) catch {};
+    } else if (bar.blink_timer) |timer| {
+        timer.timerUpdate(0) catch {};
+    }
+}
+
+fn onBlink(bar: *Taskbar) c_int {
+    if (!bar.network_offline or anim.reducedMotion()) {
+        // Settle on a solid icon; the timer stays disarmed.
+        if (bar.blink_dim) bar.repaintWifi();
+        bar.blink_dim = false;
+        return 0;
+    }
+    bar.blink_dim = !bar.blink_dim;
+    bar.repaintWifi();
+    bar.blink_timer.?.timerUpdate(blink_half_ms) catch {};
+    return 0;
+}
+
+fn repaintWifi(bar: *Taskbar) void {
+    if (!bar.itemShown(.network)) return;
     bar.tray_dirty[@intFromEnum(TrayKind.wifi)] = true;
     bar.markDirty(paint_tray);
     bar.wlr_output.scheduleFrame();
@@ -1629,9 +1676,11 @@ fn renderPart(bar: *Taskbar, now_ms: i64, part: Part, origin_x: i32, origin_y: i
             .volume => bar.audio_muted,
             .wifi => bar.network_offline,
         };
-        const color = if (alert)
-            Color.fromRgba(ui_theme.taskbar(.danger))
-        else
+        const color = if (alert) blk: {
+            var danger = Color.fromRgba(ui_theme.taskbar(.danger));
+            if (@as(TrayKind, @enumFromInt(i)) == .wifi and bar.blink_dim) danger.a *= 0.25;
+            break :blk danger;
+        } else
             Color.lerp(Color.tray_icon(), Color.tray_icon_hover(), hover);
         const size = 20 * press;
         var renderer = @import("ui").paint.Renderer.init(buf.pixels, buf.width, buf.height, scale);

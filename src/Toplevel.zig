@@ -1422,7 +1422,7 @@ fn commitPosition(toplevel: *Toplevel, x: i32, y: i32, update_scene: bool) void 
     toplevel.y = y;
     if (update_scene) toplevel.applyVisualTransform(nowMs());
     if (moved) toplevel.server.scheduleFrames();
-    toplevel.server.world.ensureInBounds(x, y, toplevel.chrome_width, toplevel.chrome_height);
+    toplevel.server.world.ensureToplevelInBounds(toplevel);
     if (moved) {
         if (!toplevel.isResizing() and !toplevel.backend_gone) {
             switch (toplevel.backend) {
@@ -2024,7 +2024,7 @@ pub fn tickZoom(toplevel: *Toplevel, now_ms: i64) bool {
         const moved = toplevel.x != round_x or toplevel.y != round_y;
         toplevel.x = round_x;
         toplevel.y = round_y;
-        if (moved) toplevel.server.world.ensureInBounds(round_x, round_y, toplevel.chrome_width, toplevel.chrome_height);
+        if (moved) toplevel.server.world.ensureToplevelInBounds(toplevel);
         return true;
     }
 }

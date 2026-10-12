@@ -16,9 +16,11 @@ pub const Map = struct {
     width: f64,
     height: f64,
     scale: f64,
-    pub fn init(bounds: camera.Bounds, zoom: f64, max_w: f64, max_h: f64) Map {
-        const w = @max(bounds.width + 2 * bounds.max_x, bounds.width / zoom);
-        const h = @max(bounds.height + 2 * bounds.max_y, bounds.height / zoom);
+    /// The map is the reachable canvas and nothing else: zooming out never
+    /// pads it (the viewport marker is clipped to the map instead).
+    pub fn init(bounds: camera.Bounds, max_w: f64, max_h: f64) Map {
+        const w = bounds.width + 2 * bounds.max_x;
+        const h = bounds.height + 2 * bounds.max_y;
         const scale = @min(max_w / @max(1, w), max_h / @max(1, h));
         return .{ .world = .{ .x = bounds.origin_x + (bounds.width - w) / 2, .y = bounds.origin_y + (bounds.height - h) / 2, .w = w, .h = h }, .width = w * scale, .height = h * scale, .scale = scale };
     }
@@ -46,7 +48,7 @@ test "map drag round trips at negative origins and fractional zoom" {
     const b = camera.computeGridBounds(-1920, -200, 3200, 1080, 4, 2);
     const out: Rect = .{ .x = -1920, .y = -200, .w = 1920, .h = 1080 };
     const cam: camera.Camera = .{ .offset_x = 123, .offset_y = -321, .zoom_value = 0.85 };
-    const m = Map.init(b, cam.zoom(), 220, 140);
+    const m = Map.init(b, 220, 140);
     const v = m.viewport(cam, b, out);
     const anchor: camera.Vec = .{ .x = v.w / 3, .y = v.h / 4 };
     const same = m.drag(cam, b, out, v.x + anchor.x, v.y + anchor.y, anchor);
@@ -60,21 +62,27 @@ test "map drag round trips at negative origins and fractional zoom" {
     try std.testing.expectEqual(limits.lo_y, clamped.offset_y);
 }
 
-test "map fits odd even narrow and expanded canvases and large viewports" {
+test "map fits odd even narrow and expanded canvases, and ignores zoom" {
     for ([_]u32{ 1, 2, 3, 10 }) |cols| {
         var b = camera.computeGridBounds(0, 0, 1280, 720, cols, 1);
         for ([_]f64{ 0.25, 0.85, 1, 2 }) |z| {
-            const m = Map.init(b, z, 220, 140);
+            const m = Map.init(b, 220, 140);
             try std.testing.expect(m.width <= 220.000001 and m.height <= 140.000001);
+            try std.testing.expectEqual(b.width + 2 * b.max_x, m.world.w);
+            try std.testing.expectEqual(b.height, m.world.h);
             var cam: camera.Camera = .{ .zoom_value = z };
             cam.clamp(b);
             const v = m.viewport(cam, b, .{ .x = 0, .y = 0, .w = 1280, .h = 720 });
-            try std.testing.expect(v.x >= -0.000001 and v.y >= -0.000001);
-            try std.testing.expect(v.x + v.w <= m.width + 0.000001);
-            try std.testing.expect(v.y + v.h <= m.height + 0.000001);
+            // At 100% or closer the viewport lies inside the map; zoomed out it
+            // may be larger and is clipped by the painter.
+            if (z >= 1) {
+                try std.testing.expect(v.x >= -0.000001 and v.y >= -0.000001);
+                try std.testing.expect(v.x + v.w <= m.width + 0.000001);
+                try std.testing.expect(v.y + v.h <= m.height + 0.000001);
+            }
         }
         b.max_x += 5000;
-        const m = Map.init(b, 1, 220, 140);
+        const m = Map.init(b, 220, 140);
         try std.testing.expectEqual(b.width + 2 * b.max_x, m.world.w);
     }
 }

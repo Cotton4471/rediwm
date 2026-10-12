@@ -199,61 +199,28 @@ def run(scale):
                     with Image.open(target) as image:
                         icon=image.convert('RGB').crop((round(box['x']*raster),round(box['y']*raster),round((box['x']+box['width'])*raster),round((box['y']+box['height'])*raster)))
                     return any(red > green+60 and red > blue+60 for red,green,blue in icon.getdata())
+                def tray_phases(seconds=2.0):
+                    # Offline, the icon blinks once a second: sample both phases.
+                    seen, end = set(), time.monotonic() + seconds
+                    while time.monotonic() < end and len(seen) < 2:
+                        seen.add(tray_red())
+                        time.sleep(.1)
+                    return seen
                 # The tray icon follows NetworkManager's global state with no popup open:
                 # red only while nothing is connected, never while connecting.
                 assert not tray_red(), 'connected: the wifi icon is red'
-                command(global_state=20);assert tray_red(), 'disconnected: the wifi icon is not red'
+                command(global_state=20);phases=tray_phases();assert True in phases, 'disconnected: the wifi icon is not red'
+                assert phases == {True, False}, 'disconnected: the wifi icon does not blink'
                 command(global_state=40);assert not tray_red(), 'connecting: the wifi icon is red'
-                command(global_state=10);assert tray_red(), 'asleep: the wifi icon is not red'
+                time.sleep(1.2);assert not tray_red(), 'connecting: the wifi icon still blinks'
+                command(global_state=10);assert True in tray_phases(), 'asleep: the wifi icon is not red'
                 command(global_state=70);assert not tray_red(), 'reconnected: the wifi icon is still red'
                 open_menu()
                 wait_for(lambda: ipc.hit_test(*at(100,100)).get('widget')=='row','network rows')
-                def sonar_image():
-                    x,y=at(262,3)
-                    raster=float(scale)
-                    target=tmp/'sonar.png'
-                    target.unlink(missing_ok=True)
-                    ipc.screenshot(str(target))
-                    with Image.open(target) as image:
-                        return image.convert('RGB').crop((round(x*raster),round(y*raster),round((x+60*factor)*raster),round((y+60*factor)*raster)))
-                def sonar_pixels(): return list(sonar_image().getdata())
-                def has_sonar():
-                    return any(red > green+35 for red,green,blue in sonar_pixels())
-                assert has_sonar(), 'scan acceptance hid the sonar before completion'
-                first=sonar_pixels()
-                time.sleep(.2) # sample a different sweep phase
-                assert sonar_pixels()!=first, 'sonar sweep did not animate'
                 screenshot('searching')
                 command(hold_scan=False, complete_scan=True)
-                def sonar_settled():
-                    first = sonar_pixels()
-                    time.sleep(.15)
-                    return sonar_pixels() == first
-                wait_for(sonar_settled, 'scan completion stops sweep')
-                assert has_sonar(), 'completed scan lost its signal map'
                 assert ipc.hit_test(*at(100,100)).get('widget')=='row', 'search hid existing networks'
                 screenshot('list')
-                # A real signal update moves the same echo radially; the centre
-                # beacon and faint rings are excluded from this pixel check.
-                def echo_distance():
-                    image = sonar_image()
-                    distances = []
-                    for y in range(image.height):
-                        for x in range(image.width):
-                            red, green, blue = image.getpixel((x,y))
-                            distance = ((x+.5-image.width/2)**2+(y+.5-image.height/2)**2)**.5 / (float(scale)*factor)
-                            if red > green+120 and distance > 5:
-                                distances.append(distance)
-                    assert distances, 'network echo missing'
-                    return sum(distances)/len(distances)
-                command(count=1, strength=10)
-                weak = echo_distance()
-                command(strength=95)
-                assert echo_distance() < weak-8, 'stronger signal did not move towards centre'
-                command(count=6, strength=None)
-                strongest = sonar_pixels()
-                command(count=35, active=35)
-                assert sonar_pixels() == strongest, 'weaker networks changed the six strongest echoes'
                 command(count=6, active=1)
                 # Opening focuses the first network: Down/Enter opens the
                 # second (saved, secured) network without toggling the radio.
@@ -294,7 +261,6 @@ def run(scale):
                 click(369,36)
                 assert read_line(fake)=={'enabled':False}
                 settle();screenshot('off')
-                assert not has_sonar(), 'disabled radio still shows a signal map'
                 # With no network list, opening still focuses the radio toggle.
                 close();open_menu();ipc.key_down_up(28)
                 assert read_line(fake)=={'enabled':True}

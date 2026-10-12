@@ -328,7 +328,68 @@ pub fn destroyClosing(world: *World) void {
 
 /// Compute and store camera bounds from the combined output layout rectangle.
 pub fn initBounds(world: *World, layout_x: i32, layout_y: i32, layout_w: i32, layout_h: i32) void {
-    world.bounds = camera_mod.computeGridBounds(layout_x, layout_y, layout_w, layout_h, world.server.config.compositor.canvas_columns, world.server.config.compositor.canvas_rows);
+    world.bounds = world.derivedBounds(layout_x, layout_y, layout_w, layout_h);
+}
+
+/// The configured grid, grown just enough to keep every resting window
+/// reachable. A pure function of the layout, the config and the windows, so
+/// the reachable area (and the mini-map drawn from it) never depends on where
+/// a window happened to pass through.
+fn derivedBounds(world: *World, layout_x: i32, layout_y: i32, layout_w: i32, layout_h: i32) camera_mod.Bounds {
+    const cfg = world.server.config.compositor;
+    var bounds = camera_mod.computeGridBounds(layout_x, layout_y, layout_w, layout_h, cfg.canvas_columns, cfg.canvas_rows);
+    if (world.workspaces.active) return bounds;
+    var it = world.toplevels.iterator(.forward);
+    while (it.next()) |top| {
+        if (top.tab_hidden or top.closing or top.backend_gone or !top.in_world) continue;
+        expandForToplevel(&bounds, top);
+    }
+    return bounds;
+}
+
+/// Frames are measured at the window's own zoom, not the temporary focus boost.
+fn expandForToplevel(bounds: *camera_mod.Bounds, top: *const Toplevel) void {
+    const w: i32 = @intFromFloat(@ceil(@as(f64, @floatFromInt(top.chrome_width)) * top.zoom_scale));
+    const h: i32 = @intFromFloat(@ceil(@as(f64, @floatFromInt(top.chrome_height)) * top.zoom_scale));
+    camera_mod.expandToFrame(
+        bounds,
+        top.x,
+        top.y,
+        w,
+        h,
+        @intFromFloat(@round(bounds.origin_x)),
+        @intFromFloat(@round(bounds.origin_y)),
+        @intFromFloat(@round(bounds.width)),
+        @intFromFloat(@round(bounds.height)),
+    );
+}
+
+/// Re-derive the bounds from the current windows, once per frame. Bounds
+/// shrink again when a window comes back or goes away; a camera left beyond
+/// the new limits glides back. During a move or resize grab they only grow, so
+/// the canvas doesn't pull in under the pointer.
+pub fn refreshBounds(world: *World) void {
+    if (world.workspaces.active or world.bounds.width <= 0 or world.bounds.height <= 0) return;
+    const old = world.bounds;
+    var next = world.derivedBounds(@intFromFloat(@round(old.origin_x)), @intFromFloat(@round(old.origin_y)), @intFromFloat(@round(old.width)), @intFromFloat(@round(old.height)));
+    const input = &world.server.input;
+    if (input.cursor_mode == .move or input.cursor_mode == .resize) {
+        next.max_x = @max(next.max_x, old.max_x);
+        next.max_y = @max(next.max_y, old.max_y);
+    }
+    if (std.meta.eql(next, old)) return;
+    world.bounds = next;
+    var clamped = world.camera;
+    clamped.clamp(next);
+    if (!world.allowsOverscroll() and (clamped.offset_x != world.camera.offset_x or clamped.offset_y != world.camera.offset_y)) {
+        world.springPan(clamped.offset_x, clamped.offset_y, .camera_reveal);
+    }
+}
+
+/// Keep `toplevel` reachable right away, between per-frame refreshes.
+pub fn ensureToplevelInBounds(world: *World, toplevel: *const Toplevel) void {
+    if (world.workspaces.active) return;
+    expandForToplevel(&world.bounds, toplevel);
 }
 
 /// Project the world without changing source nodes or client geometry.
@@ -408,6 +469,8 @@ pub fn revealIfOffscreen(world: *World, toplevel: *Toplevel, output: *@import("O
 }
 
 fn windowFocusOffset(world: *World, toplevel: *Toplevel, output: *@import("Output.zig"), cam: camera_mod.Camera, scale: f64, force: bool) ?camera_mod.Vec {
+    // A restored or just-placed window may not be in the last frame's bounds.
+    world.ensureToplevelInBounds(toplevel);
     const usable = output.usableBox();
     return camera_mod.focusOffset(cam, world.bounds, .{ .x = @floatFromInt(toplevel.x), .y = @floatFromInt(toplevel.y) }, .{ .x = @as(f64, @floatFromInt(toplevel.chrome_width)) * scale, .y = @as(f64, @floatFromInt(toplevel.chrome_height)) * scale }, .{ .x = @floatFromInt(usable.x), .y = @floatFromInt(usable.y) }, .{ .x = @floatFromInt(usable.width), .y = @floatFromInt(usable.height) }, force);
 }
@@ -442,22 +505,6 @@ pub fn refreshFocusZoom(world: *World) void {
         world.setZoom(0, world.server.input.cursor.x, world.server.input.cursor.y);
     }
     world.server.scheduleFrames();
-}
-
-/// Expand camera bounds if necessary so that the frame at (wx, wy) with size (w, h)
-/// remains reachable through camera movement.
-///
-/// Uses the current layout rectangle in `world.bounds` rather than looking up a
-/// live output. Output destroy runs while the dying output is still in the
-/// layout, so a cursor-based lookup can return a wrapper that has already been
-/// freed.
-pub fn ensureInBounds(world: *World, wx: i32, wy: i32, w: i32, h: i32) void {
-    if (world.workspaces.active) return;
-    const ux: i32 = @intFromFloat(@round(world.bounds.origin_x));
-    const uy: i32 = @intFromFloat(@round(world.bounds.origin_y));
-    const uw: i32 = @intFromFloat(@round(world.bounds.width));
-    const uh: i32 = @intFromFloat(@round(world.bounds.height));
-    camera_mod.expandToFrame(&world.bounds, wx, wy, w, h, ux, uy, uw, uh);
 }
 
 /// Scroll the camera to bring `toplevel`'s frame into the output's usable area.

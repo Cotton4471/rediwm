@@ -202,7 +202,7 @@ pub fn tick(self: *Self, output: *Output, now: i64) bool {
     }
     const cfg = server.config.compositor;
     const world = &server.world;
-    const map = geo.Map.init(world.bounds, world.camera.zoom(), @min(220, @as(f64, @floatFromInt(usable.width - 32))), @min(140, @as(f64, @floatFromInt(usable.height - 32))));
+    const map = geo.Map.init(world.bounds, @min(220, @as(f64, @floatFromInt(usable.width - 32))), @min(140, @as(f64, @floatFromInt(usable.height - 32))));
     const theme = ui.theme.shellPalette();
     const key: Cache = .{ .map = map, .bounds = world.bounds, .columns = cfg.canvas_columns, .rows = cfg.canvas_rows, .scale = output.wlr_output.scale, .bg = theme.window_bg, .fg = theme.window_fg, .bg_opacity = theme.mini_map_bg_opacity, .grid_alpha = theme.mini_map_grid_alpha, .border_alpha = theme.mini_map_border_alpha, .radius = theme.mini_map_radius };
     if (self.cache == null or !std.meta.eql(self.cache.?, key)) {
