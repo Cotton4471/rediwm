@@ -1,8 +1,8 @@
 # RediWM
 
 <div align="center">
+<img width="1085" height="233" alt="redi-logo" src="https://github.com/user-attachments/assets/4e80c572-bd30-4800-bcf3-acb95299358d" />
 
-<img width="690" height="519" alt="Screenshot-1791166153-291331984-4" src="https://github.com/user-attachments/assets/7ba5668a-649f-4bae-ac2c-ec08f6826b14" />
 
 ### A Wayland compositor with its own desktop shell, built in Zig
 
@@ -13,7 +13,11 @@ that draws its whole shell itself: taskbar, start menu, settings, lock and login
 screens, notifications and OSDs, all in one process, benchmarked against
 [labwc](https://labwc.github.io/) to stay as lean (192mb idle ram usage, <1% CPU usage)
 
-https://github.com/user-attachments/assets/60bc1190-694c-4fb7-b2bc-d90e5e9faa90
+
+
+https://github.com/user-attachments/assets/34c20760-f1ec-4776-a00b-063e3c8a5ffb
+
+
 
 ## Features
 
