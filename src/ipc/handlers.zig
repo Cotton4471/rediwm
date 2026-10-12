@@ -58,6 +58,15 @@ pub fn handleRequest(
         .get_services => return @import("settings.zig").services(server, allocator),
         .get_sounds => return .{ .ok = .{ .sounds = try @import("../audio/sounds.zig").inspect(server, allocator) } },
         .get_wallpaper => return @import("settings.zig").wallpaper(server, allocator),
+        .theme_list => {
+            const packs = try @import("config").theme_pack.list(allocator, server.io, server.environ, server.config.path);
+            var result: protocol.ResponsePayload = .{ .theme_packs = .{ .active = server.config.theme_base, .packs = &.{} } };
+            const T = @typeInfo(@TypeOf(result.theme_packs.packs)).pointer.child;
+            const rows = try allocator.alloc(T, packs.len);
+            for (packs, rows) |p, *row| row.* = .{ .id = p.id, .name = p.name, .version = p.version, .user_installed = p.user_installed };
+            result.theme_packs.packs = rows;
+            return .{ .ok = result };
+        },
         .get_theme => return @import("settings.zig").getTheme(server, allocator),
         .get_processes => return @import("processes.zig").start(server, request_id, client),
         .get_keyboard_layouts => return .{ .ok = .{ .keyboard_layouts = try @import("../input/layouts.zig").inspect(server, allocator) } },
@@ -678,6 +687,14 @@ fn handleAction(
             return .{ .ok = .{ .service_mode = .{ .service = p.service, .mode = p.mode } } };
         },
         .play_sound => |p| return @import("../audio/sounds.zig").play(server, allocator, p.event) catch |err| .{ .err = @errorName(err) },
+        .theme_apply => |p| {
+            @import("../config_runtime/theme_pack.zig").apply(server, p.id) catch |err| return .{ .err = @errorName(err) };
+            return .{ .ok = .handled };
+        },
+        .theme_install => |p| {
+            @import("../config_runtime/theme_job.zig").start(server, if (p.replace) &.{ "install", p.path, "--replace" } else &.{ "install", p.path }, client, request_id) catch |err| return .{ .err = @errorName(err) };
+            return .{ .ok = .async_pending };
+        },
         .set_wallpaper => |p| {
             @import("settings.zig").setWallpaper(server, p.path, p.persist) catch |err| return .{ .err = @errorName(err) };
             return .{ .ok = .handled };

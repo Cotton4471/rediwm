@@ -1,3 +1,8 @@
+[meta]
+format = 1
+id = "rediwm-dark"
+name = "RediWM Dark"
+
 [theme]
 font = "Manrope"
 mono_font = "JetBrains Mono"
@@ -75,3 +80,6 @@ start_menu_search_bg = "rgba(21,26,31,1.000)"
 start_menu_selected_bg = "rgba(255,255,255,0.045)"
 start_menu_selected_border = "rgba(237,27,46,0.350)"
 start_menu_selected_marker = "rgba(237,27,46,1.000)"
+
+[assets]
+color_scheme = "dark"

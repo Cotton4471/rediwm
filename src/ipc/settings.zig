@@ -38,7 +38,7 @@ pub fn services(server: *Server, a: std.mem.Allocator) !protocol.Response {
 pub fn wallpaper(server: *Server, a: std.mem.Allocator) !protocol.Response {
     return .{ .ok = .{ .wallpaper = .{
         .configured = server.config.compositor.wallpaper,
-        .resolved_path = wallpapers.resolve(a, server.io, server.config.compositor.wallpaper) catch null,
+        .resolved_path = @import("../config_runtime/theme_pack.zig").wallpaperPath(server, a) catch null,
         .displayed_path = server.wallpaper_displayed_path,
         .loading = server.wallpaper_loader != null,
         .failed = server.wallpaper_failed,

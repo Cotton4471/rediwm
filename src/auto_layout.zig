@@ -13,6 +13,9 @@ pub const Member = struct {
     min_height: i32 = 1,
     max_width: i32 = 0,
     max_height: i32 = 0,
+    /// Where a new member goes: this placed leaf is split. Without one, or when
+    /// it has no tile, the member splits the leaf admitted before it.
+    anchor: ?Key = null,
 };
 pub const Axis = enum { horizontal, vertical };
 pub const Direction = enum { left, right, up, down };
@@ -310,9 +313,10 @@ pub const Tree = struct {
         var beside: ?Key = null;
         for (members) |member| {
             if (!tree.contains(member.key)) {
+                const at = if (member.anchor) |anchor| (if (tree.rectangle(anchor) != null) anchor else beside) else beside;
                 var rect = usable;
-                if (beside) |key| rect = tree.rectangle(key) orelse usable;
-                try tree.insert(allocator, member, beside, if (rect.width >= rect.height) .horizontal else .vertical);
+                if (at) |key| rect = tree.rectangle(key) orelse usable;
+                try tree.insert(allocator, member, at, if (rect.width >= rect.height) .horizontal else .vertical);
                 tree.arrange(members, usable, requested_gap);
             }
             if (tree.rectangle(member.key) != null) beside = member.key;
@@ -386,6 +390,26 @@ test "rotation, resizing, swapping and bounded clients" {
     tree.remove(testing.allocator, members[0].key);
     tree.arrange(members[1..], screen, 8);
     try testing.expect(!tree.contains(members[0].key));
+}
+
+test "a new member splits its anchor, else the member before it" {
+    var tree: Tree = .{};
+    defer tree.deinit(testing.allocator);
+    var members = [_]Member{ .{ .key = .{ .id = 1 }, .order = 1 }, .{ .key = .{ .id = 2 }, .order = 2 }, .{ .key = .{ .id = 3 }, .order = 3, .anchor = .{ .id = 1 } } };
+    try tree.sync(testing.allocator, members[0..2], screen, 8);
+    const second = tree.rectangle(members[1].key).?;
+    try tree.sync(testing.allocator, &members, screen, 8);
+    // The tall left tile splits top/bottom; the right one keeps its tile.
+    const first = tree.rectangle(members[0].key).?;
+    const third = tree.rectangle(members[2].key).?;
+    try testing.expectEqual(second, tree.rectangle(members[1].key).?);
+    try testing.expectEqual(first.x, third.x);
+    try testing.expectEqual(first.y + first.height + 8, third.y);
+    // An anchor without a tile falls back to the member admitted before.
+    members[0].active = false;
+    var fourth = [_]Member{ members[0], members[1], members[2], .{ .key = .{ .id = 4 }, .order = 4, .anchor = .{ .id = 1 } } };
+    try tree.sync(testing.allocator, &fourth, screen, 8);
+    try testing.expectEqual(tree.placement(fourth[3].key).?.anchor, members[2].key);
 }
 
 test "insertion allocation failures preserve the original leaf" {

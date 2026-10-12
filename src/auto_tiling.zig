@@ -97,6 +97,9 @@ pub const Manager = struct {
     trees: [@import("workspaces.zig").count]layout.Tree = @splat(.{}),
     idle: ?*wl.EventSource = null,
     applying: bool = false,
+    /// The next flush places tiles at once instead of gliding: entering the
+    /// mode, output changes and restored layouts are not user rearrangements.
+    quiet: bool = false,
 
     pub fn deinit(self: *Manager) void {
         if (self.idle) |source| source.remove();
@@ -119,6 +122,7 @@ pub const Manager = struct {
         if (!server.world.workspaces.active) return;
         self.applying = true;
         defer self.applying = false;
+        defer self.quiet = false;
         self.reflow(server) catch |err| {
             std.log.warn("automatic layout: {s}", .{@errorName(err)});
             return;
@@ -137,6 +141,9 @@ pub const Manager = struct {
         }.less);
         var members: std.ArrayList(layout.Member) = .empty;
         defer members.deinit(gpa);
+        // A live split drag follows the pointer exactly.
+        const dragging = if (server.input.tiling_grab) |grab| grab.kind == .resize else false;
+        const animate = !self.quiet and !dragging;
         for (&self.trees, 0..) |*tree, index| {
             members.clearRetainingCapacity();
             const output = server.world.workspaces.slots[index].output;
@@ -152,6 +159,7 @@ pub const Manager = struct {
                     .min_height = @max(1, s.constraints.min_height) +| s.vertical,
                     .max_width = if (s.constraints.max_width > 0) s.constraints.max_width +| s.horizontal else 0,
                     .max_height = if (s.constraints.max_height > 0) s.constraints.max_height +| s.vertical else 0,
+                    .anchor = anchorOf(top),
                 };
                 if (s.constraints.control_min_width > s.constraints.min_width and
                     (s.constraints.max_width == 0 or s.constraints.control_min_width <= s.constraints.max_width))
@@ -193,9 +201,11 @@ pub const Manager = struct {
             for (tops.items) |top| {
                 if (top.workspace_id != index + 1) continue;
                 const s = state(top);
+                // Used by the sync above, or moot for a window that floats.
+                top.auto_anchor = null;
                 if (!s.excluded and !s.suspended and !s.hidden) {
                     if (tree.rectangle(key(top))) |rect| {
-                        top.setAutoTile(.{ .x = rect.x, .y = rect.y, .width = rect.width, .height = rect.height });
+                        top.setAutoTile(.{ .x = rect.x, .y = rect.y, .width = rect.width, .height = rect.height }, animate and @import("workspaces.zig").visible(top));
                     } else top.clearAutoTile(true);
                 } else if (s.excluded) top.clearAutoTile(true);
                 top.auto_seen = state(top);
@@ -203,6 +213,14 @@ pub const Manager = struct {
         }
     }
 };
+
+/// The tile a window joining the tree splits: the window that had focus on
+/// its workspace when it joined.
+fn anchorOf(top: *Top) ?layout.Key {
+    const other = top.server.findToplevelById(top.auto_anchor orelse return null) orelse return null;
+    if (other == top or other.workspace_id != top.workspace_id) return null;
+    return key(other);
+}
 
 fn boundedMin(a: i32, b: i32) i32 {
     return if (a == 0) b else if (b == 0) a else @min(a, b);

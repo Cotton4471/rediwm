@@ -1,0 +1,14 @@
+[meta]
+format = 1
+id = "test-pack"
+name = "Test Pack"
+version = "1.0"
+author = "RediWM tests"
+license = "CC0-1.0"
+[theme]
+accent = "#f42ca0"
+window_bg = "#142850"
+start_button_icon = "logo.svg"
+[assets]
+wallpaper = "test.png"
+color_scheme = "dark"

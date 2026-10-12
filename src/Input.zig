@@ -505,7 +505,16 @@ pub fn cursorThemeName(input: *const Input) []const u8 {
 
 /// Config reload: switch to a changed `cursor_theme`/`cursor_size`.
 pub fn applyCursorTheme(input: *Input, theme: []const u8, size: u32) void {
-    if (size == input.cursor_theme_size and std.mem.eql(u8, theme, input.cursor_theme_name[0..input.cursor_theme_len])) return;
+    applyCursorThemeImpl(input, theme, size, false);
+}
+
+/// An installed pack can replace cursor bytes without changing its name.
+pub fn reloadCursorTheme(input: *Input) void {
+    applyCursorThemeImpl(input, input.server.config.input.cursor_theme, input.server.config.input.cursor_size, true);
+}
+
+fn applyCursorThemeImpl(input: *Input, theme: []const u8, size: u32, force: bool) void {
+    if (!force and size == input.cursor_theme_size and std.mem.eql(u8, theme, input.cursor_theme_name[0..input.cursor_theme_len])) return;
     const mgr = createCursorManager(theme, size) orelse {
         log.warn("cursor theme '{s}' at size {d}: could not create manager", .{ theme, size });
         return;

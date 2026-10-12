@@ -150,6 +150,14 @@ the one for the directory you work in: `src/files`, `src/editor`,
   `forcedGeometry()`). `Toplevel.layout()` reads the `maximized` field, not
   `isMaximized()` (xdg acks later). Leaving a layout without moving goes
   through `leaveLayout()`.
+* **Tiles glide and workspaces slide.** `setAutoTile(rect, animate)` eases
+  like snapping (`auto_tiling.Manager.quiet` for non-user reflows). A switch
+  keeps the leaving workspace's frames shown but inert
+  (`rediwm_projection_set_tree_inert`) until `tickSwitch` settles; anything
+  that stops showing a window mid-slide calls `finishSwitch`. Input follows
+  what is drawn and `chrome_box` sizes are animated: tests
+  `wait_for("window_geometry_settled")` before pointer input or geometry
+  snapshots.
 * **`Backend.shell` windows** (Settings) paint into `scene_tree` and present
   with `presentOwned`. No wl_surface: focused = first in `world.toplevels`,
   activated, no seat focus (`hasKeyboardFocus`). Never close one from a

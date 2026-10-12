@@ -561,6 +561,13 @@ static void test_clip_output(struct wlr_scene *scene, struct wlr_scene_output *o
   assert(hit == under_leaf->source);
   hit = rediwm_projection_node_at(p, 310.5, 200.5, &nx, &ny); // on the straight edge
   assert(hit == client_leaf->source);
+  // An inert window is still drawn, but the pointer reaches what is below it.
+  assert(rediwm_projection_set_tree_inert(&frame->node, true));
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  assert(client_leaf->item.enabled && rediwm_projection_node_at(p, 360, 240, &nx, &ny) == under_leaf->source);
+  assert(rediwm_projection_set_tree_inert(&frame->node, false));
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  assert(rediwm_projection_node_at(p, 360, 240, &nx, &ny) == client_leaf->source);
   // Without a shape the corner is the window's again.
   assert(rediwm_projection_set_tree_clip(&frame->node, NULL));
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);

@@ -162,6 +162,7 @@ battery_uevent_source: ?*wl.EventSource = null,
 // forever, matching how a themeless/iconless desktop already renders (the
 // hand-drawn fallback tiles in Taskbar.zig, no icon in the titlebar).
 icon_service: ?*icon_service_mod.IconService = null,
+theme_job: ?*@import("config_runtime/theme_job.zig").Job = null,
 icon_wake_source: ?*wl.EventSource = null,
 
 scale_override: ?f32 = null,
@@ -394,6 +395,7 @@ pub fn init(server: *Server, scale: ?f32, icon_theme_cfg: icon_theme.Config, io:
         loaded.desktop.enabled = false;
         loaded.polkit.enable = false;
     }
+    if (!greeter) @import("ui").shell_icons.configure(io, if (loaded.theme_pack) |p| p.root else "");
     ui_theme.global = loaded.theme;
     ui_theme.taskbar_override = if (loaded.taskbar_theme) |chosen| ui_theme.taskbarTokens(chosen) else null;
     @import("ui").text.setPreferredFamilies(ui_theme.global.font, ui_theme.global.mono_font);
@@ -585,6 +587,7 @@ pub fn init(server: *Server, scale: ?f32, icon_theme_cfg: icon_theme.Config, io:
         log.warn("init: could not start icon service, icons disabled: {}", .{err});
         break :blk null;
     };
+    @import("config_runtime/theme_pack.zig").configureIcons(server);
     if (server.icon_service) |svc| {
         server.icon_wake_source = server.wl_server.getEventLoop().addFd(*Server, svc.wakeFd(), .{ .readable = true }, handleIconWake, server) catch |err| blk: {
             log.warn("init: could not register icon wake fd: {}", .{err});
@@ -693,9 +696,9 @@ fn loadGreeterConfig(io: std.Io, environ: std.process.Environ) !config_loader.Co
     const allocator = @import("main.zig").gpa;
     const path = if (environ.getPosix("REDIWM_CONFIG")) |p| (if (p.len > 0) p else null) else null;
     const system = "/etc/rediwm/greeter.toml";
-    if (path) |p| return config_loader.load(p, allocator, io, environ);
+    if (path) |p| return parseGreeterFile(p, allocator, io);
     std.Io.Dir.cwd().access(io, system, .{}) catch return config_loader.default(allocator);
-    return config_loader.load(system, allocator, io, environ);
+    return parseGreeterFile(system, allocator, io);
 }
 
 pub fn executeAction(server: *Server, action: config_actions.Action) void {
@@ -869,6 +872,8 @@ pub fn getSystemd(server: *Server) !*@import("systemd.zig").Client {
 }
 
 pub fn deinit(server: *Server) void {
+    if (server.theme_job) |job| job.deinit();
+    server.theme_job = null;
     server.undo.clear();
     server.undo.applying = true;
     // terminate saved the layout before leaving the event loop. Only paths
@@ -1297,6 +1302,7 @@ pub fn syncDesktop(server: *Server) void {
         log.err("desktop: {}", .{err});
         break :blk null;
     };
+    if (server.desktop) |desktop| desktop.app.worker.updateTheme(server.icon_theme_cfg);
 }
 
 /// Shows the control center's Appearance page on the output under the cursor.
@@ -1581,7 +1587,7 @@ pub fn reloadWallpaper(server: *Server) void {
 
 fn loadWallpaper(server: *Server, delay_ns: u64) void {
     const gpa = @import("main.zig").gpa;
-    const path = wallpapers.resolve(gpa, server.io, server.config.compositor.wallpaper) catch |err| {
+    const path = @import("config_runtime/theme_pack.zig").wallpaperPath(server, gpa) catch |err| {
         log.warn("wallpaper '{s}': {}", .{ server.config.compositor.wallpaper, err });
         return;
     };
@@ -1719,4 +1725,10 @@ fn polkitState(owner: ?*anyopaque, state: polkit_mod.Agent.State) void {
     if (server.notifications) |mgr| {
         _ = mgr.postNotification("Authentication", 0, "", "Authentication agent unavailable", "Could not register with polkit. Another authentication agent may already be running.", &.{}, 1, false, true, 6000, "", null) catch {};
     }
+}
+
+fn parseGreeterFile(path: []const u8, a: std.mem.Allocator, io: std.Io) !config_loader.Config {
+    const bytes = try std.Io.Dir.cwd().readFileAlloc(io, path, a, .limited(1 << 20));
+    defer a.free(bytes);
+    return config_loader.parse(a, bytes, path);
 }

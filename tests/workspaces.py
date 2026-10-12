@@ -21,6 +21,9 @@ def run(outputs=1):
 desktop_mode = "canvas"
 focus_zoom = "keep"
 snap_to_edges = false
+# Slow workspace slides: the hidden-input checks run while the old workspace
+# is still sliding off screen.
+desktop_switch_ms = 3000
 [keybinds]
 "Super+q" = "noop"
 "Super+F12" = "noop"
@@ -142,6 +145,8 @@ snap_to_edges = false
                 assert workspace() == 5 and focused() == settings
                 ipc.action("close_window", {"id": settings})
                 ipc.focus_window(b)
+                # Input follows the slide: grab b once it has arrived.
+                ipc.wait_for("window_geometry_settled", window_id=b, timeout_ms=10000)
                 # Explicit placement floats a tile; Super-drag never pans the camera.
                 ipc.action("move_window_to", {"id": b, "x": 100, "y": 120})
                 ipc.wait_for_frame()
@@ -430,6 +435,7 @@ enabled = false
                     wait_for(lambda: all(w["id"] != d for w in ipc.get_windows()), "close destination tile")
                 # Closing the focused leaf after a resize does not consume
                 # undo or resurrect it; the remaining split keeps its ratio.
+                ipc.focus_window(b)
                 c, cc = launch("controls-undo-closed")
                 wait_for(lambda: frame(b)[3] < halves[b][3], "undo third tile")
                 baseline = {a: frame(a), b: frame(b)}
@@ -682,8 +688,9 @@ window_gap = 8
                 ipc.key_down_up(87)
                 ipc.action("tiling_action", {"id": a, "action": "toggle_floating"})
                 expect(a, half); expect(b, right)
+                # A new window splits the focused tile along its longer side.
+                ipc.focus_window(b)
                 c, cc = launch("auto-c", "0 0 0 0")
-                # The second split follows the longer side of the right tile.
                 if right[2] >= right[3]:
                     cw = (right[2] - 8 + 1) // 2
                     second = (right[0], 8, cw, right[3])
@@ -700,6 +707,21 @@ window_gap = 8
                     expect(a, half)
                     expect(b, second)
                     expect(c, third)
+                # With the older tile focused, a new one splits it, not the newest.
+                if half[2] >= half[3]:
+                    dw = (half[2] - 8 + 1) // 2
+                    kept, added = (8, 8, dw, half[3]), (16 + dw, 8, half[2] - dw - 8, half[3])
+                else:
+                    dh = (half[3] - 8 + 1) // 2
+                    kept, added = (8, 8, half[2], dh), (8, 16 + dh, half[2], half[3] - dh - 8)
+                d, cd = launch("auto-d", "0 0 0 0")
+                expect(a, kept)
+                expect(d, added)
+                expect(b, second)
+                expect(c, third)
+                stop_process(cd)
+                wait_for(lambda: all(w["id"] != d for w in ipc.get_windows()), "close d")
+                expect(a, half)
                 # Minimize and temporary geometry overrides preserve the split.
                 ipc.focus_window(c)
                 ipc.key_down_up(68)
@@ -991,9 +1013,12 @@ def xwayland_routing():
                     box = ipc.get_window_debug(id)["chrome_box"]
                     return tuple(box[k] for k in ("x", "y", "width", "height"))
                 wait_for(lambda: rect(one)[0] < rect(two)[0] and rect(one)[2] < 900, "two GTK tiles")
+                for id in (one, two): ipc.wait_for("window_geometry_settled", window_id=id, timeout_ms=5000)
                 before_one, before_two = rect(one), rect(two)
                 ipc.action("tiling_action", {"action": "swap_right", "id": one})
                 wait_for(lambda: rect(one)[0] == before_two[0], "X11 tile swap")
+                # Tiles glide to their new places, and input follows what is shown.
+                for id in (one, two): ipc.wait_for("window_geometry_settled", window_id=id, timeout_ms=5000)
                 ipc.focus_window(two)
                 box = ipc.get_window_debug(two)["client_box"]
                 x, y = box["x"] + 80, box["y"] + 70
@@ -1011,6 +1036,7 @@ def xwayland_routing():
                 wait_for(lambda: rect(two)[2] > 1000, "X11 transfer reflow")
                 for key, top, child, path in [("2", two, client_two, log_two), ("1", one, client_one, log_one)]:
                     chord(key)
+                    ipc.wait_for("window_geometry_settled", window_id=top, timeout_ms=5000)
                     box = ipc.get_window_debug(top)["client_box"]
                     move(box["x"] + 70, box["y"] + 80)
                     ipc.pointer_button(0x111, True)
@@ -1116,8 +1142,12 @@ def persistence_controls():
                         ipc.action("tiling_action", {"id": ids["First"], "action": "resize_split_down"})
                         ipc.action("set_window_gap", {"gap": 12, "persist": True})
                         wait_for(lambda: ipc.get_workspaces()[0]["window_gap"] == 12, "gap setting")
-                        time.sleep(.3)
-                        expected = {title: frame(id) for title, id in ids.items()}
+                        def settled():
+                            # Tiles glide to a new split: wait until they rest.
+                            first = {title: frame(id) for title, id in ids.items()}
+                            time.sleep(.2)
+                            return first if first == {title: frame(id) for title, id in ids.items()} else None
+                        expected = wait_for(settled, "tiles at rest")
                         chord("F9")
                         checkpoint = runtime / "layouts" / "checkpoint.toml"
                         wait_for(checkpoint.exists, "named workspace save")
@@ -1125,7 +1155,8 @@ def persistence_controls():
                         ipc.action("set_workspace_layout", {"workspace": 1, "automatic": False})
                         wait_for(lambda: window(ids["First"])["placement"] == "floating", "floating layout")
                         chord("F10")
-                        wait_for(lambda: all(frame(id) == expected[title] for title, id in ids.items()), "named split restore")
+                        try: wait_for(lambda: all(frame(id) == expected[title] for title, id in ids.items()), "named split restore")
+                        except AssertionError: raise AssertionError(("named split restore", expected, {title: frame(id) for title, id in ids.items()})) from None
                         # Settings uses the same setters; toggle a per-app exception.
                         ipc.action("open_control_center")
                         settings = wait_for(lambda: next((w for w in ipc.get_windows() if w["app_id"] == "rediwm-settings"), None), "Settings map")["id"]

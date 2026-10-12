@@ -398,7 +398,7 @@ def test_appearance_settings():
                                                       taskbar["x"] + 40, taskbar["y"] + 38))
                     assert sum(max(logo.getpixel((x, y))) < 100 for y in range(logo.height) for x in range(logo.width)) > 100, "Light R logo is not dark"
                 light_theme = read_config()["theme"]
-                assert light_theme["shell_accent"].startswith("rgba(14,165,160,")
+                assert light_theme == {"base": "rediwm-light"}, light_theme
                 for name in ("caret", "selection", "selection_fg", "field_border_focus"):
                     assert name not in light_theme
 
@@ -426,7 +426,7 @@ def test_appearance_settings():
                 assert all(abs(a - b) < 0.001 for a, b in zip(tokens["window_fg"], [31 / 255, 36 / 255, 48 / 255, 1]))
                 assert ui.scroll_into_view("theme")["selected_index"] == 1
                 assert read_config()["taskbar_theme"] == {}
-                assert read_config()["theme"]["shell_accent"].startswith("rgba(14,165,160,")
+                assert read_config()["theme"] == {"base": "rediwm-light"}
                 ipc.reload_config()
                 ipc.close_panel("control_center")
                 ipc.wait_for("control_center_closed", timeout_ms=5000)
@@ -507,9 +507,9 @@ def test_appearance_settings():
                         expected = min(defaults[name], 4) if index == 0 else defaults[name] * (1.3 if index == 2 else 1)
                         assert abs(tokens[name] - expected) < 0.001, (index, name, tokens[name], expected)
                     assert ui.scroll_into_view("radius")["selected_index"] == index
-                    assert abs(read_config()["theme"]["radius_lg"] - tokens["radius_lg"]) < 0.001
+                    assert abs(read_config()["theme"].get("radius_lg", defaults["radius_lg"]) - tokens["radius_lg"]) < 0.001
                 # A legacy compositor value cannot override an explicit theme radius.
-                config_path.write_text(config_path.read_text().replace("radius_lg = 10", "radius_lg = 2.5") +
+                config_path.write_text(config_path.read_text().replace('base = "rediwm-dark"', 'base = "rediwm-dark"\nradius_lg = 2.5') +
                                        "\n[compositor]\nborder_radius = 24\n")
                 ipc.reload_config()
                 ipc.wait_for_panel_settled("control_center")

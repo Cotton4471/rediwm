@@ -87,6 +87,8 @@ struct leaf {
   struct wlr_scene_surface *surface;
   struct feedback *feedback;
   bool dirty, seen;
+  // Under an inert tree at the last resolve(): drawn, never picked.
+  bool inert;
   // Commits can outpace presentation. Keep their union, including empty damage
   // on a rotated buffer; buffer identity is not evidence of changed pixels.
   pixman_region32_t damage;
@@ -135,10 +137,12 @@ struct leaf {
 //    the source graph while belonging to no window shape. The subtree's own clip,
 //    if it sets one, still applies;
 //  * shadow: every leaf under the tree is the analytic shadow of this shape
-//    (REDIWM_ITEM_SHADOW), resolved like the clip.
+//    (REDIWM_ITEM_SHADOW), resolved like the clip;
+//  * inert: the subtree is shown but takes no input: the pick passes through it
+//    to what is below (a window sliding off a workspace it has left).
 struct tree_props {
   struct wlr_addon addon;
-  bool has_zoom, has_scale, has_clip, unclipped, has_shadow;
+  bool has_zoom, has_scale, has_clip, unclipped, has_shadow, inert;
   double zoom, scale;
   struct rediwm_clip_spec clip;
   struct rediwm_shadow_spec shadow;
@@ -221,6 +225,12 @@ bool rediwm_projection_set_tree_unclipped(struct wlr_scene_node *node, bool uncl
   struct tree_props *props = unclipped ? tree_props_get(node) : tree_props_find(node);
   if (unclipped && !props) return false;
   if (props) props->unclipped = unclipped;
+  return true;
+}
+bool rediwm_projection_set_tree_inert(struct wlr_scene_node *node, bool inert) {
+  struct tree_props *props = inert ? tree_props_get(node) : tree_props_find(node);
+  if (inert && !props) return false;
+  if (props) props->inert = inert;
   return true;
 }
 static const struct wlr_addon_interface source_lookup_impl, group_source_impl;
@@ -518,7 +528,7 @@ static void damage_clip_change(struct rediwm_projection *p, const struct rediwm_
 // moves and shows nothing.
 static void resolve_node(struct rediwm_projection *p, struct group *g,
                          struct wlr_scene_node *node, double x, double y,
-                         bool enabled, struct rediwm_xform t,
+                         bool enabled, bool inert, struct rediwm_xform t,
                          const struct rediwm_clip *clip,
                          const struct rediwm_shadow *shadow) {
   x += node->x;
@@ -533,6 +543,7 @@ static void resolve_node(struct rediwm_projection *p, struct group *g,
       if (props->has_zoom) t = rediwm_xform_scale_about(t, props->zoom, x, y);
       if (props->has_scale) t = rediwm_xform_scale_about(t, props->scale, x, y);
       if (props->unclipped) clip = NULL;
+      if (props->inert) inert = true;
       if (props->has_clip) {
         here = rediwm_clip_resolve(t, x, y, &props->clip);
         clip = &here;
@@ -552,7 +563,7 @@ static void resolve_node(struct rediwm_projection *p, struct group *g,
     }
     struct wlr_scene_node *child;
     wl_list_for_each(child, &wlr_scene_tree_from_node(node)->children, link)
-        resolve_node(p, g, child, x, y, enabled, t, clip, shadow);
+        resolve_node(p, g, child, x, y, enabled, inert, t, clip, shadow);
     return;
   }
   struct leaf *l = get_leaf(p, node);
@@ -561,6 +572,7 @@ static void resolve_node(struct rediwm_projection *p, struct group *g,
     return;
   }
   l->seen = true;
+  if (l->inert != inert) l->inert = inert;
   // Flattened leaves within each group retain the source's paint order.
   wl_list_insert(g->items.prev, &l->paint);
   struct rediwm_item *item = &l->item;
@@ -1012,7 +1024,7 @@ static void resolve(struct rediwm_projection *p, double z, double cx, double cy,
     g->seen = true;
     g->enabled = node->enabled;
     wl_list_insert(p->paint.prev, &g->paint);
-    resolve_node(p, g, node, 0, 0, true, t, NULL, NULL);
+    resolve_node(p, g, node, 0, 0, true, false, t, NULL, NULL);
   }
 }
 static void damage_restacked(struct rediwm_projection *p);
@@ -1222,7 +1234,7 @@ static struct wlr_scene_node *pick_world(struct rediwm_projection *p, double lx,
       struct leaf *l = wl_container_of(ll, l, paint);
       const struct rediwm_item *item = &l->item;
       // An effect takes no input, and a leaf with no pixels once rounded is not shown.
-      if (!item->enabled || item->kind == REDIWM_ITEM_EFFECT) continue;
+      if (!item->enabled || item->kind == REDIWM_ITEM_EFFECT || l->inert) continue;
       const struct rediwm_snap s = rediwm_edges_snap(item->edges);
       if (s.width <= 0 || s.height <= 0 || px < s.x || px >= s.x + s.width || py < s.y ||
           py >= s.y + s.height)

@@ -26,8 +26,9 @@ pub fn init(allocator: std.mem.Allocator, io: std.Io) void {
     if (bundled_dir) |old| allocator.free(old);
     bundled_dir = icons;
     const inherited = if (std.c.getenv("XCURSOR_PATH")) |p| std.mem.span(p) else default_path;
-    if (containsDir(inherited, icons)) return;
-    const value = std.fmt.allocPrintSentinel(allocator, "{s}:{s}", .{ icons, inherited }, 0) catch return;
+    const user_icons = if (std.c.getenv("XDG_DATA_HOME")) |data| std.fmt.allocPrint(allocator, "{s}/icons", .{std.mem.span(data)}) catch return else allocator.dupe(u8, "~/.local/share/icons") catch return;
+    defer allocator.free(user_icons);
+    const value = std.fmt.allocPrintSentinel(allocator, "{s}:{s}:{s}", .{ icons, user_icons, inherited }, 0) catch return;
     if (setenv("XCURSOR_PATH", value.ptr, 1) != 0) {
         allocator.free(value);
         return;

@@ -1,3 +1,8 @@
+[meta]
+format = 1
+id = "rediwm-light"
+name = "RediWM Light"
+
 [theme]
 font = "Manrope"
 mono_font = "JetBrains Mono"
@@ -119,3 +124,6 @@ start_button_logo_color = "#1F2430"
 file_broken = "#168579"
 battery_critical = "#168579"
 desktop_notice_bg = "rgba(8,42,36,0.95)"
+
+[assets]
+color_scheme = "light"

@@ -60,6 +60,7 @@ pub fn mapped(self: *Self, top: *Top) void {
         top.auto_float_override = null;
         top.auto_seen = null;
         top.auto_reinsert = null;
+        top.auto_anchor = null;
     }
     if (top.parentWindow()) |parent| top.workspace_id = parent.workspace_id;
     if (top.workspace_id == 0) {
@@ -69,6 +70,8 @@ pub fn mapped(self: *Self, top: *Top) void {
     if (top.workspace_order == 0) {
         top.workspace_order = self.next_order;
         self.next_order += 1;
+        // Called before the new window takes focus: this is the one it splits.
+        if (top.workspace_id != 0) top.auto_anchor = self.slots[top.workspace_id - 1].focus;
     }
     if (top.server.layout_autosave) |autosave| autosave.mapped(top);
     top.zoom_index = 0;
@@ -107,6 +110,7 @@ pub fn setMode(self: *Self, server: *Server, enabled: bool) void {
     self.changing = true;
     defer self.changing = false;
     cancelGestures(server);
+    finishTransitions(server);
     server.undo.clear();
     const applying = server.undo.applying;
     server.undo.applying = true;
@@ -135,6 +139,7 @@ pub fn setMode(self: *Self, server: *Server, enabled: bool) void {
             top.auto_float_override = null;
             top.auto_seen = null;
             top.auto_reinsert = null;
+            top.auto_anchor = null;
             top.workspace_generation = self.generation;
             top.workspace_order = self.next_order;
             self.next_order += 1;
@@ -165,6 +170,7 @@ pub fn setMode(self: *Self, server: *Server, enabled: bool) void {
         var outputs = server.outputs.iterator(.forward);
         while (outputs.next()) |output| output.workspace_id = 0;
     }
+    self.tiler.quiet = true;
     self.tiler.schedule(server);
     self.refresh(server);
     focusFallback(server, null);
@@ -219,12 +225,14 @@ pub fn syncOutputs(self: *Self, server: *Server) void {
         const box = output.usableBox();
         if (moved or !std.meta.eql(box, slot.box)) {
             if (server.input.tiling_grab != null) server.input.finishTilingGrab(false);
+            finishTransitions(server);
             var tops = server.world.toplevels.iterator(.forward);
             while (tops.next()) |top| if (top.workspace_id == index + 1) {
                 _ = top.moveFromUsableToOutput(slot.box, output);
                 fit(top, output);
             };
             slot.box = box;
+            self.tiler.quiet = true;
         }
     }
     self.tiler.schedule(server);
@@ -242,14 +250,64 @@ pub fn switchTo(self: *Self, server: *Server, id: u8) void {
     slot.exists = true;
     slot.output = output;
     slot.box = output.usableBox();
+    const previous = output.workspace_id;
     output.workspace_id = id;
     // Selecting a workspace on another output focuses that output, never
     // duplicates membership onto the output under the pointer.
     if (Output.atLayout(server, server.input.cursor.x, server.input.cursor.y) != output) {
         _ = server.input.cursor.warp(null, @as(f64, @floatFromInt(slot.box.x)) + @as(f64, @floatFromInt(slot.box.width)) / 2, @as(f64, @floatFromInt(slot.box.y)) + @as(f64, @floatFromInt(slot.box.height)) / 2);
     }
+    transition(server, output, previous, id);
     self.refresh(server);
     focusFallback(server, id);
+}
+
+/// Slides the workspace `output` showed out and `id`'s in, the higher number
+/// arriving from the right (or below), along an axis no other display shares;
+/// with displays on both axes, or reduced motion, they cross-fade. Runs before
+/// `refresh`, while a frame still says whether its window was shown.
+fn transition(server: *Server, output: *Output, previous: u8, id: u8) void {
+    if (previous == 0 or previous == id) return;
+    const box = output.cached_box;
+    const sign: f32 = if (id > previous) 1 else -1;
+    var dx: f32 = 0;
+    var dy: f32 = 0;
+    if (@import("ui").anim.reducedMotion()) {
+        // Motion is off; the fade is what remains of the transition.
+    } else if (clearOfOutputs(server, output, .{ .x = box.x - box.width, .y = box.y, .width = 3 * box.width, .height = box.height })) {
+        dx = sign * @as(f32, @floatFromInt(box.width));
+    } else if (clearOfOutputs(server, output, .{ .x = box.x, .y = box.y - box.height, .width = box.width, .height = 3 * box.height })) {
+        dy = sign * @as(f32, @floatFromInt(box.height));
+    }
+    const fade = dx == 0 and dy == 0;
+    var tops = server.world.toplevels.iterator(.forward);
+    while (tops.next()) |top| {
+        if (!top.in_world or top.closing) continue;
+        const shown = top.frame_tree.node.enabled;
+        if (top.workspace_id == id and @import("window_tabs.zig").visible(top)) {
+            // A window moved along with the switch is already in place.
+            if (!shown or top.switch_leaving) top.switchIn(dx, dy, fade);
+        } else if (top.workspace_id == previous and shown and !top.switch_leaving) {
+            top.switchOut(-dx, -dy, fade);
+        }
+    }
+}
+
+/// Whether no output but `output` meets `strip`, the band a slide crosses.
+fn clearOfOutputs(server: *Server, output: *Output, strip: wlr.Box) bool {
+    var outputs = server.outputs.iterator(.forward);
+    while (outputs.next()) |other| {
+        if (other == output or !other.isLogicallyEnabled()) continue;
+        const b = other.cached_box;
+        if (b.x < strip.x + strip.width and strip.x < b.x + b.width and b.y < strip.y + strip.height and strip.y < b.y + b.height) return false;
+    }
+    return true;
+}
+
+/// Ends every workspace switch transition at once.
+fn finishTransitions(server: *Server) void {
+    var tops = server.world.toplevels.iterator(.forward);
+    while (tops.next()) |top| top.finishSwitch();
 }
 
 pub fn cycle(self: *Self, server: *Server, forward: bool) void {
@@ -299,6 +357,8 @@ fn transfer(self: *Self, top: *Top, id: u8, translate: bool) void {
         const owner = root(member);
         if (owner != leader and (leader.tab_group == 0 or owner.tab_group != leader.tab_group)) continue;
         member.workspace_id = id;
+        // Joins beside the destination's focused window, as a new one would.
+        member.auto_anchor = slot.focus;
         if (source) |out| {
             if (translate and out != destination) _ = member.moveFromUsableToOutput(out.usableBox(), destination);
         }
@@ -408,6 +468,7 @@ fn restoreCanvas(top: *Top, topology_changed: bool) void {
     top.auto_float_override = null;
     top.auto_seen = null;
     top.auto_reinsert = null;
+    top.auto_anchor = null;
     if (top.canvas_state) |saved| {
         if (top.fullscreen) top.setFullscreen(false);
         top.leaveLayout();

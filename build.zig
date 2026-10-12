@@ -93,6 +93,23 @@ pub fn build(b: *std.Build) void {
     config_mod.addImport("xkbcommon", xkbcommon);
     config_mod.linkSystemLibrary("xkbcommon", .{});
 
+    const theme_helper = b.addExecutable(.{
+        .name = "rediwm-theme",
+        .root_module = b.createModule(.{ .root_source_file = b.path("src/theme_main.zig"), .target = target, .optimize = optimize, .link_libc = true }),
+        .use_llvm = use_llvm,
+        .use_lld = use_llvm,
+    });
+    theme_helper.root_module.addImport("config", config_mod);
+    theme_helper.root_module.addImport("ui", ui_mod);
+    theme_helper.root_module.addCSourceFile(.{ .file = b.path("src/theme_helper/native.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    inline for (.{ "libarchive", "librsvg-2.0", "gdk-pixbuf-2.0" }) |lib| theme_helper.root_module.linkSystemLibrary(lib, .{});
+    addThumbCodec(b, theme_helper.root_module);
+    theme_helper.root_module.linkSystemLibrary("libwebp", .{});
+    theme_helper.root_module.linkSystemLibrary("xcursor", .{});
+    b.installArtifact(theme_helper);
+    b.getInstallStep().dependOn(&b.addInstallFileWithDir(b.path("data/rediwm-theme.desktop"), .prefix, "share/applications/rediwm-theme.desktop").step);
+    b.getInstallStep().dependOn(&b.addInstallFileWithDir(b.path("data/rediwm-theme.xml"), .prefix, "share/mime/packages/rediwm-theme.xml").step);
+
     const protocol_mod = b.createModule(.{
         .root_source_file = b.path("src/ipc/protocol.zig"),
         .target = target,

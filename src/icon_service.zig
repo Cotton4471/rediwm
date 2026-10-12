@@ -114,6 +114,7 @@ pub const IconService = struct {
     published: std.StringHashMapUnmanaged(Published) = .empty,
     id_to_key: std.AutoHashMapUnmanaged(u64, []const u8) = .empty,
     next_id: u64 = 1,
+    owns_config: bool = false,
     unpinned_bytes: usize = 0, // sum of .bytes over published entries with refcount == 0
     touch_clock: u64 = 0,
 
@@ -168,6 +169,10 @@ pub const IconService = struct {
         self.published.deinit(self.allocator);
         self.id_to_key.deinit(self.allocator);
 
+        if (self.owns_config) {
+            self.allocator.free(self.cfg.theme_name);
+            self.allocator.free(self.cfg.override_root);
+        }
         self.allocator.destroy(self);
     }
 
@@ -234,7 +239,7 @@ pub const IconService = struct {
     /// Essential priority: never budget-gated. See `prefetch` for the
     /// speculative counterpart.
     pub fn request(self: *IconService, name: []const u8, size_px: i32) Lookup {
-        if (name.len == 0) return .missing;
+        if (name.len == 0 or !self.running) return .missing;
         var buf: [512]u8 = undefined;
         const key = formatKey(&buf, size_px, name) orelse return .missing;
 
@@ -296,6 +301,41 @@ pub const IconService = struct {
     /// since-evicted id as a no-op (see their tests), so the stale id each
     /// consumer is still holding just becomes inert until its next
     /// `syncChrome`/repaint re-requests and re-pins the fresh entry.
+    /// Stop the single decoder before changing its paths or index cache. The
+    /// eventfd and published IDs survive, so hosts keep their subscriptions.
+    pub fn reconfigure(self: *IconService, cfg: icon_theme.Config) !void {
+        var transferred = false;
+        const name = try self.allocator.dupe(u8, cfg.theme_name);
+        errdefer if (!transferred) self.allocator.free(name);
+        const root = try self.allocator.dupe(u8, cfg.override_root);
+        errdefer if (!transferred) self.allocator.free(root);
+        self.lock();
+        self.running = false;
+        self.dropQueuedLocked(&self.job_queue_essential);
+        self.dropQueuedLocked(&self.job_queue_speculative);
+        self.broadcast();
+        self.unlock();
+        if (self.thread) |t| t.join();
+        self.thread = null;
+        self.drainCompletions();
+        self.freeAllPublished();
+        icon_theme.forgetParsedThemes(icon_cache.gpa);
+        if (self.owns_config) {
+            self.allocator.free(self.cfg.theme_name);
+            self.allocator.free(self.cfg.override_root);
+        }
+        self.cfg = cfg;
+        self.cfg.theme_name = name;
+        self.cfg.override_root = root;
+        self.owns_config = true;
+        transferred = true;
+        self.running = true;
+        self.thread = std.Thread.spawn(.{}, run, .{self}) catch |err| {
+            self.running = false;
+            return err;
+        };
+    }
+
     pub fn invalidateAll(self: *IconService) void {
         self.freeAllPublished();
     }

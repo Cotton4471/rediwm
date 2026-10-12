@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Install theme
+Comment=Validate and install a RediWM theme pack
+Exec=rediwm-theme install %f
+MimeType=application/x-rediwm-theme;
+Icon=preferences-desktop-theme
+Terminal=false
+NoDisplay=true
+Categories=Settings;DesktopSettings;

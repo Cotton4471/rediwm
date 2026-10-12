@@ -76,3 +76,7 @@ pub fn setTreeShadow(node: *wlr.SceneNode, spec: ?ShadowSpec) bool {
 /// window's shadow hangs under the window's tree but is no part of its shape.
 extern fn rediwm_projection_set_tree_unclipped(node: *wlr.SceneNode, unclipped: bool) bool;
 pub const setTreeUnclipped = rediwm_projection_set_tree_unclipped;
+/// Shows the subtree but lets the pick pass through it to what is below: a
+/// window sliding off the workspace it has left.
+extern fn rediwm_projection_set_tree_inert(node: *wlr.SceneNode, inert: bool) bool;
+pub const setTreeInert = rediwm_projection_set_tree_inert;

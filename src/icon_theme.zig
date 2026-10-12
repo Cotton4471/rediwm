@@ -12,8 +12,13 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
+const pthread = std.posix.system;
+var index_mutex: pthread.pthread_mutex_t = pthread.PTHREAD_MUTEX_INITIALIZER;
+
 pub const Config = struct {
     theme_name: []const u8,
+    override_root: []const u8 = "",
+    generation: u64 = 0,
     base_dirs: []const []const u8,
 };
 
@@ -62,6 +67,7 @@ pub const Found = struct {
     // coerces fine everywhere else (readFileAlloc, allocator.free, ...).
     path: [:0]u8,
     svg: bool,
+    pack: bool = false,
 };
 
 const IconExt = enum { png, svg };
@@ -102,6 +108,18 @@ const Theme = struct {
 // theme -> theme's Inherits (recursive, deduped) -> "hicolor" (mandatory
 // fallback even if undeclared) -> flat /usr/share/pixmaps.
 pub fn find(allocator: Allocator, io: Io, cfg: Config, icon_name: []const u8, target_px: i32) !?Found {
+    _ = pthread.pthread_mutex_lock(&index_mutex);
+    defer _ = pthread.pthread_mutex_unlock(&index_mutex);
+    if (cfg.override_root.len > 0 and @import("config").theme_pack.relative(icon_name) and std.mem.indexOfScalar(u8, icon_name, '/') == null) {
+        for ([_][]const u8{ "svg", "png" }) |ext| {
+            const rel = try std.fmt.allocPrint(allocator, "icons/{s}.{s}", .{ icon_name, ext });
+            defer allocator.free(rel);
+            if (@import("config").theme_pack.asset(allocator, io, cfg.override_root, rel)) |path| {
+                defer allocator.free(path);
+                return .{ .path = try allocator.dupeZ(u8, path), .svg = std.mem.eql(u8, ext, "svg"), .pack = true };
+            } else |_| {}
+        }
+    }
     // Every theme-name string this call ever allocates (Inherits= entries),
     // freed once at the end. `pending`/`visited` below only ever hold slices
     // borrowed from here or from `cfg.theme_name`, so nothing can dangle.
@@ -166,9 +184,11 @@ var parsed_themes: std.StringHashMapUnmanaged(?Theme) = .empty;
 
 /// Borrowed from `parsed_themes`; the caller must not deinit the result.
 fn themeIndex(allocator: Allocator, io: Io, cfg: Config, theme_name: []const u8) !?Theme {
-    if (parsed_themes.get(theme_name)) |cached| return cached;
+    const cache_name = try std.fmt.allocPrint(allocator, "{d}:{s}", .{ cfg.generation, theme_name });
+    defer allocator.free(cache_name);
+    if (parsed_themes.get(cache_name)) |cached| return cached;
 
-    const key = try allocator.dupe(u8, theme_name);
+    const key = try allocator.dupe(u8, cache_name);
     errdefer allocator.free(key);
     const parsed = try loadThemeIndex(allocator, io, cfg, theme_name);
     errdefer if (parsed) |theme| theme.deinit(allocator);
@@ -179,6 +199,8 @@ fn themeIndex(allocator: Allocator, io: Io, cfg: Config, theme_name: []const u8)
 /// Drop every parsed index. Only needed if the icon theme configuration ever
 /// becomes changeable at runtime; nothing calls it today.
 pub fn forgetParsedThemes(allocator: Allocator) void {
+    _ = pthread.pthread_mutex_lock(&index_mutex);
+    defer _ = pthread.pthread_mutex_unlock(&index_mutex);
     var it = parsed_themes.iterator();
     while (it.next()) |entry| {
         allocator.free(entry.key_ptr.*);
@@ -547,4 +569,58 @@ test "theme section index preserves declared order and first duplicate" {
     try std.testing.expectEqual(@as(i32, 64), parsed.dirs[0].max_size);
     try std.testing.expectEqualStrings("small", parsed.dirs[1].path);
     try std.testing.expectEqual(@as(i32, 16), parsed.dirs[1].size);
+}
+
+/// Installed icon-theme names for the explicit Appearance picker.
+pub fn listNames(a: Allocator, io: Io, cfg: Config) ![][]const u8 {
+    var out: std.ArrayList([]const u8) = .empty;
+    try out.append(a, "");
+    for (cfg.base_dirs) |base| {
+        var dir = Io.Dir.cwd().openDir(io, base, .{ .iterate = true }) catch continue;
+        defer dir.close(io);
+        var it = dir.iterate();
+        while (try it.next(io)) |entry| {
+            if (entry.kind != .directory or !@import("config").theme_pack.relative(entry.name)) continue;
+            var found = false;
+            for (out.items) |name| if (std.mem.eql(u8, name, entry.name)) {
+                found = true;
+            };
+            if (found) continue;
+            const index = try std.fs.path.join(a, &.{ base, entry.name, "index.theme" });
+            Io.Dir.cwd().access(io, index, .{}) catch continue;
+            try out.append(a, try a.dupe(u8, entry.name));
+        }
+    }
+    std.mem.sort([]const u8, out.items[1..], {}, struct {
+        fn less(_: void, x: []const u8, y: []const u8) bool {
+            return std.ascii.lessThanIgnoreCase(x, y);
+        }
+    }.less);
+    return out.toOwnedSlice(a);
+}
+
+/// XDG special-directory identity, shared by Files and the desktop. Call at
+/// scan time so reading user-dirs.dirs never enters the paint path.
+pub fn folderName(a: Allocator, io: Io, env: std.process.Environ, path: []const u8) []const u8 {
+    const home = env.getPosix("HOME") orelse return "folder";
+    if (std.mem.eql(u8, path, home)) return "user-home";
+    const data = env.getPosix("XDG_DATA_HOME") orelse (std.fs.path.join(a, &.{ home, ".local/share" }) catch return "folder");
+    const trash = std.fs.path.join(a, &.{ data, "Trash/files" }) catch return "folder";
+    if (std.mem.eql(u8, path, trash)) return "user-trash";
+    const config_home = env.getPosix("XDG_CONFIG_HOME") orelse (std.fs.path.join(a, &.{ home, ".config" }) catch return "folder");
+    const file = std.fs.path.join(a, &.{ config_home, "user-dirs.dirs" }) catch return "folder";
+    const bytes = Io.Dir.cwd().readFileAlloc(io, file, a, .limited(64 * 1024)) catch "";
+    var lines = std.mem.splitScalar(u8, bytes, '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \t\r");
+        const eq = std.mem.indexOfScalar(u8, line, '=') orelse continue;
+        const key = std.mem.trim(u8, line[0..eq], " \t");
+        const value = @import("ui").theme.unquote(std.mem.trim(u8, line[eq + 1 ..], " \t")) catch continue;
+        const full = if (std.mem.startsWith(u8, value, "$HOME/")) (std.fs.path.join(a, &.{ home, value[6..] }) catch continue) else value;
+        if (!std.mem.eql(u8, path, full)) continue;
+        const keys = [_][]const u8{ "XDG_DESKTOP_DIR", "XDG_DOCUMENTS_DIR", "XDG_DOWNLOAD_DIR", "XDG_MUSIC_DIR", "XDG_PICTURES_DIR", "XDG_VIDEOS_DIR", "XDG_TEMPLATES_DIR", "XDG_PUBLICSHARE_DIR" };
+        const names = [_][]const u8{ "user-desktop", "folder-documents", "folder-download", "folder-music", "folder-pictures", "folder-videos", "folder-templates", "folder-publicshare" };
+        for (keys, names) |k, name| if (std.mem.eql(u8, key, k)) return name;
+    }
+    return "folder";
 }

@@ -116,6 +116,7 @@ saved canvas state and multi-window layout undo, both sides of tiled/floating
 output transfers, dialog transfers, closed-member reconciliation, late configure
 replies, keyboard/IPC tiling controls, drag previews and Escape, live
 split resizing, unmap/remap, placeholder replacement, automatic split geometry,
+new windows splitting the focused tile, hidden input while a workspace slides out,
 constraints/overflow, stable focus,
 minimize/maximize/fullscreen reinsertion, manual placement, workspace membership,
 hidden input, dialog transfers, Settings, workspace protocol activation,
@@ -384,3 +385,5 @@ Keyring unlock and browser/OBS sharing remain unverified. See
 [desktop readiness](desktop-readiness.md) for review results and known baseline
 failures, and [screen sharing](docs/screen-sharing.md#remaining-qualification)
 for the remaining capture acceptance checks.
+
+`python3 tests/theme_packs.py` covers theme ZIP installation, refusal of unsafe paths/links/special files/bombs, pack discovery, base plus overrides, live wallpaper and folder icons, reset, cursors and removal in isolated data/config/state directories.

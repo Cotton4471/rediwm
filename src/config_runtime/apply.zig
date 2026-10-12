@@ -23,6 +23,9 @@ const themeEql = loader.themeEql;
 const wheelAccel = loader.wheelAccel;
 pub const applyInactiveOpacity = applyWindowOpacity;
 pub fn applyDiff(server: *Server, old: Config, new: Config) void {
+    const pack_changed = !std.mem.eql(u8, old.theme_base, new.theme_base) or
+        !std.mem.eql(u8, if (old.theme_pack) |p| p.root else "", if (new.theme_pack) |p| p.root else "") or
+        !std.mem.eql(u8, if (old.theme_pack) |p| p.bytes else "", if (new.theme_pack) |p| p.bytes else "");
     server.world.workspaces.setMode(server, new.compositor.desktop_mode == .workspaces);
     server.window_tabs.reconfigure(server);
     if (old.compositor.window_gap != new.compositor.window_gap) server.world.workspaces.tiler.schedule(server);
@@ -48,6 +51,8 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
     if (!outputsColorEql(old.outputs, new.outputs) or !nightLightEql(old.night_light, new.night_light)) {
         server.night_light.reconfigure(new.night_light);
     }
+    @import("ui").shell_icons.configure(server.io, if (new.theme_pack) |p| p.root else "");
+    if (pack_changed or !std.mem.eql(u8, old.compositor.icon_theme, new.compositor.icon_theme)) @import("theme_pack.zig").configureIcons(server);
     theme_mod.global = new.theme;
     theme_mod.taskbar_override = if (new.taskbar_theme) |chosen| theme_mod.taskbarTokens(chosen) else null;
     @import("ui").text.setPreferredFamilies(theme_mod.global.font, theme_mod.global.mono_font);
@@ -144,7 +149,7 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
         n.dnd = new.notifications.dnd;
         n.default_timeout_ms = new.notifications.default_timeout_ms;
     }
-    if (!std.mem.eql(u8, old.compositor.wallpaper, new.compositor.wallpaper)) server.reloadWallpaper();
+    if (!std.mem.eql(u8, old.compositor.wallpaper, new.compositor.wallpaper) or pack_changed) server.reloadWallpaper();
     if (old.compositor.dark_mode != new.compositor.dark_mode) {
         @import("../session/settings_portal.zig").emitColorScheme(server);
         // A hand edit while settings is open: rebuild so the toggle agrees.
@@ -160,7 +165,7 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
         if (server.input.open_control_center) |cc| cc.refresh();
     }
 
-    const theme_changed = !themeEql(old.theme, new.theme) or old.compositor.border_radius != new.compositor.border_radius;
+    const theme_changed = pack_changed or !themeEql(old.theme, new.theme) or old.compositor.border_radius != new.compositor.border_radius;
     const taskbar_theme_changed = !theme_mod.taskbarOverrideEql(old.taskbar_theme, new.taskbar_theme);
     if (theme_changed) {
         if (server.desktop) |desktop| desktop.app.themeChanged();

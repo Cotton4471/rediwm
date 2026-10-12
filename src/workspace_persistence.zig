@@ -278,6 +278,7 @@ pub const Restore = struct {
                 if (saved.order == order and id != null and server.findToplevelById(id.?) != null) slot.focus = id;
             };
         }
+        server.world.workspaces.tiler.quiet = true;
         server.world.workspaces.tiler.schedule(server);
         server.world.workspaces.refresh(server);
     }

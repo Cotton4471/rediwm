@@ -39,13 +39,17 @@ pub const CommandSpec = struct {
     /// on (`IpcServer.automation`).
     automation: bool = false,
 
+    wire_name: ?[]const u8 = null,
     pub fn wire(comptime self: CommandSpec) []const u8 {
-        return @tagName(self.id);
+        return self.wire_name orelse @tagName(self.id);
     }
 };
 
 // Canonical v1 names and internal parameter-parser routes.
 pub const specs = [_]CommandSpec{
+    .{ .id = .theme_list, .wire_name = "theme.list", .kind = .query, .description = "List installed and embedded theme packs", .params_schema = "{}", .description_order = 107 },
+    .{ .id = .theme_apply, .wire_name = "theme.apply", .kind = .action, .description = "Apply a pack and clear appearance overrides", .params_schema = "{\"id\":string}", .description_order = 108 },
+    .{ .id = .theme_install, .wire_name = "theme.install", .kind = .action, .description = "Install a theme ZIP or directory using the isolated helper", .params_schema = "{\"path\":string,\"replace\"?:boolean}", .description_order = 109 },
     .{ .id = .set_desktop_mode, .kind = .action, .description = "Set Canvas or Workspaces mode", .params_schema = "{\"mode\":\"canvas\" | \"workspaces\", \"persist\"?:boolean}", .description_order = 101 },
     .{ .id = .set_workspace_layout, .kind = .action, .description = "Set a workspace to automatic tiling or floating", .params_schema = "{\"workspace\":number, \"automatic\":boolean}", .description_order = 102 },
     .{ .id = .switch_workspace, .kind = .action, .description = "Activate a workspace", .params_schema = "{\"workspace\":number}", .description_order = 103 },
@@ -839,7 +843,7 @@ pub const capabilities = blk: {
 pub const descriptions = blk: {
     var result: [specs.len]protocol.CommandDesc = undefined;
     for (specs) |s| result[s.description_order] = .{
-        .name = @tagName(s.id),
+        .name = s.wire(),
         .kind = @tagName(s.kind),
         .description = s.description,
         .params_schema = s.params_schema,

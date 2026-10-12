@@ -99,7 +99,9 @@ fn start(init: std.process.Init) !bool {
     // Process-lifetime caches, emptied after the scene has dropped its buffers.
     defer @import("ui").text.deinit();
     defer @import("panel_buffer.zig").PanelBuffer.drainPool();
-    defer @import("ui").shell_icons.deinit();
+    defer @import("ui").shell_icons.deinitPack();
+    defer @import("desktop/watcher.zig").deinitIcons();
+    defer @import("icon_cache.zig").deinit();
     defer server.deinit();
 
     var buf: [11]u8 = undefined;

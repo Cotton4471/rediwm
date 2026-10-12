@@ -64,6 +64,8 @@ bool rediwm_projection_set_tree_shadow(struct wlr_scene_node *, const struct red
 // Ends the clip inherited from an ancestor for this subtree (an xdg popup lives
 // under its parent's tree but is no part of the window's shape).
 bool rediwm_projection_set_tree_unclipped(struct wlr_scene_node *, bool);
+// Shows the subtree but lets the pick pass through it to what is below.
+bool rediwm_projection_set_tree_inert(struct wlr_scene_node *, bool);
 // Buffer-local damage for the next buffer set on a compositor-owned source
 // buffer node; NULL damages all of it. Surface leaves track their own.
 struct pixman_region32;

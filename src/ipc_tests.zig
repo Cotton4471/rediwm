@@ -805,7 +805,7 @@ test "IPC registry covers public variants and all routes" {
             cap_count += 1;
         };
         var desc_count: usize = 0;
-        for (registry.descriptions) |desc| if (std.mem.eql(u8, desc.name, @tagName(s.id))) {
+        for (registry.descriptions) |desc| if (std.mem.eql(u8, desc.name, comptime s.wire())) {
             desc_count += 1;
         };
         try std.testing.expectEqual(@as(usize, 1), cap_count);
@@ -885,7 +885,7 @@ test "every v1 command parses" {
         var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
         defer arena.deinit();
         const a = arena.allocator();
-        const input = try std.fmt.allocPrint(a, "{{\"version\":1,\"command\":\"{s}\",\"params\":{s}}}", .{ comptime s.wire(), if (s.id == .set_desktop_mode) "{\"mode\":\"workspaces\"}" else params });
+        const input = try std.fmt.allocPrint(a, "{{\"version\":1,\"command\":\"{s}\",\"params\":{s}}}", .{ comptime s.wire(), if (s.id == .set_desktop_mode) "{\"mode\":\"workspaces\"}" else if (s.id == .theme_apply) "{\"id\":\"rediwm-dark\"}" else params });
         const request = try protocol.parseRequest(a, input);
         try std.testing.expectEqualStrings(@tagName(s.id), requestCommandName(request));
     }

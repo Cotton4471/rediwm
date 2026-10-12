@@ -610,7 +610,8 @@ pub fn applyKey(allocator: Allocator, t: *Theme, key: []const u8, value: []const
     }
     inline for (optional_color_keys) |name| {
         if (std.mem.eql(u8, key, name)) {
-            @field(t, name) = try parseColor(try unquote(value));
+            const text = try unquote(value);
+            @field(t, name) = if (std.mem.eql(u8, text, "inherit")) null else try parseColor(text);
             return;
         }
     }
@@ -665,9 +666,29 @@ fn appendColor(allocator: Allocator, buf: *std.ArrayList(u8), key: []const u8, c
     try appendLine(allocator, buf, "{s} = \"rgba({d},{d},{d},{d:.3})\"\n", .{ key, q[0], q[1], q[2], std.math.clamp(c[3], 0, 1) });
 }
 
+pub fn knownKey(key: []const u8) bool {
+    inline for (std.meta.fields(Theme)) |field| if (std.mem.eql(u8, key, field.name)) return true;
+    return std.mem.eql(u8, key, "taskbar_height");
+}
+
 pub fn writeInto(allocator: Allocator, buf: *std.ArrayList(u8), t: Theme) !void {
-    const defaults: Theme = .{};
+    return writeOverrides(allocator, buf, t, .{}, "");
+}
+
+pub fn writeOverrides(allocator: Allocator, buf: *std.ArrayList(u8), t: Theme, defaults: Theme, base: []const u8) !void {
+    return writeDiff(allocator, buf, t, defaults, base, base.len == 0);
+}
+
+pub fn saveOverlay(allocator: Allocator, io: Io, path: []const u8, t: Theme, below: Theme) !void {
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(allocator);
+    try writeDiff(allocator, &buf, t, below, "", false);
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = buf.items });
+}
+
+fn writeDiff(allocator: Allocator, buf: *std.ArrayList(u8), t: Theme, defaults: Theme, base: []const u8, force_radius: bool) !void {
     try buf.appendSlice(allocator, "[theme]\n");
+    if (base.len > 0) try appendLine(allocator, buf, "base = \"{s}\"\n", .{base});
     inline for (boolean_keys) |name| {
         if (@field(t, name) != @field(defaults, name)) try appendLine(allocator, buf, "{s} = {}\n", .{ name, @field(t, name) });
     }
@@ -682,10 +703,9 @@ pub fn writeInto(allocator: Allocator, buf: *std.ArrayList(u8), t: Theme) !void 
         // Keep the frame radius explicit even at Default, so a legacy
         // compositor.border_radius cannot reappear after saving the theme.
         if (comptime std.mem.eql(u8, name, "radius_lg")) {
-            try appendLine(allocator, buf, "{s} = {d}\n", .{ name, @field(t, name) });
-            continue;
+            if (force_radius) try appendLine(allocator, buf, "{s} = {d}\n", .{ name, @field(t, name) });
         }
-        if (@field(t, name) != @field(defaults, name)) try appendLine(allocator, buf, "{s} = {d}\n", .{ name, @field(t, name) });
+        if ((!force_radius or !std.mem.eql(u8, name, "radius_lg")) and @field(t, name) != @field(defaults, name)) try appendLine(allocator, buf, "{s} = {d}\n", .{ name, @field(t, name) });
     }
     inline for (color_keys) |name| {
         if (!std.meta.eql(quantize(@field(t, name)), quantize(@field(defaults, name)))) try appendColor(allocator, buf, name, @field(t, name));
@@ -694,7 +714,12 @@ pub fn writeInto(allocator: Allocator, buf: *std.ArrayList(u8), t: Theme) !void 
     // whichever palette happened to be current, turning "follow the accent"
     // into a fixed colour on the first save.
     inline for (optional_color_keys) |name| {
-        if (@field(t, name)) |color| try appendColor(allocator, buf, name, color);
+        const actual = @field(t, name);
+        const original = @field(defaults, name);
+        const equal = if (actual) |value| (if (original) |other| std.meta.eql(quantize(value), quantize(other)) else false) else original == null;
+        if (!equal) {
+            if (@field(t, name)) |color| try appendColor(allocator, buf, name, color) else try appendLine(allocator, buf, "{s} = \"inherit\"\n", .{name});
+        }
     }
 }
 

@@ -47,11 +47,18 @@ pub const Launched = struct {
 /// White glyph from the shell icon set, centred in a transparent square so it
 /// sits in the same box as the themed icons. Rasters live for the process,
 /// like `icon_cache`'s, because snapshots only borrow their pixels.
-var builtin_icons: [8]?struct { glyph: @import("ui").layout.IconId, entry: icons.Entry } = @splat(null);
-fn builtinIcon(glyph: @import("ui").layout.IconId, size: i32) ?icons.Entry {
-    for (builtin_icons) |slot| if (slot) |s| if (s.glyph == glyph and s.entry.size == size) return s.entry;
+const BuiltinIcon = struct { glyph: @import("ui").layout.IconId, entry: icons.Entry, generation: u64 };
+var builtin_icons: std.ArrayList(BuiltinIcon) = .empty;
+pub fn deinitIcons() void {
+    for (builtin_icons.items) |slot| a.free(slot.entry.pixels);
+    builtin_icons.deinit(a);
+    builtin_icons = .empty;
+}
+fn builtinIcon(glyph: @import("ui").layout.IconId, size: i32, generation: u64) ?icons.Entry {
+    for (builtin_icons.items) |s| if (s.glyph == glyph and s.entry.size == size and s.generation == generation) return s.entry;
     const inner = @divTrunc(size * 3, 4);
-    const mask = @import("ui").shell_icons.get(glyph, inner) orelse return null;
+    const mask = @import("ui").shell_icons.getOwned(glyph, inner) orelse return null;
+    defer a.free(mask.alpha);
     const n: usize = @intCast(size);
     const pixels = a.alloc(u32, n * n) catch return null;
     @memset(pixels, 0);
@@ -62,9 +69,9 @@ fn builtinIcon(glyph: @import("ui").layout.IconId, size: i32) ?icons.Entry {
         pixels[(y + pad) * n + x + pad] = v << 24 | v << 16 | v << 8 | v; // premultiplied white
     };
     const entry = icons.Entry{ .pixels = pixels, .size = size };
-    for (&builtin_icons) |*slot| if (slot.* == null) {
-        slot.* = .{ .glyph = glyph, .entry = entry };
-        break;
+    builtin_icons.append(a, .{ .glyph = glyph, .entry = entry, .generation = generation }) catch {
+        a.free(pixels);
+        return null;
     };
     return entry;
 }
@@ -76,6 +83,8 @@ pub const Worker = struct {
     dir: []const u8,
     layout: []const u8,
     theme_cfg: theme.Config,
+    pending_theme: ?theme.Config = null,
+    theme_owned: bool = false,
     mutex: c.pthread_mutex_t = undefined,
     pending: ?*Snapshot = null,
     error_message: [256]u8 = undefined,
@@ -137,6 +146,14 @@ pub const Worker = struct {
         self.commands.deinit(a);
         self.catalog_arena.deinit();
         if (self.pending_child_env) |*env| env.deinit();
+        if (self.pending_theme) |cfg| {
+            a.free(cfg.theme_name);
+            a.free(cfg.override_root);
+        }
+        if (self.theme_owned) {
+            a.free(self.theme_cfg.theme_name);
+            a.free(self.theme_cfg.override_root);
+        }
         self.child_env.deinit();
         for (self.theme_cfg.base_dirs) |d| a.free(d);
         a.free(self.theme_cfg.base_dirs);
@@ -165,6 +182,25 @@ pub const Worker = struct {
     }
 
     /// Asks the worker to rescan from the Wayland thread.
+    pub fn updateTheme(self: *Worker, cfg: theme.Config) void {
+        var next = cfg;
+        next.theme_name = a.dupe(u8, cfg.theme_name) catch return;
+        next.override_root = a.dupe(u8, cfg.override_root) catch {
+            a.free(next.theme_name);
+            return;
+        };
+        // The worker's original search roots have process lifetime.
+        next.base_dirs = self.theme_cfg.base_dirs;
+        _ = c.pthread_mutex_lock(&self.mutex);
+        if (self.pending_theme) |old| {
+            a.free(old.theme_name);
+            a.free(old.override_root);
+        }
+        self.pending_theme = next;
+        _ = c.pthread_mutex_unlock(&self.mutex);
+        self.requestRefresh();
+    }
+
     pub fn requestRefresh(self: *Worker) void {
         self.refresh.store(true, .release);
         signal(self.wake_worker);
@@ -249,9 +285,21 @@ pub const Worker = struct {
             .{ .kind = .home, .name = "Home", .path = home, .glyph = .home },
             .{ .kind = .trash, .name = "Trash", .path = trash_files, .glyph = .trash_can },
         };
-        for (entries) |e| try list.append(mem, .{ .path = try mem.dupe(u8, e.path), .name = e.name, .icon = builtinIcon(e.glyph, size), .folder = true, .cell = config.lookup(mem, saved, e.path), .builtin = e.kind });
+        for (entries) |e| try list.append(mem, .{ .path = try mem.dupe(u8, e.path), .name = e.name, .icon = icons.get(self.theme_cfg, self.io, if (e.kind == .home) "user-home" else "user-trash", size) orelse builtinIcon(e.glyph, size, self.theme_cfg.generation), .folder = true, .cell = config.lookup(mem, saved, e.path), .builtin = e.kind });
     }
     fn scan(self: *Worker) !*Snapshot {
+        _ = c.pthread_mutex_lock(&self.mutex);
+        if (self.pending_theme) |next| {
+            if (self.theme_owned) {
+                a.free(self.theme_cfg.theme_name);
+                a.free(self.theme_cfg.override_root);
+            }
+            self.theme_cfg = next;
+            self.theme_owned = true;
+            self.pending_theme = null;
+        }
+        _ = c.pthread_mutex_unlock(&self.mutex);
+
         const snap = try a.create(Snapshot);
         snap.* = .{ .arena = std.heap.ArenaAllocator.init(a), .items = &.{} };
         errdefer snap.destroy();
@@ -290,7 +338,7 @@ pub const Worker = struct {
             const resolved = if (entry.kind == .sym_link) c.realpath(path, null) else null;
             defer if (resolved != null) c.free(resolved);
             const target_name = if (resolved != null) std.mem.span(resolved) else entry.name;
-            var icon_name: []const u8 = if (folder) "folder" else mimeIcon(target_name);
+            var icon_name: []const u8 = if (folder) theme.folderName(mem, self.io, self.environ, path) else mimeIcon(target_name);
             if (!folder and std.mem.endsWith(u8, target_name, ".desktop")) {
                 const content = std.Io.Dir.cwd().readFileAlloc(self.io, path, mem, .limited(512 * 1024)) catch continue;
                 const parsed = desktop.parse(mem, content, desktop.Locale.fromEnv(self.environ)) orelse continue;
@@ -306,6 +354,7 @@ pub const Worker = struct {
                 }
             }
             item.icon = icons.get(self.theme_cfg, self.io, icon_name, self.icon_size.load(.acquire));
+            if (item.icon == null and folder) item.icon = icons.get(self.theme_cfg, self.io, "folder", self.icon_size.load(.acquire));
             try list.append(mem, item);
         }
         std.mem.sort(Item, list.items, {}, struct {

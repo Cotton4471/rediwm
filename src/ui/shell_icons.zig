@@ -39,7 +39,106 @@ const Entry = struct { id: IconId, mask: Mask };
 var cache: [64]?Entry = @splat(null);
 var next: usize = 0;
 
+var overrides: [std.meta.fields(IconId).len]?[]u8 = @splat(null);
+var pack_root: []const u8 = "";
+var source_mutex: std.posix.system.pthread_mutex_t = .{};
+
+pub fn configure(io: std.Io, root: []const u8) void {
+    _ = std.posix.system.pthread_mutex_lock(&source_mutex);
+    defer _ = std.posix.system.pthread_mutex_unlock(&source_mutex);
+    clearPack();
+    pack_root = if (root.len > 0) std.heap.c_allocator.dupe(u8, root) catch "" else "";
+    if (root.len == 0) return;
+    inline for (.{
+        .{ IconId.git_branch, "git-branch" },
+        .{ IconId.home, "home" },
+        .{ IconId.folder, "folder" },
+        .{ IconId.edit, "edit" },
+        .{ IconId.keyboard, "keyboard" },
+        .{ IconId.settings, "settings" },
+        .{ IconId.mouse, "mouse" },
+        .{ IconId.display, "display" },
+        .{ IconId.headphones, "headphones" },
+        .{ IconId.music, "music" },
+        .{ IconId.wifi, "wifi" },
+        .{ IconId.ethernet, "ethernet" },
+        .{ IconId.globe, "globe" },
+        .{ IconId.bluetooth, "bluetooth" },
+        .{ IconId.battery, "battery" },
+        .{ IconId.notification, "notification-bell" },
+        .{ IconId.volume_low, "speaker" },
+        .{ IconId.volume_muted, "speaker-xmark" },
+        .{ IconId.clock, "clock" },
+        .{ IconId.lock, "lock" },
+        .{ IconId.logout, "logout" },
+        .{ IconId.reboot, "restart" },
+        .{ IconId.power, "power-button" },
+        .{ IconId.eye, "eye" },
+        .{ IconId.eye_off, "eye-off" },
+        .{ IconId.refresh, "refresh" },
+        .{ IconId.cut, "cut" },
+        .{ IconId.copy, "copy" },
+        .{ IconId.paste, "paste" },
+        .{ IconId.trash, "trash-outline" },
+        .{ IconId.trash_can, "trash" },
+        .{ IconId.view_grid, "view-grid" },
+        .{ IconId.view_list, "view-list" },
+        .{ IconId.sort, "sort" },
+        .{ IconId.filter, "filter" },
+        .{ IconId.zoom_in, "zoom-in" },
+        .{ IconId.zoom_out, "zoom-out" },
+        .{ IconId.rotate, "rotate" },
+        .{ IconId.crop, "crop" },
+        .{ IconId.undo, "undo" },
+        .{ IconId.save, "save" },
+        .{ IconId.fit, "fit" },
+        .{ IconId.print, "print" },
+        .{ IconId.open, "open" },
+        .{ IconId.usb_stick, "usb-stick" },
+        .{ IconId.drive, "drive" },
+        .{ IconId.eject, "eject" },
+        .{ IconId.users, "users" },
+        .{ IconId.squares, "squares" },
+    }) |pair| {
+        loadOverride(io, root, pair[0], pair[1]);
+    }
+}
+
+fn loadOverride(io: std.Io, root: []const u8, id: IconId, name: []const u8) void {
+    const path = std.fmt.allocPrint(std.heap.c_allocator, "{s}/glyphs/{s}.svg", .{ root, name }) catch return;
+    defer std.heap.c_allocator.free(path);
+    var i: usize = 1;
+    while (i < path.len) : (i += 1) if (path[i] == '/') {
+        const part = std.Io.Dir.cwd().statFile(io, path[0..i], .{ .follow_symlinks = false }) catch return;
+        if (part.kind == .sym_link) return;
+    };
+    const stat = std.Io.Dir.cwd().statFile(io, path, .{ .follow_symlinks = false }) catch return;
+    if (stat.kind != .file) return;
+    overrides[@intFromEnum(id)] = std.Io.Dir.cwd().readFileAlloc(io, path, std.heap.c_allocator, .limited(64 * 1024)) catch null;
+}
+
+pub fn deinitPack() void {
+    _ = std.posix.system.pthread_mutex_lock(&source_mutex);
+    defer _ = std.posix.system.pthread_mutex_unlock(&source_mutex);
+    clearPack();
+}
+
+fn clearPack() void {
+    deinit();
+    for (&overrides) |*entry| {
+        if (entry.*) |bytes| std.heap.c_allocator.free(bytes);
+        entry.* = null;
+    }
+    if (pack_root.len > 0) std.heap.c_allocator.free(pack_root);
+    pack_root = "";
+}
+
 fn source(id: IconId) ?[]const u8 {
+    if (overrides[@intFromEnum(id)]) |bytes| return bytes;
+    return builtinSource(id);
+}
+
+fn builtinSource(id: IconId) ?[]const u8 {
     return switch (id) {
         .git_branch => @embedFile("shell-icon-git-branch"),
         .home => @embedFile("shell-icon-home"),
@@ -94,13 +193,20 @@ fn source(id: IconId) ?[]const u8 {
     };
 }
 
+/// The desktop's scan worker owns this mask; it never borrows a UI cache entry.
+pub fn getOwned(id: IconId, size: i32) ?Mask {
+    _ = std.posix.system.pthread_mutex_lock(&source_mutex);
+    defer _ = std.posix.system.pthread_mutex_unlock(&source_mutex);
+    return rasterize(source(id) orelse return null, size) orelse rasterize(builtinSource(id) orelse return null, size);
+}
+
 pub fn get(id: IconId, requested_size: i32) ?Mask {
     const svg = source(id) orelse return null;
     const size = std.math.clamp(requested_size, 1, 256);
     for (cache) |entry| if (entry) |e| {
         if (e.id == id and e.mask.size == size) return e.mask;
     };
-    const mask = rasterize(svg, size) orelse return null;
+    const mask = rasterize(svg, size) orelse rasterize(builtinSource(id) orelse return null, size) orelse return null;
     if (cache[next]) |old| std.heap.c_allocator.free(old.mask.alpha);
     cache[next] = .{ .id = id, .mask = mask };
     next = (next + 1) % cache.len;

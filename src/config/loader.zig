@@ -171,6 +171,7 @@ pub const CompositorConfig = struct {
     /// Empty for RediWM's own, a file name in the wallpaper directories, or a
     /// path; see `wallpapers.zig`.
     wallpaper: []const u8 = "",
+    icon_theme: []const u8 = "",
     sound_theme: []const u8 = "freedesktop",
     sound_enabled: bool = true,
     sound_disabled_events: []const []const u8 = &.{},
@@ -263,6 +264,11 @@ pub const NotificationRule = struct {
 
 pub const Config = struct {
     theme: Theme = .{},
+    theme_base: []const u8 = "",
+    theme_defaults: Theme = .{},
+    /// Effective config layer before REDIWM_THEME, for saving a small overlay.
+    theme_config: Theme = .{},
+    theme_pack: ?@import("theme_pack.zig").Pack = null,
     /// `[taskbar_theme]`: the taskbar's own colours over the main theme's.
     /// Null (no section) follows the main theme. Only taskbar tokens are set.
     taskbar_theme: ?Theme = null,
@@ -334,9 +340,13 @@ pub const resolvePath = @import("path.zig").resolvePath;
 /// section and any leading comments. Used by the control center so appearance
 /// edits don't clobber keybinds/input.
 pub fn replaceThemeSection(allocator: Allocator, io: Io, path: []const u8, t: Theme) void {
+    replaceThemeOverrides(allocator, io, path, t, .{}, "");
+}
+
+pub fn replaceThemeOverrides(allocator: Allocator, io: Io, path: []const u8, t: Theme, defaults: Theme, base: []const u8) void {
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(allocator);
-    theme_mod.writeInto(allocator, &buf, t) catch return;
+    theme_mod.writeOverrides(allocator, &buf, t, defaults, base) catch return;
     rewriteSection(allocator, io, path, "[theme]", buf.items);
 }
 
@@ -452,10 +462,45 @@ pub fn loadFromBytes(
     };
     errdefer cfg.deinit();
 
+    if (cfg.theme_base.len > 0) {
+        const a = cfg.arena.allocator();
+        cfg.theme_pack = @import("theme_pack.zig").find(a, io, environ, path, cfg.theme_base) catch null;
+        if (cfg.theme_pack) |p| {
+            cfg.theme_defaults = p.tokens;
+            cfg.theme = p.tokens;
+            try theme_mod.overlay(a, &cfg.theme, bytes);
+            if (cfg.taskbar_theme == null) cfg.taskbar_theme = p.taskbar;
+            if (p.color_scheme) |dark| cfg.compositor.dark_mode = dark;
+            if (p.cursor_theme.len > 0) {
+                cfg.input.cursor_theme = if (std.mem.eql(u8, p.cursor_theme, "pack"))
+                    try std.fmt.allocPrint(a, "rediwm-{s}-cursors", .{p.id})
+                else
+                    p.cursor_theme;
+            }
+        } else log.warn("theme pack '{s}' is missing or invalid; using defaults", .{cfg.theme_base});
+    }
+    cfg.theme_config = cfg.theme;
     if (theme_mod.resolvePath(environ)) |theme_path| {
         overlayThemeFile(cfg.arena.allocator(), io, &cfg.theme, theme_path) catch |err| {
             log.warn("REDIWM_THEME overlay '{s}': {}", .{ theme_path, err });
         };
+    }
+    if (cfg.theme_pack != null) {
+        var section: []const u8 = "";
+        var lines = std.mem.splitScalar(u8, bytes, '\n');
+        while (lines.next()) |raw| {
+            const line = theme_mod.stripComment(std.mem.trim(u8, raw, " \t\r"));
+            if (line.len == 0) continue;
+            if (line[0] == '[') {
+                section = line;
+                continue;
+            }
+            const eq = std.mem.indexOfScalar(u8, line, '=') orelse continue;
+            const key = std.mem.trim(u8, line[0..eq], " \t");
+            const value = std.mem.trim(u8, line[eq + 1 ..], " \t");
+            if (std.mem.eql(u8, section, "[compositor]") and std.mem.eql(u8, key, "dark_mode")) cfg.compositor.dark_mode = std.mem.eql(u8, value, "true");
+            if (std.mem.eql(u8, section, "[input]") and std.mem.eql(u8, key, "cursor_theme")) cfg.input.cursor_theme = try cfg.arena.allocator().dupe(u8, try theme_mod.unquote(value));
+        }
     }
     finishCompositor(&cfg);
     return cfg;
@@ -522,6 +567,12 @@ pub fn parse(allocator: Allocator, bytes: []const u8, path: []const u8) !Config 
         switch (section) {
             .none => {},
             .theme => {
+                if (std.mem.eql(u8, key, "base")) {
+                    const id = try theme_mod.unquote(value);
+                    if (id.len > 0 and !@import("theme_pack.zig").validId(id)) return error.InvalidConfig;
+                    cfg.theme_base = try cfg.arena.allocator().dupe(u8, id);
+                    continue;
+                }
                 theme_mod.applyKey(cfg.arena.allocator(), &cfg.theme, key, value) catch |err| {
                     fail(path, line_no, "invalid theme field '{s}': {s}", .{ key, @errorName(err) });
                     return error.InvalidConfig;
@@ -986,6 +1037,7 @@ const compositor_rules: std.enums.EnumFieldStruct(std.meta.FieldEnum(CompositorC
     .floating_apps = .json_string_list,
     .taskbar_items = .taskbar_items,
     .taskbar_position = .enumeration,
+    .icon_theme = .string,
     .window_tab_apps = .json_string_list,
     .default_file_manager = .string,
     .default_terminal = .string,
@@ -2245,4 +2297,46 @@ test "workspace preset is independent, overrides include noop, and mode preserve
     try std.testing.expectEqual(@as(?Action, null), cfg.lookupKeybind(v.modifiers, v.sym));
     try std.testing.expectEqualStrings("custom-canvas", cfg.lookupKeybind(q.modifiers, q.sym).?.spawn);
     try std.testing.expectEqual(@as(?Action, null), cfg.lookupKeybind(two.modifiers, two.sym));
+}
+
+test "no base preserves legacy themes and embedded base layers config overrides" {
+    const a = std.testing.allocator;
+    const bytes = "[theme]\naccent = \"#123456\"\nfont_size = 14\n";
+    var old = try parse(a, bytes, "legacy");
+    defer old.deinit();
+    var loaded = try loadFromBytes(a, bytes, "legacy", .empty, std.testing.io);
+    defer loaded.deinit();
+    try std.testing.expect(themeEql(old.theme, loaded.theme));
+    var based = try loadFromBytes(a, "[theme]\nbase = \"rediwm-light\"\nfont_size = 14\n", "based", .empty, std.testing.io);
+    defer based.deinit();
+    try std.testing.expectEqualStrings("rediwm-light", based.theme_base);
+    try std.testing.expectEqual(@as(f32, 14), based.theme.font_size);
+    try std.testing.expect(themeEql(based.theme_defaults, based.theme_pack.?.tokens));
+    try std.testing.expectEqual(based.theme_defaults.accent, based.theme.accent);
+}
+
+test "external overlay wins over a referenced pack without pinning inherited tokens" {
+    const a = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena = std.heap.ArenaAllocator.init(a);
+    defer arena.deinit();
+    const mem = arena.allocator();
+    const root = try tmp.dir.realPathFileAlloc(io, ".", mem);
+    const path = try std.fs.path.join(mem, &.{ root, "overlay.toml" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "overlay.toml", .data = "[theme]\nfont_size = 16\n" });
+    const entry = try std.fmt.allocPrintSentinel(mem, "REDIWM_THEME={s}", .{path}, 0);
+    const entries = [_:null]?[*:0]const u8{entry.ptr};
+    const env: std.process.Environ = .{ .block = .{ .slice = &entries } };
+    var cfg = try loadFromBytes(a, "[theme]\nbase = \"rediwm-light\"\nfont_size = 14\n", "test", env, io);
+    defer cfg.deinit();
+    try std.testing.expectEqual(@as(f32, 16), cfg.theme.font_size);
+    try std.testing.expectEqual(@as(f32, 14), cfg.theme_config.font_size);
+    var edited = cfg.theme;
+    edited.font_size = 17;
+    try theme_mod.saveOverlay(a, io, path, edited, cfg.theme_config);
+    const saved = try tmp.dir.readFileAlloc(io, "overlay.toml", a, .limited(4096));
+    defer a.free(saved);
+    try std.testing.expectEqualStrings("[theme]\nfont_size = 17\n", saved);
 }

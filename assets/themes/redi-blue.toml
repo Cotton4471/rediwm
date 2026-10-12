@@ -1,3 +1,8 @@
+[meta]
+format = 1
+id = "redi-blue"
+name = "Redi Blue"
+
 [theme]
 # Window chrome
 window_bg = "rgba(14,19,28,0.46)"
@@ -97,3 +102,7 @@ switcher_selection_radius = 4
 calendar_radius = 4
 osd_radius = 4
 start_button_radius = 4
+
+[assets]
+color_scheme = "dark"
+wallpaper = "wallpaper-blue.png"

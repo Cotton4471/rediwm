@@ -14,6 +14,9 @@ from PIL import Image
 
 from desktop_zoom import wait_for
 from ipc_client import IPCClient, spawn_compositor, stop_process
+from ui_driver import UIDriver
+
+ROOT = Path(__file__).resolve().parents[1]
 
 AQUA = (20, 200, 190)
 STRIPES = (200, 60, 30)
@@ -70,7 +73,38 @@ def run():
                 def widgets():
                     return ipc.get_widget_tree("control_center")["widgets"]
 
+                def ensure_visible(widget):
+                    if not widget.get("name"):
+                        return widget
+                    name = widget["name"]
+                    panel = ipc.get_shell_state()["control_center"]["box"]
+                    box = widget["box"]
+                    viewport = next(w for w in widgets() if w["role"] == "scroll_container")["global_box"]
+                    y = panel["y"] + box["y"] + box["height"] / 2
+                    is_tile = name.startswith(("wallpaper_tile_", "wallpaper_check_"))
+                    if not viewport["y"] < y < viewport["y"] + viewport["height"]:
+                        UIDriver(ipc).scroll_into_view("wallpaper_strip" if is_tile else name)
+                    step, previous = -180, None
+                    for _ in range(20 if is_tile else 1):
+                        widget = next(w for w in widgets() if w["name"] == name)
+                        if not is_tile:
+                            return widget
+                        strip = next(w for w in widgets() if w["name"] == "wallpaper_strip")["global_box"]
+                        box = widget["global_box"]
+                        x = box["x"] + box["width"] / 2
+                        if strip["x"] + 3 < x < strip["x"] + strip["width"] - 3:
+                            return widget
+                        distance = abs(x - (strip["x"] + strip["width"] / 2))
+                        if previous is not None and distance >= previous:
+                            step = -step
+                        previous = distance
+                        ipc.move_cursor(round(strip["x"] + strip["width"] / 2), round(strip["y"] + strip["height"] / 2))
+                        ipc.scroll(0, step if x > strip["x"] else -step)
+                        time.sleep(.3)
+                    raise AssertionError(f"could not scroll {name} into view")
+
                 def click(widget):
+                    widget = ensure_visible(widget)
                     panel = ipc.get_shell_state()["control_center"]["box"]
                     box = widget["box"]
                     ipc.click_at(round(panel["x"] + box["x"] + box["width"] / 2),
@@ -91,6 +125,7 @@ def run():
                     return [w["name"] for w in prefixed("wallpaper_check_") if w["checked"]]
 
                 def centre(widget):
+                    widget = ensure_visible(widget)
                     panel = ipc.get_shell_state()["control_center"]["box"]
                     box = widget["box"]
                     return (round(panel["x"] + box["x"] + box["width"] / 2),
@@ -122,27 +157,31 @@ def run():
                 assert not named("wallpaper_folder")["is_disabled"]
                 # The strip lists the same images as the dropdown, ticking the
                 # bundled default; a tile or its tick box selects.
-                assert len(prefixed("wallpaper_tile_")) == 3
+                bundled = ROOT / "zig-out/share/rediwm/wallpapers"
+                bundled_count = sum(p.is_file() and not p.name.startswith(".") and p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp") and p.name not in ("aqua.png", "zebra_stripes.jpg") for p in bundled.iterdir())
+                total_wallpapers = bundled_count + 2
+                aqua_index, zebra_index = bundled_count, bundled_count + 1
+                assert len(prefixed("wallpaper_tile_")) == total_wallpapers
                 assert ticked() == ["wallpaper_check_0"], ticked()
-                click(named("wallpaper_tile_1"))
+                click(named(f"wallpaper_tile_{aqua_index}"))
                 assert saved() == "aqua.png", config_path.read_text()
                 wait_color(AQUA, "strip tile")
-                wait_for(lambda: ticked() == ["wallpaper_check_1"], "tick follows the tile")
-                click(named("wallpaper_check_2"))
+                wait_for(lambda: ticked() == [f"wallpaper_check_{aqua_index}"], "tick follows the tile")
+                click(named(f"wallpaper_check_{zebra_index}"))
                 assert saved() == "zebra_stripes.jpg"
                 wait_color(STRIPES, "strip tick box")
-                click(named("wallpaper_check_2"))
+                click(named(f"wallpaper_check_{zebra_index}"))
                 assert saved() == "zebra_stripes.jpg"
-                wait_for(lambda: ticked() == ["wallpaper_check_2"], "ticking the current image keeps it ticked")
+                wait_for(lambda: ticked() == [f"wallpaper_check_{zebra_index}"], "ticking the current image keeps it ticked")
                 click(named("wallpaper_tile_0"))
                 assert saved() == ""
                 wait_color(default, "bundled default from the strip")
                 # RediWM's own, then the user's by label: Aqua, Zebra stripes.
-                pick(1)
+                pick(aqua_index)
                 assert saved() == "aqua.png", config_path.read_text()
                 wait_color(AQUA, "user PNG")
-                wait_for(lambda: ticked() == ["wallpaper_check_1"], "dropdown moves the tick")
-                pick(2)
+                wait_for(lambda: ticked() == [f"wallpaper_check_{aqua_index}"], "dropdown moves the tick")
+                pick(zebra_index)
                 assert saved() == "zebra_stripes.jpg"
                 wait_color(STRIPES, "user JPEG")
                 pick(0)
@@ -181,7 +220,7 @@ def run():
                 # returns fills the strip, without changing the wallpaper.
                 config_path.write_text('[compositor]\nxwayland = false\n')
                 wait_color(default, "default wallpaper again")
-                wait_for(lambda: len(prefixed("wallpaper_tile_")) == 3, "wallpaper directories listed again")
+                wait_for(lambda: len(prefixed("wallpaper_tile_")) == total_wallpapers, "wallpaper directories listed again")
 
                 # Below the fold: wheel the page over the wallpaper selector until it shows.
                 x, y = centre(named("wallpaper"))

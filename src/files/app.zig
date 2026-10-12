@@ -461,6 +461,9 @@ pub const App = struct {
             .thumbs_enabled = !thumb_decode.disabled(environ),
         };
 
+        self.theme_cfg.override_root = @import("settings.zig").iconRoot();
+        const icon_base = @import("settings.zig").iconTheme();
+        if (icon_base.len > 0) self.theme_cfg.theme_name = icon_base;
         const data_home = environ.getPosix("XDG_DATA_HOME");
         self.trash_dir = if (data_home != null and std.fs.path.isAbsolute(data_home.?))
             try std.fs.path.join(allocator, &.{ data_home.?, "Trash", "files" })
@@ -989,6 +992,10 @@ pub const App = struct {
     }
 
     pub fn sync(self: *App) void {
+        if (self.worker.takeThemeNotice()) |notice| {
+            defer self.worker.allocator.free(notice);
+            self.setStatusNotice(notice, false);
+        }
         self.syncFolderSizes();
         _ = c.pthread_mutex_lock(&self.worker.mutex);
         const animation_settings = self.worker.animation_settings;
@@ -997,6 +1004,11 @@ pub const App = struct {
         _ = c.pthread_mutex_unlock(&self.worker.mutex);
         if (new_theme) |t| {
             t.apply();
+            self.theme_cfg.override_root = @import("settings.zig").iconRoot();
+            const base = @import("settings.zig").iconTheme();
+            self.theme_cfg.theme_name = if (base.len > 0) base else if (std.c.getenv("REDIWM_ICON_THEME")) |name| std.mem.span(name) else "Adwaita";
+            self.theme_cfg.generation += 1;
+            theme.forgetParsedThemes(icons.gpa);
             self.invalidate();
         }
         if (!anim.currentSettings().eql(animation_settings)) {
@@ -3659,6 +3671,11 @@ pub const App = struct {
 
     pub fn openFile(self: *App, path: []const u8) void {
         if (self.chooser != null) return;
+        if (std.ascii.endsWithIgnoreCase(path, ".rediwm-theme")) {
+            self.worker.installTheme(path);
+            self.setStatusNotice("Installing theme…", false);
+            return;
+        }
         const pdf = isPdf(path) and !@import("associations.zig").hasAlternativeDefault(path, "rediwm-pdf.desktop");
         if (!pdf) {
             @import("associations.zig").launchDefault(path) catch |err| {
@@ -5834,7 +5851,8 @@ pub const App = struct {
         for (item.icon_candidates) |name| {
             if (icons.get(self.theme_cfg, self.io, name, raster_size)) |entry| return entry;
         }
-        return icons.get(self.theme_cfg, self.io, item.icon_name, raster_size);
+        if (icons.get(self.theme_cfg, self.io, item.icon_name, raster_size)) |entry| return entry;
+        return if (item.is_dir) icons.get(self.theme_cfg, self.io, "folder", raster_size) else null;
     }
 
     pub fn drawItemIcon(self: *App, cr: *c.cairo_t, item: ViewItem, x: f64, y: f64, size: f64) void {
@@ -5853,7 +5871,7 @@ pub const App = struct {
             }
         }
         const raster_size = @as(i32, @intFromFloat(size)) * self.scale;
-        const maybe_icon = if (item.is_dir) null else self.itemIcon(item, raster_size);
+        const maybe_icon = self.itemIcon(item, raster_size);
 
         if (maybe_icon) |entry| {
             const surf = c.cairo_image_surface_create_for_data(

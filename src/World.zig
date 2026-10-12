@@ -278,6 +278,7 @@ pub fn tickHover(world: *World, now_ms: i64) bool {
         if (toplevel.tickMap(now_ms)) animating = true;
         if (toplevel.tickMove(now_ms)) animating = true;
         if (toplevel.tickDodge(now_ms)) animating = true;
+        if (toplevel.tickSwitch(now_ms)) animating = true;
         if (toplevel.tickSize(now_ms)) animating = true;
         toplevel.applyVisualTransform(now_ms);
         if (target == null and toplevel.peek_mix.to != 0) {

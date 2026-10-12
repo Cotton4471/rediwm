@@ -55,6 +55,8 @@ pub const Entry = struct {
     size: i32,
 };
 
+const pthread = std.posix.system;
+var cache_mutex: pthread.pthread_mutex_t = pthread.PTHREAD_MUTEX_INITIALIZER;
 var cache: std.StringHashMapUnmanaged(?Entry) = .empty;
 
 // Keyed by "<size_px>:<icon_name>", not name alone: the taskbar and the
@@ -65,10 +67,12 @@ var cache: std.StringHashMapUnmanaged(?Entry) = .empty;
 // "looked up, not found" so a repeatedly-unmatched app_id doesn't re-walk
 // the filesystem on every caller.
 pub fn get(cfg: icon_theme.Config, io: Io, icon_name: []const u8, size_px: i32) ?Entry {
+    _ = pthread.pthread_mutex_lock(&cache_mutex);
+    defer _ = pthread.pthread_mutex_unlock(&cache_mutex);
     if (icon_name.len == 0) return null;
 
     var key_buf: [512]u8 = undefined;
-    const key = std.fmt.bufPrint(&key_buf, "{d}:{s}", .{ size_px, icon_name }) catch
+    const key = std.fmt.bufPrint(&key_buf, "{d}:{d}:{s}", .{ cfg.generation, size_px, icon_name }) catch
         return lookup(cfg, io, icon_name, size_px) catch null;
     if (cache.get(key)) |entry| return entry;
 
@@ -104,7 +108,8 @@ pub fn lookup(cfg: icon_theme.Config, io: Io, icon_name: []const u8, size_px: i3
         if (is_svg) {
             const zpath = gpa.dupeZ(u8, icon_name) catch return null;
             defer gpa.free(zpath);
-            const pixels = rasterizeSvg(zpath, size_px) orelse return null;
+            const in_pack = cfg.override_root.len > 0 and std.mem.startsWith(u8, icon_name, cfg.override_root) and icon_name.len > cfg.override_root.len and icon_name[cfg.override_root.len] == '/';
+            const pixels = (if (in_pack) rasterizePackSvg(zpath, io, size_px) else rasterizeSvg(zpath, size_px)) orelse return null;
             return Entry{ .pixels = pixels, .size = size_px };
         } else if (is_png) {
             const zpath = gpa.dupeZ(u8, icon_name) catch return null;
@@ -135,7 +140,7 @@ pub fn lookup(cfg: icon_theme.Config, io: Io, icon_name: []const u8, size_px: i3
     defer gpa.free(found.path);
 
     if (found.svg) {
-        const pixels = rasterizeSvg(found.path, size_px) orelse return null;
+        const pixels = (if (found.pack) rasterizePackSvg(found.path, io, size_px) else rasterizeSvg(found.path, size_px)) orelse return null;
         return Entry{ .pixels = pixels, .size = size_px };
     }
 
@@ -406,4 +411,25 @@ test "decode palette PNG via cairo fallback" {
             }
         }
     }
+}
+
+fn rasterizePackSvg(path: [:0]const u8, io: Io, size: i32) ?[]u32 {
+    const bytes = Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(512 * 1024)) catch return null;
+    defer gpa.free(bytes);
+    var err: ?*GError = null;
+    defer if (err) |e| g_error_free(e);
+    const handle = rsvg_handle_new_from_data(bytes.ptr, bytes.len, &err) orelse return null;
+    defer g_object_unref(handle);
+    return renderSvg(handle, size);
+}
+
+pub fn deinit() void {
+    var it = cache.iterator();
+    while (it.next()) |entry| {
+        if (entry.value_ptr.*) |value| gpa.free(value.pixels);
+        gpa.free(entry.key_ptr.*);
+    }
+    cache.deinit(gpa);
+    cache = .empty;
+    icon_theme.forgetParsedThemes(gpa);
 }

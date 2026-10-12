@@ -14,8 +14,11 @@ pub const ThemeUpdate = struct {
     value: theme.Theme,
     allocator: std.mem.Allocator,
     region: config.RegionConfig = .{},
+    pack_root: []const u8 = "",
+    icon_theme: []const u8 = "",
+    io: std.Io,
 
-    fn init(a: std.mem.Allocator, t: theme.Theme, prefs: config.RegionConfig) !ThemeUpdate {
+    fn init(a: std.mem.Allocator, t: theme.Theme, prefs: config.RegionConfig, root: []const u8, icon_name: []const u8, io: std.Io) !ThemeUpdate {
         var value = t;
         value.font = try a.dupe(u8, t.font);
         errdefer a.free(value.font);
@@ -29,10 +32,16 @@ pub const ThemeUpdate = struct {
         owned.language = try a.dupe(u8, prefs.language);
         errdefer a.free(owned.language);
         owned.formats = try a.dupe(u8, prefs.formats);
-        return .{ .value = value, .allocator = a, .region = owned };
+        errdefer a.free(owned.formats);
+        const pack_root = try a.dupe(u8, root);
+        errdefer a.free(pack_root);
+        const icon_theme = try a.dupe(u8, icon_name);
+        return .{ .value = value, .allocator = a, .region = owned, .pack_root = pack_root, .icon_theme = icon_theme, .io = io };
     }
 
     pub fn deinit(self: ThemeUpdate) void {
+        self.allocator.free(self.icon_theme);
+        self.allocator.free(self.pack_root);
         self.allocator.free(self.value.font);
         self.allocator.free(self.value.mono_font);
         self.allocator.free(self.value.start_button_icon);
@@ -43,6 +52,7 @@ pub const ThemeUpdate = struct {
 
     /// Transfers ownership to the UI thread. Never call from a worker.
     pub fn apply(self: ThemeUpdate) void {
+        @import("ui").shell_icons.configure(self.io, self.pack_root);
         theme.global = self.value;
         region = self.region;
         text.setPreferredFamilies(self.value.font, self.value.mono_font);
@@ -55,6 +65,7 @@ var applied_theme: ?ThemeUpdate = null;
 var region: config.RegionConfig = .{};
 
 pub fn deinitTheme() void {
+    @import("ui").shell_icons.deinitPack();
     theme.global = .{};
     region = .{};
     if (applied_theme) |t| t.deinit();
@@ -62,6 +73,7 @@ pub fn deinitTheme() void {
 }
 
 pub const Settings = struct {
+    env: ?std.process.Environ = null,
     config_path: ?[:0]const u8 = null,
     theme_path: ?[:0]const u8 = null,
     stamps: [2]?Stamp = .{ null, null },
@@ -75,7 +87,7 @@ pub const Settings = struct {
     pub fn init(a: std.mem.Allocator, env: std.process.Environ) !Settings {
         const path = @import("config").path.resolvePath(env, a) catch null;
         defer if (path) |p| a.free(p);
-        var self: Settings = .{};
+        var self: Settings = .{ .env = env };
         errdefer self.deinit(a);
         if (path) |p| self.config_path = try a.dupeZ(u8, p);
         if (theme.resolvePath(env)) |p| self.theme_path = try a.dupeZ(u8, p);
@@ -110,6 +122,8 @@ pub const Settings = struct {
         var arena = std.heap.ArenaAllocator.init(a);
         defer arena.deinit();
         var t: theme.Theme = .{};
+        var icon_name: []const u8 = "";
+        var root: []const u8 = "";
         var prefs: config.RegionConfig = .{};
         self.animations = .{};
         self.region = .{};
@@ -118,9 +132,17 @@ pub const Settings = struct {
             const bytes = std.Io.Dir.cwd().readFileAlloc(io, p, arena.allocator(), .limited(1 << 20)) catch continue;
             if (i == 0) {
                 self.animations = parseAnimations(bytes);
-                var cfg = config.parse(arena.allocator(), bytes, p) catch null;
+                var cfg = if (self.env) |env| config.loadFromBytes(arena.allocator(), bytes, p, env, io) catch null else config.parse(arena.allocator(), bytes, p) catch null;
                 if (cfg) |*value| {
                     defer value.deinit();
+                    icon_name = value.compositor.icon_theme;
+                    if (value.theme_pack) |pack| if (pack.icon_theme.len > 0) {
+                        icon_name = pack.icon_theme;
+                    };
+                    icon_name = arena.allocator().dupe(u8, icon_name) catch return null;
+                    t = value.theme;
+                    if (value.theme_pack) |pack| root = arena.allocator().dupe(u8, pack.root) catch return null;
+                    inline for (.{ "font", "mono_font", "start_button_icon" }) |field| @field(t, field) = arena.allocator().dupe(u8, @field(t, field)) catch return null;
                     prefs = value.region;
                     prefs.timezone = arena.allocator().dupe(u8, prefs.timezone) catch return null;
                     prefs.language = arena.allocator().dupe(u8, prefs.language) catch return null;
@@ -134,7 +156,7 @@ pub const Settings = struct {
         // Settings only retains scalar preferences; returned updates own strings.
         self.region.clock_24h = prefs.clock_24h;
         self.region.first_day_of_week = prefs.first_day_of_week;
-        return ThemeUpdate.init(a, t, prefs) catch null;
+        return ThemeUpdate.init(a, t, prefs, root, icon_name, io) catch null;
     }
 };
 
@@ -279,4 +301,11 @@ test "Files reads the shell wheel animation and reduced motion settings" {
     try std.testing.expectEqual(@as(f32, 1.5), settings.speed);
     try std.testing.expectEqual(anim.ReducedMotion.on, settings.reduced_motion);
     try std.testing.expect(settings.targets[@intFromEnum(anim.Target.wheel_scroll)].curve == .off);
+}
+
+pub fn iconRoot() []const u8 {
+    return if (applied_theme) |t| t.pack_root else "";
+}
+pub fn iconTheme() []const u8 {
+    return if (applied_theme) |t| t.icon_theme else "";
 }

@@ -11,7 +11,7 @@ const layout = @import("ui").layout;
 const ui_slider = @import("ui").widgets.slider;
 const theme = @import("ui").theme;
 const scrollbar = @import("ui").widgets.scrollbar;
-const theme_presets = @import("ui").theme_presets;
+const theme_presets = @import("config").theme_pack;
 const Widget = layout.Widget;
 const main = @import("../../main.zig");
 const panel = @import("../panel.zig");
@@ -93,7 +93,7 @@ pub const Section = struct {
     cc: *panel.ControlCenter = undefined,
     root: Widget = undefined,
     arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator),
-    presets: []const theme_presets.Preset = &.{},
+    presets: []const theme_presets.Pack = &.{},
     top_children: [2]Widget = undefined,
     font_arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator),
     font_families: ?[][]const u8 = null,
@@ -101,7 +101,7 @@ pub const Section = struct {
     cursor_themes: ?[]cursor_theme.Theme = null,
     cursor_row_children: [2]Widget = undefined,
     family_row_children: [2]Widget = undefined,
-    row_storage: [23]Widget = undefined,
+    row_storage: [25]Widget = undefined,
     focus_zoom_children: [3]Widget = undefined,
     /// Rescanned on every build, so images added meanwhile show up.
     wallpapers: []const wallpapers.Entry = &.{},
@@ -116,6 +116,14 @@ pub const Section = struct {
     wallpaper_row_children: [2]Widget = undefined,
     wallpaper_footer_children: [2]Widget = undefined,
     theme_row_children: [2]Widget = undefined,
+    theme_actions: [5]Widget = undefined,
+    theme_preview_pending: bool = false,
+    theme_message: []const u8 = "Packs include colours and artwork. Personal edits are saved as overrides.",
+    theme_message_buf: [768]u8 = undefined,
+    theme_pending_path: ?[]u8 = null,
+    icon_theme_row: [2]Widget = undefined,
+    icon_theme_names: []const []const u8 = &.{},
+
     taskbar_theme_row_children: [2]Widget = undefined,
     app_colors_children: [3]Widget = undefined,
     app_colors_buttons: [2]Widget = undefined,
@@ -229,7 +237,7 @@ fn startLogoImage(out: *Section, a: std.mem.Allocator, logical: i32) StartLogo {
 
 /// A decode finished: a preview that was waiting for one can now show it.
 pub fn iconsReady(s: *Section) void {
-    if (s.start_logo_pending and s.cc.page == .appearance) s.cc.refresh();
+    if ((s.start_logo_pending or s.theme_preview_pending) and s.cc.page == .appearance) s.cc.refresh();
 }
 
 fn indexOfNearest(values: []const f32, v: f32) usize {
@@ -305,18 +313,17 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
     if (out.tabs_built and out.tabs_children[2].kind == .scroll_container) out.tabs_scroll = out.tabs_children[2].kind.scroll_container;
     _ = out.arena.reset(.free_all);
     const t = theme.global;
+    const server = out.cc.server;
     const arena = out.arena.allocator();
 
-    out.presets = theme_presets.list(arena, out.cc.server.io, out.cc.server.config.path);
+    out.presets = theme_presets.list(arena, out.cc.server.io, out.cc.server.environ, out.cc.server.config.path) catch &.{};
     var preset_labels: [][]const u8 = &.{};
     var matched_index: ?usize = null;
     if (arena.alloc([]const u8, out.presets.len)) |labels| {
         preset_labels = labels;
         for (out.presets, 0..) |preset, i| {
             preset_labels[i] = preset.name;
-            if (matched_index != null) continue;
-            const parsed = theme.parse(arena, preset.bytes) catch continue;
-            if (loader.themeEql(parsed, t)) matched_index = i;
+            if (std.mem.eql(u8, preset.id, out.cc.server.config.theme_base)) matched_index = i;
         }
     } else |_| {}
     out.theme_row_children = .{
@@ -347,7 +354,7 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
             labels[i] = preset.name;
             const chosen = theme.taskbar_override orelse continue;
             if (taskbar_selected != null) continue;
-            const parsed = theme.parse(arena, preset.bytes) catch continue;
+            const parsed = preset.tokens;
             if (theme.taskbarTokensEql(parsed, chosen)) taskbar_selected = i;
         }
     } else |_| {}
@@ -681,7 +688,49 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
     out.start_menu_section_children = .{ sectionLabel("START MENU"), logo_row, menu_width_row, menu_height_row, menu_size_row, menu_left_row, menu_bottom_row, icon_left_row, icon_bottom_row };
     const start_menu_section: Widget = .{ .kind = .container, .direction = .column, .gap = 12, .children = &out.start_menu_section_children };
 
+    out.theme_actions = .{
+        .{ .name = "theme_reset", .kind = .{ .button = .{ .label = "Reset to theme", .owner = out, .on_click = &onResetTheme } }, .height = .{ .fixed = 32 } },
+        .{ .name = "theme_install", .kind = .{ .button = .{ .label = "Install theme…", .owner = out, .on_click = &onInstallTheme } }, .height = .{ .fixed = 32 } },
+        .{ .name = "theme_remove", .kind = .{ .button = .{ .label = "Remove", .owner = out, .on_click = &onRemoveTheme, .state = if (matched_index != null and out.presets[matched_index.?].user_installed) .idle else .disabled } }, .height = .{ .fixed = 32 } },
+        .{ .name = "theme_export", .kind = .{ .button = .{ .label = "Save look…", .owner = out, .on_click = &onExportTheme } }, .height = .{ .fixed = 32 } },
+        .{ .name = "theme_replace", .kind = .{ .button = .{ .label = "Replace installed theme", .owner = out, .on_click = &onReplaceTheme, .state = if (out.theme_pending_path != null) .idle else .disabled } }, .height = .{ .fixed = 32 } },
+    };
+    var pack_preview: Widget = .{ .kind = .container };
+    out.theme_preview_pending = false;
+    if (server.config.theme_pack) |pack| {
+        if (pack.root.len > 0) {
+            if (theme_presets.asset(arena, server.io, pack.root, "preview.png")) |path| {
+                const result = server.iconLookup(path, 192);
+                if (result == .ready) {
+                    const entry = result.ready;
+                    if (arena.dupe(u32, entry.pixels)) |pixels| {
+                        pack_preview = .{ .name = "theme_preview", .kind = .{ .image = .{ .pixels = pixels, .width = entry.size, .height = entry.size, .fallback_icon = null } }, .width = .{ .fixed = 160 }, .height = .{ .fixed = 100 } };
+                    } else |_| {}
+                } else if (result == .pending) out.theme_preview_pending = true;
+            } else |_| {}
+        }
+    }
+    const pack_controls = arena.dupe(Widget, &.{
+        .{ .kind = .container, .direction = .row, .gap = 8, .children = out.theme_actions[0..4] },
+        .{ .kind = .{ .text = .{ .content = out.theme_message, .font_size = theme.global.app_status_size, .color = pal.dim } } },
+        .{ .kind = .container, .children = if (out.theme_pending_path != null) out.theme_actions[4..5] else &.{} },
+        pack_preview,
+    }) catch @constCast(&[_]Widget{});
+    const icon_themes = @import("../../icon_theme.zig").listNames(arena, server.io, server.icon_theme_cfg) catch &.{};
+    out.icon_theme_names = icon_themes;
+    const icon_labels = arena.dupe([]const u8, icon_themes) catch @constCast(icon_themes);
+    if (icon_labels.len > 0) icon_labels[0] = "System default";
+    var icon_selected: ?usize = null;
+    for (icon_themes, 0..) |name, i| if (std.mem.eql(u8, name, server.config.compositor.icon_theme)) {
+        icon_selected = i;
+    };
+    out.icon_theme_row = .{
+        labelWidget("Icon theme"),
+        .{ .name = "icon_theme", .kind = .{ .select = .{ .labels = icon_labels, .selected = icon_selected, .placeholder = "Pack or system default", .owner = out, .on_change = &onIconThemePicked } }, .width = .{ .fixed = segmented_width } },
+    };
     out.row_storage = .{
+        .{ .kind = .container, .direction = .column, .gap = 8, .children = pack_controls },
+        .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.icon_theme_row },
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.theme_row_children },
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.taskbar_theme_row_children },
         .{ .kind = .container, .direction = .column, .gap = 8, .children = &out.app_colors_children },
@@ -755,6 +804,8 @@ fn stopStrip(out: *Section) void {
 pub fn deinit(out: *Section) void {
     stopStrip(out);
     finishAppColors(out, false);
+    if (out.theme_pending_path) |p| main.gpa.free(p);
+    out.theme_pending_path = null;
 }
 
 fn appColorsNote(s: *Section, a: std.mem.Allocator, color: [4]f32) Widget {
@@ -871,7 +922,9 @@ fn restartStrip(out: *Section, server: *@import("../../Server.zig")) void {
 fn buildWallpaper(out: *Section, arena: std.mem.Allocator) void {
     const pal = panel.palette();
     const server = out.cc.server;
-    out.wallpapers = wallpapers.list(arena, server.io) catch &.{};
+    const ordinary = wallpapers.list(arena, server.io) catch &.{};
+    const pack_images = if (server.config.theme_pack) |p| (if (p.root.len > 0) wallpapers.listDir(arena, server.io, std.fs.path.join(arena, &.{ p.root, "wallpapers" }) catch "") catch &.{} else &.{}) else &.{};
+    out.wallpapers = std.mem.concat(arena, wallpapers.Entry, &.{ pack_images, ordinary }) catch ordinary;
     const configured = server.config.compositor.wallpaper;
     var labels: [][]const u8 = &.{};
     if (arena.alloc([]const u8, out.wallpapers.len)) |l| {
@@ -904,7 +957,7 @@ fn buildWallpaper(out: *Section, arena: std.mem.Allocator) void {
         restartStrip(out, server);
         fresh = true;
     }
-    const resolved = wallpapers.resolve(arena, server.io, configured) catch "";
+    const resolved = @import("../../config_runtime/theme_pack.zig").wallpaperPath(server, arena) catch "";
     var current_tile: ?usize = null;
     for (out.strip_entries, 0..) |entry, i| {
         if (std.mem.eql(u8, entry.path, resolved)) current_tile = i;
@@ -1105,10 +1158,17 @@ fn applyThemeChangeImpl(s: *Section, taskbar_geometry: bool) void {
 
 fn saveThemeChange(server: *Server, taskbar_geometry: bool) void {
     if (server.theme_path) |path| {
-        theme.save(main.gpa, server.io, path, theme.global);
-        theme.loadGlobal(main.gpa, server.io, path);
+        theme.saveOverlay(main.gpa, server.io, path, theme.global, server.config.theme_config) catch |err| {
+            themeFailure(server, err);
+            return;
+        };
+        const loaded = loader.load(server.config.path, main.gpa, server.io, server.environ) catch |err| {
+            themeFailure(server, err);
+            return;
+        };
+        @import("../../config_runtime/watcher.zig").applyLoadedConfig(server, loaded);
     } else if (server.config.path.len > 0) {
-        @import("config").loader.replaceThemeSection(main.gpa, server.io, server.config.path, theme.global);
+        @import("config").loader.replaceThemeOverrides(main.gpa, server.io, server.config.path, theme.global, server.config.theme_defaults, server.config.theme_base);
     }
     refreshTheme(server, taskbar_geometry);
 }
@@ -1184,21 +1244,84 @@ pub fn refreshTheme(server: *@import("../../Server.zig"), taskbar_geometry: bool
 /// than the panel's per-open arena: `theme.global`'s string fields must
 /// outlive this build, and `applyThemeChange` below may trigger a repaint
 /// that resets the arena.
+fn onResetTheme(owner: ?*anyopaque, _: usize) void {
+    const server = section(owner).cc.server;
+    if (server.config.theme_base.len == 0) {
+        theme.global = .{};
+        saveThemeChange(server, true);
+        return;
+    }
+    @import("../../config_runtime/theme_pack.zig").apply(server, server.config.theme_base) catch |err| themeFailure(server, err);
+}
+fn themeFailure(server: *Server, err: anyerror) void {
+    if (server.input.open_control_center) |cc| {
+        cc.appearance.theme_message = std.fmt.bufPrint(&cc.appearance.theme_message_buf, "Theme operation failed: {s}", .{@errorName(err)}) catch "Theme operation failed.";
+        cc.refresh();
+    }
+}
+fn onInstallTheme(owner: ?*anyopaque, _: usize) void {
+    const server = section(owner).cc.server;
+    folder_picker.startWithOptions(server, .{ .title = "Install theme", .accept_label = "Install", .filters = &.{.{ .name = "Theme packs", .rules = &.{ .{ .kind = 0, .value = "*.rediwm-theme" }, .{ .kind = 0, .value = "*.zip" } } }} }, server, themeFileChosen) catch |err| themeFailure(server, err);
+}
+fn themeFileChosen(owner: ?*anyopaque, path: ?[]const u8) void {
+    const server: *Server = @ptrCast(@alignCast(owner orelse return));
+    const picked = path orelse return;
+    if (server.input.open_control_center) |cc| {
+        if (cc.appearance.theme_pending_path) |old| main.gpa.free(old);
+        cc.appearance.theme_pending_path = main.gpa.dupe(u8, picked) catch return;
+    }
+    @import("../../config_runtime/theme_job.zig").start(server, &.{ "install", picked }, null, null) catch |err| themeFailure(server, err);
+}
+fn onReplaceTheme(owner: ?*anyopaque, _: usize) void {
+    const s = section(owner);
+    const path = s.theme_pending_path orelse return;
+    @import("../../config_runtime/theme_job.zig").start(s.cc.server, &.{ "install", path, "--replace" }, null, null) catch |err| themeFailure(s.cc.server, err);
+}
+fn onRemoveTheme(owner: ?*anyopaque, _: usize) void {
+    const s = section(owner);
+    const server = s.cc.server;
+    const id = main.gpa.dupe(u8, server.config.theme_base) catch return;
+    defer main.gpa.free(id);
+    var permitted = false;
+    for (s.presets) |p| if (std.mem.eql(u8, p.id, id) and p.user_installed) {
+        permitted = true;
+    };
+    if (!permitted) return;
+    @import("../../config_runtime/theme_pack.zig").apply(server, "rediwm-dark") catch |err| {
+        themeFailure(server, err);
+        return;
+    };
+    @import("../../config_runtime/theme_job.zig").start(server, &.{ "remove", id }, null, null) catch |err| themeFailure(server, err);
+}
+fn onExportTheme(owner: ?*anyopaque, _: usize) void {
+    const server = section(owner).cc.server;
+    folder_picker.startWithOptions(server, .{ .mode = .save, .title = "Save current look as theme", .current_name = "my-theme.rediwm-theme", .accept_label = "Save" }, server, exportFileChosen) catch |err| themeFailure(server, err);
+}
+fn exportFileChosen(owner: ?*anyopaque, path: ?[]const u8) void {
+    const server: *Server = @ptrCast(@alignCast(owner orelse return));
+    const picked = path orelse return;
+    const filename = std.fs.path.basename(picked);
+    const id = filename[0 .. std.mem.lastIndexOfScalar(u8, filename, '.') orelse filename.len];
+    if (!theme_presets.validId(id)) {
+        themeFailure(server, error.InvalidPackId);
+        return;
+    }
+    @import("../../config_runtime/theme_job.zig").start(server, &.{ "share", id, server.config.path, server.wallpaper_source orelse "", theme.global.start_button_icon, picked }, null, null) catch |err| themeFailure(server, err);
+}
+fn onIconThemePicked(owner: ?*anyopaque, _: usize, index: usize) void {
+    const s = section(owner);
+    const labels = s.icon_theme_names;
+    if (index >= labels.len) return;
+    setting_save.saveCompositor(main.gpa, s.cc.server.io, s.cc.server.config.path, "icon_theme", labels[index]) catch return;
+    @import("../../config_runtime/watcher.zig").reloadConfig(s.cc.server);
+}
+
 fn onThemePicked(owner: ?*anyopaque, _: usize, index: usize) void {
     const s = section(owner);
     if (index >= s.presets.len) return;
-    const bytes = s.presets[index].bytes;
-    const parsed = theme.parse(main.gpa, bytes) catch |err| {
-        std.log.warn("theme preset '{s}' failed to parse: {}", .{ s.presets[index].name, err });
-        return;
+    @import("../../config_runtime/theme_pack.zig").apply(s.cc.server, s.presets[index].id) catch |err| {
+        std.log.warn("apply theme pack: {s}", .{@errorName(err)});
     };
-    theme.global = parsed;
-    // A preset replaces geometry and every retained taskbar colour too.
-    applyThemeChangeImpl(section(owner), true);
-    {
-        const server = section(owner).cc.server;
-        if (server.input.open_control_center) |cc| cc.refresh();
-    }
 }
 
 /// Gives the taskbar the colours of the picked preset (index 0 hands it back
@@ -1215,10 +1338,7 @@ fn onTaskbarThemePicked(owner: ?*anyopaque, _: usize, index: usize) void {
         // Only the colour tokens are kept, so nothing outlives this arena.
         var scratch: std.heap.ArenaAllocator = .init(main.gpa);
         defer scratch.deinit();
-        const parsed = theme.parse(scratch.allocator(), preset.bytes) catch |err| {
-            std.log.warn("taskbar theme '{s}' failed to parse: {}", .{ preset.name, err });
-            return;
-        };
+        const parsed = preset.tokens;
         theme.taskbar_override = theme.taskbarTokens(parsed);
     }
     if (server.config.path.len > 0) loader.replaceTaskbarThemeSection(main.gpa, server.io, server.config.path, theme.taskbar_override);
@@ -1231,7 +1351,7 @@ fn onFontFamilyChanged(owner: ?*anyopaque, _: usize, index: usize) void {
     const families = s.font_families orelse return;
     if (index >= families.len or std.mem.eql(u8, theme.global.font, families[index])) return;
     // Theme strings outlive the panel, matching theme.parse's ownership.
-    theme.global.font = main.gpa.dupe(u8, families[index]) catch return;
+    theme.global.font = s.cc.server.config.arena.allocator().dupe(u8, families[index]) catch return;
     applyThemeChangeImpl(section(owner), true);
     {
         const server = section(owner).cc.server;

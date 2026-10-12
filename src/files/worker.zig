@@ -69,6 +69,8 @@ pub const Worker = struct {
     request_id: u64 = 1,
     pending_snapshot: ?*Snapshot = null,
     opened_paths: std.ArrayList([]u8) = .empty,
+    theme_installs: std.ArrayList([]u8) = .empty,
+    theme_notice: ?[]u8 = null,
     /// Signalled after each request so the worker sleeps between them
     /// instead of polling on an 80 ms clock.
     wake: c_int = -1,
@@ -117,6 +119,9 @@ pub const Worker = struct {
         if (self.theme) |t| t.deinit();
         for (self.opened_paths.items) |p| self.allocator.free(p);
         self.opened_paths.deinit(self.allocator);
+        for (self.theme_installs.items) |p| self.allocator.free(p);
+        self.theme_installs.deinit(self.allocator);
+        if (self.theme_notice) |p| self.allocator.free(p);
 
         for (self.theme_cfg.base_dirs) |d| self.allocator.free(d);
         self.allocator.free(self.theme_cfg.base_dirs);
@@ -127,6 +132,39 @@ pub const Worker = struct {
 
     pub fn navigateTo(self: *Worker, new_dir: []const u8, show_hidden: bool) u64 {
         return self.navigateLocation(new_dir, show_hidden, 0);
+    }
+
+    pub fn installTheme(self: *Worker, path: []const u8) void {
+        _ = c.pthread_mutex_lock(&self.mutex);
+        defer _ = c.pthread_mutex_unlock(&self.mutex);
+        const owned = self.allocator.dupe(u8, path) catch return;
+        self.theme_installs.append(self.allocator, owned) catch {
+            self.allocator.free(owned);
+            return;
+        };
+        self.signal();
+    }
+    pub fn takeThemeNotice(self: *Worker) ?[]u8 {
+        _ = c.pthread_mutex_lock(&self.mutex);
+        defer _ = c.pthread_mutex_unlock(&self.mutex);
+        const notice = self.theme_notice;
+        self.theme_notice = null;
+        return notice;
+    }
+    fn processTheme(self: *Worker, path: []const u8) void {
+        var arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer arena.deinit();
+        const mem = arena.allocator();
+        const exe_dir = std.process.executableDirPathAlloc(self.io, mem) catch return;
+        const helper = std.fs.path.join(mem, &.{ exe_dir, "rediwm-theme" }) catch return;
+        const result = std.process.run(mem, self.io, .{ .argv = &.{ helper, "install", path }, .stdout_limit = .limited(4096), .stderr_limit = .limited(16384), .timeout = .{ .duration = .{ .raw = .fromSeconds(30), .clock = .awake } } }) catch return;
+        const success = result.term == .exited and result.term.exited == 0;
+        const message = self.allocator.dupe(u8, if (success) "Theme installed. Choose it in Settings → Appearance." else result.stderr) catch return;
+        _ = c.pthread_mutex_lock(&self.mutex);
+        if (self.theme_notice) |old| self.allocator.free(old);
+        self.theme_notice = message;
+        _ = c.pthread_mutex_unlock(&self.mutex);
+        notify(self.wake_main);
     }
 
     pub fn recordOpened(self: *Worker, path: []const u8) void {
@@ -217,9 +255,17 @@ pub const Worker = struct {
 
         while (true) {
             _ = c.pthread_mutex_lock(&self.mutex);
+            const installs = self.theme_installs;
+            self.theme_installs = .empty;
             const opened = self.opened_paths;
             self.opened_paths = .empty;
             _ = c.pthread_mutex_unlock(&self.mutex);
+            for (installs.items) |p| {
+                self.processTheme(p);
+                self.allocator.free(p);
+            }
+            var install_storage = installs;
+            install_storage.deinit(self.allocator);
             for (opened.items) |p| {
                 recent.record(self.allocator, self.io, self.environ, p) catch {};
                 self.allocator.free(p);
@@ -449,6 +495,7 @@ pub const Worker = struct {
                 if (item.is_dir or item.is_broken or (item.mode & c.S_IFMT != c.S_IFREG and !item.is_symlink)) continue;
                 item.opened = entry.opened;
                 seen.put(mem, entry.path, {}) catch continue;
+                if (item.is_dir) item.icon_name = theme.folderName(mem, self.io, self.environ, item.path);
                 list.append(mem, item) catch continue;
             }
             snap.items = list.toOwnedSlice(mem) catch &.{};
@@ -474,7 +521,8 @@ pub const Worker = struct {
         while (it.next(self.io) catch null) |entry| {
             if (!show_hidden and std.mem.startsWith(u8, entry.name, ".")) continue;
             const full_path = std.fmt.allocPrintSentinel(mem, "{s}/{s}", .{ dir_path, entry.name }, 0) catch continue;
-            const item = statItem(mem, &owners, &associations, entry.name, full_path) orelse continue;
+            var item = statItem(mem, &owners, &associations, entry.name, full_path) orelse continue;
+            if (item.is_dir) item.icon_name = theme.folderName(mem, self.io, self.environ, item.path);
             list.append(mem, item) catch continue;
         }
 

@@ -12,14 +12,18 @@ umask 022
 install -d /usr/local/bin
 stage=$(mktemp -d /usr/local/bin/.rediwm-install.XXXXXX)
 trap 'rm -rf -- "$stage"' EXIT HUP INT TERM
-for binary in rediwm rediwm-msg rediwm-files rediwm-images rediwm-editor rediwm-pdf rediwm-share-picker rediwm-session rediwm-dm rediwm-accounts-helper; do
+for binary in rediwm rediwm-msg rediwm-theme rediwm-files rediwm-images rediwm-editor rediwm-pdf rediwm-share-picker rediwm-session rediwm-dm rediwm-accounts-helper; do
     install -m755 "$release_dir/bin/$binary" "$stage/$binary"
 done
+install -Dm644 "$repo_dir/data/rediwm-theme.desktop" /usr/local/share/applications/rediwm-theme.desktop
+install -Dm644 "$repo_dir/data/rediwm-theme.xml" /usr/local/share/mime/packages/rediwm-theme.xml
 install -Dm644 "$repo_dir/data/rediwm-files.desktop" /usr/local/share/applications/rediwm-files.desktop
 install -Dm644 "$release_dir/share/icons/hicolor/256x256/apps/redi-fm-icon.png" /usr/local/share/icons/hicolor/256x256/apps/redi-fm-icon.png
 install -Dm644 "$repo_dir/data/rediwm-images.desktop" /usr/local/share/applications/rediwm-images.desktop
 install -Dm644 "$repo_dir/data/rediwm-editor.desktop" /usr/local/share/applications/rediwm-editor.desktop
 install -Dm644 "$repo_dir/data/rediwm-pdf.desktop" /usr/local/share/applications/rediwm-pdf.desktop
+if command -v update-mime-database >/dev/null 2>&1; then update-mime-database /usr/local/share/mime; fi
+if command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database /usr/local/share/applications; fi
 install -Dm644 "$repo_dir/data/rediwm-portals.conf" /usr/local/share/xdg-desktop-portal/rediwm-portals.conf
 # xdg-desktop-portal reads backend descriptors only from its own datadir.
 install -Dm644 "$repo_dir/data/rediwm.portal" /usr/share/xdg-desktop-portal/portals/rediwm.portal
@@ -54,7 +58,7 @@ cp -R "$release_dir/share/rediwm/wallpapers" /usr/local/share/rediwm/.wallpapers
 chmod -R u=rwX,go=rX /usr/local/share/rediwm/.wallpapers-new
 rm -rf /usr/local/share/rediwm/wallpapers
 mv -T /usr/local/share/rediwm/.wallpapers-new /usr/local/share/rediwm/wallpapers
-for binary in rediwm rediwm-msg rediwm-files rediwm-images rediwm-editor rediwm-pdf rediwm-share-picker rediwm-session rediwm-dm rediwm-accounts-helper; do
+for binary in rediwm rediwm-msg rediwm-theme rediwm-files rediwm-images rediwm-editor rediwm-pdf rediwm-share-picker rediwm-session rediwm-dm rediwm-accounts-helper; do
     mv -fT "$stage/$binary" "/usr/local/bin/$binary"
 done
 # The compositor draws the desktop itself; the old client is retired.

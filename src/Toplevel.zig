@@ -215,8 +215,19 @@ move_y: anim.Anim = .{},
 /// see it, and it is never folded into `move_x`/`move_y`.
 dodge_x: anim.Anim = .{},
 dodge_y: anim.Anim = .{},
+/// Workspace switch (`workspaces.zig`): an offset in world units and a fade,
+/// presentation only like `dodge_*`. A window whose workspace was hidden keeps
+/// its frame shown, inert, until they settle (`switch_leaving`).
+switch_x: anim.Anim = .{},
+switch_y: anim.Anim = .{},
+switch_fade: anim.Anim = .{ .from = 1, .to = 1, .property = .opacity },
+switch_leaving: bool = false,
 size_w: anim.Anim = .{},
 size_h: anim.Anim = .{},
+/// The size request `size_w`/`size_h` ease toward. Once the client has answered
+/// it, a settled animation gives way to the size the client took (one that
+/// cannot fit is never clipped to a frame it refused).
+size_wait: ConfigureWait = .none,
 // Last clip handed to `wlr_scene_subsurface_tree_set_clip`, so an unchanged
 // clip is not re-applied. `applySizeClip` runs from `syncChrome`, i.e. on
 // every client commit, and wlroots walks the whole subsurface tree on each
@@ -269,6 +280,9 @@ auto_float: bool = false,
 auto_float_override: ?bool = null,
 auto_seen: ?@import("auto_tiling.zig").State = null,
 auto_reinsert: ?@import("auto_layout.zig").Placement = null,
+/// The window that had focus on this one's workspace when it joined it: a new
+/// tile splits that window's tile. Cleared once the window is in the tree.
+auto_anchor: ?u64 = null,
 tab_resume_group: u64 = 0,
 tab_resume_restore: ?RestoreGeometry = null,
 // Manual half/quarter tile and the floating geometry to return to.
@@ -1474,10 +1488,18 @@ pub fn finishSizeAnimation(toplevel: *Toplevel) void {
 
 pub fn requestSizeAnimated(toplevel: *Toplevel, width: i32, height: i32) ConfigureWait {
     const wait = toplevel.requestSize(width, height);
-    if (!toplevel.in_world or toplevel.isResizing()) return wait;
+    toplevel.animateChromeSize(width, height, wait);
+    return wait;
+}
+
+/// Eases the frame toward a client size already requested (`wait`), clipping
+/// the client to it while the client catches up.
+fn animateChromeSize(toplevel: *Toplevel, width: i32, height: i32, wait: ConfigureWait) void {
+    if (!toplevel.in_world or toplevel.isResizing()) return;
+    toplevel.size_wait = wait;
     const now_ms = nowMs();
     const target = chromeSizeForClient(toplevel, width, height);
-    if (target.w <= 0 or target.h <= 0) return wait;
+    if (target.w <= 0 or target.h <= 0) return;
     if (!toplevel.size_w.active() and toplevel.size_w.settle_ms == 0) {
         const cur_w: f32 = @floatFromInt(if (toplevel.chrome_width > 0) toplevel.chrome_width else target.w);
         toplevel.size_w = .{ .from = cur_w, .to = cur_w };
@@ -1495,7 +1517,6 @@ pub fn requestSizeAnimated(toplevel: *Toplevel, width: i32, height: i32) Configu
     } else {
         toplevel.server.scheduleFrames();
     }
-    return wait;
 }
 
 fn chromeSizeForClient(toplevel: *const Toplevel, client_w: i32, client_h: i32) struct { w: i32, h: i32 } {
@@ -1514,7 +1535,7 @@ fn ignoreCloseInput(_: *wlr.SceneBuffer, _: *f64, _: *f64) callconv(.c) bool {
 pub fn applyVisualTransform(toplevel: *Toplevel, now_ms: i64) void {
     const zoom_scale = toplevel.worldScale();
     if (toplevel.in_world and !toplevel.closing) {
-        toplevel.frame_tree.node.setEnabled(@import("window_tabs.zig").visible(toplevel) and toplevel.cameraFocusOpacity() > 0);
+        toplevel.frame_tree.node.setEnabled(toplevel.switch_leaving or (@import("window_tabs.zig").visible(toplevel) and toplevel.cameraFocusOpacity() > 0));
     }
     // Open keeps tree zoom at the logical window zoom so scene picking and
     // client-local coordinates stay 1:1 with the mapped frame (existing
@@ -1526,12 +1547,12 @@ pub fn applyVisualTransform(toplevel: *Toplevel, now_ms: i64) void {
         1.0;
     _ = @import("projection.zig").setTreeZoom(&toplevel.frame_tree.node, zoom_scale * factor);
     toplevel.frame_tree.node.setPosition(
-        visualX(toplevel, now_ms) + dodgeOffset(toplevel.dodge_x, now_ms),
-        visualY(toplevel, now_ms) + dodgeOffset(toplevel.dodge_y, now_ms),
+        visualX(toplevel, now_ms) + animOffset(toplevel.dodge_x, now_ms) + animOffset(toplevel.switch_x, now_ms),
+        visualY(toplevel, now_ms) + animOffset(toplevel.dodge_y, now_ms) + animOffset(toplevel.switch_y, now_ms),
     );
 }
 
-fn dodgeOffset(a: anim.Anim, now_ms: i64) i32 {
+fn animOffset(a: anim.Anim, now_ms: i64) i32 {
     if (!a.active()) return 0;
     return @intFromFloat(@round(a.value(now_ms)));
 }
@@ -1575,6 +1596,69 @@ pub fn tickDodge(toplevel: *Toplevel, now_ms: i64) bool {
     return true;
 }
 
+/// Brings the window in with its workspace: from (`from_x`, `from_y`) world
+/// units away, faded out with `fade`, or from where it is when it was leaving.
+pub fn switchIn(toplevel: *Toplevel, from_x: f32, from_y: f32, fade: bool) void {
+    if (!toplevel.switch_leaving) {
+        toplevel.switch_x = .{ .from = from_x, .to = from_x };
+        toplevel.switch_y = .{ .from = from_y, .to = from_y };
+        const start: f32 = if (fade) 0 else 1;
+        toplevel.switch_fade = .{ .from = start, .to = start, .property = .opacity };
+    }
+    toplevel.setSwitchLeaving(false);
+    toplevel.retargetSwitch(0, 0, 1);
+}
+
+/// Takes the window out with the workspace it is on, which is already hidden:
+/// it stays shown, inert, until it reaches (`to_x`, `to_y`) or has faded.
+pub fn switchOut(toplevel: *Toplevel, to_x: f32, to_y: f32, fade: bool) void {
+    toplevel.setSwitchLeaving(true);
+    toplevel.retargetSwitch(to_x, to_y, if (fade) 0 else 1);
+}
+
+fn retargetSwitch(toplevel: *Toplevel, x: f32, y: f32, opacity: f32) void {
+    const now_ms = nowMs();
+    const curve = anim.curveFor(.camera_desktop);
+    toplevel.switch_x.retargetTo(now_ms, x, curve);
+    toplevel.switch_y.retargetTo(now_ms, y, curve);
+    toplevel.switch_fade.retargetTo(now_ms, opacity, curve);
+    if (!toplevel.tickSwitch(now_ms)) return;
+    toplevel.applyVisualTransform(now_ms);
+    toplevel.applyOpacity(now_ms);
+    toplevel.server.scheduleFrames();
+}
+
+fn setSwitchLeaving(toplevel: *Toplevel, leaving: bool) void {
+    if (toplevel.switch_leaving == leaving) return;
+    toplevel.switch_leaving = leaving;
+    _ = projection.setTreeInert(&toplevel.frame_tree.node, leaving);
+}
+
+/// Ends a workspace switch at once; a window that was leaving is hidden.
+pub fn finishSwitch(toplevel: *Toplevel) void {
+    if (!toplevel.switch_x.active() and !toplevel.switch_y.active() and !toplevel.switch_fade.active() and !toplevel.switch_leaving) return;
+    toplevel.switch_x.cancel(0);
+    toplevel.switch_y.cancel(0);
+    toplevel.switch_fade.cancel(1);
+    toplevel.setSwitchLeaving(false);
+    if (!toplevel.in_world) return;
+    const now_ms = nowMs();
+    toplevel.applyVisualTransform(now_ms);
+    toplevel.applyOpacity(now_ms);
+}
+
+pub fn tickSwitch(toplevel: *Toplevel, now_ms: i64) bool {
+    if (!toplevel.switch_x.active() and !toplevel.switch_y.active() and !toplevel.switch_fade.active() and !toplevel.switch_leaving) return false;
+    _ = toplevel.switch_x.sampleChanged(now_ms, anim.quantum_px);
+    _ = toplevel.switch_y.sampleChanged(now_ms, anim.quantum_px);
+    _ = toplevel.switch_fade.sampleChanged(now_ms, anim.quantum_alpha);
+    if (toplevel.switch_x.settled(now_ms) and toplevel.switch_y.settled(now_ms) and toplevel.switch_fade.settled(now_ms)) {
+        toplevel.finishSwitch();
+        return false;
+    }
+    return true;
+}
+
 pub fn tickMove(toplevel: *Toplevel, now_ms: i64) bool {
     if (!toplevel.move_x.active() and !toplevel.move_y.active()) return false;
     _ = toplevel.move_x.sampleChanged(now_ms, anim.quantum_px);
@@ -1593,7 +1677,8 @@ pub fn tickSize(toplevel: *Toplevel, now_ms: i64) bool {
     const quantum = anim.rasterPixelQuantum(toplevel.render_scale);
     const w_changed = toplevel.size_w.sampleChanged(now_ms, quantum);
     const h_changed = toplevel.size_h.sampleChanged(now_ms, quantum);
-    if (w_changed or h_changed) {
+    // At rest the frame may give way to the size the client took.
+    if (w_changed or h_changed or !moving) {
         toplevel.syncChrome(true, now_ms) catch |err| {
             log.err("tickSize: could not update window decoration: {}", .{err});
         };
@@ -2049,6 +2134,7 @@ pub fn handleSurfaceCommit(toplevel: *Toplevel) void {
     if (toplevel.kde_decoration) |decoration| decoration.commit();
     if (toplevel.decoration) |decoration| decoration.applyMode();
 
+    if (toplevel.size_wait == .x11_commit or toplevel.configureCompleted(toplevel.size_wait)) toplevel.size_wait = .none;
     if (toplevel.server.input.resize_session) |*session| {
         if (session.toplevel == toplevel) {
             if (session.outstanding_configure == .x11_commit) {
@@ -2126,6 +2212,7 @@ pub fn handleMapped(toplevel: *Toplevel) void {
             toplevel.auto_float = ph_top.auto_float;
             toplevel.auto_restore = ph_top.auto_restore;
             toplevel.auto_reinsert = ph_top.auto_reinsert;
+            toplevel.auto_anchor = ph_top.auto_anchor;
             const ph = &ph_top.backend.placeholder;
             ph.matched = true;
             ph_token = ph.token;
@@ -2276,6 +2363,7 @@ pub fn handleUnmapped(toplevel: *Toplevel) void {
     toplevel.in_world = false;
     toplevel.needs_attention = false;
     toplevel.detachInput();
+    toplevel.finishSwitch();
     const keep_scene = if (was_tab or !@import("workspaces.zig").visible(toplevel)) false else toplevel.beginCloseAnimation();
     if (!keep_scene) {
         toplevel.clearChromeCache();
@@ -2456,7 +2544,8 @@ pub fn isResizing(toplevel: *Toplevel) bool {
 pub fn isGeometrySettled(toplevel: *Toplevel, now_ms: i64) bool {
     if (toplevel.isResizing()) return false;
     return toplevel.move_x.settled(now_ms) and toplevel.move_y.settled(now_ms) and
-        toplevel.size_w.settled(now_ms) and toplevel.size_h.settled(now_ms);
+        toplevel.size_w.settled(now_ms) and toplevel.size_h.settled(now_ms) and
+        toplevel.switch_x.settled(now_ms) and toplevel.switch_y.settled(now_ms);
 }
 
 pub fn chromeAcceptsInput(buffer: *wlr.SceneBuffer, sx: *f64, sy: *f64) callconv(.c) bool {
@@ -2630,7 +2719,7 @@ pub fn syncChrome(toplevel: *Toplevel, rebuild_shadow: bool, now_ms: i64) !void 
     toplevel.chrome_height = height;
 
     const title_memo = chrome.TitlebarMemo.capture(width, height, toplevel.titlePtr(), state);
-    const skip_titlebar = if (toplevel.last_titlebar) |prev| prev.eql(title_memo) else false;
+    const skip_titlebar = if (toplevel.last_titlebar) |prev| prev.eql(title_memo) or toplevel.stretchesTitlebar(prev, title_memo, now_ms) else false;
     if (!skip_titlebar) {
         const titlebar = if (toplevel.cached_titlebar != null and toplevel.last_titlebar != null and toplevel.last_titlebar.?.reusableFor(title_memo))
             try chrome.ChromeBuffer.createUpdated(toplevel.cached_titlebar.?, state, toplevel.last_titlebar.?.title_ptr != title_memo.title_ptr)
@@ -2660,13 +2749,34 @@ pub fn syncChrome(toplevel: *Toplevel, rebuild_shadow: bool, now_ms: i64) !void 
     applySizeClip(toplevel);
 }
 
+/// How far an easing frame stretches its titlebar raster before rastering anew.
+const titlebar_stretch: f32 = 0.12;
+
+/// Whether a frame easing to a new size keeps its titlebar raster, stretched,
+/// instead of rastering it for every frame (`ChromeBuffer.create` costs
+/// milliseconds, and a reflow eases several frames at once): only the size
+/// changed, the width by at most `titlebar_stretch`. The band does not depend
+/// on the height, and the settled size always rasters exactly.
+fn stretchesTitlebar(toplevel: *const Toplevel, raster: chrome.TitlebarMemo, next: chrome.TitlebarMemo, now_ms: i64) bool {
+    if (toplevel.size_w.settle_ms == 0 and toplevel.size_h.settle_ms == 0) return false;
+    if (toplevel.size_w.settled(now_ms) and toplevel.size_h.settled(now_ms)) return false;
+    var resized = raster;
+    resized.width = next.width;
+    resized.height = next.height;
+    if (!resized.eql(next)) return false;
+    const ratio = @as(f32, @floatFromInt(next.width)) / @as(f32, @floatFromInt(@max(raster.width, 1)));
+    return @abs(ratio - 1) <= titlebar_stretch;
+}
+
 fn visualChromeSize(toplevel: *Toplevel, now_ms: i64, natural_w: i32, natural_h: i32) struct { w: i32, h: i32 } {
     if (toplevel.size_w.settle_ms == 0 and toplevel.size_h.settle_ms == 0) {
         return .{ .w = natural_w, .h = natural_h };
     }
     const w: i32 = @intFromFloat(@round(toplevel.size_w.value(now_ms)));
     const h: i32 = @intFromFloat(@round(toplevel.size_h.value(now_ms)));
-    if (toplevel.size_w.settled(now_ms) and toplevel.size_h.settled(now_ms) and w == natural_w and h == natural_h) {
+    if (toplevel.size_w.settled(now_ms) and toplevel.size_h.settled(now_ms) and
+        ((w == natural_w and h == natural_h) or toplevel.size_wait == .none))
+    {
         toplevel.size_w.cancel(@floatFromInt(natural_w));
         toplevel.size_h.cancel(@floatFromInt(natural_h));
         return .{ .w = natural_w, .h = natural_h };
@@ -2799,7 +2909,7 @@ pub fn effectiveOpacity(toplevel: *Toplevel, now_ms: i64) f32 {
 }
 
 pub fn applyOpacity(toplevel: *Toplevel, now_ms: i64) void {
-    var opacity = std.math.clamp(toplevel.effectiveOpacity(now_ms) * toplevel.map_opacity.value(now_ms), 0, 1);
+    var opacity = std.math.clamp(toplevel.effectiveOpacity(now_ms) * toplevel.map_opacity.value(now_ms) * toplevel.switch_fade.value(now_ms), 0, 1);
     toplevel.frame_tree.node.forEachBuffer(*f32, struct {
         fn iter(buffer: *wlr.SceneBuffer, _: c_int, _: c_int, value: *f32) void {
             buffer.setOpacity(value.*);
@@ -2936,6 +3046,7 @@ pub fn minimize(toplevel: *Toplevel) void {
     if (toplevel.minimized or !toplevel.in_world) return;
     toplevel.minimized = true;
     toplevel.detachInput();
+    toplevel.finishSwitch();
     toplevel.frame_tree.node.setEnabled(false);
 
     const server = toplevel.server;
@@ -3451,7 +3562,9 @@ pub fn setTiledOn(toplevel: *Toplevel, output: *Output, tile: tiling.Tile) void 
 
 /// Arbitrary automatic frame rectangle. Only changed targets configure a client;
 /// replies to an earlier configure never trigger another layout pass.
-pub fn setAutoTile(toplevel: *Toplevel, rect: wlr.Box) void {
+/// `animate` glides the frame to the tile like other compositor-owned geometry;
+/// a window still opening takes its first tile at once.
+pub fn setAutoTile(toplevel: *Toplevel, rect: wlr.Box, animate: bool) void {
     if (!toplevel.in_world or toplevel.fullscreen or toplevel.maximized) return;
     const footer = if (toplevel.hasServerDecorations()) chrome.frame_border else 0;
     const target: RestoreGeometry = .{
@@ -3460,10 +3573,12 @@ pub fn setAutoTile(toplevel: *Toplevel, rect: wlr.Box) void {
         .width = @max(1, rect.width - 2 * toplevel.borderWidth()),
         .height = @max(1, rect.height - toplevel.titlebarHeight() - footer),
     };
-    toplevel.finishSizeAnimation();
+    // An unchanged tile keeps a glide in flight (an earlier reflow, a restore).
     if (toplevel.auto_target) |previous| if (std.meta.eql(previous, target)) return;
-    if (toplevel.auto_restore == null) toplevel.auto_restore = toplevel.rememberGeometry();
     const was_tiled = toplevel.auto_target != null;
+    const glide = animate and (was_tiled or !toplevel.map_motion.active());
+    if (!glide) toplevel.finishSizeAnimation();
+    if (toplevel.auto_restore == null) toplevel.auto_restore = toplevel.rememberGeometry();
     toplevel.auto_target = target;
     toplevel.pending_restore = null;
     toplevel.clearZoomBoost();
@@ -3471,8 +3586,9 @@ pub fn setAutoTile(toplevel: *Toplevel, rect: wlr.Box) void {
     const moved = toplevel.x != target.x or toplevel.y != target.y;
     // X11 sends position and size together: commitPosition uses auto_target,
     // never the old client buffer size, and already configures a moved window.
-    toplevel.setPosition(target.x, target.y);
-    if (toplevel.backend != .xwayland or !moved) _ = toplevel.requestSize(target.width, target.height);
+    if (glide) toplevel.setPositionAnimated(target.x, target.y) else toplevel.setPosition(target.x, target.y);
+    const wait: ConfigureWait = if (toplevel.backend != .xwayland or !moved) toplevel.requestSize(target.width, target.height) else .x11_commit;
+    if (glide) toplevel.animateChromeSize(target.width, target.height, wait);
     toplevel.notifyLayoutChanged();
 }
 

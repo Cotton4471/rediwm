@@ -1,5 +1,9 @@
 {"Ok":{"Services":{"available":false,"loading":false,"analyzing":false,"timing_available":false,"action_pending":false,"boot_us":null,"status":"text \"quoted\"\n\\","supported_modes":["text \"quoted\"\n\\"],"services":[{"name":"text \"quoted\"\n\\","description":"text \"quoted\"\n\\","active":"text \"quoted\"\n\\","sub":"text \"quoted\"\n\\","startup":"text \"quoted\"\n\\","trigger":"text \"quoted\"\n\\","activation_us":null,"editable":false}]}}}
 {"Ok":{"Services":{"available":true,"loading":true,"analyzing":true,"timing_available":true,"action_pending":true,"boot_us":7,"status":"text \"quoted\"\n\\","supported_modes":["text \"quoted\"\n\\"],"services":[{"name":"text \"quoted\"\n\\","description":"text \"quoted\"\n\\","active":"text \"quoted\"\n\\","sub":"text \"quoted\"\n\\","startup":"text \"quoted\"\n\\","trigger":"text \"quoted\"\n\\","activation_us":7,"editable":true}]}}}
+{"Ok":{"ThemePacks":{"active":"text \"quoted\"\n\\","packs":[{"id":"text \"quoted\"\n\\","name":"text \"quoted\"\n\\","version":"text \"quoted\"\n\\","user_installed":false}]}}}
+{"Ok":{"ThemePacks":{"active":"text \"quoted\"\n\\","packs":[{"id":"text \"quoted\"\n\\","name":"text \"quoted\"\n\\","version":"text \"quoted\"\n\\","user_installed":true}]}}}
+{"Ok":{"ThemeJob":{"id":"text \"quoted\"\n\\","message":"text \"quoted\"\n\\"}}}
+{"Ok":{"ThemeJob":{"id":"text \"quoted\"\n\\","message":"text \"quoted\"\n\\"}}}
 {"Ok":{"Sounds":{"theme":"text \"quoted\"\n\\","enabled":false,"player_available":false,"events":[{"name":"text \"quoted\"\n\\","enabled":false,"available":false,"path":null}]}}}
 {"Ok":{"Sounds":{"theme":"text \"quoted\"\n\\","enabled":true,"player_available":true,"events":[{"name":"text \"quoted\"\n\\","enabled":true,"available":true,"path":"text \"quoted\"\n\\"}]}}}
 {"Ok":{"Wallpaper":{"configured":"text \"quoted\"\n\\","resolved_path":null,"displayed_path":null,"loading":false,"failed":false,"width":null,"height":null}}}

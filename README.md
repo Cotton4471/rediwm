@@ -45,7 +45,7 @@ Installing never replaces your login manager
 Requirements: Zig 0.16, wlroots 0.20, and the development files for Wayland,
 wayland-protocols, xkbcommon, pixman, FreeType, HarfBuzz, Fontconfig,
 librsvg/GdkPixbuf, PangoCairo, libinput, PAM, libpulse, libpipewire-0.3, Poppler GLib,
-libseccomp, libjpeg and libpng. Optional:
+libseccomp, libarchive, libjpeg, libpng, libwebp and libXcursor. Optional:
 Xwayland, `foot`, `brightnessctl`, `gio`/`xdg-open`, `git` (optional).
 
 Run from a checkout, `scripts/install.sh` builds that checkout (dependencies,
@@ -124,8 +124,14 @@ and `[keybinds.workspace]`. Their action names are `toggle_floating`,
 IPC uses the same actions: `tiling_action` takes an `action` string and an
 optional window `id`; without `id`, it uses the focused window/current workspace.
 
-New workspace windows use a recursive split layout, with an 8 px gap around
-and between frames by default. Set `[compositor] window_gap` to override it,
+New workspace windows use a recursive split layout: a new window splits the
+focused tile along its longer side, and a window moved to another workspace
+joins beside that workspace's focused tile. Tiles glide to their new places, and
+switching workspaces slides the old one out and the new one in (the higher
+number from the right, or from below when other displays sit beside the output;
+a cross-fade when displays surround it or motion is reduced) at
+`[compositor] desktop_switch_ms`. There is an 8 px gap around and between
+frames by default. Set `[compositor] window_gap` to override it,
 including `0` for no gap; Canvas keeps its default gap of 0 px. Existing explicit
 gap settings are preserved. The active workspace window has a 1 px red outline,
 including floating windows and clients that draw their own decorations;
@@ -306,3 +312,5 @@ terms or conditions.
 
 Bundled third-party assets keep their own licenses: the fonts under
 `assets/fonts` (SIL OFL 1.1) and the cursors under `assets/cursors` (CC BY-SA 4.0).
+
+Theme packs are selected in Settings → Appearance. Packs can include wallpapers, shell glyphs, file/app icons and cursors. See [theme packs](docs/themes.md) for the format, installation and sharing.

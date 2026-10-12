@@ -238,6 +238,9 @@ pub const Client = struct {
     }
 
     pub fn destroy(client: *Client) void {
+        if (client.ipc.compositor.theme_job) |job| if (job.client == client) {
+            job.client = null;
+        };
         if (client.process_job) |job| job.cancel();
         client.process_job = null;
         client.ipc.wait_mgr.cancelForClient(client.id);

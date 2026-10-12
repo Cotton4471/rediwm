@@ -980,6 +980,8 @@ pub const ProcessesResult = struct {
 };
 
 pub const Action = union(enum) {
+    theme_apply: struct { id: []const u8 },
+    theme_install: struct { path: []const u8, replace: bool = false },
     set_service_mode: struct { service: []const u8, mode: ServiceMode },
     play_sound: struct { event: []const u8 },
     set_wallpaper: struct { path: []const u8, persist: bool = true },
@@ -1080,6 +1082,7 @@ pub const Action = union(enum) {
 };
 
 pub const Request = union(enum) {
+    theme_list,
     get_services,
     get_sounds,
     get_wallpaper,
@@ -1133,6 +1136,8 @@ pub const TextInputResult = struct {
 
 pub const ResponsePayload = union(enum) {
     services: ServicesResult,
+    theme_packs: struct { active: []const u8, packs: []const struct { id: []const u8, name: []const u8, version: []const u8, user_installed: bool } },
+    theme_job: struct { id: []const u8, message: []const u8 },
     sounds: SoundsResult,
     wallpaper: WallpaperResult,
     theme: struct { tokens: ThemeTokens, path: ?[]const u8, dark_mode: bool },
@@ -1900,6 +1905,16 @@ fn persistParam(p: std.json.ObjectMap) ParseError!bool {
 
 fn parseActionParams(allocator: std.mem.Allocator, command_tag: commands.RouteTag(.action), params: ?std.json.ObjectMap) ParseError!Action {
     switch (command_tag) {
+        .theme_apply => {
+            const p = params orelse return error.InvalidRequest;
+            return .{ .theme_apply = .{ .id = try requiredText(allocator, p, "id", 64) } };
+        },
+        .theme_install => {
+            const p = params orelse return error.InvalidRequest;
+            const r = p.get("replace");
+            if (r != null and r.? != .bool) return error.InvalidRequest;
+            return .{ .theme_install = .{ .path = try requiredText(allocator, p, "path", 4095), .replace = if (r) |v| v.bool else false } };
+        },
         .switch_layout => {
             const p = params orelse return error.InvalidRequest;
             const value = p.get("layout") orelse return error.InvalidRequest;
@@ -2702,6 +2717,16 @@ fn stringifyResponsePayload(payload: ResponsePayload, writer: anytype) !void {
         },
         .services => |value| {
             try writer.writeAll("{\"Services\":");
+            try writer.print("{f}", .{std.json.fmt(value, .{})});
+            try writer.writeByte('}');
+        },
+        .theme_packs => |value| {
+            try writer.writeAll("{\"ThemePacks\":");
+            try writer.print("{f}", .{std.json.fmt(value, .{})});
+            try writer.writeByte('}');
+        },
+        .theme_job => |value| {
+            try writer.writeAll("{\"ThemeJob\":");
             try writer.print("{f}", .{std.json.fmt(value, .{})});
             try writer.writeByte('}');
         },
