@@ -133,6 +133,8 @@ pub const Manager = struct {
     wired_timer: ?*@import("wayland").server.wl.EventSource = null,
     wired_message: []const u8 = "",
     wired_generation: u64 = 0,
+    /// What the taskbars were last told by `publishOffline`.
+    offline_published: bool = false,
 
     pub fn create(server: *Server) !*Manager {
         const self = try gpa.create(Manager);
@@ -155,8 +157,23 @@ pub const Manager = struct {
         self.scan_pending = true;
         if (self.conn == null or self.conn.?.closed) self.connect() else self.fetch();
     }
+    /// NetworkManager reports no connection at all (state ASLEEP or DISCONNECTED;
+    /// connecting, unknown and an absent service are not alarming), by wifi or
+    /// wire. The taskbar tints its network icon with it.
+    pub fn offline(self: *const Manager) bool {
+        return self.available and (self.state == 10 or self.state == 20);
+    }
+    /// Only a flip reaches the taskbars, so an idle session stays idle.
+    fn publishOffline(self: *Manager) void {
+        const now = self.offline();
+        if (now == self.offline_published) return;
+        self.offline_published = now;
+        var it = self.server.outputs.iterator(.forward);
+        while (it.next()) |output| if (output.taskbar) |bar| bar.applyNetwork(now);
+    }
     fn refresh(self: *Manager) void {
         if (self.closing) return;
+        self.publishOffline();
         if (self.server.input.open_wifi) |popup| popup.changed();
         if (self.server.input.open_control_center) |cc| if (cc.page == .network) cc.refresh();
     }
@@ -240,6 +257,13 @@ pub const Manager = struct {
             for (self.saved[0..self.saved_count]) |*saved| if (eq(u8, saved.path.slice(), msg.headers.path orelse "")) {
                 saved.loaded = false;
             };
+        }
+        // The global state is one small signal: track it with no snapshot, so the
+        // taskbar stays right while no popup is open.
+        if (eq(u8, msg.headers.interface orelse "", nm) and eq(u8, msg.headers.member orelse "", "StateChanged") and eq(u8, msg.headers.signature, "u")) {
+            var body = msg.body;
+            self.state = try body.uint32();
+            self.publishOffline();
         }
         const settings_open = if (self.server.input.open_control_center) |cc| cc.page == .network else false;
         if (self.server.input.open_wifi != null or settings_open or self.busy or self.wired_pending != null) self.fetch();

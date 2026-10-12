@@ -192,6 +192,9 @@ hover_target: Target = .none,
 audio_generation_seen: u32 = 0,
 audio_volume: f32 = 0,
 audio_muted: bool = false,
+// NetworkManager reports no connection: the wifi icon is drawn in the danger
+// colour, like a muted speaker. Pushed by `network.Manager`, never polled.
+network_offline: bool = false,
 
 clock_time: [16]u8 = [_]u8{0} ** 16,
 clock_date: [128]u8 = [_]u8{0} ** 128,
@@ -390,6 +393,7 @@ pub fn create(server: *Server, wlr_output: *wlr.Output) !*Taskbar {
         .capture_node = capture_node,
         .battery_node = battery_node,
         .battery_state = battery.read(server.io, gpa),
+        .network_offline = if (server.network) |network| network.offline() else false,
         .clock_minute = @divFloor(c_time.time(null), 60),
         .timer = undefined,
     };
@@ -446,6 +450,16 @@ pub fn applyBattery(bar: *Taskbar, next: battery.State) void {
         bar.clock_dirty = true;
         bar.capture_dirty = true;
     }
+    bar.markDirty(paint_tray);
+    bar.wlr_output.scheduleFrame();
+}
+
+/// A flip of `network.Manager.offline` recolours the wifi icon; nothing else
+/// about the tray changes, so only that icon repaints.
+pub fn applyNetwork(bar: *Taskbar, offline: bool) void {
+    if (offline == bar.network_offline) return;
+    bar.network_offline = offline;
+    bar.tray_dirty[@intFromEnum(TrayKind.wifi)] = true;
     bar.markDirty(paint_tray);
     bar.wlr_output.scheduleFrame();
 }
@@ -1611,7 +1625,11 @@ fn renderPart(bar: *Taskbar, now_ms: i64, part: Part, origin_x: i32, origin_y: i
     }
     if (part == .tray) {
         const i = part.tray;
-        const color = if (i == @intFromEnum(TrayKind.volume) and bar.audio_muted)
+        const alert = switch (@as(TrayKind, @enumFromInt(i))) {
+            .volume => bar.audio_muted,
+            .wifi => bar.network_offline,
+        };
+        const color = if (alert)
             Color.fromRgba(ui_theme.taskbar(.danger))
         else
             Color.lerp(Color.tray_icon(), Color.tray_icon_hover(), hover);

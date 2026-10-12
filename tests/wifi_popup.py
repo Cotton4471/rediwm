@@ -29,11 +29,11 @@ ETH = ROOT + '/Devices/2'
 IP4 = ROOT + '/IP4Config/2'
 conn = Gio.bus_get_sync(Gio.BusType.SESSION)
 v = GLib.Variant
-state = {'enabled': True, 'hardware': True, 'active': 1, 'fail': False, 'device': True, 'many': False, 'updated': False, 'last_scan': -1, 'hold_scan': True, 'ethernet': True, 'eth_state': 100, 'carrier': True, 'managed': True, 'eth_profile': True, 'eth_fail': False, 'hold_eth': False, 'connectivity': 4}
+state = {'global_state': 70, 'enabled': True, 'hardware': True, 'active': 1, 'fail': False, 'device': True, 'many': False, 'updated': False, 'last_scan': -1, 'hold_scan': True, 'ethernet': True, 'eth_state': 100, 'carrier': True, 'managed': True, 'eth_profile': True, 'eth_fail': False, 'hold_eth': False, 'connectivity': 4}
 names = ['REDI_Home', 'Studio_5G', 'Cafe_WiFi', 'Linksys_7432', 'OfficeNet', 'MySpectrum']
 def objects():
     count = state.get('count', 35 if state['many'] else 6)
-    result = {ROOT: {NM: {'WirelessEnabled': v('b', state['enabled']), 'WirelessHardwareEnabled': v('b', state['hardware']), 'State': v('u', 70), 'Connectivity': v('u', state['connectivity'])}}, SAVED: {NM+'.Settings.Connection': {}}}
+    result = {ROOT: {NM: {'WirelessEnabled': v('b', state['enabled']), 'WirelessHardwareEnabled': v('b', state['hardware']), 'State': v('u', state['global_state']), 'Connectivity': v('u', state['connectivity'])}}, SAVED: {NM+'.Settings.Connection': {}}}
     if state['ethernet']:
         result[ETH] = {NM+'.Device': {'Interface': v('s','enp4s0'), 'Driver': v('s','r8169'), 'Managed': v('b',state['managed']), 'State': v('u',state['eth_state']), 'Ip4Config': v('o',IP4), 'AvailableConnections': v('ao',[ROOT+'/Settings/2'] if state['eth_profile'] else [])}, NM+'.Device.Wired': {'Carrier': v('b',state['carrier']), 'Speed': v('u',2500), 'HwAddress': v('s','3C:EC:EF:12:34:56')}}
         result[IP4] = {NM+'.IP4Config': {'AddressData': v('aa{sv}',[{'address':v('s','192.168.1.100'),'prefix':v('u',24)}]), 'Gateway': v('s','192.168.1.1'), 'NameserverData': v('aa{sv}',[{'address':v('s','1.1.1.1')},{'address':v('s','1.0.0.1')}])}}
@@ -123,6 +123,9 @@ def command(channel,cond):
     req=json.loads(sys.stdin.readline())
     state.update(req)
     if req.get('complete_scan'): completed()
+    if 'global_state' in req:
+        conn.emit_signal(None, ROOT, NM, 'StateChanged', v('(u)', (req['global_state'],)))
+        conn.flush_sync()
     if 'device' in req:
         # Device hotplug is announced from ObjectManager's parent path.
         if state['device']:
@@ -189,6 +192,20 @@ def run(scale):
                     target=Path('/tmp')/f'rediwm-wifi-{name}-{scale}-{os.environ.get("REDIWM_TEST_RENDERER", "gles2")}.png'
                     target.unlink(missing_ok=True)
                     ipc.screenshot(str(target))
+                def tray_red():
+                    box,raster,target=boxes['network'],float(scale),tmp/'tray.png'
+                    target.unlink(missing_ok=True)
+                    ipc.screenshot(str(target))
+                    with Image.open(target) as image:
+                        icon=image.convert('RGB').crop((round(box['x']*raster),round(box['y']*raster),round((box['x']+box['width'])*raster),round((box['y']+box['height'])*raster)))
+                    return any(red > green+60 and red > blue+60 for red,green,blue in icon.getdata())
+                # The tray icon follows NetworkManager's global state with no popup open:
+                # red only while nothing is connected, never while connecting.
+                assert not tray_red(), 'connected: the wifi icon is red'
+                command(global_state=20);assert tray_red(), 'disconnected: the wifi icon is not red'
+                command(global_state=40);assert not tray_red(), 'connecting: the wifi icon is red'
+                command(global_state=10);assert tray_red(), 'asleep: the wifi icon is not red'
+                command(global_state=70);assert not tray_red(), 'reconnected: the wifi icon is still red'
                 open_menu()
                 wait_for(lambda: ipc.hit_test(*at(100,100)).get('widget')=='row','network rows')
                 def sonar_image():
