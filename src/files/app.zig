@@ -361,6 +361,8 @@ pub const App = struct {
     drag_ready: bool = false,
     collapse_on_release: ?usize = null,
     deselect_on_release: ?usize = null,
+    open_on_release: ?usize = null,
+    single_click_open: bool = true,
     selection_band: ?struct {
         x: f64,
         y: f64, // Content coordinates, so the anchor survives edge scrolling.
@@ -459,6 +461,7 @@ pub const App = struct {
             .job_runner = ops_mod.JobRunner.init(allocator) catch null,
             .folder_sizes = std.StringHashMap(SizeState).init(allocator),
             .thumbs_enabled = !thumb_decode.disabled(environ),
+            .single_click_open = @import("settings.zig").singleClickOpen(),
         };
 
         self.theme_cfg.override_root = @import("settings.zig").iconRoot();
@@ -1003,6 +1006,8 @@ pub const App = struct {
         self.worker.theme = null;
         _ = c.pthread_mutex_unlock(&self.worker.mutex);
         if (new_theme) |t| {
+            self.single_click_open = t.single_click_open;
+            self.open_on_release = null;
             t.apply();
             self.theme_cfg.override_root = @import("settings.zig").iconRoot();
             const base = @import("settings.zig").iconTheme();
@@ -3982,6 +3987,7 @@ pub const App = struct {
                 self.drag_origin = null;
                 self.collapse_on_release = null;
                 self.deselect_on_release = null;
+                self.open_on_release = null;
                 self.last_click_index = null;
             }
         }
@@ -4036,6 +4042,7 @@ pub const App = struct {
         self.drag_ready = false;
         self.collapse_on_release = null;
         self.deselect_on_release = null;
+        self.open_on_release = null;
     }
 
     fn bandRect(self: *App) header.Rect {
@@ -4216,6 +4223,7 @@ pub const App = struct {
         }
         if (!pressed) {
             if (button == 0x110) {
+                const open_index = self.open_on_release;
                 if (self.collapse_on_release) |idx| {
                     for (self.items.items, 0..) |*it, i| it.selected = i == idx;
                     self.invalidate();
@@ -4225,6 +4233,13 @@ pub const App = struct {
                     self.invalidate();
                 }
                 self.cancelDrag();
+                if (open_index) |idx| {
+                    if (!self.ctrl and !self.shift and !self.alt and self.singleClickIconAt(self.mouse_x, self.mouse_y) == idx) {
+                        self.last_click_index = null;
+                        self.last_click_time = 0;
+                        self.activateItem(idx);
+                    }
+                }
             }
             self.text_dragging = false;
             self.scroll_drag.end();
@@ -4497,15 +4512,16 @@ pub const App = struct {
                     }
                 }
 
-                // Double click check
-                if (button == 0x110 and self.last_click_index == idx and (now - self.last_click_time < 400)) {
+                const single_click = button == 0x110 and !self.ctrl and !self.shift and !self.alt and self.singleClickIconAt(x, y) == idx;
+                // Icon clicks activate on release so they can still start a drag.
+                if (!single_click and button == 0x110 and !self.ctrl and !self.shift and !self.alt and self.last_click_index == idx and (now - self.last_click_time < 400)) {
                     self.activateItem(idx);
                     self.last_click_index = null;
                     self.last_click_time = 0;
                     return;
                 }
 
-                self.last_click_index = idx;
+                self.last_click_index = if (single_click or button != 0x110 or self.ctrl or self.shift or self.alt) null else idx;
                 self.last_click_time = now;
                 self.focused_index = idx;
 
@@ -4532,6 +4548,7 @@ pub const App = struct {
                 }
                 if (self.chooser != null and !self.items.items[idx].is_dir) self.setChooserName(self.items.items[idx].name);
                 if (self.chooser == null and button == 0x110 and self.items.items[idx].selected) self.drag_origin = .{ .x = x, .y = y };
+                if (single_click) self.open_on_release = idx;
             } else {
                 // A background press starts a rubber-band selection; pressing
                 // an item still starts an outgoing file drag.
@@ -5416,7 +5433,15 @@ pub const App = struct {
         if (self.overSidebarDivider(x, y)) return "col-resize";
         if (self.chooser != null and self.chooserRect(0).contains(x, y)) return "text";
         if (self.focus != .location_bar and !self.search_visible and header.field(self.w).contains(x, y)) return "pointer";
+        if (self.singleClickIconAt(x, y) != null) return "pointer";
         return if (header.field(self.w).contains(x, y)) "text" else "default";
+    }
+
+    fn singleClickIconAt(self: *App, x: f64, y: f64) ?usize {
+        if (!self.single_click_open or self.chooser != null or self.dialog != null or self.menu != null) return null;
+        if (x < @as(f64, @floatFromInt(self.sidebarWidth())) or x >= @as(f64, @floatFromInt(self.w - self.scrollbarGutter()))) return null;
+        const idx = self.itemAt(x, y) orelse return null;
+        return if (self.itemIconRect(@intCast(idx)).contains(x, y)) idx else null;
     }
 
     /// The rename card, anchored to the item being renamed: the same inline
@@ -6871,6 +6896,55 @@ test "file drag threshold preserves multi-selection and ordinary release collaps
     app.handleButton(0x110, true);
     app.handleButton(0x110, false);
     try std.testing.expect(!app.items.items[0].selected);
+}
+
+test "single-click opening targets only visible icons and cancels for selection or dragging" {
+    for ([_]bool{ false, true }) |list| {
+        var app = try testApp();
+        defer app.deinit();
+        app.list_view = list;
+        try testItems(&app, 20);
+        const rect = app.itemIconRect(0);
+        const x = rect.x + rect.w / 2;
+        const y = rect.y + rect.h / 2;
+        try std.testing.expectEqualStrings("pointer", std.mem.span(app.pointerCursor(x, y)));
+        try std.testing.expectEqualStrings("default", std.mem.span(app.pointerCursor(rect.x + rect.w + 8, y)));
+        app.handleMotion(x, y);
+        app.handleButton(0x110, true);
+        try std.testing.expectEqual(@as(?usize, 0), app.open_on_release);
+        app.handleMotion(x + 9, y);
+        try std.testing.expect(app.drag_ready and app.open_on_release == null);
+        app.handleButton(0x110, false);
+        app.handleMotion(x, y);
+        for (0..3) |modifier| {
+            app.ctrl = modifier == 0;
+            app.shift = modifier == 1;
+            app.alt = modifier == 2;
+            app.handleButton(0x110, true);
+            try std.testing.expect(app.open_on_release == null);
+            app.handleButton(0x110, false);
+        }
+        app.ctrl = false;
+        app.shift = false;
+        app.alt = false;
+        app.handleButton(0x110, true);
+        app.cancelDrag();
+        try std.testing.expect(app.open_on_release == null);
+        app.single_click_open = false;
+        try std.testing.expectEqualStrings("default", std.mem.span(app.pointerCursor(x, y)));
+        app.handleButton(0x110, true);
+        try std.testing.expect(app.open_on_release == null);
+        app.cancelDrag();
+        app.single_click_open = true;
+        app.scroll_y = @intFromFloat(rect.y + rect.h - app.viewTop());
+        try std.testing.expect(app.singleClickIconAt(x, @floatFromInt(app.viewTop() - 1)) == null);
+        if (list) {
+            app.scroll_y = 0;
+            app.scroll_x = 12;
+            const shifted = app.itemIconRect(0);
+            try std.testing.expectEqualStrings("pointer", std.mem.span(app.pointerCursor(shifted.x + 1, y)));
+        }
+    }
 }
 
 test "Files reduced motion scrolls immediately" {

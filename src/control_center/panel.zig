@@ -185,6 +185,8 @@ pub const ControlCenter = struct {
     general_output_text: [2]Widget = undefined,
     general_display: [2]Widget = undefined,
     general_display_text: [2]Widget = undefined,
+    general_files: [2]Widget = undefined,
+    general_files_text: [2]Widget = undefined,
     brightness_children: [2]Widget = undefined,
     brightness_row: [3]Widget = undefined,
     brightness_percent: [8]u8 = undefined,
@@ -638,6 +640,18 @@ pub const ControlCenter = struct {
         cc.append(display_card);
         default_apps_section.build(&cc.default_apps, cc);
         cc.append(cc.default_apps.root);
+        cc.general_files_text = .{
+            label("Single-click file and folder icons", 14, false),
+            label("In Files, click an icon to open it in list or icons view. Click the name to select.", 12, true),
+        };
+        cc.general_files = .{
+            .{ .kind = .container, .direction = .column, .gap = 5, .width = .{ .flex = 1 }, .children = &cc.general_files_text },
+            .{ .name = "files_single_click_open", .kind = .{ .toggle = .{ .on = cc.server.config.compositor.files_single_click_open, .owner = cc, .on_change = filesSingleClickChanged } } },
+        };
+        var files_card = card(&cc.general_files);
+        files_card.direction = .row;
+        files_card.@"align" = .center;
+        cc.append(files_card);
     }
 
     fn buildDevices(cc: *ControlCenter) void {
@@ -1245,4 +1259,15 @@ fn brightnessChanged(owner: ?*anyopaque, _: usize, value: f32) void {
     server.brightness.set(server, value);
     cc.brightness_row[2].kind.text.content = std.fmt.bufPrint(&cc.brightness_percent, "{d}%", .{@as(i32, @intFromFloat(@round(value * 100)))}) catch "";
     cc.brightness_row[2].markDirty();
+}
+
+fn filesSingleClickChanged(owner: ?*anyopaque, _: usize, on: bool) void {
+    const cc: *ControlCenter = @ptrCast(@alignCast(owner orelse return));
+    @import("config").setting_save.saveCompositor(gpa, cc.server.io, cc.server.config.path, "files_single_click_open", on) catch |err| {
+        std.log.warn("could not save Files single-click setting: {}", .{err});
+        cc.default_apps.message = "Could not save the Files setting.";
+        cc.refresh();
+        return;
+    };
+    cc.server.config.compositor.files_single_click_open = on;
 }

@@ -24,6 +24,9 @@ The file manager. Space opens images, PDFs and text files.
 - **Pins:** drop a folder on the PLACES sidebar to pin it. Stored one path per
   line in `$XDG_STATE_HOME/rediwm/files-places`.
 - Drag a file out and the window slides aside (`dodge_file_drags`).
+- File and folder icons open with one click in list and icons view, with a hand
+  cursor on hover. Names select; Ctrl/Shift clicks and dragging still work.
+  Turn this off in Settings → General (`files_single_click_open`).
 
 ## Text editor (`rediwm-editor [FILE ...]`)
 

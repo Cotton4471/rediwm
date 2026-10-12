@@ -155,6 +155,8 @@ pub const CompositorConfig = struct {
     /// A file manager slides aside while a file is dragged out of it; see
     /// `input/drag_dodge.zig`.
     dodge_file_drags: bool = true,
+    /// Files opens an item with one click on its icon; names still select.
+    files_single_click_open: bool = true,
     inactive_opacity: f32 = 1.0,
     switcher_opacity: f32 = 1.0,
     border_radius: u32 = 10,
@@ -1062,6 +1064,7 @@ const compositor_rules: std.enums.EnumFieldStruct(std.meta.FieldEnum(CompositorC
     .window_gap = .{ .uint = .{ .min = 0, .max = 512 } },
     .snap_to_edges = .boolean,
     .dodge_file_drags = .boolean,
+    .files_single_click_open = .boolean,
     .inactive_opacity = .{ .float = .{ .min = 0, .max = 1 } },
     .switcher_opacity = .{ .float = .{ .min = 0, .max = 1 } },
     .border_radius = .{ .uint = .{ .min = 0, .max = 128 } },

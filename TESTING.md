@@ -262,7 +262,9 @@ a JSON result on stdout.
 `files_browser.py` (file-path selection; with `REDIWM_FORCE_DBUS=1` on a private
 `dbus-run-session` bus, also checks `FileManager1.ShowItems`), `files_controls.py`, `files_decoration.py`,
 `files_controls.py --places-only` isolates navigation, Recent history and sidebar
-controls from the Git checks. `files_thumbnails.py` (draws real pictures and reads thumbnail pixels back: shape,
+controls from the Git checks; `--single-click-only` checks icon-only opening in
+both views, hand cursors, selection/drag cancellation and the live Settings toggle.
+`files_thumbnails.py` (draws real pictures and reads thumbnail pixels back: shape,
 colour, EXIF rotation, the shared freedesktop cache read and write, a 240-picture
 folder, the `REDIWM_FILES_THUMBNAILS=0` switch and idle wakeups; it sets a scratch
 `XDG_CACHE_HOME`), `files_fixes.py` (wl-clipboard), `files_associations.py` (private MIME/app

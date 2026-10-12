@@ -137,6 +137,7 @@ pub const source =
     \\# window_gap          = 8      # px around and between tiled windows
     \\snap_to_edges         = true   # drag a window to a screen edge to tile or maximize it
     \\dodge_file_drags      = true   # a file manager slides aside while you drag a file out of it
+    \\files_single_click_open = true # Files: one click on an icon opens the file or folder
     \\switcher_opacity      = 1.0   # 0.0-1.0, background only; previews stay opaque
     \\inactive_opacity      = 1.0   # 0.0-1.0, 1.0 = no change
     \\border_radius         = 10    # window corner radius

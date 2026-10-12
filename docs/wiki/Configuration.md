@@ -82,6 +82,7 @@ keep 12-hour time and Sunday first until changed.
 | `window_gap` | `0` | px between snapped windows |
 | `snap_to_edges` | `true` | |
 | `dodge_file_drags` | `true` | file manager slides aside while you drag a file out |
+| `files_single_click_open` | `true` | Files opens files and folders with one click on their icon in list or icons view |
 | `switcher_opacity`, `inactive_opacity` | `1.0` | |
 | `border_radius` | `10` | Legacy frame radius; `[theme].radius_lg` takes precedence. |
 | `xwayland` | `true` | `false` means native only |

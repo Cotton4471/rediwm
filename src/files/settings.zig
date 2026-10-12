@@ -17,6 +17,7 @@ pub const ThemeUpdate = struct {
     pack_root: []const u8 = "",
     icon_theme: []const u8 = "",
     io: std.Io,
+    single_click_open: bool = true,
 
     fn init(a: std.mem.Allocator, t: theme.Theme, prefs: config.RegionConfig, root: []const u8, icon_name: []const u8, io: std.Io) !ThemeUpdate {
         var value = t;
@@ -125,6 +126,7 @@ pub const Settings = struct {
         var icon_name: []const u8 = "";
         var root: []const u8 = "";
         var prefs: config.RegionConfig = .{};
+        var single_click_open = true;
         self.animations = .{};
         self.region = .{};
         for (paths, 0..) |path, i| {
@@ -141,6 +143,7 @@ pub const Settings = struct {
                     };
                     icon_name = arena.allocator().dupe(u8, icon_name) catch return null;
                     t = value.theme;
+                    single_click_open = value.compositor.files_single_click_open;
                     if (value.theme_pack) |pack| root = arena.allocator().dupe(u8, pack.root) catch return null;
                     inline for (.{ "font", "mono_font", "start_button_icon" }) |field| @field(t, field) = arena.allocator().dupe(u8, @field(t, field)) catch return null;
                     prefs = value.region;
@@ -156,7 +159,9 @@ pub const Settings = struct {
         // Settings only retains scalar preferences; returned updates own strings.
         self.region.clock_24h = prefs.clock_24h;
         self.region.first_day_of_week = prefs.first_day_of_week;
-        return ThemeUpdate.init(a, t, prefs, root, icon_name, io) catch null;
+        var update = ThemeUpdate.init(a, t, prefs, root, icon_name, io) catch return null;
+        update.single_click_open = single_click_open;
+        return update;
     }
 };
 
@@ -208,6 +213,7 @@ test "Files follows config edits, theme overrides and file removal" {
     try std.testing.expectEqualStrings("Noto Sans", update0.value.font);
     try std.testing.expectEqualStrings("Noto Sans Mono", update0.value.mono_font);
     try std.testing.expect(!update0.region.clock_24h);
+    try std.testing.expect(update0.single_click_open);
     settings.last_second = -1;
     try std.testing.expect(settings.poll(a, io) == null);
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = &theme_path, .data = "[theme]\nscrollbar_width = 24\nfont = \"Liberation Sans\"\n" });
@@ -223,13 +229,19 @@ test "Files follows config edits, theme overrides and file removal" {
     defer update2.deinit();
     try std.testing.expectEqual(@as(f32, 12), update2.value.scrollbar_width);
     try std.testing.expectEqualStrings("Noto Sans", update2.value.font);
-    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = &config_path, .data = "[theme]\nscrollbar_width = 4\n[region]\nclock_24h = true\ntimezone = \"Pacific/Auckland\"\nlanguage = \"C.utf8\"\nformats = \"en_NZ.utf8\"\n" });
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = &config_path, .data = "[compositor]\nfiles_single_click_open = false\n[theme]\nscrollbar_width = 4\n[region]\nclock_24h = true\ntimezone = \"Pacific/Auckland\"\nlanguage = \"C.utf8\"\nformats = \"en_NZ.utf8\"\n" });
     settings.last_second = -1;
     const update3 = settings.poll(a, io).?;
     defer update3.deinit();
     try std.testing.expectEqual(@as(f32, 4), update3.value.scrollbar_width);
     try std.testing.expectEqualStrings((theme.Theme{}).font, update3.value.font);
     try std.testing.expect(update3.region.clock_24h);
+    try std.testing.expect(!update3.single_click_open);
+    _ = c.unlink(&config_path);
+    settings.last_second = -1;
+    const update4 = settings.poll(a, io).?;
+    defer update4.deinit();
+    try std.testing.expect(update4.single_click_open);
     // The config's preference travels with the worker update, independently
     // of theme overrides; verify both clock formats in local time.
     var tm: c.struct_tm = std.mem.zeroes(c.struct_tm);
@@ -308,4 +320,8 @@ pub fn iconRoot() []const u8 {
 }
 pub fn iconTheme() []const u8 {
     return if (applied_theme) |t| t.icon_theme else "";
+}
+
+pub fn singleClickOpen() bool {
+    return if (applied_theme) |t| t.single_click_open else true;
 }

@@ -178,6 +178,97 @@ def run():
                     action('focus_window', {"id": win["id"]})
                     time.sleep(.2)
 
+                if "--single-click-only" in sys.argv:
+                    import tomllib
+                    from ipc_client import IPCClient
+                    from ui_driver import UIDriver
+
+                    with IPCClient(tmp) as ipc:
+                        ui = UIDriver(ipc)
+
+                        def move_local(x, y):
+                            box = ipc.get_window_debug(win["id"])["client_box"]
+                            ipc.move_cursor(box["x"] + x, box["y"] + y)
+
+                        def cursor(x, y, expected):
+                            move_local(x, y)
+                            # Let the client handle enter/motion before accepting
+                            # a cursor left by the Settings window.
+                            time.sleep(.15)
+                            wait_for(lambda: ipc.get_input_state()["cursor_name"] == expected,
+                                     "Files cursor did not become " + expected)
+
+                        def toggle(enabled):
+                            ipc.open_control_center()
+                            ui.wait_settled("control_center")
+                            ui.click(ui.scroll_into_view("files_single_click_open"), panel="control_center")
+                            wait_for(lambda: tomllib.loads(config.read_text()).get("compositor", {}).get(
+                                "files_single_click_open") is enabled, "single-click setting did not save")
+                            settings = next(w for w in ipc.get_windows() if w["app_id"] == "rediwm-settings")
+                            ipc.close_window(settings["id"])
+                            ui.wait_absent("control_center")
+                            ipc.focus_window(win["id"])
+
+                        def navigate_home():
+                            key(38, ctrl=True)
+                            text(str(home))
+                            key(28)
+                            title("Home")
+
+                        for list_view in (False, True):
+                            box = ipc.get_window_debug(win["id"])["client_box"]
+                            click(box["width"] - (233 if list_view else 269), 82)
+                            ix, iy = (252, 180) if list_view else (278, 176)
+                            nx, ny = (330, 180) if list_view else (278, 220)
+                            search("Archive")
+                            cursor(ix, iy, "pointer")
+                            cursor(nx, ny, "default")
+                            click(nx, ny)
+                            title("Home")
+                            for modifier in (29, 42):  # Ctrl/Shift click selects.
+                                ipc.key(modifier, True)
+                                click(ix, iy)
+                                ipc.key(modifier, False)
+                                title("Home")
+                            move_local(ix, iy)
+                            ipc.pointer_button(272, True)
+                            move_local(ix + 10, iy)
+                            ipc.pointer_button(272, False)
+                            title("Home")  # Dragging must not open the folder.
+                            click(ix, iy)
+                            title("Archive")
+                            navigate_home()
+                            search("alpha-file.txt")
+                            cursor(ix, iy, "pointer")
+                            click(nx, ny)
+                            assert not marker.exists(), "clicking a name opened the file"
+                            click(ix, iy)
+                            opened("alpha-file.txt")
+                            toggle(False)
+                            cursor(ix, iy, "default")  # Live preference reaches the open client.
+                            click(ix, iy)
+                            assert not marker.exists(), "disabled single-click opened the file"
+                            click(ix, iy)
+                            opened("alpha-file.txt")
+                            search("Archive")
+                            click(ix, iy)
+                            title("Home")
+                            click(ix, iy)
+                            title("Archive")
+                            navigate_home()
+                            search("Archive")
+                            toggle(True)
+                            cursor(ix, iy, "pointer")
+                        # Reload under a stationary pointer, including removing the preference.
+                        config.write_text('[compositor]\nfiles_single_click_open = false\n')
+                        wait_for(lambda: ipc.get_input_state()["cursor_name"] == "default",
+                                 "stationary pointer did not follow disabled single-click")
+                        config.write_text("")
+                        wait_for(lambda: ipc.get_input_state()["cursor_name"] == "pointer",
+                                 "removing the preference did not restore default single-click")
+                    print("PASS: icon-only single-click files/folders, hand cursors, selection, drag cancellation, Settings persistence and live reload in both views")
+                    return
+
                 if "--archive-only" in sys.argv:
                     archive_dir = tmp / "archive-check"
                     archive_dir.mkdir()
