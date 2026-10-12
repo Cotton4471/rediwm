@@ -4,6 +4,7 @@ const wlr = @import("wlroots");
 const ui = @import("ui");
 const Output = @import("Output.zig");
 const Toplevel = @import("Toplevel.zig");
+const IconEntry = @import("icon_service.zig").Entry;
 const PanelBuffer = @import("panel_buffer.zig").PanelBuffer;
 const SceneData = @import("scene_data.zig").SceneData;
 const gpa = @import("main.zig").gpa;
@@ -29,6 +30,11 @@ offset: usize = 0,
 windows: usize = 0,
 dispatcher: ui.input.Dispatcher = .{},
 arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator),
+/// Digests of what the dock and its tooltip show. Every window event rebuilds
+/// the dock, but most (a title change) alter neither raster: then nothing is
+/// repainted.
+drawn: u64 = 0,
+tip_drawn: u64 = 0,
 
 pub fn deinit(self: *Self) void {
     self.dispatcher.reset();
@@ -82,15 +88,17 @@ pub fn tick(self: *Self, output: *Output) void {
     const capacity: usize = @intCast(@min(max_items - 4, @max(0, @divTrunc(usable.width - 40, step) - 4)));
     const wanted = @min(capacity, self.windows) + 4;
     if (self.box.width != @as(i32, @intCast(wanted)) * step + 24) self.dirty = true;
-    const restore_hover = self.dirty and self.dispatcher.hovered != null;
-    if (self.dirty) self.rebuild(capacity) catch return;
-    self.box.x = usable.x + @divTrunc(usable.width - self.box.width, 2);
-    self.box.y = usable.y + usable.height - height - 10;
+    if (self.dirty) self.rebuild(capacity, usable) catch return;
+    self.place(usable);
     self.tree.?.node.setPosition(self.box.x, self.box.y);
-    if (restore_hover) self.motion(server.input.cursor.x - @as(f64, @floatFromInt(self.box.x)), server.input.cursor.y - @as(f64, @floatFromInt(self.box.y)));
 }
 
-fn rebuild(self: *Self, capacity: usize) !void {
+fn place(self: *Self, usable: wlr.Box) void {
+    self.box.x = usable.x + @divTrunc(usable.width - self.box.width, 2);
+    self.box.y = usable.y + usable.height - height - 10;
+}
+
+fn rebuild(self: *Self, capacity: usize, usable: wlr.Box) !void {
     const output = self.output.?;
     var tops: std.ArrayList(*Toplevel) = .empty;
     defer tops.deinit(gpa);
@@ -111,9 +119,9 @@ fn rebuild(self: *Self, capacity: usize) !void {
     self.count = @min(capacity, self.windows) + 4;
     self.box.width = @as(i32, @intCast(self.count)) * step + 24;
     self.scale = output.wlr_output.scale;
+    const hovered = self.dispatcher.hovered != null;
     self.dispatcher.reset();
     _ = self.arena.reset(.retain_capacity);
-    self.tooltip.?.node.setEnabled(false);
     self.root = .{ .kind = .container, .children = self.buttons[0..self.count], .computed_width = @floatFromInt(self.box.width), .computed_height = height };
     for (self.buttons[0..self.count], 0..) |*button, index| {
         self.ids[index] = if (index >= 3 and index < self.count - 1) tops.items[self.offset + index - 3].id else 0;
@@ -125,6 +133,13 @@ fn rebuild(self: *Self, capacity: usize) !void {
             .computed_width = 48,
             .computed_height = 48,
         };
+    }
+    // The pointer rests on a replaced button: hover it before painting, so
+    // the rebuild paints once.
+    if (hovered) {
+        self.place(usable);
+        const cursor = output.server.input.cursor;
+        self.dispatcher.pointerMotion(&self.root, @floatCast(cursor.x - @as(f64, @floatFromInt(self.box.x))), @floatCast(cursor.y - @as(f64, @floatFromInt(self.box.y))));
     }
     try self.paint();
     self.dirty = false;
@@ -146,35 +161,72 @@ fn label(self: *Self, index: usize) []const u8 {
     return if (self.topAt(index)) |top| top.title() else "Application";
 }
 
+/// Hashes a value field by field; floats by their bits, slices by contents.
+fn hashValue(hasher: *std.hash.Wyhash, value: anytype) void {
+    switch (@typeInfo(@TypeOf(value))) {
+        .optional => if (value) |v| {
+            hasher.update(&.{1});
+            hashValue(hasher, v);
+        } else hasher.update(&.{0}),
+        .@"struct" => |info| inline for (info.fields) |field| hashValue(hasher, @field(value, field.name)),
+        .pointer => {
+            hasher.update(std.mem.asBytes(&value.len));
+            hasher.update(std.mem.sliceAsBytes(value));
+        },
+        else => hasher.update(std.mem.asBytes(&value)),
+    }
+}
+
+/// What one button shows.
+const Look = struct {
+    top: ?*Toplevel,
+    focused: bool,
+    icon: ?IconEntry,
+};
+
 fn paint(self: *Self) !void {
     const output = self.output.?;
     const pal = ui.theme.shellPalette();
+    var bg = ui.theme.taskbar(.taskbar_bg);
+    bg[3] = @max(bg[3], 0.86);
+    const focused = @import("ipc/handlers.zig").findFocusedToplevel(output.server);
+    var looks: [max_items]Look = undefined;
+    var hasher = std.hash.Wyhash.init(0);
+    hashValue(&hasher, .{ pal, bg, self.scale, self.box.width, self.count, self.offset, self.windows });
+    for (self.buttons[0..self.count], looks[0..self.count], 0..) |button, *look, index| {
+        const top = self.topAt(index);
+        const icon_name = if (top) |t| t.appId() else if (index == 0) "builtin:redi-logo" else if (index == 1) "rediwm-files" else if (index == 2) "utilities-terminal" else "preferences-system";
+        const lookup = output.server.iconLookup(icon_name, @import("geometry.zig").devicePixels(36, self.scale));
+        look.* = .{ .top = top, .focused = top != null and top == focused, .icon = if (lookup == .ready) lookup.ready else null };
+        const icon_id: ?u64 = if (look.icon) |icon| icon.id else null;
+        hashValue(&hasher, .{ button.kind.button.state, top != null, look.focused, if (top) |t| t.minimized else false, icon_id });
+    }
+    const key = hasher.final();
+    if (key != self.drawn) try self.paintDock(pal, bg, looks[0..self.count]);
+    self.drawn = key;
+    try self.paintTooltip();
+}
+
+fn paintDock(self: *Self, pal: ui.theme.Theme, bg: [4]f32, looks: []const Look) !void {
     const image = try PanelBuffer.create(self.box.width, height, self.scale);
     defer image.base.drop();
     var r = ui.paint.Renderer.init(image.pixels, image.width, image.height, self.scale);
     r.palette = pal;
-    var bg = ui.theme.taskbar(.taskbar_bg);
-    bg[3] = @max(bg[3], 0.86);
     var border = pal.accent;
     border[3] = 0.55;
     r.fillRect(0, 0, @floatFromInt(self.box.width), height, .{ .color = bg, .radius = 16, .border_width = 1, .border_color = border });
-    for (self.buttons[0..self.count], 0..) |button, index| {
+    for (self.buttons[0..self.count], looks, 0..) |button, look, index| {
         const x = button.computed_x;
-        const top = self.topAt(index);
-        ui.widgets.button.paintBackground(&r, .{ .x = x, .y = 8, .w = 48, .h = 48 }, .{ .variant = .ghost, .radius = 12 }, .{ .pointer = button.kind.button.state, .selected = if (top) |t| @import("ipc/handlers.zig").findFocusedToplevel(output.server) == t else false });
-        const icon_name = if (top) |t| t.appId() else if (index == 0) "builtin:redi-logo" else if (index == 1) "rediwm-files" else if (index == 2) "utilities-terminal" else "preferences-system";
-        const lookup = output.server.iconLookup(icon_name, @import("geometry.zig").devicePixels(36, self.scale));
-        if (lookup == .ready) {
-            const icon = lookup.ready;
+        ui.widgets.button.paintBackground(&r, .{ .x = x, .y = 8, .w = 48, .h = 48 }, .{ .variant = .ghost, .radius = 12 }, .{ .pointer = button.kind.button.state, .selected = look.focused });
+        if (look.icon) |icon| {
             r.drawImageCover(x + 6, 14, 36, 36, 0, .{ .pixels = icon.pixels, .width = icon.size, .height = icon.size });
         } else {
             r.drawIcon(x + 7, 15, 34, 34, .{ .id = if (index == 0) .grid else if (index == 1) .folder else if (index == 2) .terminal else if (index == self.count - 1) .settings else .generic, .color = pal.window_fg });
         }
-        if (top) |t| {
-            const focused = @import("ipc/handlers.zig").findFocusedToplevel(output.server) == t;
+        if (look.top) |t| {
             var accent = pal.accent;
             accent[3] *= if (t.minimized) @as(f32, 0.4) else 1;
-            const width: f32 = if (focused) 22 else 10;
+            const width: f32 = if (look.focused) 22 else 10;
             r.fillRect(x + 24 - width / 2, 58, width, 4, .{ .color = accent, .radius = 2 });
         }
     }
@@ -185,7 +237,6 @@ fn paint(self: *Self) !void {
     if (self.offset + self.count - 4 < self.windows) r.drawIcon(@floatFromInt(self.box.width - 11), 28, 10, 12, .{ .id = .chevron_right, .color = pal.accent });
     self.node.?.setBuffer(&image.base);
     self.node.?.setDestSize(self.box.width, height);
-    try self.paintTooltip();
 }
 
 fn paintTooltip(self: *Self) !void {
@@ -200,6 +251,16 @@ fn paintTooltip(self: *Self) !void {
     const index = hovered.kind.button.id;
     const pal = ui.theme.shellPalette();
     const value = self.label(index);
+    var hasher = std.hash.Wyhash.init(0);
+    hashValue(&hasher, .{ pal, self.scale, self.box.width, value });
+    const key = hasher.final();
+    if (key == self.tip_drawn) {
+        // Same text: only the button under it may differ.
+        const width = self.tooltip.?.dst_width;
+        self.tooltip.?.node.setPosition(std.math.clamp(@as(i32, @intFromFloat(hovered.computed_x + 24)) - @divTrunc(width, 2), 0, self.box.width - width), -38);
+        self.tooltip.?.node.setEnabled(true);
+        return;
+    }
     const width: i32 = @intFromFloat(@min(@as(f32, @floatFromInt(self.box.width)), @max(80, (ui.text.measureWidthF(value, .manrope, pal.font_size, 1) catch 100) + 24)));
     const image = try PanelBuffer.create(width, 30, self.scale);
     defer image.base.drop();
@@ -213,6 +274,7 @@ fn paintTooltip(self: *Self) !void {
     self.tooltip.?.setDestSize(width, 30);
     self.tooltip.?.node.setPosition(std.math.clamp(@as(i32, @intFromFloat(hovered.computed_x + 24)) - @divTrunc(width, 2), 0, self.box.width - width), -38);
     self.tooltip.?.node.setEnabled(true);
+    self.tip_drawn = key;
 }
 
 pub fn motion(self: *Self, x: f64, y: f64) void {
@@ -222,9 +284,9 @@ pub fn motion(self: *Self, x: f64, y: f64) void {
 }
 
 pub fn leave(self: *Self) void {
-    if (self.dispatcher.hovered == null) return;
-    self.dispatcher.pointerLeave(&self.root);
-    self.repaint();
+    // `Dispatcher.pointerLeave` keeps a hovered button lit, and this runs on
+    // every motion elsewhere: a motion outside the dock unhovers it once.
+    if (self.dispatcher.hovered != null) self.motion(-1, -1);
 }
 
 fn repaint(self: *Self) void {
@@ -240,11 +302,18 @@ pub fn press(self: *Self, x: f64, y: f64) void {
     self.repaint();
 }
 
-pub fn scroll(self: *Self, delta: f64) void {
-    if (delta == 0 or self.windows + 4 <= self.count) return;
-    if (delta > 0) self.offset +|= 1 else self.offset -|= 1;
+/// Windows, theme or icons changed: rebuild on the output's next frame. A
+/// hidden dock rebuilds when it is shown again.
+pub fn invalidate(self: *Self) void {
     self.dirty = true;
-    self.output.?.wlr_output.scheduleFrame();
+    if (self.visible) self.output.?.wlr_output.scheduleFrame();
+}
+
+pub fn scroll(self: *Self, delta: f64) void {
+    // A pending rebuild may add windows; it clamps the offset.
+    if (delta == 0 or (!self.dirty and self.windows + 4 <= self.count)) return;
+    if (delta > 0) self.offset +|= 1 else self.offset -|= 1;
+    self.invalidate();
 }
 
 fn clicked(owner: ?*anyopaque, index: usize) void {

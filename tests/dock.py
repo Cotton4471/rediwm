@@ -68,6 +68,17 @@ enabled = false
                 ipc.wait_for_frame()
                 hover = shot('hover')
                 assert ImageChops.difference(plain, hover).getbbox(), 'no hover feedback'
+                # Leaving in one jump unhovers the dock; motion elsewhere then paints nothing.
+                ipc.move_cursor(5, 5)
+                ipc.wait_for_frame()
+                def panel_bytes():
+                    perf = ipc.get_perf()
+                    return perf['panel_allocated_bytes'] + perf['panel_reused_bytes']
+                painted = panel_bytes()
+                for x in range(40, 60):
+                    ipc.move_cursor(x, 40)
+                ipc.wait_for_frame()
+                assert panel_bytes() == painted, 'motion off the dock repaints it'
                 if preview := os.environ.get('REDIWM_DOCK_PREVIEW'):
                     hover.save(preview)
                 click(button('applications'))
@@ -118,29 +129,27 @@ enabled = false
                     first = shown()
                     assert len(first) == capacity
                     ipc.move_cursor(*center(button('terminal')))
+                    # Poll: with two outputs the next frame may be the other output's.
                     ipc.scroll(0, -120)
-                    ipc.wait_for_frame()
-                    if shown() == first:
+                    try:
+                        wait_for(lambda: shown() != first, 'scroll', timeout=2)
+                    except AssertionError:
                         ipc.scroll(0, 120)
-                        ipc.wait_for_frame()
-                    assert shown() != first, 'overflow windows cannot be reached'
+                        wait_for(lambda: shown() != first, 'overflow windows cannot be reached')
                     for client in clients:
                         stop_process(client)
                     wait_for(lambda: not ipc.get_windows(), 'overflow cleanup')
-                    ipc.wait_for_frame()
-                    assert not shown()
+                    wait_for(lambda: not shown(), 'closed windows left in the dock')
                 # Config reload relocates the dock above a bottom taskbar only.
                 cfg = tmp / 'rediwm-config.toml'
                 before = button('terminal')['global_box']['y']
                 cfg.write_text(cfg.read_text().replace('[compositor]', '[compositor]\ntaskbar_position = "top"'))
                 ipc.reload_config()
-                ipc.wait_for_frame()
-                assert button('terminal')['global_box']['y'] > before
+                wait_for(lambda: button('terminal')['global_box']['y'] > before, 'dock moved down')
                 x, y = center(button('terminal'))
                 cfg.write_text(cfg.read_text().replace('dock_enabled = true', 'dock_enabled = false'))
                 ipc.reload_config()
-                ipc.wait_for_frame()
-                assert not dock()
+                wait_for(lambda: not dock(), 'reload disables dock')
                 assert ipc.hit_test(x, y)['target_type'] != 'dock', 'disabled dock intercepts input'
             print(f'PASS: dock defaults, Appearance, persistence, hover, launcher, settings, windows, fullscreen, reload ({scale}x)')
         except Exception:
