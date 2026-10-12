@@ -138,8 +138,16 @@ pub fn find(allocator: Allocator, io: Io, cfg: Config, icon_name: []const u8, ta
 
     var found_hicolor = false;
 
+    // A configured theme that lacks an icon (a cursor-only "default" index,
+    // say) falls back to the built-in default theme and its parents.
+    var queued_default = false;
     var head: usize = 0;
-    while (head < pending.items.len) : (head += 1) {
+    while (true) : (head += 1) {
+        if (head == pending.items.len) {
+            if (queued_default) break;
+            queued_default = true;
+            try pending.append(allocator, default_theme);
+        }
         const theme_name = pending.items[head];
 
         var already = false;

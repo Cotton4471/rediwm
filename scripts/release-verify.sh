@@ -65,7 +65,7 @@ chown tester "$xdg"
 chmod 700 "$xdg"
 log_file=/tmp/rediwm-verify.log
 runuser -u tester -- env HOME=/home/tester XDG_RUNTIME_DIR="$xdg" XDG_STATE_HOME="$xdg/state" \
-    WLR_BACKENDS=headless WLR_HEADLESS_OUTPUTS=1 WLR_RENDERER=pixman REDIWM_SCALE=1 \
+    WLR_BACKENDS=headless WLR_HEADLESS_OUTPUTS=1 WLR_RENDERER=gles2 WLR_RENDERER_ALLOW_SOFTWARE=1 REDIWM_SCALE=1 \
     /usr/local/bin/rediwm > "$log_file" 2>&1 &
 pid=$!
 up=no
