@@ -1401,6 +1401,7 @@ const IconNameCache = struct {
 fn iconNameForAppId(snap: *applications.Snapshot, app_id: []const u8) []const u8 {
     if (app_id.len == 0) return app_id;
     // The built-in settings window has no desktop entry.
+    if (std.mem.eql(u8, app_id, @import("Toplevel.zig").welcome_app_id)) return "builtin:redi-logo";
     if (std.mem.eql(u8, app_id, @import("Toplevel.zig").settings_app_id)) return "preferences-system";
 
     // Pass 1: exact StartupWMClass match → use the desktop file's Icon= name.

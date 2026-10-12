@@ -114,18 +114,21 @@ pub const Backend = union(enum) {
     shell: Shell,
 };
 
-/// A window whose content the compositor draws itself (the settings window).
+/// A window whose content the compositor draws itself (Settings or Welcome).
 /// It has no wl_surface: keyboard focus is "first in the stack with no seat
 /// focus", and pointer input reaches the content through its own scene data.
 pub const Shell = struct {
     /// Cleared before the window is destroyed; the content owns this window.
     control_center: ?*ControlCenter,
+    /// Identity outlives the content, including unmap and the close animation.
+    welcome: bool = false,
     client_width: i32,
     client_height: i32,
 };
 
 pub const settings_title: [:0]const u8 = "RediWM Settings";
 pub const settings_app_id: [:0]const u8 = "rediwm-settings";
+pub const welcome_app_id: [:0]const u8 = "rediwm-welcome";
 
 /// Token returned by `requestSize`. xdg waits on a configure serial; X11
 /// waits on a surface commit. Never invent an xdg serial for X11.
@@ -823,7 +826,7 @@ pub fn titlePtr(toplevel: *const Toplevel) ?[*:0]const u8 {
         .xdg => |*adapter| adapter.xdg_toplevel.title,
         .xwayland => |*adapter| adapter.xsurface.title,
         .placeholder => |*ph| ph.name.ptr,
-        .shell => settings_title.ptr,
+        .shell => |shell| if (shell.welcome) "Welcome to RediWM" else settings_title.ptr,
     };
 }
 
@@ -841,7 +844,7 @@ pub fn appIdPtr(toplevel: *const Toplevel) ?[*:0]const u8 {
         .xdg => |*adapter| adapter.xdg_toplevel.app_id,
         .xwayland => |*adapter| adapter.xsurface.class orelse adapter.xsurface.instance,
         .placeholder => |*ph| ph.app_id.ptr,
-        .shell => settings_app_id.ptr,
+        .shell => |shell| if (shell.welcome) welcome_app_id.ptr else settings_app_id.ptr,
     };
 }
 
@@ -3207,8 +3210,8 @@ pub fn currentIdentity(toplevel: *Toplevel) window_rules.WindowIdentity {
             .dialog = toplevel.parentWindow() != null or adapter.xsurface.parent != null,
         },
         .shell => .{
-            .app_id = settings_app_id,
-            .title = settings_title,
+            .app_id = toplevel.appId(),
+            .title = toplevel.title(),
             .backend = .xdg,
             .dialog = false,
         },

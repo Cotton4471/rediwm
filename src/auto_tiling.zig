@@ -18,6 +18,8 @@ pub const State = struct {
 };
 
 pub fn isFloating(top: *const Top) bool {
+    // The welcome chooser stays usable while switching into tiling mode.
+    if (top.backend == .shell and top.backend.shell.welcome) return true;
     if (top.auto_float_override) |value| return value;
     if (top.auto_float) return true;
     if (top.live_rules.floating) |value| return value;

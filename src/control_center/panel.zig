@@ -37,6 +37,7 @@ const region_section = @import("sections/region.zig");
 const network_section = @import("sections/network.zig");
 
 const log = std.log.scoped(.control_center);
+const welcome_section = @import("welcome.zig");
 
 /// Default content size; a saved size (window_sizes) or a rule wins.
 const default_width = 960;
@@ -154,6 +155,8 @@ pub const ControlCenter = struct {
     /// Content size; x/y stay 0 (see `screenBox`).
     panel_box: wlr.Box = .{ .x = 0, .y = 0, .width = 0, .height = 0 },
 
+    is_welcome: bool = false,
+    welcome: welcome_section.State = .{},
     page: Page = .general,
     /// The page `root` was last built for; null until the first build, when
     /// `root` is still undefined.
@@ -164,7 +167,7 @@ pub const ControlCenter = struct {
     /// The window is activated; keys arrive only with `hasKeyboardFocus`.
     focused: bool = false,
     root: Widget = undefined,
-    root_children: [1]Widget = undefined,
+    root_children: [2]Widget = undefined,
     body_children: [2]Widget = undefined,
     nav_rows: [page_names.len]Widget = undefined,
     nav_children: [page_names.len][2]Widget = undefined,
@@ -220,15 +223,23 @@ pub const ControlCenter = struct {
 
     /// Creates the settings window on `wlr_output` and maps it focused.
     pub fn create(server: *Server, wlr_output: *wlr.Output) !*ControlCenter {
+        return createWindow(server, wlr_output, false);
+    }
+
+    pub fn createWelcome(server: *Server, wlr_output: *wlr.Output) !*ControlCenter {
+        return createWindow(server, wlr_output, true);
+    }
+
+    fn createWindow(server: *Server, wlr_output: *wlr.Output, welcome: bool) !*ControlCenter {
         const cc = try gpa.create(ControlCenter);
         errdefer gpa.destroy(cc);
 
-        var width: i32 = default_width;
-        var height: i32 = default_height;
-        if (@import("../window_sizes.zig").load(server.io, server.environ, Toplevel.settings_app_id)) |saved| {
+        var width: i32 = if (welcome) 820 else default_width;
+        var height: i32 = if (welcome) 800 else default_height;
+        if (!welcome) if (@import("../window_sizes.zig").load(server.io, server.environ, Toplevel.settings_app_id)) |saved| {
             width = saved.width;
             height = saved.height;
-        }
+        };
         var box: wlr.Box = undefined;
         server.output_layout.getBox(wlr_output, &box);
         if (box.width > 0 and box.height > 0) {
@@ -240,6 +251,7 @@ pub const ControlCenter = struct {
         height = @max(min_height, height);
 
         const toplevel = try Toplevel.createShell(server, cc, width, height);
+        toplevel.backend.shell.welcome = welcome;
         errdefer {
             toplevel.backend.shell.control_center = null;
             toplevel.destroy();
@@ -251,6 +263,7 @@ pub const ControlCenter = struct {
 
         cc.* = .{
             .server = server,
+            .is_welcome = welcome,
             .wlr_output = wlr_output,
             .toplevel = toplevel,
             .buffer_node = buffer_node,
@@ -263,8 +276,10 @@ pub const ControlCenter = struct {
         scene_data.SceneData.attach(&cc.node_data, &buffer_node.node);
 
         server.input.open_control_center = cc;
-        cc.server.brightness.query(server);
-        if (!server.greeter_mode) cc.systemd_client = server.getSystemd() catch null;
+        if (!welcome) {
+            cc.server.brightness.query(server);
+            if (!server.greeter_mode) cc.systemd_client = server.getSystemd() catch null;
+        }
         toplevel.mapShell();
         cc.relayout();
         return cc;
@@ -284,6 +299,7 @@ pub const ControlCenter = struct {
         if (cc.server.input.open_control_center == cc) cc.server.input.open_control_center = null;
         cc.shortcuts.cancel();
         if (cc.systemd_client) |client| client.detachSettings();
+        cc.welcome.deinit();
         cc.services.deinit();
         cc.network.deinit();
         if (cc.page == .bluetooth) if (cc.server.bluetooth) |m| m.closed();
@@ -392,6 +408,19 @@ pub const ControlCenter = struct {
     }
 
     fn buildTree(cc: *ControlCenter) void {
+        if (cc.is_welcome) {
+            ui.input.reset();
+            cc.content_children[0] = welcome_section.build(cc);
+            cc.body_children = .{ .{ .kind = .container }, .{ .kind = .{ .scroll_container = .{} }, .direction = .column, .@"align" = .stretch, .width = .{ .percent = 1 }, .height = .{ .flex = 1 }, .padding = layout.Edges.all(28), .children = cc.content_children[0..1] } };
+            cc.body_children[1].padding = layout.Edges.all(if (welcome_section.compact(cc)) 20 else 28);
+            cc.body_children[1].padding.bottom = 8;
+            cc.root_children = .{ .{ .kind = .container, .direction = .column, .width = .{ .percent = 1 }, .height = .{ .flex = 1 }, .children = cc.body_children[1..2] }, cc.welcome.footer };
+            cc.root = .{ .kind = .{ .rect = .{ .color = bodyColor() } }, .direction = .column, .width = .{ .fixed = @floatFromInt(cc.panel_box.width) }, .height = .{ .fixed = @floatFromInt(cc.panel_box.height) }, .children = &cc.root_children };
+            cc.root.linkParents();
+            cc.built_page = cc.page;
+            cc.refresh_pending = false;
+            return;
+        }
         cc.services.capture();
         if (cc.page == .bluetooth and cc.built_page == .bluetooth) cc.bluetooth.capture();
         if (cc.page == .network and cc.built_page == .network) cc.network.captureFocus();
@@ -539,9 +568,7 @@ pub const ControlCenter = struct {
             // Keep the scrollbar's full hover/drag gutter outside the cards.
             cc.body_children[1].padding.right += ui.widgets.scrollbar.gutter(theme.global.scrollbar_width);
         }
-        cc.root_children = .{
-            .{ .kind = .container, .direction = .row, .padding = .{ .left = 16, .top = 16, .bottom = 16, .right = if (cc.page == .services) 16 else 6 }, .gap = 14, .width = .{ .percent = 1 }, .height = .{ .flex = 1 }, .children = &cc.body_children },
-        };
+        cc.root_children[0] = .{ .kind = .container, .direction = .row, .padding = .{ .left = 16, .top = 16, .bottom = 16, .right = if (cc.page == .services) 16 else 6 }, .gap = 14, .width = .{ .percent = 1 }, .height = .{ .flex = 1 }, .children = &cc.body_children };
         // Opaque like a client's content: only the window chrome is glass.
         cc.root = .{
             .kind = .{ .rect = .{ .color = bodyColor() } },
@@ -549,7 +576,7 @@ pub const ControlCenter = struct {
             .gap = 0,
             .width = .{ .fixed = @floatFromInt(cc.panel_box.width) },
             .height = .{ .fixed = @floatFromInt(cc.panel_box.height) },
-            .children = &cc.root_children,
+            .children = cc.root_children[0..1],
         };
         cc.root.linkParents();
         if (cc.page == .services and cc.services.search_focus) {
@@ -704,7 +731,7 @@ pub const ControlCenter = struct {
                 }
             }
         }
-        if (cc.page == .users or cc.page == .services or cc.page == .network or cc.page == .bluetooth or cc.page == .region) {
+        if (cc.is_welcome or cc.page == .users or cc.page == .services or cc.page == .network or cc.page == .bluetooth or cc.page == .region) {
             const focused = dispatcher.focused;
             if (cc.page == .bluetooth and bluetooth_section.key(cc, key)) return true;
             if (cc.page == .network and (focused == null or focused.?.kind != .select or !focused.?.kind.select.open)) {
@@ -940,6 +967,7 @@ pub const ControlCenter = struct {
     /// Only structural breakpoints need a new tree. Ordinary resize frames
     /// retain fields, scroll positions and settings data (including filesystem lists).
     fn resizeNeedsTree(cc: *const ControlCenter) bool {
+        if (cc.is_welcome) return (cc.root.computed_width < 680) != (cc.panel_box.width < 680) or (cc.root.computed_height < 740) != welcome_section.compact(cc);
         const old = cc.root.computed_width;
         const width: f32 = @floatFromInt(cc.panel_box.width);
         const thresholds: []const f32 = switch (cc.page) {
@@ -956,6 +984,11 @@ pub const ControlCenter = struct {
     }
 
     fn resizeLayout(cc: *ControlCenter) void {
+        if (cc.is_welcome) {
+            cc.root.width = .{ .fixed = @floatFromInt(cc.panel_box.width) };
+            cc.root.height = .{ .fixed = @floatFromInt(cc.panel_box.height) };
+            return;
+        }
         const narrow = cc.panel_box.width < 660;
         const nav_count = cc.body_children[0].children.len;
         const gap: f32 = if (cc.panel_box.height < 550) 2 else 5;

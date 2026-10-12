@@ -72,6 +72,7 @@ fn launch(self: *Startup) c_int {
         self.fail(err);
         return 0;
     };
+    @import("../control_center/welcome.zig").showOnce(server);
     server.spawnAutostart();
     startup.markSessionClientsStarted();
     return 0;
