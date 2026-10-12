@@ -10,18 +10,19 @@ struct rediwm_projection;
 struct rediwm_item;
 struct rediwm_clip_spec;
 // Synchronous traversal of the whole displayed graph (bottom-to-top unless
-// reverse is true). World
-// geometry comes from resolved items, never the view tree. `transport` owns
-// buffer resources and surface feedback until the legacy adapter is removed.
-// Callbacks must not mutate the scene; pointers are borrowed for this call.
+// reverse is true). World geometry comes from resolved items; `transport` is the
+// scene node that owns the item's buffer, texture and wait points: the source
+// node for the world, the node itself for the layout trees. Callbacks must not
+// mutate the scene; pointers are borrowed for this call.
 typedef bool (*rediwm_item_iterator)(const struct rediwm_item *,
                                     struct wlr_scene_node *transport, void *);
 bool rediwm_projection_for_each_item(struct rediwm_projection *, bool reverse, rediwm_item_iterator, void *);
 // Whether a commit changed how buffer pixels map onto the surface, so damage
 // from before it cannot be combined with damage after it.
 bool rediwm_surface_state_remapped(const struct wlr_surface_state *);
-struct rediwm_projection *rediwm_projection_create(struct wlr_scene_tree *,
-                                                   struct wlr_scene_tree *,
+// `source` is the world's tree, disabled so that wlroots ignores it; the
+// projection resolves it into the graph the output pass draws.
+struct rediwm_projection *rediwm_projection_create(struct wlr_scene_tree *source,
                                                    struct wlr_scene *);
 void rediwm_projection_destroy(struct rediwm_projection *);
 void rediwm_projection_sync(struct rediwm_projection *, double, double, double,
@@ -42,12 +43,14 @@ uint64_t rediwm_projection_damage_cursor(struct rediwm_projection *);
 // Optional root subtree presented in layout coordinates, independent of the camera.
 void rediwm_projection_sync_fixed(struct rediwm_projection *, double, double, double,
                                   double, double, struct wlr_scene_tree *);
-struct wlr_scene_node *rediwm_projection_source(struct wlr_scene_node *);
+// The topmost node at a layout point, with the point in the node's own coordinates
+// (source units for a client surface), or NULL. Hits in the world are source nodes.
+struct wlr_scene_node *rediwm_projection_node_at(struct rediwm_projection *, double lx, double ly,
+                                                 double *nx, double *ny);
 // Window scale relative to its parent camera, around the frame origin.
 bool rediwm_projection_set_tree_zoom(struct wlr_scene_node *, double);
 // Relative presentation scale. Composes with parent camera and window zoom.
 bool rediwm_projection_set_tree_scale(struct wlr_scene_node *, double);
-double rediwm_projection_node_zoom(struct wlr_scene_node *);
 // One rounded-rectangle shape for every leaf under the tree, in the tree's own
 // units and anchored at its origin; NULL removes it. Returns false for a size
 // that is not positive or a radius or border that is negative or not finite.
@@ -79,5 +82,26 @@ bool rediwm_projection_present_owned(struct rediwm_projection *,
                                      struct wlr_renderer *,
                                      struct wlr_buffer *,
                                      const struct pixman_region32 *);
-struct wlr_scene_node *rediwm_projection_node(struct rediwm_projection *,
-                                              struct wlr_scene_node *);
+// A node's opaque region (in the node's own units, `source_width` by `source_height`)
+// as it lands on a box of `width` by `height` device pixels: never larger than the
+// real one, one pixel inward where the node is scaled.
+void rediwm_mirror_opaque(struct pixman_region32 *out, const struct pixman_region32 *source,
+                          int source_width, int source_height, int width, int height);
+// Surface feedback (stage 6): each time the output pass builds, it reports how
+// much of every client surface nothing above hides, over the whole layout.
+// `begin` clears the last report, `note` reports one surface (a node of the
+// graph's items; anything but a client surface of the world is ignored) and
+// `end` works out and sends what changed: outputs entered and left, the primary
+// output.
+// What of an item nothing above hides, in layout space, as the pass saw it.
+struct wlr_scene_output;
+void rediwm_projection_note_visible(struct rediwm_projection *, struct wlr_scene_node *,
+                                    const struct pixman_region32 *visible);
+void rediwm_projection_feedback_begin(struct rediwm_projection *);
+void rediwm_projection_feedback_note(struct rediwm_projection *, struct wlr_scene_node *,
+                                     const struct pixman_region32 *visible);
+void rediwm_projection_feedback_end(struct rediwm_projection *);
+// Frame callbacks of the world's surfaces, beside wlr_scene_output_send_frame_done.
+struct timespec;
+void rediwm_projection_send_frame_done(struct rediwm_projection *, struct wlr_scene_output *,
+                                       struct timespec *now);

@@ -53,11 +53,11 @@ vel_z: anim.VelocityTracker = .{},
 /// Last chip selected during the current Super hold; IDs survive window teardown safely.
 peek_window_id: ?u64 = null,
 
-pub fn init(world: *World, server: *Server, tree: *wlr.SceneTree, view: *wlr.SceneTree) !void {
+pub fn init(world: *World, server: *Server, tree: *wlr.SceneTree) !void {
     world.* = .{
         .server = server,
         .tree = tree,
-        .projection = Projection.create(tree, view, server.scene) orelse return error.SceneCreateFailed,
+        .projection = Projection.create(tree, server.scene) orelse return error.SceneCreateFailed,
     };
     world.toplevels.init();
     world.closing.init();

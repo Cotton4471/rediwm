@@ -34,8 +34,8 @@ the one for the directory you work in: `src/files`, `src/editor`,
   buffer and carries footprint, opacity and input only, so the projection
   damages that footprint itself. CSD windows have no shape and keep the
   `border_rects` outline. A changed clip damages its rim itself
-  (`projection.c`); a point the shape cuts away is declined in `accepts()`, so
-  the pick falls to what is below. Window capture draws the client alone and is
+  (`projection.c`); a point the shape cuts away is declined by the pick
+  (`pick_world`), so the pick falls to what is below. Window capture draws the client alone and is
   handed the shape explicitly. The ring is one `max(1, round(border * scale))`.
   Without the shaped programs (`chrome.shapes` false) windows are square, with
   no ring or shadow.
@@ -75,9 +75,9 @@ the one for the directory you work in: `src/files`, `src/editor`,
   there. Skipped frames get callbacks from `vblank_timer`, never immediately.
   Build output state through `Server.buildOutputState`, including capture: the
   owned GLES2 pass is the only presenter (the session requires GLES2) and keeps
-  one swapchain damage history. It reads graph geometry; scene nodes remain
-  resource and feedback transports until stage 6
-  (`docs/plans/scene-graph-stage3.md`).
+  one swapchain damage history. It reads graph geometry and the buffers,
+  textures and wait points of the source nodes
+  (`docs/plans/scene-graph-stage3.md`, `scene-graph-stage6.md`).
 * **Shapes in the owned pass** (`scene_pass.h`): a window's rounded clip, ring
   and shadow are `rediwm_scene_pass_add_*_shaped` calls, device pixels, snapped by
   the caller. The programs cost the driver about 430 KiB (a GL program costs
@@ -101,16 +101,41 @@ the one for the directory you work in: `src/files`, `src/editor`,
 * **Projection is resolve, then present** (`projection.c`, `scene_graph.h`).
   `resolve` turns the source tree into typed items (kind, unrounded
   layout-space edges, composed scale, content) listed in paint order per group
-  and moves no view; `present` rounds once (`rediwm_edges_snap`, edges not
-  origin+size) and applies. Geometry is derived only in `resolve`: a new rule
-  (clip, opacity, fractional placement) is a field on the item, not a
-  computation in `present_leaf`. A leaf or group leaves its `paint` list before
-  the head is freed (`detach`, `finish_group`). Buffer identity, wait points and
-  opaque regions are still read from the source node by `present`. A tree's
-  rounded clip (`rediwm_projection_set_tree_clip`) is a field on each item
-  (`item.clip`), resolved after the tree's own zoom and scale; an xdg popup
-  lives under its parent's tree and must carry
+  and shows nothing; `present` rounds once (`rediwm_edges_snap`, edges not
+  origin+size) and turns what changed into damage events and screen damage.
+  Geometry is derived only in `resolve`: a new rule (clip, opacity, fractional
+  placement) is a field on the item, not a computation in `present_leaf`. A leaf
+  or group leaves its `paint` list before the head is freed (`detach`,
+  `destroy_group`). Buffer identity and damage are read from the source node by
+  `present`, textures, single-pixel colours, wait points and opaque regions by
+  the pass. A tree's rounded clip (`rediwm_projection_set_tree_clip`) is a field
+  on each item (`item.clip`), resolved after the tree's own zoom and scale; an
+  xdg popup lives under its parent's tree and must carry
   `rediwm_projection_set_tree_unclipped`.
+* **The world has no second tree** (`docs/plans/scene-graph-stage6.md`). The
+  source tree is disabled, so wlroots computes no outputs, frame callbacks,
+  damage or picks for it; the graph does, with wlroots' own rules on our data.
+  *Feedback* (`rediwm_projection_feedback_*`, called by the pass's `collect`):
+  per build, the pixels of each client surface that nothing above hides, over
+  every output; an output is active when it shows more than a tenth of that, the
+  primary one shows most (the later wins a tie); `outputs_update` and
+  `output_enter/leave` go out on the *source* buffer, again when an active
+  output's scale, transform or subpixel changed. Frame callbacks of the world
+  come from `Server.sendFrameDone`, never `wlr_scene_output_send_frame_done`
+  alone; the pass emits `output_sample` on the source buffer. A layer-shell
+  surface below the world (background, bottom) is no longer occluded by windows
+  in wlroots' eyes: it keeps frame callbacks while covered. *Damage*: every
+  change reaches `p->pending` through `damage_box` and goes to the outputs once,
+  at the end of each sync. A change of what a leaf itself shows is cut to what
+  was visible of it at the last build (`l->visible`); a move, restyle or removal
+  damages the old box (cut) and the new one; a restack damages what moved
+  (`damage_restacked`), shadow footprints included; a destroyed node applies at
+  once, because a capture can build before the next sync. A new kind of change
+  that moves no leaf has to damage itself there (clip rims and shadows do).
+  *Picks*: `rediwm_projection_node_at` (graph for the world, wlroots for the
+  layout trees), never `wlr_scene_node_at` on the root. GLES2 lets go of a
+  plain buffer once uploaded, so "has content" is a buffer, a texture or a
+  single-pixel colour (`present_leaf`, `collect`).
 * **Client buffers:** `wlr_client_buffer_apply_damage` works in place only
   without extra locks, so mark long-held locks ignorable. v4
   `attach(buffer, 0, 0)` still sets OFFSET; only nonzero dx/dy remaps. Don't
@@ -191,8 +216,8 @@ the one for the directory you work in: `src/files`, `src/editor`,
   beside every `onWindowChanged`/`onWindowMoved`; output management goes
   through `Output.applyAndPersist`; only a client `on` clears
   `Output.power_off`.
-* **Explicit sync:** projection moves `output_sample` to the view with its
-  wait points; other GPU reads use `ReadFence`, CPU reads check
+* **Explicit sync:** the pass emits `output_sample` on the source buffer, which
+  carries the wait points; other GPU reads use `ReadFence`, CPU reads check
   `AcquireWait.ready`.
 
 ## Shared UI

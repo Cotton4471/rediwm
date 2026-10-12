@@ -13,7 +13,7 @@ debugging on the host, see AGENTS.md, "Rendering".
 
 | Command | What it checks |
 | --- | --- |
-| `zig build test` | In-process unit tests: rasterizers vs. full rasters, UI, config, IPC parser/serializer fixtures, glass damage, projection damage and its typed graph (paint order, unrounded edges, list lifetime), lifecycle/allocation failures, Files/desktop logic. No compositor or bus. |
+| `zig build test` | In-process unit tests: rasterizers vs. full rasters, UI, config, IPC parser/serializer fixtures, glass damage, projection damage, restack and visibility cuts, hit tests and surface feedback from its typed graph (paint order, unrounded edges, list lifetime), lifecycle/allocation failures, Files/desktop logic. No compositor or bus. |
 | `zig build test-glass` | The glass registry and an effect's geometry in the graph at every zoom (no GPU). Glass pixels are gated in `test-scene-pass` (stage 5b) and by `tests/glass_reblur.py`. |
 | `zig build test-pass-spike` | The owned-pass spike of `docs/plans/scene-graph-stage1.md`: rounded clip, border, shadow, external-OES texture, backdrop blur, buffer-age damage and cost on headless GLES2 (needs a render node; `-Doptimize=ReleaseSafe` for cost). |
 | `zig build test-scene-pass` | Stage 3's owned GLES2 drawing backend against wlroots: transforms, crops, filters, premultiplied alpha, damage, external-OES (an RGB EGLImage and a linear NV12 dmabuf; needs gbm), GL/EGL state and acquire/release timelines. Needs a compatible render node (`WLR_RENDER_DRM_DEVICE` on multi-GPU machines); also run with `-Doptimize=ReleaseSafe`. The unavailable-acquire test intentionally logs `drmSyncobjTransfer failed`. Stage 4b's rounded-shape gates are in the same fixture: clip against a supersampled reference, piece joins, border/body, premultiplied edges, the opaque cover, shadow, and partial repaint across a clip edge; the 128 parity cases also run through the shaped programs. Stage 4d's shadow gate compares every pixel with the CPU chrome's shadow formula. |
@@ -56,6 +56,17 @@ compiler, `wayland-scanner` and wayland-protocols; D-Bus suites need PyGObject,
   conditions; compare with `--report new.json --against old.json`. Use a
   ReleaseSafe build and a render node, keep other builds/tests stopped and AC
   power on. `--report` still reads the stages 3 and 4 "paired" results.
+- `zig build -Ddamage-audit=true` (Debug): after every frame the compositor
+  redraws the same entries whole into a private buffer and logs `damage audit`
+  errors for any pixel the frame's damage missed, with the entries over it. It
+  reads two frames back each time, so timing-sensitive suites (`glass_hold`,
+  `glass_reblur`, `desktop_damage`, `window_urgency`) fail on that build; read
+  the logs of the others. `REDIWM_TEST_LOG_DIR=/dir` makes
+  `ipc_client.spawn_compositor` keep each compositor log there
+  (`grep -h "damage audit" /dir/*.log`). A hit means a change reached the graph
+  without damaging itself (`docs/plans/scene-graph-stage6.md`, 6b); the
+  `capture` suite is known to show a few corner pixels (unsubmitted isolated
+  renders upset buffer age, which predates the graph damage).
 - `REDIWM_*_PREVIEW=/tmp/...` (lock, greeter, OSD, settings, switcher, tray,
   notification): keep the compositor's own screenshots.
 - GLES2 at a fractional scale can differ by one level depending on render

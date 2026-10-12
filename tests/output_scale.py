@@ -90,6 +90,12 @@ def run_case(binary, override='auto'):
                                   'client not mapped')
                 wid = window['id']
 
+                def draw_lines():
+                    return [l for l in (tmp / 'client.log').read_text().splitlines() if l.startswith('draw ')]
+
+                def surface_events():
+                    return [l for l in (tmp / 'client.log').read_text().splitlines() if l.startswith(('enter ', 'leave '))]
+
                 def move_and_check(out, scale):
                     # Camera world coordinates are exposed separately from layout coordinates.
                     ipc.action('move_window_to', {'id': wid, 'x': out['x'] + 80, 'y': out['y'] + 80})
@@ -97,8 +103,7 @@ def run_case(binary, override='auto'):
                         wait_for(lambda: ipc.dump_buffer('titlebar', window_id=wid)['scale'] == scale,
                                  f'chrome did not switch to {scale}')
                     expected_draw = f'draw {round(scale * 120)} {round(400 * scale)} {round(260 * scale)}'
-                    wait_for(lambda: (tmp / 'client.log').read_text().strip().splitlines()[-1:] == [expected_draw],
-                             f'client did not receive {scale} scale')
+                    wait_for(lambda: draw_lines()[-1:] == [expected_draw], f'client did not receive {scale} scale')
                     wait_for(lambda: (ipc.get_window_debug(wid)['buffer_width'],
                                       ipc.get_window_debug(wid)['buffer_height']) ==
                              (round(400 * scale), round(260 * scale)), 'client buffer size mismatch')
@@ -110,6 +115,19 @@ def run_case(binary, override='auto'):
                 move_and_check(outputs[0], 1)
                 move_and_check(outputs[1], 1.5)
                 move_and_check(outputs[0], 1)
+                move_and_check(outputs[1], 1.5)
+                # The surface is told which outputs show it: only the one it is on, and
+                # both while it spans the seam, where it renders at the denser one.
+                names = [out['name'] for out in outputs]
+                wait_for(lambda: surface_events()[-1:] == [f'enter {names[1]}'] and f'leave {names[0]}' in surface_events(),
+                         'surface events did not follow the move')
+                seam = max(out['x'] for out in outputs)
+                ipc.action('move_window_to', {'id': wid, 'x': seam - 150, 'y': outputs[0]['y'] + 80})
+                wait_for(lambda: surface_events()[-1:] == [f'enter {names[0]}'], 'spanning window did not enter both outputs')
+                wait_for(lambda: draw_lines()[-1:] == ['draw 180 600 390'], 'spanning window did not render at the denser output')
+                ipc.action('move_window_to', {'id': wid, 'x': outputs[0]['x'] + 80, 'y': outputs[0]['y'] + 80})
+                wait_for(lambda: surface_events()[-1:] == [f'leave {names[1]}'], 'window did not leave the other output')
+                wait_for(lambda: draw_lines()[-1:] == ['draw 120 400 260'], 'window did not return to the lighter output')
                 move_and_check(outputs[1], 1.5)
                 (tmp / 'rediwm-config.toml').write_text(config(1.25))
                 ipc.reload_config()

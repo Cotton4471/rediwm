@@ -551,7 +551,11 @@ def spawn_compositor(
     if env_extra:
         env.update(env_extra)
 
-    log_file = (tmp_dir / "compositor.log").open("w")
+    # REDIWM_TEST_LOG_DIR keeps every compositor log (the temporary directory is
+    # removed when a test passes), e.g. for the `-Ddamage-audit` build.
+    keep = os.environ.get("REDIWM_TEST_LOG_DIR")
+    log_path = Path(keep) / f"compositor-{os.getpid()}-{time.monotonic_ns()}.log" if keep else tmp_dir / "compositor.log"
+    log_file = log_path.open("w")
     proc = subprocess.Popen(
         [str(binary or ROOT / "zig-out/bin/rediwm")],
         env=env,

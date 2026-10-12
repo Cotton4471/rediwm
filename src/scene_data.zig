@@ -142,11 +142,9 @@ pub fn toNodeLocal(node: *wlr.SceneNode, lx: f64, ly: f64) geometry.Vec2 {
 
 pub fn hitTest(server: *@import("Server.zig"), lx: f64, ly: f64) Hit {
     server.world.syncPresentation();
-    const root = &server.scene.tree.node;
     var nx: f64 = undefined;
     var ny: f64 = undefined;
-    const displayed = root.at(lx, ly, &nx, &ny) orelse return .none;
-    var node = @import("projection.zig").source(displayed);
+    var node = server.world.projection.nodeAt(lx, ly, &nx, &ny) orelse return .none;
 
     // Let the latched preview receive input through other dimmed windows.
     // Shell UI and layers keep their normal priority, as do points outside

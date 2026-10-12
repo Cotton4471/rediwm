@@ -360,7 +360,8 @@ pub fn init(server: *Server, scale: ?f32, icon_theme_cfg: icon_theme.Config, io:
 
     const scene = wlr.Scene.create() catch return error.SceneCreateFailed;
     errdefer scene.tree.node.destroy();
-    // The world source tree stays disabled: projection renders its copies.
+    // The world source tree stays disabled: wlroots ignores it, and the projection
+    // resolves it into the graph the output pass draws.
     // wlroots would lower each mapped X11 source as if it were hidden,
     // undoing our raise after the map listener runs. Toplevel owns X11
     // stacking alongside its scene ordering instead.
@@ -370,7 +371,6 @@ pub fn init(server: *Server, scale: ?f32, icon_theme_cfg: icon_theme.Config, io:
     const desktop_tree = scene.tree.createSceneTree() catch return error.SceneCreateFailed;
     const world_tree = scene.tree.createSceneTree() catch return error.SceneCreateFailed;
     const world_desktop_tree = world_tree.createSceneTree() catch return error.SceneCreateFailed;
-    const world_view = scene.tree.createSceneTree() catch return error.SceneCreateFailed;
     const taskbar_tree = scene.tree.createSceneTree() catch return error.SceneCreateFailed;
     const overlay_tree = scene.tree.createSceneTree() catch return error.SceneCreateFailed;
     const ime_tree = scene.tree.createSceneTree() catch return error.SceneCreateFailed;
@@ -483,7 +483,7 @@ pub fn init(server: *Server, scale: ?f32, icon_theme_cfg: icon_theme.Config, io:
     }
     server.outputs.init();
     server.layer_surfaces.init();
-    try server.world.init(server, world_tree, world_view);
+    try server.world.init(server, world_tree);
     errdefer server.world.deinit();
     try server.shell.init(server);
     errdefer server.shell.deinit();
@@ -1060,6 +1060,13 @@ pub fn deinit(server: *Server) void {
 /// the same swapchain/damage history. Commits stay on Output.
 pub fn buildOutputState(server: *Server, output: *wlr.SceneOutput, state: *wlr.Output.State) bool {
     return server.output_renderer.buildState(server.world.projection, output, state);
+}
+
+/// Frame callbacks for everything the output shows: the layout trees through
+/// wlroots, the world's surfaces from the graph.
+pub fn sendFrameDone(server: *Server, output: *wlr.SceneOutput, now: *std.posix.timespec) void {
+    output.sendFrameDone(now);
+    server.world.projection.sendFrameDone(output, now);
 }
 
 pub fn beginRenderPass(server: *Server, buffer: *wlr.Buffer, options: ?*const wlr.Renderer.BufferPassOptions) !*wlr.RenderPass {

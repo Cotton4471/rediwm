@@ -162,12 +162,13 @@ environment variable: no test hooks in production), removed in stage 6.
    [scene-graph-stage5.md](scene-graph-stage5.md).* Delete `glass.c`'s prefix capture,
    per-effect contexts, dependency hashing and the drag hold; keep glass pixel
    tests, converted.
-6. **Delete.** *Planned 2026-10-11, D1 to D4 taken:
+6. **Delete.** *Done 2026-10-12 (projection CPU -21 % median, instructions and
+   memory level with stage 5, pixels identical, uncommitted):
    [scene-graph-stage6.md](scene-graph-stage6.md); the legacy presenter and the
-   temporary config key already went in stage 4e.* `wlr_scene` output rendering, the projection view tree, the
-   legacy presenter and the temporary config key. Update `AGENTS.md`
-   (rendering and damage rules, the two-border-path and skirt notes),
-   `TESTING.md` and the area notes.
+   temporary config key already went in stage 4e.* The projection's view tree is
+   gone: surface feedback, damage and hit testing come from the graph, and the
+   pass reads the source nodes. Updated `AGENTS.md` (rendering and damage rules),
+   `TESTING.md` (the damage audit) and the tests.
 
 The old wlr_scene source tree stays as the surface adapter until a separate,
 later decision; replacing it is not part of this plan.

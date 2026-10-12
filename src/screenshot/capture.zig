@@ -459,7 +459,7 @@ pub const Manager = struct {
                 log.err("processPendingJob: scene buildState failed for {s}", .{job.output_name});
             }
             var now = Output.timestamp();
-            scene_output.sendFrameDone(&now);
+            mgr.server.sendFrameDone(scene_output, &now);
         } else {
             // Commit frame state to keep output pipeline in sync
             _ = job.output.commitFrameState(&state);

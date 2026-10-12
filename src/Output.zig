@@ -1151,7 +1151,7 @@ fn handleVblank(output: *Output) c_int {
 fn sendFrameDone(output: *Output) void {
     if (output.server.scene.getSceneOutput(output.wlr_output)) |scene_output| {
         var now = timestamp();
-        scene_output.sendFrameDone(&now);
+        output.server.sendFrameDone(scene_output, &now);
     }
     var preview_time = timestamp();
     output.server.switcher.frameDone(output, &preview_time);
@@ -1336,7 +1336,7 @@ fn runFrame(output: *Output) void {
         }
         if (!deferred) {
             var now = timestamp();
-            scene_output.sendFrameDone(&now);
+            output.server.sendFrameDone(scene_output, &now);
         }
     }
     if (deferred) {

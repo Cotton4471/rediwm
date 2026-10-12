@@ -1,6 +1,7 @@
+const std = @import("std");
 const wlr = @import("wlroots");
 pub const Projection = opaque {
-    extern fn rediwm_projection_create(source: *wlr.SceneTree, view: *wlr.SceneTree, scene: *wlr.Scene) ?*Projection;
+    extern fn rediwm_projection_create(source: *wlr.SceneTree, scene: *wlr.Scene) ?*Projection;
     pub const create = rediwm_projection_create;
     extern fn rediwm_projection_watch(projection: *Projection, compositor: *wlr.Compositor) void;
     pub const watch = rediwm_projection_watch;
@@ -19,9 +20,15 @@ pub const Projection = opaque {
     /// in place with `damage` when the renderer allows; null replaces all.
     /// The caller may drop `buffer` afterwards. True when updated in place.
     pub const presentOwned = rediwm_projection_present_owned;
+    extern fn rediwm_projection_node_at(projection: *Projection, lx: f64, ly: f64, nx: ?*f64, ny: ?*f64) ?*wlr.SceneNode;
+    /// The topmost node at a layout point (a source node for the world), and
+    /// the point in the node's own coordinates.
+    pub const nodeAt = rediwm_projection_node_at;
+    extern fn rediwm_projection_send_frame_done(projection: *Projection, output: *wlr.SceneOutput, now: *std.posix.timespec) void;
+    /// Frame callbacks of the world's client surfaces for one output, beside
+    /// `wlr.SceneOutput.sendFrameDone`, which reaches the layout trees only.
+    pub const sendFrameDone = rediwm_projection_send_frame_done;
 };
-extern fn rediwm_projection_source(node: *wlr.SceneNode) *wlr.SceneNode;
-pub const source = rediwm_projection_source;
 extern fn rediwm_projection_set_tree_zoom(node: *wlr.SceneNode, scale: f64) bool;
 pub const setTreeZoom = rediwm_projection_set_tree_zoom;
 extern fn rediwm_projection_set_tree_scale(node: *wlr.SceneNode, factor: f64) bool;

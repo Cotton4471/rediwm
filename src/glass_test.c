@@ -94,24 +94,25 @@ static bool projection_input(struct wlr_scene_buffer *buffer, double *x, double 
     *x += 7; *y += 9;
     return true;
 }
-struct items { struct rediwm_item effect, target; };
+struct items { struct rediwm_item effect, target, client; };
+static struct wlr_scene_node *client_node;
 static bool find_items(const struct rediwm_item *item, struct wlr_scene_node *transport, void *data) {
     struct items *found = data;
-    struct wlr_scene_node *source = rediwm_projection_source(transport);
     if (item->kind == REDIWM_ITEM_EFFECT) found->effect = *item;
-    else if (source->type == WLR_SCENE_NODE_BUFFER && !wlr_scene_buffer_from_node(source)->buffer &&
+    else if (transport == client_node) found->client = *item;
+    else if (transport->type == WLR_SCENE_NODE_BUFFER && !wlr_scene_buffer_from_node(transport)->buffer &&
              item->width == 200) found->target = *item;
     return true;
 }
 static void projection_checks(struct wlr_scene *scene, struct glass_engine *engine) {
     struct wlr_scene_tree *source = wlr_scene_tree_create(&scene->tree);
-    struct wlr_scene_tree *view = wlr_scene_tree_create(&scene->tree);
-    struct rediwm_projection *p = rediwm_projection_create(source, view, scene);
+    struct rediwm_projection *p = rediwm_projection_create(source, scene);
     assert(p);
     struct wlr_scene_tree *frame = wlr_scene_tree_create(source);
     wlr_scene_node_set_position(&frame->node, 101, 51);
     struct test_buffer *image = buffer_create(400, 260);
     struct wlr_scene_buffer *client = wlr_scene_buffer_create(frame, &image->base);
+    client_node = &client->node;
     wlr_buffer_drop(&image->base);
     wlr_scene_buffer_set_source_box(client, &(struct wlr_fbox){10, 10, 380, 240});
     wlr_scene_buffer_set_dest_size(client, 400, 260);
@@ -123,23 +124,23 @@ static void projection_checks(struct wlr_scene *scene, struct glass_engine *engi
         for (size_t i = 0; i < sizeof(levels)/sizeof(levels[0]); i++) {
             double z = levels[i];
             rediwm_projection_sync(p, z, -20, -30, 0, 0);
-            struct wlr_scene_node *displayed = rediwm_projection_node(p, &client->node);
-            assert(displayed && rediwm_projection_source(displayed) == &client->node);
-            struct wlr_scene_buffer *buffer = wlr_scene_buffer_from_node(displayed);
-            int displayed_x, displayed_y;
-            assert(wlr_scene_node_coords(displayed, &displayed_x, &displayed_y));
-            assert(displayed_x == lround(121*z) && displayed_y == lround(81*z));
-            assert(buffer->dst_width == lround(121*z+400*wz*z) - lround(121*z));
-            assert(fabs(rediwm_projection_node_zoom(displayed) - wz*z) < .0001);
-            assert(buffer->src_box.x == 10 && buffer->src_box.width == 380);
+            struct items found = {0};
+            rediwm_projection_for_each_item(p, false, find_items, &found);
+            const struct rediwm_item *shown = &found.client;
+            assert(shown->kind == REDIWM_ITEM_BUFFER);
+            const struct rediwm_snap snap = rediwm_edges_snap(shown->edges);
+            assert(snap.x == lround(121*z) && snap.y == lround(81*z));
+            assert(snap.width == lround(121*z+400*wz*z) - lround(121*z));
+            assert(fabs(shown->scale - wz*z) < .0001);
+            assert(shown->content.src_box.x == 10 && shown->content.src_box.width == 380);
             assert(frame->node.x == 101 && frame->node.y == 51);
             assert(client->dst_width == 400 && client->dst_height == 260);
             double x, y;
-            struct wlr_scene_node *hit = wlr_scene_node_at(&view->node,
-                displayed_x + buffer->dst_width * .5, displayed_y + buffer->dst_height * .5, &x, &y);
-            assert(hit == displayed);
+            struct wlr_scene_node *hit = rediwm_projection_node_at(p,
+                snap.x + snap.width * .5, snap.y + snap.height * .5, &x, &y);
+            assert(hit == &client->node);
             assert(fabs(x - 207) < .0001 && fabs(y - 139) < .0001);
-            assert(!wlr_scene_node_at(&view->node, displayed_x + 1, displayed_y + 1, &x, &y));
+            assert(!rediwm_projection_node_at(p, snap.x + 1, snap.y + 1, &x, &y));
         }
     }
     // An effect has its target's box at every zoom, and is shown only with it.
@@ -163,12 +164,13 @@ static void projection_checks(struct wlr_scene *scene, struct glass_engine *engi
     struct items hidden = {0};
     rediwm_projection_for_each_item(p, false, find_items, &hidden);
     assert(hidden.effect.kind != REDIWM_ITEM_EFFECT);
-    // Source destruction tears down all mirrors, including effects.
+    // Source destruction tears down the graph's items, including effects.
     wlr_scene_node_destroy(&frame->node);
-    assert(wl_list_empty(&view->children));
+    struct items gone = {0};
+    rediwm_projection_for_each_item(p, false, find_items, &gone);
+    assert(gone.client.width == 0 && gone.effect.kind != REDIWM_ITEM_EFFECT);
     rediwm_projection_destroy(p);
     wlr_scene_node_destroy(&source->node);
-    wlr_scene_node_destroy(&view->node);
     fputs("PASS: projection geometry, input, glass geometry and destruction\n", stderr);
 }
 int main(void)

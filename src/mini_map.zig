@@ -241,7 +241,7 @@ pub fn tick(self: *Self, output: *Output, now: i64) bool {
     if (!self.dragging) {
         var sx: f64 = 0;
         var sy: f64 = 0;
-        const picked = server.scene.tree.node.at(server.input.cursor.x, server.input.cursor.y, &sx, &sy);
+        const picked = server.world.projection.nodeAt(server.input.cursor.x, server.input.cursor.y, &sx, &sy);
         self.hovered = server.input.cursor_mode == .passthrough and server.input.active_buttons == 0 and
             picked != null and SceneData.fromNode(picked.?) == &self.scene_data;
     }

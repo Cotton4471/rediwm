@@ -6,6 +6,8 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const use_llvm = b.option(bool, "llvm", "Use LLVM and LLD (default for optimized builds)") orelse (optimize != .Debug);
+    // Debug aid (TESTING.md): redraw every frame whole and log what the damage missed.
+    const damage_audit = b.option(bool, "damage-audit", "Compare every frame with a full repaint and log the difference (slow)") orelse false;
     // Set by scripts/build-wlroots.sh builds on distros without wlroots 0.20
     // (Debian/Ubuntu). Must be applied before anything runs pkg-config.
     const wlroots_prefix = b.option([]const u8, "wlroots-prefix", "Use wlroots and its bundled dependencies from this private prefix (see scripts/build-wlroots.sh)");
@@ -136,7 +138,7 @@ pub fn build(b: *std.Build) void {
     compositor.root_module.linkSystemLibrary("xcb", .{});
     compositor.root_module.addCSourceFile(.{ .file = b.path("src/session/auth.c"), .flags = &.{"-std=c11"} });
     compositor.root_module.addCSourceFile(.{ .file = b.path("src/polkit/native.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    addGlass(b, compositor.root_module);
+    addGlass(b, compositor.root_module, damage_audit);
     compositor.root_module.addCSourceFile(.{ .file = b.path("src/gpu_timing.c"), .flags = &.{"-std=c11"} });
     b.step("rediwm", "Build the compositor").dependOn(&compositor.step);
 
@@ -420,7 +422,7 @@ pub fn build(b: *std.Build) void {
     // Fake PAM is linked only into unit tests; the compositor always uses libpam.
     ui_tests_module.addCSourceFile(.{ .file = b.path("tests/auth_test.c"), .flags = &.{ "-std=c11", "-DREDIWM_AUTH_EMBEDDED_TEST" } });
     ui_tests_module.addCSourceFile(.{ .file = b.path("src/polkit/native.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    addGlass(b, ui_tests_module);
+    addGlass(b, ui_tests_module, false);
     ui_tests_module.addCSourceFile(.{ .file = b.path("src/gpu_timing.c"), .flags = &.{"-std=c11"} });
     const ui_tests = b.addTest(.{ .root_module = ui_tests_module });
     const run_ui_tests = b.addRunArtifact(ui_tests);
@@ -768,13 +770,13 @@ fn addBassDsp(b: *std.Build, target: std.Build.ResolvedTarget) void {
     }).step);
 }
 
-fn addGlass(b: *std.Build, module: *std.Build.Module) void {
+fn addGlass(b: *std.Build, module: *std.Build.Module, damage_audit: bool) void {
     module.linkSystemLibrary("wlroots-0.20", .{});
     module.linkSystemLibrary("egl", .{});
     module.linkSystemLibrary("glesv2", .{});
     module.addCSourceFile(.{ .file = b.path("src/projection.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra" } });
     module.addCSourceFile(.{ .file = b.path("src/scene_pass.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    module.addCSourceFile(.{ .file = b.path("src/scene_output.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    module.addCSourceFile(.{ .file = b.path("src/scene_output.c"), .flags = if (damage_audit) &.{ "-std=c11", "-Wall", "-Wextra", "-Werror", "-DREDIWM_DAMAGE_AUDIT" } else &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     module.addCSourceFile(.{ .file = b.path("src/scene_damage.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     module.addCSourceFile(.{ .file = b.path("src/glass.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra" } });
     module.addCSourceFile(.{ .file = b.path("src/explicit_sync.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
