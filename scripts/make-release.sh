@@ -76,10 +76,13 @@ fi
 # Each build writes into its tree (zig-out), so each family gets its own copy.
 # Rootless podman maps root in the container to this user, so what it writes to
 # a bind mount is already ours; docker's root-owned files are handed back.
+# run_args: extra engine options for the next run() (the verify step's render node).
+run_args=""
 run() { # family script args...
     family=$1; shift
     rc=0
-    "$engine" run --rm \
+    # shellcheck disable=SC2086 # word-split on purpose
+    "$engine" run --rm $run_args \
         -v "$work/$family:/work" -v "$out:/out" \
         -v "$cache/zig:/cache/zig" -v "$cache/zig-global:/cache/zig-global" \
         -e REDIWM_ZIG_DIR=/cache/zig -e ZIG_GLOBAL_CACHE_DIR=/cache/zig-global \
@@ -96,7 +99,13 @@ for family in $families; do
     run "$family" sh /work/scripts/release-build.sh "$family" /out
     if [ "$verify" = yes ]; then
         log "Verifying $family in a fresh container"
+        # The compositor needs GLES2, which needs a DRM render node even for
+        # llvmpipe, and a bare container has none: hand it the host's.
+        node=${REDIWM_RENDER_NODE:-$(ls /dev/dri/renderD* 2>/dev/null | head -n 1)}
+        [ -n "$node" ] || die "no /dev/dri/renderD* on this machine for the verify step (set REDIWM_RENDER_NODE, or use --no-verify)"
+        run_args="--device $node"
         run "$family" sh /work/scripts/release-verify.sh "$family" /out
+        run_args=""
     fi
     rm -rf -- "$work/$family"
 done

@@ -64,8 +64,11 @@ xdg=$(mktemp -d)
 chown tester "$xdg"
 chmod 700 "$xdg"
 log_file=/tmp/rediwm-verify.log
+# make-release.sh passes the host's render node in; GLES2 needs one even for llvmpipe.
+node=$(ls /dev/dri/renderD* 2>/dev/null | head -n 1) || true
+[ -n "$node" ] || die "no DRM render node in the container"
 runuser -u tester -- env HOME=/home/tester XDG_RUNTIME_DIR="$xdg" XDG_STATE_HOME="$xdg/state" \
-    WLR_BACKENDS=headless WLR_HEADLESS_OUTPUTS=1 WLR_RENDERER=gles2 WLR_RENDERER_ALLOW_SOFTWARE=1 REDIWM_SCALE=1 \
+    WLR_BACKENDS=headless WLR_HEADLESS_OUTPUTS=1 WLR_RENDERER=gles2 WLR_RENDERER_ALLOW_SOFTWARE=1 WLR_RENDER_DRM_DEVICE="$node" REDIWM_SCALE=1 \
     /usr/local/bin/rediwm > "$log_file" 2>&1 &
 pid=$!
 up=no
