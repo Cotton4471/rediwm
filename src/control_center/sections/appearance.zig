@@ -101,7 +101,8 @@ pub const Section = struct {
     cursor_themes: ?[]cursor_theme.Theme = null,
     cursor_row_children: [2]Widget = undefined,
     family_row_children: [2]Widget = undefined,
-    row_storage: [25]Widget = undefined,
+    row_storage: [26]Widget = undefined,
+    dock_children: [2]Widget = undefined,
     focus_zoom_children: [3]Widget = undefined,
     /// Rescanned on every build, so images added meanwhile show up.
     wallpapers: []const wallpapers.Entry = &.{},
@@ -728,6 +729,10 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
         labelWidget("Icon theme"),
         .{ .name = "icon_theme", .kind = .{ .select = .{ .labels = icon_labels, .selected = icon_selected, .placeholder = "Pack or system default", .owner = out, .on_change = &onIconThemePicked } }, .width = .{ .fixed = segmented_width } },
     };
+    out.dock_children = .{
+        labelWidget("RediWM dock"),
+        .{ .name = "dock_enabled", .kind = .{ .toggle = .{ .on = out.cc.server.config.compositor.dock_enabled, .owner = out, .on_change = &onDockChanged } } },
+    };
     out.row_storage = .{
         .{ .kind = .container, .direction = .column, .gap = 8, .children = pack_controls },
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.icon_theme_row },
@@ -752,6 +757,7 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
         inactive_opacity_row,
         window_gap_row,
         pxGroup(out, px_scrollbar_width, "Scrollbar width", t.scrollbar_width, 4, 24, 1, &PxHandler(px_scrollbar_width, "scrollbar_width", false).changed),
+        .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.dock_children },
         taskbar_section,
         start_menu_section,
     };
@@ -1755,4 +1761,16 @@ fn onWindowTabsChanged(owner: ?*anyopaque, index: usize, checked: bool) void {
 
 fn section(owner: ?*anyopaque) *Section {
     return @ptrCast(@alignCast(owner.?));
+}
+
+fn onDockChanged(owner: ?*anyopaque, _: usize, on: bool) void {
+    const server = section(owner).cc.server;
+    setting_save.saveCompositor(main.gpa, server.io, server.config.path, "dock_enabled", on) catch |err| {
+        std.log.warn("could not save dock: {}", .{err});
+        section(owner).dock_children[1].kind.toggle.on = server.config.compositor.dock_enabled;
+        section(owner).dock_children[1].markDirty();
+        return;
+    };
+    server.config.compositor.dock_enabled = on;
+    server.scheduleFrames();
 }

@@ -124,6 +124,7 @@ pub const CompositorConfig = struct {
     floating_apps: []const []const u8 = &.{},
     default_file_manager: []const u8 = "",
     default_terminal: []const u8 = "",
+    dock_enabled: bool = false,
     taskbar_items: TaskbarItems = .{},
     taskbar_position: enum { top, bottom } = .bottom,
     /// App identities opted into compositor tabs. Only + launches join a group.
@@ -1035,6 +1036,7 @@ const region_rules: std.enums.EnumFieldStruct(std.meta.FieldEnum(RegionConfig), 
 const compositor_rules: std.enums.EnumFieldStruct(std.meta.FieldEnum(CompositorConfig), FieldRule, null) = .{
     .desktop_mode = .enumeration,
     .floating_apps = .json_string_list,
+    .dock_enabled = .boolean,
     .taskbar_items = .taskbar_items,
     .taskbar_position = .enumeration,
     .icon_theme = .string,

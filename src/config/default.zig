@@ -117,6 +117,7 @@ pub const source =
     \\# Desktop application IDs; empty keeps Files and the automatic terminal.
     \\default_file_manager = ""
     \\default_terminal = ""
+    \\dock_enabled = false # compact launcher alongside the taskbar
     \\# Right-side taskbar items, left to right; prefix a name with - to hide it.
     \\taskbar_position = "bottom" # top or bottom
     \\taskbar_items = ["battery", "network", "volume", "clock"]

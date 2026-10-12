@@ -24,6 +24,7 @@ pub const SceneData = struct {
         chrome: *Toplevel,
         /// Taskbar strip for one output.
         taskbar: *Taskbar,
+        dock: *@import("Dock.zig"),
         calendar: *@import("calendar.zig").Calendar,
         battery_popup: *@import("battery_popup.zig").Popup,
         wifi_popup: *@import("network/popup.zig").Popup,
@@ -68,6 +69,7 @@ pub const Hit = union(enum) {
     chrome: Chrome,
     surface: Surface,
     taskbar: TaskbarHit,
+    dock: struct { dock: *@import("Dock.zig"), sx: f64, sy: f64 },
     wifi_popup: struct { popup: *@import("network/popup.zig").Popup, sx: f64, sy: f64 },
     battery_popup: struct { popup: *@import("battery_popup.zig").Popup, sx: f64, sy: f64 },
     calendar: struct { calendar: *@import("calendar.zig").Calendar, sx: f64, sy: f64 },
@@ -184,6 +186,10 @@ pub fn hitTest(server: *@import("Server.zig"), lx: f64, ly: f64) Hit {
             .calendar => |calendar| blk: {
                 const local = toNodeLocal(&calendar.buffer_node.node, lx, ly);
                 break :blk .{ .calendar = .{ .calendar = calendar, .sx = local.x, .sy = local.y } };
+            },
+            .dock => |dock| blk: {
+                const local = toNodeLocal(&dock.node.?.node, lx, ly);
+                break :blk .{ .dock = .{ .dock = dock, .sx = local.x, .sy = local.y } };
             },
             .taskbar => |bar| blk: {
                 const local = toNodeLocal(&bar.buffer_node.node, lx, ly);

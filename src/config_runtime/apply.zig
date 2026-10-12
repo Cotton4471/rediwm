@@ -199,6 +199,11 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
 
     if (old.compositor.taskbar_position != new.compositor.taskbar_position) server.applyTaskbarPosition();
 
+    if (old.compositor.dock_enabled != new.compositor.dock_enabled) {
+        server.scheduleFrames();
+        if (server.input.open_control_center) |cc| cc.refresh();
+    }
+
     logKeybindDiff(old, new);
 
     for (new.autostart) |cmd| {

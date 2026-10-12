@@ -1181,6 +1181,7 @@ pub fn refreshTaskbars(server: *Server) void {
     const desired_h = Taskbar.barHeight();
     var it = server.outputs.iterator(.forward);
     while (it.next()) |output| {
+        output.dock.dirty = true;
         if (output.taskbar) |bar| {
             if (bar.box.height != desired_h) {
                 var box: wlr.Box = undefined;
@@ -1224,6 +1225,7 @@ pub fn releaseTaskbars(server: *Server) void {
 pub fn refreshTaskbarsGeometry(server: *Server) void {
     var it = server.outputs.iterator(.forward);
     while (it.next()) |output| {
+        output.dock.dirty = true;
         if (output.taskbar) |bar| {
             var box: wlr.Box = undefined;
             server.output_layout.getBox(output.wlr_output, &box);
@@ -1686,6 +1688,7 @@ fn handleIconWake(fd: c_int, mask: wl.EventMask, server: *Server) c_int {
     var output_it = server.outputs.iterator(.forward);
     while (output_it.next()) |output| {
         if (output.taskbar) |bar| bar.notifyToplevelsChanged();
+        output.dock.dirty = true;
         if (output.start_menu) |sm| sm.iconsReady();
     }
     if (server.notifications) |mgr| mgr.iconsReady();

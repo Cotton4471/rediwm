@@ -74,6 +74,7 @@ server: *Server,
 wlr_output: *wlr.Output,
 wallpaper: ?*wlr.SceneBuffer = null,
 taskbar: ?*Taskbar = null,
+dock: @import("Dock.zig") = .{},
 osd: @import("osd.zig") = .{},
 start_menu: ?*StartMenu = null,
 calendar: ?*@import("calendar.zig").Calendar = null,
@@ -523,6 +524,7 @@ pub fn syncLayout(server: *Server) void {
     var it = server.outputs.iterator(.forward);
     while (it.next()) |output| {
         if (output.idle_blanked or output.user_disabled) {
+            output.dock.deinit();
             if (output.server.switcher.output == output) output.server.switcher.cancel();
             output.osd.hide();
             continue;
@@ -1215,6 +1217,7 @@ fn runFrame(output: *Output) void {
     anim.observeBegin();
     const switcher_animating = output.server.switcher.tick(output, now_ms);
     const osd_animating = output.osd.tick(output, now_ms);
+    output.dock.tick(output);
     const taskbar_started = stats.nowNs();
     var bar_animating = false;
     if (output.taskbar) |bar| bar_animating = bar.tick(now_ms);
@@ -1472,6 +1475,7 @@ fn handleDestroy(listener: *wl.Listener(*wlr.Output), _: *wlr.Output) void {
     output.lock_view.tree.node.destroy();
 
     if (output.wallpaper) |node| node.node.destroy();
+    output.dock.deinit();
     if (output.taskbar) |bar| bar.destroy();
     output.closeCalendar();
     output.closeBattery();

@@ -446,6 +446,11 @@ pub fn handleRequest(
                     result.local_x = s.sx;
                     result.local_y = s.sy;
                 },
+                .dock => |d| {
+                    result.target_type = "dock";
+                    result.local_x = d.sx;
+                    result.local_y = d.sy;
+                },
                 .taskbar => |tb| {
                     result.target_type = "taskbar";
                     result.local_x = tb.sx;
@@ -574,7 +579,7 @@ pub fn handleRequest(
                     .widgets = try widgets.toOwnedSlice(allocator),
                 } } };
             }
-            return .{ .err = "InvalidPanel: expected start_menu, control_center, power_menu, taskbar, or window" };
+            return .{ .err = "InvalidPanel: expected start_menu, control_center, power_menu, dock, taskbar, or window" };
         },
         .list_panels => {
             const def_out = server.getDefaultOutput();
@@ -1940,7 +1945,13 @@ fn resolvePowerMenu(out: *Output) ?PanelRoot {
     return .{ .root = &pm.root, .box = pm.panel_box };
 }
 
+fn resolveDock(output: *Output) ?PanelRoot {
+    if (!output.dock.visible) return null;
+    return .{ .root = &output.dock.root, .box = output.dock.box };
+}
+
 pub const panel_registry = [_]PanelRegistryEntry{
+    .{ .name = "dock", .resolve = resolveDock },
     .{ .name = "start_menu", .resolve = resolveStartMenu },
     .{ .name = "control_center", .resolve = resolveControlCenter },
     .{ .name = "power_menu", .resolve = resolvePowerMenu },

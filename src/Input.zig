@@ -247,7 +247,8 @@ pub fn isDesktopZoomHeld(input: *Input) bool {
 /// button). A fresh hit test rather than `hovered_taskbar`, which is only
 /// refreshed by passthrough motion and would otherwise lag one event behind.
 pub fn cursorOverTaskbar(input: *Input) bool {
-    return scene_data.hitTest(input.server, input.cursor.x, input.cursor.y) == .taskbar;
+    const hit = scene_data.hitTest(input.server, input.cursor.x, input.cursor.y);
+    return hit == .taskbar or hit == .dock;
 }
 
 pub fn updateAccel(input: *Input, profile: AccelProfile, p1: [2]f32, p2: [2]f32, max_speed: f32) void {
@@ -1522,6 +1523,10 @@ fn passthroughMotion(input: *Input, time_msec: u32) void {
     if (hit != .toast) {
         input.clearToastHover();
     }
+    var dock_it = input.server.outputs.iterator(.forward);
+    while (dock_it.next()) |out| {
+        if (hit != .dock or hit.dock.dock != &out.dock) out.dock.leave();
+    }
     input.server.world.mini_map.hover(hit == .mini_map);
     if (hit != .power_menu) {
         if (input.open_power_menu) |menu| menu.pointerMotion(-1, -1);
@@ -1558,6 +1563,14 @@ fn passthroughMotion(input: *Input, time_msec: u32) void {
             input.setHover(null, null);
             input.setToastHover(res.toast);
             res.toast.pointerMotion(res.sx, res.sy);
+            input.setDefaultCursor();
+            input.seat.pointerClearFocus();
+        },
+        .dock => |res| {
+            input.hovered_resize_edges = null;
+            input.clearTaskbarHover();
+            input.setHover(null, null);
+            res.dock.motion(res.sx, res.sy);
             input.setDefaultCursor();
             input.seat.pointerClearFocus();
         },
@@ -2071,6 +2084,10 @@ fn processClientButton(
             res.toast.pointerButtonDown(res.sx, res.sy);
             return;
         },
+        .dock => |res| {
+            if (button == btn_left) res.dock.press(res.sx, res.sy);
+            return;
+        },
         .taskbar => |res| {
             res.bar.pointerPress(res.sx, res.sy);
             return;
@@ -2359,6 +2376,10 @@ pub fn processAxis(
             if (orientation == .vertical_scroll) {
                 hit.menu.scrollWheel(hit.sx, hit.sy, ui_scroll.axisDeltaPx(delta, delta_discrete), notch);
             }
+            return;
+        },
+        .dock => |hit| {
+            hit.dock.scroll(ui_scroll.axisDeltaPx(delta, delta_discrete));
             return;
         },
         .taskbar => |hit| {
