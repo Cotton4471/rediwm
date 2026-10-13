@@ -44,6 +44,13 @@ pub const ClipSpec = extern struct {
     radii: [4]f64,
     border: f64,
     border_color: [4]f32,
+    /// A highlight on the edge near a point of the tree (see scene_graph.h);
+    /// `glow_color` is premultiplied, opacity applied. No radius, no highlight.
+    glow_x: f64 = 0,
+    glow_y: f64 = 0,
+    glow_radius: f64 = 0,
+    glow_depth: f64 = 0,
+    glow_color: [4]f32 = .{ 0, 0, 0, 0 },
 };
 extern fn rediwm_projection_set_tree_clip(node: *wlr.SceneNode, spec: ?*const ClipSpec) bool;
 /// A null spec removes the clip. False for a size that is not positive or a

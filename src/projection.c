@@ -196,7 +196,12 @@ bool rediwm_projection_set_tree_clip(struct wlr_scene_node *node,
   }
   if (spec->width <= 0 || spec->height <= 0 || !finite_at_least_zero(spec->border)) return false;
   for (int i = 0; i < 4; i++)
-    if (!finite_at_least_zero(spec->radii[i]) || !isfinite(spec->border_color[i])) return false;
+    if (!finite_at_least_zero(spec->radii[i]) || !isfinite(spec->border_color[i]) ||
+        !isfinite(spec->glow_color[i]))
+      return false;
+  if (!isfinite(spec->glow_x) || !isfinite(spec->glow_y) || !finite_at_least_zero(spec->glow_radius) ||
+      !finite_at_least_zero(spec->glow_depth))
+    return false;
   struct tree_props *props = tree_props_get(node);
   if (!props) return false;
   props->clip = *spec;
@@ -495,13 +500,30 @@ static bool clip_same_shape(const struct rediwm_clip *a, const struct rediwm_cli
     if (a->radii[i] != b->radii[i] || a->border_color[i] != b->border_color[i]) return false;
   return true;
 }
-static void clip_rim(pixman_region32_t *out, const struct rediwm_clip *c) {
+// Where the highlight is, as far as it can be seen: a square around its point.
+static bool clip_glow_box(const struct rediwm_clip *c, pixman_box32_t *out) {
+  if (c->glow_radius <= 0 || c->glow_color[3] <= 0) return false;
+  const double reach = c->glow_radius + 1;
+  *out = (pixman_box32_t){(int)floor(c->glow_x - reach), (int)floor(c->glow_y - reach),
+                          (int)ceil(c->glow_x + reach), (int)ceil(c->glow_y + reach)};
+  return true;
+}
+static bool clip_same_glow(const struct rediwm_clip *a, const struct rediwm_clip *b) {
+  if (a->glow_radius != b->glow_radius || a->glow_depth != b->glow_depth) return false;
+  if (a->glow_radius <= 0) return true;
+  if (a->glow_x != b->glow_x || a->glow_y != b->glow_y) return false;
+  for (int i = 0; i < 4; i++)
+    if (a->glow_color[i] != b->glow_color[i]) return false;
+  return true;
+}
+// `only` limits the rim to a box (a moved highlight changes nothing else).
+static void clip_rim(pixman_region32_t *out, const struct rediwm_clip *c, const pixman_box32_t *only) {
   const struct rediwm_snap f = rediwm_edges_snap(c->edges);
   if (f.width <= 0 || f.height <= 0) return;
   double radius = 0;
   for (int i = 0; i < 4; i++)
     if (c->radii[i] > radius) radius = c->radii[i];
-  const int inset = (int)ceil(radius) + (int)ceil(c->border) + 2;
+  const int inset = (int)ceil(radius) + (int)ceil(c->border) + (int)ceil(c->glow_depth) + 2;
   pixman_region32_t rim;
   pixman_region32_init_rect(&rim, f.x, f.y, f.width, f.height);
   if (f.width > 2 * inset && f.height > 2 * inset) {
@@ -511,6 +533,7 @@ static void clip_rim(pixman_region32_t *out, const struct rediwm_clip *c) {
     pixman_region32_subtract(&rim, &rim, &inner);
     pixman_region32_fini(&inner);
   }
+  if (only) pixman_region32_intersect_rect(&rim, &rim, only->x1, only->y1, only->x2 - only->x1, only->y2 - only->y1);
   pixman_region32_union(out, out, &rim);
   pixman_region32_fini(&rim);
 }
@@ -518,8 +541,15 @@ static void damage_clip_change(struct rediwm_projection *p, const struct rediwm_
                                const struct rediwm_clip *after) {
   pixman_region32_t region;
   pixman_region32_init(&region);
-  if (before) clip_rim(&region, before);
-  if (after) clip_rim(&region, after);
+  if (before && after && clip_same_shape(before, after)) {
+    // Only the highlight changed: its old and new places.
+    pixman_box32_t box;
+    if (clip_glow_box(before, &box)) clip_rim(&region, before, &box);
+    if (clip_glow_box(after, &box)) clip_rim(&region, after, &box);
+  } else {
+    if (before) clip_rim(&region, before, NULL);
+    if (after) clip_rim(&region, after, NULL);
+  }
   pixman_region32_union(&p->pending, &p->pending, &region);
   pixman_region32_fini(&region);
 }
@@ -548,7 +578,8 @@ static void resolve_node(struct rediwm_projection *p, struct group *g,
         here = rediwm_clip_resolve(t, x, y, &props->clip);
         clip = &here;
         // A hidden window damages nothing; showing it will.
-        if (enabled && (!props->has_applied || !clip_same_shape(&props->applied, &here)))
+        if (enabled && (!props->has_applied || !clip_same_shape(&props->applied, &here) ||
+                        !clip_same_glow(&props->applied, &here)))
           damage_clip_change(p, props->has_applied ? &props->applied : NULL, &here);
         props->applied = here;
         props->has_applied = true;

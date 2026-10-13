@@ -130,6 +130,14 @@ pub const Theme = struct {
     field_border_focus: ?[4]f32 = null,
     field_radius: f32 = 8.0,
     shadow: [4]f32 = .{ 0, 0, 0, 0.35 },
+    /// Highlight on the focused window's edge where the pointer comes near
+    /// (`Toplevel.setGlow`). Its alpha is the strength at full proximity; zero
+    /// turns it off.
+    border_glow_enabled: bool = true,
+    border_glow: [4]f32 = .{ 237.0 / 255.0, 27.0 / 255.0, 46.0 / 255.0, 0.60 },
+    border_glow_length: f32 = 72.0, // along the edge, logical px; fades out smoothly
+    border_glow_reach: f32 = 56.0, // pointer distance from the edge where it appears
+    border_glow_depth: f32 = 3.0, // how far it bleeds inward past the 1 px ring
     shadow_size: f32 = 24.0, // blur/softness radius, logical px
     shadow_offset_y: f32 = 8.0, // vertical offset, logical px
     // 0 sizes the menu to the output (`start_menu/size.zig`); set either to pin it.

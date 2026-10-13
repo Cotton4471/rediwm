@@ -22,7 +22,7 @@ struct program {
     unsigned bit; // which bit of pass.targets_set tracks this program's target size
     GLint target, dst, color, alpha, opaque, sampler, coords;
     // Shaped programs only (-1 elsewhere): the shape, and the shadow's own terms.
-    GLint mode, origin, size, radii, border, bcolor, offset, softness, hide, use_shape;
+    GLint mode, origin, size, radii, border, bcolor, glow, gcolor, offset, softness, hide, use_shape;
     // The backdrop composite (shaped mode 3) and the blur program.
     GLint bmap, fmap, saturation, front, front_alpha, has_front;
     GLint step_uv, sigma, limits, src_scale;
@@ -171,7 +171,7 @@ static const char shaped_vertex[] =
 #define SHAPED_HEAD \
     "#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n" \
     "varying vec2 uv; varying vec2 local; uniform vec2 size; uniform vec4 radii, bcolor, color;" \
-    "uniform float border;" \
+    "uniform float border; uniform vec4 glow, gcolor;" \
     "float sdf(vec2 p, vec4 r){ vec2 q=p-size*.5;" \
     "float rad=q.x<0.?(q.y<0.?r.x:r.w):(q.y<0.?r.y:r.z);" \
     "rad=clamp(rad,0.,min(size.x,size.y)*.5);" \
@@ -212,7 +212,13 @@ static const char shaped_fragment[] = SHAPED_HEAD
     "if(use_shape<.5){ gl_FragColor=c; return; }"
     "float d=sdf(local,radii);"
     "float w=border>0.?1.-cov(d+border):0.;"
-    "gl_FragColor=(c*(1.-bcolor.a*w)+bcolor*w)*cov(d); }";
+    "vec4 o=c*(1.-bcolor.a*w)+bcolor*w;"
+    // The highlight (a smoothstep of the distance from its point), over the ring
+    // and, when it has depth, fading inward past it.
+    "if(glow.z>0.){ float g=clamp(1.-length(local-glow.xy)/glow.z,0.,1.); g=g*g*(3.-2.*g);"
+    "float t=glow.w>0.?1.-smoothstep(0.,1.,(-d-border)/glow.w):w;"
+    "o=o*(1.-gcolor.a*g*t)+gcolor*(g*t); }"
+    "gl_FragColor=o*cov(d); }";
 
 // The backdrop blur (stage 5b): glass.c's kernel, 49 taps, sigma in texels of the
 // target, reading a source texture that may be larger than the region (scratch),
@@ -285,6 +291,8 @@ static bool program_init(struct program *p, unsigned bit, const char *vertex_sou
     p->radii = glGetUniformLocation(p->id, "radii");
     p->border = glGetUniformLocation(p->id, "border");
     p->bcolor = glGetUniformLocation(p->id, "bcolor");
+    p->glow = glGetUniformLocation(p->id, "glow");
+    p->gcolor = glGetUniformLocation(p->id, "gcolor");
     p->offset = glGetUniformLocation(p->id, "offset");
     p->softness = glGetUniformLocation(p->id, "softness");
     p->hide = glGetUniformLocation(p->id, "hide");
@@ -423,8 +431,9 @@ static void draw(const struct pass *p, const pixman_region32_t *clip) {
 static bool shape_usable(const struct rediwm_pass_shape *s) {
     if (!isfinite(s->border) || s->border < 0) return false;
     for (int i = 0; i < 4; i++) if (!isfinite(s->radii[i]) || s->radii[i] < 0) return false;
-    for (int i = 0; i < 4; i++) if (!isfinite(s->border_color[i])) return false;
-    return true;
+    for (int i = 0; i < 4; i++) if (!isfinite(s->border_color[i]) || !isfinite(s->glow_color[i])) return false;
+    return isfinite(s->glow_radius) && isfinite(s->glow_depth) && s->glow_radius >= 0 && s->glow_depth >= 0 &&
+        isfinite(s->glow_center[0]) && isfinite(s->glow_center[1]);
 }
 static void set_shape(const struct pass *p, const struct program *g, const struct rediwm_pass_shape *s) {
     glUniform1f(g->use_shape, 1.f);
@@ -435,6 +444,8 @@ static void set_shape(const struct pass *p, const struct program *g, const struc
     glUniform1f(g->border, s->border);
     glUniform4f(g->bcolor, s->border_color[0], s->border_color[1], s->border_color[2],
         s->border_color[3]);
+    glUniform4f(g->glow, s->glow_center[0], s->glow_center[1], s->glow_radius, s->glow_depth);
+    glUniform4f(g->gcolor, s->glow_color[0], s->glow_color[1], s->glow_color[2], s->glow_color[3]);
 }
 static void add_rect(struct wlr_render_pass *base, const struct wlr_render_rect_options *o) {
     struct pass *p = wl_container_of(base, p, base);

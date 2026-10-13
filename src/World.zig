@@ -273,6 +273,7 @@ pub fn tickHover(world: *World, now_ms: i64) bool {
     while (it.next()) |toplevel| {
         if (focused != toplevel) toplevel.setZoomBoost(false);
         if (toplevel.tickHover(now_ms)) animating = true;
+        if (toplevel.tickGlow(now_ms)) animating = true;
         if (toplevel.tickZoom(now_ms)) animating = true;
         if (toplevel.tickZoomBoost(now_ms)) animating = true;
         if (toplevel.tickMap(now_ms)) animating = true;

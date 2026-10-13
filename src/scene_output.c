@@ -10,6 +10,7 @@
 #include "glass.h"
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
 #ifdef REDIWM_DAMAGE_AUDIT
 #include <drm_fourcc.h>
 #include <wlr/render/allocator.h>
@@ -185,6 +186,19 @@ static void shape_for(struct rediwm_pass_shape *s, const struct rediwm_clip *c, 
     device_radii(s->radii, radii, v->transform);
     s->border = c->border > 0 ? fmaxf(1.f, roundf((float)(c->border * v->scale))) : 0.f;
     for (int i = 0; i < 4; i++) s->border_color[i] = c->border_color[i];
+    s->glow_radius = s->glow_depth = 0;
+    memset(s->glow_center, 0, sizeof(s->glow_center));
+    memset(s->glow_color, 0, sizeof(s->glow_color));
+    if (c->glow_radius > 0 && c->glow_color[3] > 0) {
+        // The highlight's point goes through the same transform as the box, as a
+        // one-pixel box (the loss is under a layout pixel, far inside its radius).
+        const struct wlr_box at = device_box((struct wlr_box){(int)floor(c->glow_x), (int)floor(c->glow_y), 1, 1}, v);
+        s->glow_center[0] = at.x + at.width * .5f - s->box.x;
+        s->glow_center[1] = at.y + at.height * .5f - s->box.y;
+        s->glow_radius = (float)(c->glow_radius * v->scale);
+        s->glow_depth = (float)(c->glow_depth * v->scale);
+        for (int i = 0; i < 4; i++) s->glow_color[i] = c->glow_color[i];
+    }
 }
 // What of a clipped item may be drawn without the shape and without blending: the
 // model's opaque cover, minus a margin around the edge where the ring is drawn.
@@ -682,7 +696,7 @@ static bool render_entry(struct rediwm_output_renderer *r, struct entry *e, stru
         // window for what a rim of a few shaded pixels costs far less than: draws
         // dominated the output build in a drag.
         float depth = fmaxf(fmaxf(shape.radii[0], shape.radii[1]), fmaxf(shape.radii[2], shape.radii[3]));
-        const int inset = (int)ceilf(fmaxf(depth, shape.border)) + REDIWM_CLIP_OPAQUE_MARGIN;
+        const int inset = (int)ceilf(fmaxf(depth, shape.border + shape.glow_depth)) + REDIWM_CLIP_OPAQUE_MARGIN;
         if (shape.box.width > 2 * inset && shape.box.height > 2 * inset)
             pixman_region32_intersect_rect(&core, &core, shape.box.x + inset, shape.box.y + inset,
                 shape.box.width - 2 * inset, shape.box.height - 2 * inset);

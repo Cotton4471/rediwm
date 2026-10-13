@@ -102,7 +102,7 @@ pub const Section = struct {
     cursor_themes: ?[]cursor_theme.Theme = null,
     cursor_row_children: [2]Widget = undefined,
     family_row_children: [2]Widget = undefined,
-    row_storage: [26]Widget = undefined,
+    row_storage: [27]Widget = undefined,
     dock_children: [2]Widget = undefined,
     dock_group_children: [2]Widget = undefined,
     focus_zoom_children: [3]Widget = undefined,
@@ -147,6 +147,8 @@ pub const Section = struct {
     font_row_children: [2]Widget = undefined,
     radius_row_children: [2]Widget = undefined,
     shadow_row_children: [2]Widget = undefined,
+    glow_row_children: [2]Widget = undefined,
+    glow_label_children: [2]Widget = undefined,
     opacity_header_children: [2]Widget = undefined,
     opacity_group_children: [2]Widget = undefined,
     opacity_value_buf: [16]u8 = undefined,
@@ -534,6 +536,15 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
         },
     };
 
+    out.glow_label_children = .{
+        .{ .kind = .{ .text = .{ .content = "Edge glow", .font_size = 13, .weight = 600, .color = pal.fg } } },
+        .{ .kind = .{ .text = .{ .content = "Light the active window's edge near the pointer", .font_size = 12, .color = pal.dim } } },
+    };
+    out.glow_row_children = .{
+        .{ .kind = .container, .direction = .column, .gap = 2, .width = .{ .flex = 1 }, .children = &out.glow_label_children },
+        .{ .name = "border_glow", .kind = .{ .toggle = .{ .on = t.border_glow_enabled, .owner = out, .on_change = &onBorderGlowChanged } } },
+    };
+
     const opacity_val = std.math.clamp(t.window_bg[3], 0.0, 1.0);
     const opacity_formatted = std.fmt.bufPrint(&out.opacity_value_buf, "{d}%", .{@as(i32, @intFromFloat(@round(opacity_val * 100.0)))}) catch "?";
     out.opacity_header_children = .{ labelWidget("Window chrome opacity"), pillWidget(opacity_formatted) };
@@ -760,6 +771,7 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.font_row_children },
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.radius_row_children },
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.shadow_row_children },
+        .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.glow_row_children },
         chrome_row,
         buildWindowTabs(out),
         inactive_opacity_row,
@@ -1390,6 +1402,12 @@ fn onRadiusChanged(owner: ?*anyopaque, _: usize, index: usize) void {
 fn onShadowChanged(owner: ?*anyopaque, _: usize, index: usize) void {
     theme.global.shadow_size = shadow_size_values[index];
     theme.global.shadow[3] = shadow_alpha_values[index];
+    applyThemeChange(section(owner));
+}
+
+fn onBorderGlowChanged(owner: ?*anyopaque, _: usize, on: bool) void {
+    if (theme.global.border_glow_enabled == on) return;
+    theme.global.border_glow_enabled = on;
     applyThemeChange(section(owner));
 }
 

@@ -31,6 +31,7 @@ const window_rules = @import("config").window_rules;
 const loader = @import("config").loader;
 const actions = @import("config_runtime/actions.zig");
 const anim = @import("ui").anim;
+const border_glow = @import("border_glow.zig");
 const window_sizes = @import("window_sizes.zig");
 const placeholder_match = @import("placeholder_match.zig");
 const applications = @import("start_menu/applications.zig");
@@ -249,6 +250,13 @@ hover_anim: anim.Anim = .{},
 chip_pos: anim.Anim = .{},
 chip_alpha: anim.Anim = .{ .property = .opacity },
 last_painted_hover: f32 = 0,
+/// Edge highlight near the pointer (`setGlow`): `glow_anim` is its strength,
+/// eased toward `glow_near`, and (`glow_x`, `glow_y`) the point of the frame's
+/// edge it is centred on, in frame units.
+glow_anim: anim.Anim = .{ .property = .opacity },
+glow_near: f32 = 0,
+glow_x: f32 = 0,
+glow_y: f32 = 0,
 /// The window opacity the border colour of the shape was last given, so a
 /// hover or focus repaint keeps the ring as faded as the body.
 shape_opacity: f32 = 1,
@@ -1102,6 +1110,7 @@ fn syncXwaylandStack(toplevel: *Toplevel) void {
 pub fn setActivated(toplevel: *Toplevel, activated: bool) void {
     const changed = toplevel.activated != activated;
     toplevel.activated = activated;
+    if (!activated) toplevel.setGlow(null);
     if (toplevel.wlr_foreign) |handle| handle.setActivated(activated);
     switch (toplevel.backend) {
         .xdg => |*adapter| _ = adapter.xdg_toplevel.setActivated(activated),
@@ -2848,13 +2857,24 @@ fn applyShape(toplevel: *Toplevel) void {
     }
     const radius: f64 = toplevel.cornerRadius();
     const ring = toplevel.borderColor().scale(toplevel.shape_opacity);
-    if (!projection.setTreeClip(node, .{
+    var spec: projection.ClipSpec = .{
         .width = toplevel.chrome_width,
         .height = toplevel.chrome_height,
         .radii = .{ radius, radius, radius, radius },
         .border = @floatFromInt(chrome.frame_border),
         .border_color = ring.rgba,
-    })) {
+    };
+    const t = theme.global;
+    const glow = toplevel.glow_anim.value(nowMs()) * toplevel.shape_opacity;
+    if (t.border_glow_enabled and glow * t.border_glow[3] >= 0.004) {
+        const density = toplevel.chromeDensity();
+        spec.glow_x = toplevel.glow_x;
+        spec.glow_y = toplevel.glow_y;
+        spec.glow_radius = @max(0.5 * t.border_glow_length * density, 1);
+        spec.glow_depth = @max(t.border_glow_depth * density, 0);
+        spec.glow_color = col.Straight.fromRgba(t.border_glow).premultiply().scale(glow).rgba;
+    }
+    if (!projection.setTreeClip(node, spec)) {
         log.warn("could not set the window shape ({d}x{d})", .{ toplevel.chrome_width, toplevel.chrome_height });
     }
 }
@@ -2978,6 +2998,54 @@ fn retargetChip(toplevel: *Toplevel, control: ?chrome.ControlKind) void {
 fn resetChip(toplevel: *Toplevel) void {
     toplevel.chip_pos.cancel(0);
     toplevel.chip_alpha.cancel(0);
+}
+
+/// The pointer's place relative to this window's frame, or null away from it
+/// (`border_glow.probe`; `lx`, `ly` in layout space).
+pub fn glowProbe(toplevel: *const Toplevel, lx: f64, ly: f64) ?border_glow.Probe {
+    if (!chrome.shapes or !theme.global.border_glow_enabled or theme.global.border_glow[3] <= 0) return null;
+    if (!toplevel.hasServerDecorations() or toplevel.isMaximized() or toplevel.isFullscreen()) return null;
+    const density = toplevel.chromeDensity();
+    const local = toplevel.frameLocal(lx, ly);
+    return border_glow.probe(
+        @floatFromInt(toplevel.chrome_width),
+        @floatFromInt(toplevel.chrome_height),
+        toplevel.cornerRadius(),
+        @floatCast(local.x),
+        @floatCast(local.y),
+        theme.global.border_glow_reach * density,
+    );
+}
+
+/// Shows the highlight of the frame's edge at `probe` (null: fades it out). Only
+/// a change of strength or of the whole-pixel place repaints, so a still pointer
+/// costs nothing and the focused window alone ever calls this with a probe.
+pub fn setGlow(toplevel: *Toplevel, probe: ?border_glow.Probe) void {
+    const near: f32 = if (probe) |p| @round(p.near * 64) / 64 else 0;
+    const now = nowMs();
+    var changed = false;
+    if (near != toplevel.glow_near) {
+        toplevel.glow_near = near;
+        toplevel.glow_anim.retargetTo(now, near, anim.curveFor(.titlebar_hover));
+        changed = true;
+    }
+    if (probe) |p| {
+        const x = @round(p.x);
+        const y = @round(p.y);
+        if (near > 0 and (x != toplevel.glow_x or y != toplevel.glow_y)) {
+            toplevel.glow_x = x;
+            toplevel.glow_y = y;
+            changed = true;
+        }
+    }
+    if (!changed) return;
+    toplevel.applyShape();
+    toplevel.server.scheduleFrames();
+}
+
+pub fn tickGlow(toplevel: *Toplevel, now_ms: i64) bool {
+    if (toplevel.glow_anim.sampleChanged(now_ms, anim.rasterAlphaQuantum())) toplevel.applyShape();
+    return !toplevel.glow_anim.settled(now_ms);
 }
 
 pub fn tickHover(toplevel: *Toplevel, now_ms: i64) bool {

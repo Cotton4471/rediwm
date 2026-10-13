@@ -51,6 +51,7 @@ border_focus = "rgba(0,209,255,0.45)"
 glass = "rgba(8,20,38,0.62)"
 glass_strong = "rgba(8,18,32,0.82)"
 shadow = "rgba(0,0,0,0.55)"
+border_glow = "rgba(0,209,255,0.50)"
 
 # Taskbar
 taskbar_bg = "rgba(10,20,38,0.96)"

@@ -81,12 +81,21 @@ struct rediwm_clip_spec {
   // Premultiplied, with the window's opacity already applied: the ring is
   // composited over the body, so a translucent border tints what is under it.
   float border_color[4];
+  // A highlight on the frame's edge near a point: `glow_color` (premultiplied,
+  // opacity applied) fades out with the distance from (glow_x, glow_y), in the
+  // tree's own units, to `glow_radius`, and reaches `glow_depth` inward past the
+  // ring. A radius of 0 draws none.
+  double glow_x, glow_y, glow_radius, glow_depth;
+  float glow_color[4];
 };
 struct rediwm_clip {
   struct rediwm_edges edges;
   double radii[4];
   double border;
   float border_color[4];
+  // In layout space, like the edges.
+  double glow_x, glow_y, glow_radius, glow_depth;
+  float glow_color[4];
 };
 // Radii are capped at half the short side before scaling, as the CPU chrome
 // does, so a small window never asks for an impossible arc.
@@ -100,6 +109,13 @@ static inline struct rediwm_clip rediwm_clip_resolve(struct rediwm_xform t, doub
   for (int i = 0; i < 4; i++)
     clip.radii[i] = (spec->radii[i] < cap ? spec->radii[i] : cap) * t.scale;
   for (int i = 0; i < 4; i++) clip.border_color[i] = spec->border_color[i];
+  if (spec->glow_radius > 0) {
+    clip.glow_x = clip.edges.x1 + spec->glow_x * t.scale;
+    clip.glow_y = clip.edges.y1 + spec->glow_y * t.scale;
+    clip.glow_radius = spec->glow_radius * t.scale;
+    clip.glow_depth = spec->glow_depth * t.scale;
+    for (int i = 0; i < 4; i++) clip.glow_color[i] = spec->glow_color[i];
+  }
   return clip;
 }
 // Signed distance, negative inside, from (px, py) to the rounded rectangle

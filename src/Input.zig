@@ -158,6 +158,8 @@ cursor_hold_end: wl.Listener(*wlr.Pointer.event.HoldEnd) = .init(cursorHoldEnd),
 
 cursor_mode: enum { passthrough, move, resize, pan } = .passthrough,
 hovered_toplevel: ?*Toplevel = null,
+/// The window whose edge highlight follows the pointer (`updateBorderGlow`).
+glow_toplevel: ?*Toplevel = null,
 hovered_taskbar: ?*Taskbar = null,
 tray_buttons: u32 = 0,
 hovered_toast: ?*@import("notifications/toast.zig").Toast = null,
@@ -1119,6 +1121,7 @@ pub fn detachOutput(input: *Input, output: *Output) void {
 pub fn detachToplevel(input: *Input, toplevel: *Toplevel) void {
     if (input.window_menu.target == toplevel) input.window_menu.close();
     if (input.hovered_toplevel == toplevel) input.hovered_toplevel = null;
+    if (input.glow_toplevel == toplevel) input.glow_toplevel = null;
     input.drag_dodge.detach(toplevel);
     if (input.grabbed_toplevel == toplevel) input.clearGrab();
     if (input.resize_session) |session| {
@@ -1521,6 +1524,7 @@ fn passthroughMotion(input: *Input, time_msec: u32) void {
         }
     }
     const hit = scene_data.hitTest(input.server, input.cursor.x, input.cursor.y);
+    input.updateBorderGlow(hit);
     if (hit != .toast) {
         input.clearToastHover();
     }
@@ -2214,6 +2218,26 @@ fn processClientButton(
         .xwayland_unmanaged => |res| input.rememberPointerGrab(res.sx, res.sy, 1.0 / input.server.xwaylandScale()),
         else => {},
     }
+}
+
+/// The focused window's edge lights up where the pointer nears it, unless
+/// something else (another window, shell UI) is under the pointer.
+fn updateBorderGlow(input: *Input, hit: scene_data.Hit) void {
+    var target: ?*Toplevel = null;
+    if (@import("config_runtime/actions.zig").focusedToplevel(input.server)) |top| {
+        const clear = switch (hit) {
+            .none, .layer, .desktop => true,
+            .chrome => |h| h.toplevel == top,
+            .surface => |h| h.toplevel == top,
+            else => false,
+        };
+        if (clear) target = top;
+    }
+    if (input.glow_toplevel) |previous| {
+        if (previous != target) previous.setGlow(null);
+    }
+    input.glow_toplevel = target;
+    if (target) |top| top.setGlow(top.glowProbe(input.cursor.x, input.cursor.y));
 }
 
 pub fn setHover(input: *Input, toplevel: ?*Toplevel, control: ?chrome.ControlKind) void {

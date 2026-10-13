@@ -39,6 +39,12 @@ struct rediwm_pass_shape {
   // 0 draws no ring.
   float border;
   float border_color[4]; // premultiplied
+  // A highlight over the ring near `glow_center` (device pixels from the box's
+  // corner): `glow_color` (premultiplied) fades with the distance to
+  // `glow_radius`, and past the ring it reaches `glow_depth` inward. 0 radius: none.
+  float glow_center[2];
+  float glow_radius, glow_depth;
+  float glow_color[4];
 };
 struct rediwm_pass_shadow {
   float offset_x, offset_y; // how far the shadow is shifted from the shape

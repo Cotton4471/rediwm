@@ -390,8 +390,8 @@ static void test_clip_opaque(void) {
   // pill keeps the full-height column between its two semicircles.
   struct rediwm_snap one[3];
   const struct rediwm_xform identity = {1, 0, 0};
-  assert(rediwm_clip_opaque(&(struct rediwm_clip){rediwm_xform_rect(identity, 0, 0, 8, 8), {4, 4, 4, 4}, 0, {0}}, one) == 0);
-  assert(rediwm_clip_opaque(&(struct rediwm_clip){rediwm_xform_rect(identity, 5, 7, 120, 80), {40, 40, 40, 40}, 0, {0}}, one) == 1);
+  assert(rediwm_clip_opaque(&(struct rediwm_clip){rediwm_xform_rect(identity, 0, 0, 8, 8), {4, 4, 4, 4}, 0, {0}, 0, 0, 0, 0, {0}}, one) == 0);
+  assert(rediwm_clip_opaque(&(struct rediwm_clip){rediwm_xform_rect(identity, 5, 7, 120, 80), {40, 40, 40, 40}, 0, {0}, 0, 0, 0, 0, {0}}, one) == 1);
   assert(one[0].x == 5 + 42 && one[0].y == 7 && one[0].width == 120 - 84 && one[0].height == 80);
 }
 static void test_clip_projection(struct wlr_scene *scene) {

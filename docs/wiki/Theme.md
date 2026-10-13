@@ -175,6 +175,8 @@ geometry retain their content or structural dimensions.
 | `field_border` | `"rgba(63,70,77,1)"` |
 | `field_border_focus` | `unset` |
 | `shadow` | `"rgba(0,0,0,0.35)"` |
+| `border_glow_enabled` | `true` |
+| `border_glow` | `"rgba(237,27,46,0.6)"` (alpha 0 turns the highlight off) |
 | `start_menu_bg` | `"rgba(29,34,41,0.98)"` |
 | `start_menu_border` | `"rgba(255,255,255,0.12)"` |
 | `start_menu_search_bg` | `"rgba(21,26,31,1)"` |
@@ -287,6 +289,9 @@ Numeric tokens accept 0–4096 unless constrained below. Fractions ending in
 | `field_radius` | `8.0` |
 | `shadow_size` | `24.0` |
 | `shadow_offset_y` | `8.0` |
+| `border_glow_length` | `72.0` |
+| `border_glow_reach` | `56.0` |
+| `border_glow_depth` | `3.0` |
 | `start_menu_width` | `0` (automatic) |
 | `start_menu_max_height` | `0` (automatic) |
 | `start_menu_radius` | `14.0` |
