@@ -37,6 +37,10 @@ for toml in "$here"/assets/themes/*.toml; do
     dir="$work/$id"
     mkdir -p "$dir"
     cp "$toml" "$dir/theme.toml"
+    # Optional pack artwork, already sized and named for shared icon lookup.
+    if [ -d "$here/assets/themes/$id" ]; then
+        cp -R "$here/assets/themes/$id/." "$dir/"
+    fi
 
     # wallpaper = "name" under [assets] names a file in wallpapers/.
     wallpaper=$(sed -n 's/^wallpaper = "\(.*\)"$/\1/p' "$toml" | head -n 1)

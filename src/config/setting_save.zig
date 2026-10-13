@@ -15,6 +15,33 @@ pub fn saveCompositor(allocator: std.mem.Allocator, io: Io, path: []const u8, co
     } else try save(allocator, io, path, "compositor", key, value);
 }
 
+/// A pack switch/reset clears only layout edits owned by themes. Keep user
+/// launchers, hidden dock entries and unrelated compositor preferences.
+pub fn resetThemeLayout(allocator: std.mem.Allocator, io: Io, path: []const u8) !void {
+    const original = try Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(1 << 20));
+    defer allocator.free(original);
+    var result: std.ArrayList(u8) = .empty;
+    defer result.deinit(allocator);
+    var in_compositor = false;
+    var lines = std.mem.splitScalar(u8, original, '\n');
+    var offset: usize = 0;
+    while (lines.next()) |raw| {
+        const end = @min(original.len, offset + raw.len + 1);
+        const line = theme.stripComment(std.mem.trim(u8, raw, " \t\r"));
+        if (std.mem.startsWith(u8, line, "[")) in_compositor = std.mem.eql(u8, line, "[compositor]");
+        var remove = false;
+        if (in_compositor) if (std.mem.indexOfScalar(u8, line, '=')) |eq| {
+            const key = std.mem.trim(u8, line[0..eq], " \t\"");
+            inline for (@import("theme_pack.zig").Layout.keys) |layout_key| {
+                if (std.mem.eql(u8, key, layout_key)) remove = true;
+            }
+        };
+        if (!remove) try result.appendSlice(allocator, original[offset..end]);
+        offset = end;
+    }
+    try writeValidated(allocator, io, path, result.items);
+}
+
 pub fn saveRegion(allocator: std.mem.Allocator, io: Io, path: []const u8, comptime key: []const u8, value: @FieldType(loader.RegionConfig, key)) !void {
     try save(allocator, io, path, "region", key, value);
 }

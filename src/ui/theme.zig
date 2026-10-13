@@ -62,6 +62,44 @@ pub const Theme = struct {
     app_git_added: [4]f32 = .{ 34.0 / 255.0, 197.0 / 255.0, 94.0 / 255.0, 1 }, // #22c55e, added lines
     app_divider: [4]f32 = .{ 55.0 / 255.0, 63.0 / 255.0, 72.0 / 255.0, 1 }, // #373f48
     app_icon: [4]f32 = .{ 214.0 / 255.0, 214.0 / 255.0, 214.0 / 255.0, 1 }, // #d6d6d6, sidebar glyphs
+    /// Client content can be light while compositor decorations stay dark.
+    /// Unset values preserve the existing shared window palette.
+    app_fg: ?[4]f32 = null,
+    app_sidebar_fg: ?[4]f32 = null,
+    app_sidebar_selected: ?[4]f32 = null,
+    app_menu_bg: ?[4]f32 = null,
+    app_field_bg: ?[4]f32 = null,
+    app_field_border: ?[4]f32 = null,
+    dock_bg: ?[4]f32 = null,
+    dock_border: ?[4]f32 = null,
+    dock_radius: f32 = 0, // zero follows the window frame radius
+    notification_bg: ?[4]f32 = null,
+    notification_fg: ?[4]f32 = null,
+    notification_dim: ?[4]f32 = null,
+    notification_border: ?[4]f32 = null,
+    notification_icon_bg: ?[4]f32 = null,
+    notification_radius: f32 = 12,
+    notification_blur: bool = false,
+    // Optional Foot launch palette. Unset entries keep the terminal's config.
+    terminal_bg: ?[4]f32 = null,
+    terminal_fg: ?[4]f32 = null,
+    terminal_cursor: ?[4]f32 = null,
+    terminal_black: ?[4]f32 = null,
+    terminal_red: ?[4]f32 = null,
+    terminal_green: ?[4]f32 = null,
+    terminal_yellow: ?[4]f32 = null,
+    terminal_blue: ?[4]f32 = null,
+    terminal_magenta: ?[4]f32 = null,
+    terminal_cyan: ?[4]f32 = null,
+    terminal_white: ?[4]f32 = null,
+    terminal_bright_black: ?[4]f32 = null,
+    terminal_bright_red: ?[4]f32 = null,
+    terminal_bright_green: ?[4]f32 = null,
+    terminal_bright_yellow: ?[4]f32 = null,
+    terminal_bright_blue: ?[4]f32 = null,
+    terminal_bright_magenta: ?[4]f32 = null,
+    terminal_bright_cyan: ?[4]f32 = null,
+    terminal_bright_white: ?[4]f32 = null,
     scrollbar_thumb: [4]f32 = .{ 89.0 / 255.0, 98.0 / 255.0, 110.0 / 255.0, 1 }, // #59626e
     /// Unset follows the surface accent during hover/drag.
     scrollbar_thumb_active: ?[4]f32 = null,
@@ -296,6 +334,26 @@ pub const Theme = struct {
 
     pub fn caretColor(t: Theme) [4]f32 {
         return t.caret orelse t.accent;
+    }
+
+    /// Resolve once in standalone clients, keeping every shared widget and
+    /// Cairo text caller on the same effective foreground and field palette.
+    pub fn forApp(t: Theme) Theme {
+        var result = t;
+        result.window_fg = t.app_fg orelse t.window_fg;
+        result.window_dim = t.app_fg orelse t.window_dim;
+        result.window_bg = t.app_menu_bg orelse t.window_bg;
+        result.field_bg = t.app_field_bg orelse t.field_bg;
+        result.field_border = t.app_field_border orelse t.field_border;
+        return result;
+    }
+
+    pub fn sidebarForeground(t: Theme) [4]f32 {
+        return t.app_sidebar_fg orelse t.window_fg;
+    }
+
+    pub fn sidebarSelected(t: Theme) [4]f32 {
+        return t.app_sidebar_selected orelse t.app_nav_selected;
     }
 
     pub fn controlFocusColor(t: Theme) [4]f32 {

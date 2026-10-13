@@ -82,6 +82,14 @@ static void registry_checks(void)
 	// Allocation failure leaves nothing behind.
 	fail_next_glass_allocation = true;
 	assert(!rediwm_glass_attach(engine, panel, &panel->node, GLASS_PANEL));
+	// A live notification can turn its blur off without removing its card.
+	rediwm_glass_hold(engine, other);
+	rediwm_glass_detach(other);
+	assert(engine->held == NULL && wl_list_empty(&engine->effects));
+	assert(wl_list_length(&scene->tree.children) == 1);
+	other = rediwm_glass_attach(engine, panel, &panel->node, GLASS_PANEL);
+	assert(other && rediwm_glass_effect_info(&other->node->node, &info));
+	assert(info.serial != other_info.serial);
 	rediwm_glass_destroy(engine);
 	assert(wl_list_length(&scene->tree.children) == 1); // the panel; its effect went
 	wlr_scene_node_destroy(&scene->tree.node);

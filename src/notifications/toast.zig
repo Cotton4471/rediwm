@@ -11,6 +11,7 @@ const scene_data = @import("../scene_data.zig");
 const text_mod = @import("ui").text;
 const ui = @import("ui");
 const theme = @import("ui").theme;
+const glass = @import("../glass.zig");
 const icon_service_mod = @import("../icon_service.zig");
 const image_mod = @import("image.zig");
 
@@ -45,6 +46,7 @@ pub const Toast = struct {
     icon_entry: ?icon_service_mod.Entry = null,
 
     buffer_node: *wlr.SceneBuffer,
+    glass_effect: ?*glass.Effect = null,
     node_data: scene_data.SceneData = undefined,
     panel_box: wlr.Box = .{ .x = 0, .y = 0, .width = 0, .height = 0 },
 
@@ -220,12 +222,12 @@ pub const Toast = struct {
                 .content = if (toast.summary.len > 0) toast.summary else if (toast.app_name.len > 0) toast.app_name else "Notification",
                 .font_size = 15,
                 .weight = 600,
-                .color = t.window_fg,
+                .color = t.notification_fg orelse t.window_fg,
             } },
             .width = .{ .flex = 1 },
         };
         header[1] = .{
-            .kind = .{ .text = .{ .content = "now", .font_size = 11, .color = t.window_dim } },
+            .kind = .{ .text = .{ .content = "now", .font_size = 11, .color = t.notification_dim orelse t.window_dim } },
             .width = .{ .fixed = 52 },
         };
         toast.age_widget = &header[1];
@@ -257,7 +259,7 @@ pub const Toast = struct {
         };
         for (lines, 0..) |line, i| {
             content[i + 1] = .{
-                .kind = .{ .text = .{ .content = line, .font_size = 13, .color = t.window_dim } },
+                .kind = .{ .text = .{ .content = line, .font_size = 13, .color = t.notification_dim orelse t.window_dim } },
                 .width = .{ .percent = 1 },
             };
         }
@@ -282,7 +284,7 @@ pub const Toast = struct {
         }
         const root_children = try a.alloc(Widget, 2);
         root_children[0] = .{
-            .kind = .{ .rect = .{ .color = t.surface, .radius = 10 } },
+            .kind = .{ .rect = .{ .color = t.notification_icon_bg orelse t.surface, .radius = 10 } },
             .padding = ui.layout.Edges.all(8),
             .width = .{ .fixed = 56 },
             .height = .{ .fixed = 56 },
@@ -299,12 +301,12 @@ pub const Toast = struct {
         const border_col = if (toast.urgency == 2)
             [4]f32{ 0.95, 0.25, 0.25, 0.95 } // Urgent red
         else
-            t.border;
+            t.notification_border orelse t.border;
 
         toast.root = .{
             .kind = .{ .rect = .{
-                .color = t.window_bg,
-                .radius = 12,
+                .color = t.notification_bg orelse t.window_bg,
+                .radius = t.notification_radius,
                 .border_width = if (toast.urgency == 2) 2 else 1,
                 .border_color = border_col,
             } },
@@ -359,12 +361,28 @@ pub const Toast = struct {
 
         const buf = PanelBuffer.createUninitialized(pw, ph, scale) catch return;
         var renderer = ui.paint.Renderer.init(buf.pixels, buf.width, buf.height, scale);
+        var palette = theme.global;
+        palette.fg = palette.notification_fg orelse palette.fg;
+        palette.dim = palette.notification_dim orelse palette.dim;
+        palette.window_fg = palette.notification_fg orelse palette.window_fg;
+        palette.window_dim = palette.notification_dim orelse palette.window_dim;
+        renderer.palette = palette;
         toast.background.paint(allocator, &toast.root, &renderer);
 
         toast.buffer_node.setBuffer(&buf.base);
         toast.buffer_node.setDestSize(pw, ph);
         buf.base.drop();
         toast.dirty = false;
+    }
+
+    pub fn configureGlass(toast: *Toast, engine: ?*glass.Engine, alpha: f32) void {
+        if (!theme.global.notification_blur) {
+            glass.Effect.detach(toast.glass_effect);
+            toast.glass_effect = null;
+            return;
+        }
+        if (toast.glass_effect == null) toast.glass_effect = glass.Engine.attach(engine, toast.buffer_node, &toast.buffer_node.node, .panel);
+        glass.Effect.configure(toast.glass_effect, theme.global.notification_radius, alpha);
     }
 
     pub fn beginClose(toast: *Toast, now_ms: i64, reason: u32) void {

@@ -1,0 +1,8 @@
+Gold
+
+Colour artwork comes from assets/icons/gold/ in the RediWM source tree.
+Runtime copies are bounded to 256 pixels and use freedesktop icon names.
+The source artwork is retained unchanged. The preview is a compositor capture.
+
+The theme also provides taskbar/dock layout defaults and a Foot launch palette.
+See docs/themes.md in the source tree for the theme format and override rules.

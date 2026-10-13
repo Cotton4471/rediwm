@@ -105,7 +105,7 @@ def run():
         try:
             with IPCClient(tmp, timeout=30) as ipc:
                 before = ipc.query("theme.list")
-                assert {p["id"] for p in before["packs"]} >= {"rediwm-dark", "rediwm-light", "redi-blue", "redi-mocha"}
+                assert {p["id"] for p in before["packs"]} >= {"rediwm-dark", "rediwm-light", "redi-blue", "redi-mocha", "gold"}
                 mocha = next(p for p in before["packs"] if p["id"] == "redi-mocha")
                 assert mocha["name"] == "Redi-Mocha" and not mocha["user_installed"], mocha
                 ipc.action("theme.apply", {"id": "redi-mocha"})
@@ -117,6 +117,37 @@ def run():
                     assert all(abs(a - b) < .001 for a, b in zip(look["tokens"][key], expected)), key
                 wait_for(lambda: (ipc.query("get_wallpaper")["displayed_path"] or "").endswith("/wallpaper-mocha.png"), "Mocha wallpaper was not presented")
                 assert tomllib.loads((tmp / "rediwm-config.toml").read_text())["theme"] == {"base": "redi-mocha"}
+                # Gold is a complete installed pack, including layout defaults.
+                ipc.action("theme.apply", {"id": "gold"})
+                gold = ipc.action("get_theme")
+                assert gold["tokens"]["notification_blur"] is True
+                assert gold["tokens"]["app_fg"] != gold["tokens"]["window_fg"]
+                wait_for(lambda: UIDriver(ipc).widgets("dock"), "Gold dock did not appear")
+                assert ipc.get_shell_state()["taskbars"][0]["box"]["y"] == 0
+                assert UIDriver(ipc).widgets("dock")[0]["global_box"]["height"] == 76
+                wait_for(lambda: (ipc.query("get_wallpaper")["displayed_path"] or "").endswith("/wallpaper-gold.png"), "Gold wallpaper was not presented")
+                cfg = tomllib.loads((tmp / "rediwm-config.toml").read_text())
+                assert not {"dock_enabled", "dock_height", "taskbar_position"} & cfg["compositor"].keys()
+                if shutil.which("foot"):
+                    helper(dict(env, REDIWM_CONFIG=str(tmp / "rediwm-config.toml")), "terminal", "foot", "--check-config", "--config=/dev/null")
+                config_path = tmp / "rediwm-config.toml"
+                config_path.write_text(config_path.read_text().replace("[compositor]", '[compositor]\ndock_enabled = false\ntaskbar_position = "bottom"\ndock_height = 48', 1))
+                wait_for(lambda: not UIDriver(ipc).widgets("dock"), "explicit dock override did not win")
+                assert ipc.get_shell_state()["taskbars"][0]["box"]["y"] > 0
+                ipc.action("theme.apply", {"id": "gold"})
+                wait_for(lambda: UIDriver(ipc).widgets("dock"), "reset did not restore Gold layout")
+                assert not {"dock_enabled", "dock_height", "taskbar_position"} & tomllib.loads(config_path.read_text())["compositor"].keys()
+                # Every other bundled theme restores the standard bar and no dock.
+                for theme_id in ("rediwm-dark", "rediwm-light", "redi-blue", "redi-mocha"):
+                    ipc.action("theme.apply", {"id": "gold"})
+                    wait_for(lambda: UIDriver(ipc).widgets("dock"), "Gold dock did not appear")
+                    ipc.action("theme.apply", {"id": theme_id})
+                    wait_for(lambda: not UIDriver(ipc).widgets("dock"), f"Gold dock layout leaked into {theme_id}")
+                    assert ipc.action("get_theme")["tokens"]["taskbar_size"] == 44, theme_id
+                    bar = ipc.get_shell_state()["taskbars"][0]["box"]
+                    output = ipc.get_outputs()[0]
+                    assert bar["height"] == 44, (theme_id, bar)
+                    assert bar["y"] == output["y"] + output["logical_height"] - 44, (theme_id, bar)
                 installed = ipc.action("theme.install", {"path": str(archive)})
                 assert installed["id"] == "test-pack", installed
                 try:
@@ -162,6 +193,16 @@ def run():
                     pixels = Image.open(files_shot).convert("RGB").crop((box["x"], box["y"], box["x"] + box["width"], box["y"] + box["height"]))
                     return any(color == PINK for color in pixels.getdata())
                 wait_for(files_has_folder, "Files did not use pack folder icon")
+                ipc.action("theme.apply", {"id": "gold"})
+                def files_has_gold_palette():
+                    files_shot.unlink(missing_ok=True)
+                    ipc.screenshot(str(files_shot))
+                    with Image.open(files_shot) as image:
+                        colors = dict((color, count) for count, color in image.convert("RGB").getcolors(image.width * image.height))
+                    return colors.get((238, 230, 219), 0) > 5000 and colors.get((57, 51, 46), 0) > 100 and colors.get((241, 231, 219), 0) > 100
+                wait_for(files_has_gold_palette, "Gold app, sidebar and chrome foregrounds were not separated")
+                ipc.action("theme.apply", {"id": "test-pack"})
+                wait_for(files_has_folder, "Files did not restore pack icons after Gold")
                 ipc.action("set_accent_color", {"color": "#112233"})
                 cfg = tomllib.loads((tmp / "rediwm-config.toml").read_text())
                 assert set(cfg["theme"]) == {"base", "accent"}, cfg["theme"]
@@ -179,6 +220,8 @@ def run():
                 helper(export_env, "share", "exported", tmp / "rediwm-config.toml", tmp / "data/rediwm/themes/test-pack/wallpapers/test.png", tmp / "data/rediwm/themes/test-pack/logo.svg", exported)
                 assert exported.is_file()
                 helper(env, "validate", tmp / "data/rediwm/themes/exported")
+                assert (tmp / "data/rediwm/themes/exported/icons/folder.svg").read_bytes() == (pack / "icons/folder.svg").read_bytes()
+                assert (tmp / "data/rediwm/themes/exported/glyphs/wifi.svg").read_bytes() == (pack / "glyphs/wifi.svg").read_bytes()
                 helper(env, "remove", "exported")
                 ipc.action("theme.apply", {"id": "test-pack"})
                 assert tomllib.loads((tmp / "rediwm-config.toml").read_text())["theme"] == {"base": "test-pack"}

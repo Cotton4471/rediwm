@@ -10,6 +10,7 @@ pub fn apply(server: *Server, id: []const u8) !void {
     defer arena.deinit();
     const p = (try config.theme_pack.find(arena.allocator(), server.io, server.environ, server.config.path, id)) orelse return error.ThemeNotFound;
     if (server.config.path.len == 0) return error.NoConfigPath;
+    try config.setting_save.resetThemeLayout(main.gpa, server.io, server.config.path);
     config.loader.replaceThemeOverrides(main.gpa, server.io, server.config.path, p.tokens, p.tokens, id);
     config.loader.replaceTaskbarThemeSection(main.gpa, server.io, server.config.path, p.taskbar);
     // Empty wallpaper means the pack default. Explicit later choices pin it.

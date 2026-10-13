@@ -351,8 +351,8 @@ fn paint(self: *Self, now_ms: i64) !void {
     const output = self.output.?;
     const m = self.metrics();
     const pal = ui.theme.shellPalette();
-    var bg = ui.theme.taskbar(.taskbar_bg);
-    bg[3] = @max(bg[3], 0.86);
+    var bg = pal.dock_bg orelse ui.theme.taskbar(.taskbar_bg);
+    if (pal.dock_bg == null) bg[3] = @max(bg[3], 0.86);
     const focused = @import("ipc/handlers.zig").findFocusedToplevel(output.server);
     var looks: [max_items]Look = undefined;
     self.pills_animating = false;
@@ -399,7 +399,8 @@ fn paintDock(self: *Self, pal: ui.theme.Theme, bg: [4]f32, looks: []const Look) 
     r.palette = pal;
     var border = pal.accent;
     border[3] = 0.55;
-    const radius = @min(ui.window_chrome.frameRadius(), @as(f32, @floatFromInt(self.box.height)) / 2);
+    border = pal.dock_border orelse border;
+    const radius = @min(if (pal.dock_radius > 0) pal.dock_radius else ui.window_chrome.frameRadius(), @as(f32, @floatFromInt(self.box.height)) / 2);
     glass.Effect.configure(self.glass_effect, radius, 1);
     r.fillRect(0, 0, @floatFromInt(self.box.width), @floatFromInt(self.box.height), .{ .color = bg, .radius = radius, .border_width = 1, .border_color = border });
     for (self.buttons[0..self.count], looks, 0..) |button, look, index| {

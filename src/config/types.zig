@@ -1,5 +1,6 @@
 const std = @import("std");
 pub const PanModifier = enum { super, super_alt };
+pub const TaskbarPosition = enum { top, bottom };
 
 pub const AccelProfile = enum {
     flat,

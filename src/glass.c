@@ -139,6 +139,11 @@ void rediwm_glass_configure(struct glass_effect *effect, float radius, float opa
 	effect->radius = radius;
 	effect->opacity = opacity;
 }
+void rediwm_glass_detach(struct glass_effect *effect)
+{
+	if (effect)
+		wlr_scene_node_destroy(&effect->node->node);
+}
 void rediwm_glass_destroy(struct glass_engine *engine)
 {
 	if (!engine)

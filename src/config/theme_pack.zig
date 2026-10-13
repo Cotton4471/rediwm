@@ -6,6 +6,42 @@ const presets = @import("ui").theme_presets;
 const A = std.mem.Allocator;
 const Io = std.Io;
 
+/// Only appearance-related layout defaults belong to packs. User overrides
+/// remain in [compositor]; packs cannot inject other compositor settings.
+pub const Layout = struct {
+    taskbar_position: ?@import("types.zig").TaskbarPosition = null,
+    dock_enabled: ?bool = null,
+    dock_height: ?u32 = null,
+
+    pub const keys = .{ "taskbar_position", "dock_enabled", "dock_height" };
+
+    pub fn apply(self: Layout, compositor: anytype) void {
+        inline for (keys) |key| if (@field(self, key)) |value| {
+            @field(compositor, key) = value;
+        };
+    }
+
+    fn parseKey(self: *Layout, key: []const u8, value: []const u8) !void {
+        if (std.mem.eql(u8, key, "taskbar_position")) {
+            self.taskbar_position = std.meta.stringToEnum(@import("types.zig").TaskbarPosition, try theme.unquote(value)) orelse return error.InvalidLayout;
+        } else if (std.mem.eql(u8, key, "dock_enabled")) {
+            self.dock_enabled = if (std.mem.eql(u8, value, "true")) true else if (std.mem.eql(u8, value, "false")) false else return error.InvalidLayout;
+        } else if (std.mem.eql(u8, key, "dock_height")) {
+            const height = std.fmt.parseInt(u32, value, 10) catch return error.InvalidLayout;
+            if (height < 48 or height > 96) return error.InvalidLayout;
+            self.dock_height = height;
+        } else return error.InvalidLayout;
+    }
+
+    pub fn write(a: A, bytes: *std.ArrayList(u8), compositor: anytype) !void {
+        const text = try std.fmt.allocPrint(a, "[layout]\ntaskbar_position = \"{s}\"\ndock_enabled = {}\ndock_height = {d}\n", .{
+            @tagName(compositor.taskbar_position), compositor.dock_enabled, compositor.dock_height,
+        });
+        defer a.free(text);
+        try bytes.appendSlice(a, text);
+    }
+};
+
 pub const Pack = struct {
     id: []const u8,
     name: []const u8,
@@ -17,6 +53,7 @@ pub const Pack = struct {
     bytes: []const u8,
     tokens: theme.Theme = .{},
     taskbar: ?theme.Theme = null,
+    layout: Layout = .{},
     wallpaper: []const u8 = "",
     color_scheme: ?bool = null,
     icon_theme: []const u8 = "",
@@ -97,6 +134,8 @@ pub fn parse(a: A, bytes: []const u8, fallback_id: []const u8, root: []const u8)
             }
         } else if (std.mem.eql(u8, section, "taskbar_theme")) {
             _ = try theme.applyTaskbarKey(a, &p.taskbar.?, key, value);
+        } else if (std.mem.eql(u8, section, "layout")) {
+            try p.layout.parseKey(key, value);
         } else if (std.mem.eql(u8, section, "assets")) {
             const text = try theme.unquote(value);
             if (std.mem.eql(u8, key, "color_scheme")) {
@@ -198,6 +237,10 @@ test "pack metadata, future tokens and unsafe paths" {
     try std.testing.expectError(error.UnsafeAssetPath, parse(a, "[theme]\nstart_button_icon = \"../logo.svg\"", "nord", "/tmp/nord"));
     for ([_][]const u8{ "../x", "/x", "x//y", "x/./y", "x\\y" }) |path| try std.testing.expect(!relative(path));
     try std.testing.expect(!validId("../nord"));
+    for ([_][]const u8{ "dock_height = 47", "dock_height = 97", "dock_enabled = 1", "taskbar_position = \"left\"", "xwayland = true" }) |line| {
+        const bytes = try std.fmt.allocPrint(a, "[layout]\n{s}\n", .{line});
+        try std.testing.expectError(error.InvalidLayout, parse(a, bytes, "test", ""));
+    }
 }
 
 fn legacyId(a: A, name: []const u8) ![]const u8 {

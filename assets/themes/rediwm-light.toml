@@ -126,5 +126,9 @@ file_broken = "#168579"
 battery_critical = "#168579"
 desktop_notice_bg = "rgba(8,42,36,0.95)"
 
+[layout]
+taskbar_position = "bottom"
+dock_enabled = false
+
 [assets]
 color_scheme = "light"

@@ -4,6 +4,8 @@ const wlr = @import("wlroots");
 
 pub const Kind = enum(c_int) { titlebar, taskbar, panel };
 pub const Effect = opaque {
+    extern fn rediwm_glass_detach(effect: ?*Effect) void;
+    pub const detach = rediwm_glass_detach;
     extern fn rediwm_glass_configure(effect: ?*Effect, radius: f32, opacity: f32) void;
     pub const configure = rediwm_glass_configure;
 };

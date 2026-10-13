@@ -82,5 +82,9 @@ start_menu_selected_bg = "rgba(255,255,255,0.045)"
 start_menu_selected_border = "rgba(237,27,46,0.350)"
 start_menu_selected_marker = "rgba(237,27,46,1.000)"
 
+[layout]
+taskbar_position = "bottom"
+dock_enabled = false
+
 [assets]
 color_scheme = "dark"

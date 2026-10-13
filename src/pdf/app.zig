@@ -1702,16 +1702,17 @@ pub const App = struct {
         // Top tabs: [ Pages ] [ Outline ]
         const tab_w = sb.w / 2.0;
         const tab_h = 32.0;
-        shell_ui.setSource(cr, if (self.sidebar_tab == .pages) ui_theme.global.app_nav_selected else ui_theme.global.app_item);
+        const idle_tab = if (ui_theme.global.app_sidebar_fg != null) ui_theme.global.app_sidebar else ui_theme.global.app_item;
+        shell_ui.setSource(cr, if (self.sidebar_tab == .pages) ui_theme.global.sidebarSelected() else idle_tab);
         c.api.cairo_rectangle(cr, sb.x + 4.0, sb.y + 4.0, tab_w - 6.0, tab_h - 8.0);
         c.api.cairo_fill(cr);
 
-        shell_ui.setSource(cr, if (self.sidebar_tab == .outline) ui_theme.global.app_nav_selected else ui_theme.global.app_item);
+        shell_ui.setSource(cr, if (self.sidebar_tab == .outline) ui_theme.global.sidebarSelected() else idle_tab);
         c.api.cairo_rectangle(cr, sb.x + tab_w + 2.0, sb.y + 4.0, tab_w - 6.0, tab_h - 8.0);
         c.api.cairo_fill(cr);
 
         // The selected tab is told apart by its fill, not by a dimmer label.
-        shell_ui.setSource(cr, ui_theme.global.window_fg);
+        shell_ui.setSource(cr, ui_theme.global.sidebarForeground());
         shell_ui.drawText(cr, "Pages", sb.x + (tab_w - shell_ui.measureText(cr, "Pages", shell_ui.textSize(), true)) / 2.0, sb.y + 20.0, shell_ui.textSize(), true);
         shell_ui.drawText(cr, "Outline", sb.x + tab_w + (tab_w - shell_ui.measureText(cr, "Outline", shell_ui.textSize(), true)) / 2.0, sb.y + 20.0, shell_ui.textSize(), true);
 
@@ -1806,7 +1807,7 @@ pub const App = struct {
             var badge: [16]u8 = undefined;
             const badge_str = std.fmt.bufPrint(&badge, "{d}", .{i + 1}) catch "";
             const bw = shell_ui.measureText(cr, badge_str, shell_ui.textSize(), is_current);
-            shell_ui.setSource(cr, ui_theme.global.window_fg);
+            shell_ui.setSource(cr, ui_theme.global.sidebarForeground());
             shell_ui.drawText(cr, badge_str, card_x + (card_w - bw) / 2.0, card_y + card.card_h + 15.0, shell_ui.textSize(), is_current);
         }
     }
@@ -1814,7 +1815,7 @@ pub const App = struct {
     fn renderOutlineList(self: *App, cr: *c.api.cairo_t) void {
         const sb = self.sidebarRect();
         const items = self.outline orelse {
-            shell_ui.setSource(cr, ui_theme.global.window_fg);
+            shell_ui.setSource(cr, ui_theme.global.sidebarForeground());
             shell_ui.drawText(cr, "No outline in document", sb.x + 16.0, sb.y + 60.0, shell_ui.textSize(), false);
             return;
         };
@@ -1826,13 +1827,13 @@ pub const App = struct {
 
             const is_hover = self.hover_outline == idx;
             if (is_hover) {
-                shell_ui.setSource(cr, ui_theme.global.app_item_hover);
+                shell_ui.setSource(cr, if (ui_theme.global.app_sidebar_fg != null) ui_theme.global.sidebarSelected() else ui_theme.global.app_item_hover);
                 c.api.cairo_rectangle(cr, sb.x + 4.0, row_y, sb.w - 8.0, row_h);
                 c.api.cairo_fill(cr);
             }
 
             const indent = @as(f64, @floatFromInt(it.level)) * 12.0;
-            shell_ui.setSource(cr, ui_theme.global.window_fg);
+            shell_ui.setSource(cr, ui_theme.global.sidebarForeground());
             c.api.cairo_save(cr);
             c.api.cairo_rectangle(cr, sb.x + 12.0 + indent, row_y, @max(0.0, sb.w - 24.0 - indent), row_h);
             c.api.cairo_clip(cr);

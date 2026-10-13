@@ -257,6 +257,14 @@ pub const Manager = struct {
         return id;
     }
 
+    pub fn themeChanged(self: *Manager) void {
+        for (self.toasts.items) |toast| {
+            toast.buildTree() catch continue;
+            toast.dirty = true;
+        }
+        self.relayoutStack(anim.nowMs());
+    }
+
     fn resolveIcon(self: *Manager, toast: *Toast) void {
         if (toast.image != null or toast.icon_entry != null or toast.app_icon.len == 0) return;
         const output = self.server.getDefaultOutput();
@@ -409,6 +417,7 @@ pub const Manager = struct {
             const rx = toast.renderX(now_ms);
             const ry = toast.renderY(now_ms);
             const op = toast.opacity(now_ms);
+            toast.configureGlass(self.server.glass_engine, if (is_locked) 0 else op);
 
             toast.buffer_node.node.setPosition(@intFromFloat(@round(rx)), @intFromFloat(@round(ry)));
             toast.buffer_node.setOpacity(op);

@@ -11,6 +11,7 @@ extern fn rediwm_theme_pack([*:0]const u8, [*:0]const u8) c_int;
 extern fn rediwm_theme_copy([*:0]const u8, [*:0]const u8) c_int;
 extern fn rediwm_theme_problem() [*:0]const u8;
 extern fn mkdtemp([*:0]u8) ?[*:0]u8;
+extern fn execvp([*:0]const u8, [*:null]const ?[*:0]const u8) c_int;
 const a = std.heap.c_allocator;
 
 export fn rediwm_theme_safe_path(path: [*:0]const u8) c_int {
@@ -54,6 +55,27 @@ fn unwrap(io: std.Io, stage: []const u8) ![]const u8 {
     if ((try it.next(io)) != null) return error.MultipleArchiveRoots;
     return root;
 }
+
+fn copyArtwork(io: std.Io, pack: packs.Pack, destination: []const u8) !void {
+    if (pack.root.len == 0) return;
+    // Pack icon/glyph overrides are flat directories. Preserve them when
+    // saving a customised look so its artwork does not silently disappear.
+    for ([_][]const u8{ "icons", "glyphs" }) |folder| {
+        const source = packs.asset(a, io, pack.root, folder) catch |err| switch (err) {
+            error.FileNotFound => continue,
+            else => return err,
+        };
+        var directory = try std.Io.Dir.cwd().openDir(io, source, .{ .iterate = true });
+        defer directory.close(io);
+        var entries = directory.iterate();
+        while (try entries.next(io)) |entry| {
+            const relative = try std.fs.path.join(a, &.{ folder, entry.name });
+            const path = try packs.asset(a, io, pack.root, relative);
+            const target = try std.fs.path.join(a, &.{ destination, relative });
+            try native(rediwm_theme_copy((try z(path)).ptr, (try z(target)).ptr));
+        }
+    }
+}
 fn cursorLink(io: std.Io, env: std.process.Environ, p: packs.Pack, destination: []const u8, prepare: bool) !void {
     const data = if (env.getPosix("XDG_DATA_HOME")) |d| d else try std.fs.path.join(a, &.{ env.getPosix("HOME") orelse return error.NoHome, ".local/share" });
     const icons = try std.fs.path.join(a, &.{ data, "icons" });
@@ -83,6 +105,33 @@ fn run(init: std.process.Init) !void {
     if (args.len < 3) return error.Usage;
     const verb = std.mem.span(args[1]);
     const input = std.mem.span(args[2]);
+    if (std.mem.eql(u8, verb, "terminal")) {
+        if (!std.mem.eql(u8, std.fs.path.basename(input), "foot")) return error.UnsupportedTerminal;
+        var palette: theme.Theme = .{};
+        if (@import("config").path.resolvePath(init.minimal.environ, a)) |path| {
+            if (@import("config").loader.load(path, a, io, init.minimal.environ)) |cfg| palette = cfg.theme else |_| {}
+        } else |_| {}
+        const terminal = @import("config").terminal_theme;
+        const raw = try a.alloc([]const u8, args.len - 2);
+        for (raw, args[2..]) |*dest, arg| dest.* = std.mem.span(arg);
+        var command: []const []const u8 = raw;
+        if (terminal.enabled(palette)) {
+            // Probe an empty config, never the user's. This work happens only
+            // in the short-lived helper, outside the compositor event loop.
+            const probe = std.process.run(a, io, .{
+                .argv = &.{ input, "--check-config", "--config=/dev/null", "--override=colors-dark.foreground=ffffff" },
+                .stdout_limit = .limited(4096),
+                .stderr_limit = .limited(4096),
+                .timeout = .{ .duration = .{ .raw = .fromSeconds(2), .clock = .awake } },
+            }) catch null;
+            const modern = if (probe) |p| p.term == .exited and p.term.exited == 0 else false;
+            command = try terminal.argv(a, raw, palette, modern);
+        }
+        const argv = try a.allocSentinel(?[*:0]const u8, command.len, null);
+        for (argv, command) |*dest, arg| dest.* = (try a.dupeZ(u8, arg)).ptr;
+        _ = execvp(argv[0].?, argv.ptr);
+        return error.TerminalExecFailed;
+    }
     if (std.mem.eql(u8, verb, "validate")) {
         const p = try validate(io, input, std.fs.path.basename(input));
         _ = std.posix.system.write(1, p.id.ptr, p.id.len);
@@ -112,6 +161,7 @@ fn run(init: std.process.Init) !void {
                 defer cfg.deinit();
                 if (std.mem.eql(u8, cfg.theme_base, input)) {
                     changed_config = config_path;
+                    try @import("config").setting_save.resetThemeLayout(a, io, config_path);
                     const dark = try packs.parse(a, @import("ui").theme_presets.bundled[0].bytes, "rediwm-dark", "");
                     @import("config").loader.replaceThemeOverrides(a, io, config_path, dark.tokens, dark.tokens, "rediwm-dark");
                     @import("config").loader.replaceTaskbarThemeSection(a, io, config_path, null);
@@ -140,6 +190,7 @@ fn run(init: std.process.Init) !void {
         // export <id> <config> <wallpaper> <logo>; asset paths are frozen by caller.
         if ((std.mem.eql(u8, verb, "share") and args.len != 7) or (std.mem.eql(u8, verb, "export") and args.len != 6) or !packs.validId(input)) return error.Usage;
         const cfg = try @import("config").loader.load(std.mem.span(args[3]), a, io, init.minimal.environ);
+        if (cfg.theme_pack) |pack| try copyArtwork(io, pack, stage);
         var t = cfg.theme;
         if (std.mem.span(args[5]).len > 0) {
             const ext = if (std.ascii.endsWithIgnoreCase(std.mem.span(args[5]), ".svg")) ".svg" else ".png";
@@ -152,6 +203,7 @@ fn run(init: std.process.Init) !void {
         try theme.writeInto(a, &bytes, t);
         if (std.mem.span(args[5]).len > 0) try bytes.appendSlice(a, if (std.ascii.endsWithIgnoreCase(std.mem.span(args[5]), ".svg")) "start_button_icon = \"logo.svg\"\n" else "start_button_icon = \"logo.png\"\n");
         if (cfg.taskbar_theme) |bar| try theme.writeTaskbarInto(a, &bytes, bar);
+        try packs.Layout.write(a, &bytes, cfg.compositor);
         try bytes.appendSlice(a, if (cfg.compositor.dark_mode) "[assets]\ncolor_scheme = \"dark\"\n" else "[assets]\ncolor_scheme = \"light\"\n");
         if (std.mem.span(args[4]).len > 0) {
             const name = std.fs.path.basename(std.mem.span(args[4]));

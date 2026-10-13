@@ -33,6 +33,7 @@ test "notifications unit: replaces_id, urgency, DND, lock suppression" {
     server.config.notification_rules = &.{};
     server.ipc = null;
     server.icon_service = null;
+    server.glass_engine = null;
     server.output_layout = output_layout;
     server.outputs.init();
     server.input.cursor = &dummy_cursor;

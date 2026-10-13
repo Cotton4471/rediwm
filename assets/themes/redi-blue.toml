@@ -104,6 +104,10 @@ calendar_radius = 4
 osd_radius = 4
 start_button_radius = 4
 
+[layout]
+taskbar_position = "bottom"
+dock_enabled = false
+
 [assets]
 color_scheme = "dark"
 wallpaper = "wallpaper-blue.png"

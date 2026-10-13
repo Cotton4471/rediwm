@@ -3172,7 +3172,7 @@ pub const App = struct {
     /// an eject button on the mounted ones.
     fn renderDevices(self: *App, cr: *c.cairo_t, content_width: f64) void {
         if (self.device_list.items.len == 0) return;
-        setSource(cr, ui_theme.global.window_fg);
+        setSource(cr, ui_theme.global.sidebarForeground());
         drawText(cr, "DEVICES", 24, @floatFromInt(self.placeY(self.deviceBase()) - 12), shell_ui.headingSize(), true);
         const accent = ui_theme.shellPalette().accent;
         const hovered = self.hoverKey();
@@ -3184,7 +3184,7 @@ pub const App = struct {
             if (self.placeActive(index)) {
                 const row = self.placeRect(index);
                 roundedRect(cr, row.x, row.y, row.w, row.h, 5);
-                setSource(cr, ui_theme.global.app_nav_selected);
+                setSource(cr, ui_theme.global.sidebarSelected());
                 c.cairo_fill(cr);
                 roundedRect(cr, 10, y + 3, 3, 24, 1.5);
                 setSource(cr, accent);
@@ -3195,7 +3195,7 @@ pub const App = struct {
                 layer.renderer.drawIcon(0, 0, 24, 24, .{ .id = if (volume.kind == .stick) .usb_stick else .drive, .color = withAlpha(ui_theme.global.app_icon, alpha) });
                 layer.finish();
             }
-            setSource(cr, withAlpha(ui_theme.global.window_fg, alpha));
+            setSource(cr, withAlpha(ui_theme.global.sidebarForeground(), alpha));
             const metrics = fontMetrics(cr, shell_ui.textSize());
             var label_buf: [96]u8 = undefined;
             const reserve: f64 = if (mounted) 28 else 0;
@@ -3316,7 +3316,7 @@ pub const App = struct {
             setSource(cr, withAlpha(ui_theme.global.app_item_hover, glide.alpha));
             c.cairo_fill(cr);
         }
-        setSource(cr, ui_theme.global.window_fg);
+        setSource(cr, ui_theme.global.sidebarForeground());
         drawText(cr, "PLACES", 24, @floatFromInt(self.placeY(places_start) - 12), shell_ui.headingSize(), true);
         for (0..self.deviceBase()) |i| {
             if (!self.placeVisible(i)) continue;
@@ -3335,7 +3335,7 @@ pub const App = struct {
             if (active) {
                 const row = self.placeRect(i);
                 roundedRect(cr, row.x, row.y, row.w, row.h, 5);
-                setSource(cr, ui_theme.global.app_nav_selected);
+                setSource(cr, ui_theme.global.sidebarSelected());
                 c.cairo_fill(cr);
                 roundedRect(cr, 10, y + 3, 3, 24, 1.5);
                 setSource(cr, accent);
@@ -3378,7 +3378,7 @@ pub const App = struct {
                 roundedRect(cr, 25, y + 10.5, 17, 12, 2);
                 c.cairo_fill(cr);
             }
-            setSource(cr, withAlpha(ui_theme.global.window_fg, alpha));
+            setSource(cr, withAlpha(ui_theme.global.sidebarForeground(), alpha));
             const metrics = fontMetrics(cr, shell_ui.textSize());
             drawEllipsis(cr, label, 54, y + (30 - metrics.ascent - metrics.descent) / 2 + metrics.ascent, content_width - 64, shell_ui.textSize(), false);
         }
@@ -3445,18 +3445,18 @@ pub const App = struct {
     fn renderGitSidebar(self: *App, cr: *c.cairo_t, content_width: f64) void {
         const repo = self.repository() orelse return;
         const card = self.gitCard();
-        setSource(cr, ui_theme.global.window_fg);
+        setSource(cr, ui_theme.global.sidebarForeground());
         drawText(cr, "GIT", 24, card.y - 10, shell_ui.headingSize(), true);
         if (shell_ui.Layer.begin(cr, .{ .x = 23, .y = @floatCast(card.y + 6), .w = 20, .h = 20 })) |icon_layer| {
             var layer = icon_layer;
-            layer.renderer.drawIcon(0, 0, 20, 20, .{ .id = .git_branch, .color = ui_theme.global.window_fg });
+            layer.renderer.drawIcon(0, 0, 20, 20, .{ .id = .git_branch, .color = ui_theme.global.sidebarForeground() });
             layer.finish();
         }
-        setSource(cr, ui_theme.global.window_fg);
+        setSource(cr, ui_theme.global.sidebarForeground());
         drawEllipsis(cr, std.fs.path.basename(repo.root), 50, card.y + 22, content_width - 80, shell_ui.textSize(), false);
         if (shell_ui.Layer.begin(cr, .{ .x = @floatCast(content_width - 28), .y = @floatCast(card.y + 9), .w = 14, .h = 14 })) |icon_layer| {
             var layer = icon_layer;
-            layer.renderer.drawIcon(0, 0, 14, 14, .{ .id = if (self.git_expanded) .chevron_down else .chevron_right, .color = ui_theme.global.window_fg });
+            layer.renderer.drawIcon(0, 0, 14, 14, .{ .id = if (self.git_expanded) .chevron_down else .chevron_right, .color = ui_theme.global.sidebarForeground() });
             layer.finish();
         }
         if (!self.git_expanded) return;
@@ -3465,11 +3465,11 @@ pub const App = struct {
         for (0..rows + 1) |i| {
             const row_y = card.y + git_header_h + @as(f64, @floatFromInt(i)) * git_row_h;
             const baseline = row_y + 19;
-            setSource(cr, ui_theme.global.window_fg);
+            setSource(cr, ui_theme.global.sidebarForeground());
             if (i == rows) {
                 if (shell_ui.Layer.begin(cr, .{ .x = 24, .y = @floatCast(row_y + 7), .w = 14, .h = 14 })) |icon_layer| {
                     var layer = icon_layer;
-                    layer.renderer.drawIcon(0, 0, 14, 14, .{ .id = .plus, .color = ui_theme.global.window_fg });
+                    layer.renderer.drawIcon(0, 0, 14, 14, .{ .id = .plus, .color = ui_theme.global.sidebarForeground() });
                     layer.finish();
                 }
                 drawText(cr, "New branch", 44, baseline, shell_ui.textSize(), false);
@@ -3480,7 +3480,7 @@ pub const App = struct {
             if (row.current) {
                 if (shell_ui.Layer.begin(cr, .{ .x = 24, .y = @floatCast(row_y + 7), .w = 14, .h = 14 })) |icon_layer| {
                     var layer = icon_layer;
-                    layer.renderer.drawIcon(0, 0, 14, 14, .{ .id = .checkmark, .color = ui_theme.global.window_fg });
+                    layer.renderer.drawIcon(0, 0, 14, 14, .{ .id = .checkmark, .color = ui_theme.global.sidebarForeground() });
                     layer.finish();
                 }
                 if (repo.upstream) {

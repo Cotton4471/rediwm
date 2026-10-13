@@ -318,6 +318,14 @@ dnd_bypass = true
                      "folder-download", "Download Complete",
                      "ubuntu-24.04.iso has finished downloading.", 0, 0, 0)
             time.sleep(0.35)  # entrance/reflow settled
+            # A live card adopts Gold's separate palette and glass, then drops
+            # its effect when switched back. It remains the same notification.
+            live_id = ipc.get_notifications()["toasts"][0]["id"]
+            for theme_id in ("gold", "rediwm-dark"):
+                ipc.action("theme.apply", {"id": theme_id})
+                ipc.wait_for_frame()
+                assert ipc.get_notifications()["toasts"][0]["id"] == live_id
+            time.sleep(0.35)  # the taskbar edge change also reflows the card
             output = ipc.get_outputs()[0]
             preview = os.environ.get("REDIWM_NOTIFICATION_PREVIEW")
             if preview:

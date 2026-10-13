@@ -571,7 +571,16 @@ pub const Worker = struct {
                     try args.appendSlice(mem, &.{ if (cmd.folder and executable(self.environ, "rediwm-files")) "rediwm-files" else "xdg-open", cmd.path });
                 }
                 if (args.items.len == 0) return error.EmptyCommand;
-                var child = try std.process.spawn(self.io, .{ .argv = args.items, .cwd = cwd, .environ_map = &self.child_env });
+                var themed: []const []const u8 = args.items;
+                if (std.mem.eql(u8, std.fs.path.basename(args.items[0]), "foot")) {
+                    const cfg_path = @import("config").path.resolvePath(self.environ, mem) catch "";
+                    if (@import("config").loader.load(cfg_path, mem, self.io, self.environ)) |loaded| {
+                        var cfg = loaded;
+                        defer cfg.deinit();
+                        themed = try @import("config").terminal_theme.wrap(mem, self.io, args.items, cfg.theme);
+                    } else |_| {}
+                }
+                var child = try std.process.spawn(self.io, .{ .argv = themed, .cwd = cwd, .environ_map = &self.child_env });
                 var launched = Launched{ .token = cmd.token, .pid = child.id orelse 0 };
                 launched.setApp(std.fs.path.stem(std.fs.path.basename(cmd.path)));
                 // A launcher names its scope; an opened file names it after the program.

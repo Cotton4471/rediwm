@@ -238,9 +238,11 @@ the one for the directory you work in: `src/files`, `src/editor`,
   hand-hit-test one (`src/ui/AGENTS.md`).
 * App clients (Files, Images, PDF) draw through `ui/cairo.zig` with theme
   tokens (`app_*`, `shellPalette().accent`) and shell icons. Text is
-  `window_fg` only (placeholder at half alpha) at `text_size`,
+  the effective `window_fg` (placeholder at half alpha) at `text_size`,
   `heading_size` or `status_size`, never hardcoded sizes. Load the theme with
   `files/settings.zig` before the first frame (PDF: before its sandbox).
+  That loader resolves `Theme.forApp()` so `app_fg`, menu and field overrides
+  can differ from compositor chrome; sidebar text uses `sidebarForeground()`.
 * Secrets live in `secret_input.Input` over caller-owned mlocked storage;
   hand-laid secret fields draw the caret with `CaretOverlay`.
 * **Dead keys:** `xkb_state_key_get_utf8` returns nothing for them, so any

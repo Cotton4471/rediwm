@@ -47,6 +47,7 @@ pub const Palette = struct {
     fg: Color,
     toolbar: Color,
     sidebar: Color,
+    sidebar_fg: Color,
     item: Color,
     hover: Color,
     border: Color,
@@ -55,7 +56,8 @@ pub const Palette = struct {
     danger: Color,
     dim: Color,
 
-    pub fn fromTheme(t: theme.Theme) Palette {
+    pub fn fromTheme(source: theme.Theme) Palette {
+        const t = source.forApp();
         const bg = composite(t.app_bg, .{ 255, 255, 255 });
         const fg = composite(t.window_fg, bg);
         const accent = composite(t.shell_accent orelse t.start_menu_selected_marker, bg);
@@ -64,6 +66,7 @@ pub const Palette = struct {
             .fg = fg,
             .toolbar = composite(t.app_toolbar, bg),
             .sidebar = composite(t.app_sidebar, bg),
+            .sidebar_fg = composite(t.sidebarForeground(), composite(t.app_sidebar, bg)),
             .item = composite(t.app_item, bg),
             .hover = composite(t.app_item_hover, bg),
             .border = composite(t.app_item_border, bg),
@@ -130,11 +133,11 @@ pub fn gtkColors(a: Allocator, p: Palette, gtk4: bool) ![]u8 {
         "theme_unfocused_selected_bg_color", "theme_unfocused_selected_fg_color", "insensitive_fg_color",
     };
     const colors = [_]Color{
-        p.bg,      p.fg, p.bg,      p.fg,      p.toolbar, p.fg,        p.toolbar,
-        p.sidebar, p.fg, p.sidebar, p.sidebar, p.fg,      p.item,      p.fg,
-        p.bg,      p.fg, p.toolbar, p.fg,      p.accent,  p.on_accent, p.accent,
-        p.border,  p.bg, p.fg,      p.bg,      p.fg,      p.accent,    p.on_accent,
-        p.bg,      p.fg, p.bg,      p.fg,      p.accent,  p.on_accent, p.dim,
+        p.bg,      p.fg,         p.bg,      p.fg,      p.toolbar,    p.fg,        p.toolbar,
+        p.sidebar, p.sidebar_fg, p.sidebar, p.sidebar, p.sidebar_fg, p.item,      p.fg,
+        p.bg,      p.fg,         p.toolbar, p.fg,      p.accent,     p.on_accent, p.accent,
+        p.border,  p.bg,         p.fg,      p.bg,      p.fg,         p.accent,    p.on_accent,
+        p.bg,      p.fg,         p.bg,      p.fg,      p.accent,     p.on_accent, p.dim,
     };
     for (names, colors) |name, color| try appendFmt(&out, a, "@define-color {s} {s};\n", .{ name, hex(color) });
     try appendFmt(&out, a, "@define-color destructive_bg_color {s};\n@define-color destructive_fg_color {s};\n", .{ hex(p.danger), hex(contrast(p.danger)) });
@@ -174,7 +177,10 @@ pub fn qtColors(a: Allocator, p: Palette) ![]u8 {
     try out.appendSlice(a, "[ColorScheme]\n");
     // QPalette::ColorRole order, including NoRole, PlaceholderText and Qt6's
     // Accent. Extra roles are ignored by Qt5 and older Qt6.
-    const active = [_]Color{ p.fg, p.item, blend(p.item, .{ 255, 255, 255 }, 0.7), p.hover, p.border, p.border, p.fg, p.fg, p.fg, p.bg, p.bg, p.border, p.accent, p.on_accent, p.accent, p.accent, p.sidebar, p.bg, p.toolbar, p.fg, p.dim, p.accent };
+    // QPalette has no separate foreground for AlternateBase. A contrasting
+    // sidebar cannot also be used for alternating rows with the content text.
+    const alternate = if (std.meta.eql(p.sidebar_fg, p.fg)) p.sidebar else p.item;
+    const active = [_]Color{ p.fg, p.item, blend(p.item, .{ 255, 255, 255 }, 0.7), p.hover, p.border, p.border, p.fg, p.fg, p.fg, p.bg, p.bg, p.border, p.accent, p.on_accent, p.accent, p.accent, alternate, p.bg, p.toolbar, p.fg, p.dim, p.accent };
     for ([_][]const u8{ "active_colors", "inactive_colors", "disabled_colors" }, 0..) |name, group| {
         try appendFmt(&out, a, "{s}=", .{name});
         for (active, 0..) |color, role| {
@@ -407,6 +413,15 @@ test "app palettes composite straight alpha and choose readable accent text" {
     t.shell_accent = .{ 0, 0, 0, 1 };
     p = Palette.fromTheme(t);
     try std.testing.expectEqual(Color{ 255, 255, 255 }, p.on_accent);
+    t.app_bg = .{ 1, 1, 1, 1 };
+    t.app_fg = .{ 0.2, 0.1, 0, 1 };
+    t.app_sidebar = .{ 0, 0, 0, 1 };
+    t.app_sidebar_fg = .{ 1, 1, 1, 1 };
+    p = Palette.fromTheme(t);
+    try std.testing.expectEqual(Color{ 51, 26, 0 }, p.fg);
+    try std.testing.expectEqual(Color{ 255, 255, 255 }, p.sidebar_fg);
+    try std.testing.expectEqual(t.app_fg.?, t.forApp().window_fg);
+    try std.testing.expectEqual((theme.Theme{}).window_fg, t.window_fg);
 }
 
 test "app colors edits are idempotent and scoped to their INI section" {

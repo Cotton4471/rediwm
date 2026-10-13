@@ -132,7 +132,7 @@ pub const CompositorConfig = struct {
     dock_hidden_apps: []const []const u8 = &.{},
     dock_hidden_shortcuts: []const []const u8 = &.{},
     taskbar_items: TaskbarItems = .{},
-    taskbar_position: enum { top, bottom } = .bottom,
+    taskbar_position: types.TaskbarPosition = .bottom,
     /// App identities opted into compositor tabs. Only + launches join a group.
     window_tab_apps: []const []const u8 = &.{},
     focus_follows_mouse: bool = false,
@@ -479,6 +479,7 @@ pub fn loadFromBytes(
             cfg.theme = p.tokens;
             try theme_mod.overlay(a, &cfg.theme, bytes);
             if (cfg.taskbar_theme == null) cfg.taskbar_theme = p.taskbar;
+            p.layout.apply(&cfg.compositor);
             if (p.color_scheme) |dark| cfg.compositor.dark_mode = dark;
             if (p.cursor_theme.len > 0) {
                 cfg.input.cursor_theme = if (std.mem.eql(u8, p.cursor_theme, "pack"))
@@ -508,6 +509,11 @@ pub fn loadFromBytes(
             const key = std.mem.trim(u8, line[0..eq], " \t");
             const value = std.mem.trim(u8, line[eq + 1 ..], " \t");
             if (std.mem.eql(u8, section, "[compositor]") and std.mem.eql(u8, key, "dark_mode")) cfg.compositor.dark_mode = std.mem.eql(u8, value, "true");
+            if (std.mem.eql(u8, section, "[compositor]")) {
+                inline for (@import("theme_pack.zig").Layout.keys) |layout_key| {
+                    if (std.mem.eql(u8, key, layout_key)) try applyCompositorKey(&cfg.compositor, cfg.arena.allocator(), key, value);
+                }
+            }
             if (std.mem.eql(u8, section, "[input]") and std.mem.eql(u8, key, "cursor_theme")) cfg.input.cursor_theme = try cfg.arena.allocator().dupe(u8, try theme_mod.unquote(value));
         }
     }
@@ -2328,6 +2334,17 @@ test "no base preserves legacy themes and embedded base layers config overrides"
     try std.testing.expectEqual(@as(f32, 14), based.theme.font_size);
     try std.testing.expect(themeEql(based.theme_defaults, based.theme_pack.?.tokens));
     try std.testing.expectEqual(based.theme_defaults.accent, based.theme.accent);
+
+    var gold = try loadFromBytes(a, "[theme]\nbase = \"gold\"\n", "gold", .empty, std.testing.io);
+    defer gold.deinit();
+    try std.testing.expectEqual(.top, gold.compositor.taskbar_position);
+    try std.testing.expect(gold.compositor.dock_enabled);
+    try std.testing.expectEqual(@as(u32, 76), gold.compositor.dock_height);
+    var customized = try loadFromBytes(a, "[theme]\nbase = \"gold\"\n[compositor]\ntaskbar_position = \"bottom\"\ndock_enabled = false\ndock_height = 52\n", "gold", .empty, std.testing.io);
+    defer customized.deinit();
+    try std.testing.expectEqual(.bottom, customized.compositor.taskbar_position);
+    try std.testing.expect(!customized.compositor.dock_enabled);
+    try std.testing.expectEqual(@as(u32, 52), customized.compositor.dock_height);
 }
 
 test "external overlay wins over a referenced pack without pinning inherited tokens" {

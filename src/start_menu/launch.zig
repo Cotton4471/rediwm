@@ -304,6 +304,9 @@ fn launchExec(allocator: Allocator, server: *Server, entry: *const AppEntry, uri
         for (argv) |arg| allocator.free(arg);
         allocator.free(argv);
     }
+    var palette_arena = std.heap.ArenaAllocator.init(allocator);
+    defer palette_arena.deinit();
+    const themed_argv = try @import("config").terminal_theme.wrap(palette_arena.allocator(), server.io, argv, server.config.theme);
 
     const token = server.activation.createToken();
     const token_name = if (token) |t| std.mem.span(t.name()) else null;
@@ -329,7 +332,7 @@ fn launchExec(allocator: Allocator, server: *Server, entry: *const AppEntry, uri
     const cwd: std.process.Child.Cwd = if (entry.path) |p| (if (p.len > 0) .{ .path = p } else .inherit) else .inherit;
 
     const child = std.process.spawn(server.io, .{
-        .argv = argv,
+        .argv = themed_argv,
         .environ_map = &env_map,
         .cwd = cwd,
     }) catch |err| {
@@ -668,11 +671,12 @@ fn launchNewWindowBytes(allocator: Allocator, server: *Server, entry: *const App
     defer snapshot.release();
     const terminal = @import("../config_runtime/default_apps.zig").find(snapshot.entries, server.config.compositor.default_terminal);
     const argv = try buildLaunchArgvUris(a, &live, server.environ, &.{}, terminal);
+    const themed_argv = try @import("config").terminal_theme.wrap(a, server.io, argv, server.config.theme);
     var env_map = try server.environ.createMap(a);
     defer env_map.deinit();
     try server.applyChildEnvWithToken(&env_map, token);
     const cwd: std.process.Child.Cwd = if (live.path) |p| (if (p.len > 0) .{ .path = p } else .inherit) else .inherit;
-    const child = try std.process.spawn(server.io, .{ .argv = argv, .environ_map = &env_map, .cwd = cwd });
+    const child = try std.process.spawn(server.io, .{ .argv = themed_argv, .environ_map = &env_map, .cwd = cwd });
     const pid = child.id orelse return error.SpawnFailed;
     server.launch_feedback.begin(.{ .pid = pid, .token = token, .desktop_id = entry.id, .startup_wm_class = entry.startup_wm_class });
     app_scope.place(server, pid, trimDesktopSuffix(entry.id));

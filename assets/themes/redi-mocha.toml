@@ -9,6 +9,7 @@ description = "Catppuccin Mocha with mauve accents and the Auckland skyline."
 # Catppuccin Mocha: https://catppuccin.com/palette/#mocha
 # Base #1e1e2e, mantle #181825, crust #11111b; mauve #cba6f7.
 # Keep RediWM's default fonts and geometry.
+taskbar_size = 44
 
 # Window chrome
 window_bg = "rgba(24,24,37,0.80)"
@@ -139,6 +140,10 @@ image_crop_grid = "rgba(205,214,244,0.40)"
 pdf_loading = "#a6adc8"
 pdf_search_match = "rgba(249,226,175,0.40)"
 pdf_search_match_active = "rgba(250,179,135,0.65)"
+
+[layout]
+taskbar_position = "bottom"
+dock_enabled = false
 
 [assets]
 color_scheme = "dark"

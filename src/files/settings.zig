@@ -54,7 +54,7 @@ pub const ThemeUpdate = struct {
     /// Transfers ownership to the UI thread. Never call from a worker.
     pub fn apply(self: ThemeUpdate) void {
         @import("ui").shell_icons.configure(self.io, self.pack_root);
-        theme.global = self.value;
+        theme.global = self.value.forApp();
         region = self.region;
         text.setPreferredFamilies(self.value.font, self.value.mono_font);
         if (applied_theme) |old| old.deinit();

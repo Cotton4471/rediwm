@@ -106,17 +106,17 @@ fn tileFocused(server: *Server, dir: snap.Direction) void {
 }
 
 pub fn spawnProcess(server: *Server, cmd: []const u8) void {
-    spawnTracked(server, cmd, false);
+    spawnTracked(server, cmd, false, &.{ "/bin/sh", "-c", cmd });
 }
 
 pub fn spawnHelper(server: *Server, cmd: []const u8) void {
     if (server.services) |manager| {
         if (manager.helperRunning(cmd)) return;
     }
-    spawnTracked(server, cmd, true);
+    spawnTracked(server, cmd, true, &.{ "/bin/sh", "-c", cmd });
 }
 
-fn spawnTracked(server: *Server, cmd: []const u8, helper: bool) void {
+fn spawnTracked(server: *Server, cmd: []const u8, helper: bool, argv: []const []const u8) void {
     var env_map = server.environ.createMap(gpa) catch |err| {
         log.warn("autostart/spawn env: {}", .{err});
         return;
@@ -127,7 +127,7 @@ fn spawnTracked(server: *Server, cmd: []const u8, helper: bool) void {
         return;
     };
     const child = std.process.spawn(server.io, .{
-        .argv = &.{ "/bin/sh", "-c", cmd },
+        .argv = argv,
         .environ_map = &env_map,
         .pgid = if (helper) 0 else null,
     }) catch |err| {
@@ -626,5 +626,13 @@ fn launchPreferred(server: *Server, cmd: []const u8) void {
         }
         log.warn("preferred application '{s}' is no longer installed; using fallback", .{id});
     }
-    spawnProcess(server, if (file_manager) "rediwm-files" else server.environ.getPosix("TERMINAL") orelse "foot");
+    if (file_manager) return spawnProcess(server, "rediwm-files");
+    const command = server.environ.getPosix("TERMINAL") orelse "foot";
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const args = @import("../start_menu/launch.zig").parseExec(arena.allocator(), command, null) catch return;
+    if (args.len == 0) return;
+    const themed = @import("config").terminal_theme.wrap(arena.allocator(), server.io, args, server.config.theme) catch return;
+    if (themed.ptr == args.ptr) return spawnProcess(server, command);
+    spawnTracked(server, command, false, themed);
 }

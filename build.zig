@@ -86,6 +86,14 @@ pub fn build(b: *std.Build) void {
     ui_mod.addAnonymousImport("theme-rediwm-light", .{ .root_source_file = b.path("assets/themes/rediwm-light.toml") });
     ui_mod.addAnonymousImport("theme-redi-blue", .{ .root_source_file = b.path("assets/themes/redi-blue.toml") });
     ui_mod.addAnonymousImport("theme-redi-mocha", .{ .root_source_file = b.path("assets/themes/redi-mocha.toml") });
+    ui_mod.addAnonymousImport("theme-gold", .{ .root_source_file = b.path("assets/themes/gold.toml") });
+    b.getInstallStep().dependOn(&b.addInstallDirectory(.{
+        .source_dir = b.path("assets/themes/gold"),
+        .install_dir = .prefix,
+        .install_subdir = "share/rediwm/themes/gold",
+    }).step);
+    b.getInstallStep().dependOn(&b.addInstallFileWithDir(b.path("assets/themes/gold.toml"), .prefix, "share/rediwm/themes/gold/theme.toml").step);
+    b.getInstallStep().dependOn(&b.addInstallFileWithDir(b.path("assets/wallpapers/wallpaper-gold.png"), .prefix, "share/rediwm/themes/gold/wallpapers/wallpaper-gold.png").step);
     const dbus_mod = b.createModule(.{ .root_source_file = b.path("src/dbus/mod.zig"), .target = target, .optimize = optimize, .link_libc = true });
     dbus_mod.addImport("wayland", wayland);
     dbus_mod.linkSystemLibrary("wayland-server", .{});
