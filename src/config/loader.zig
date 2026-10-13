@@ -118,6 +118,9 @@ pub const RegionConfig = struct {
 pub const TaskbarItems = @import("taskbar_items.zig").Config;
 
 pub const DesktopMode = enum { canvas, workspaces };
+pub const dock_height_min: u32 = 48;
+pub const dock_height_max: u32 = 96;
+pub const dock_height_default: u32 = 68;
 
 pub const CompositorConfig = struct {
     desktop_mode: DesktopMode = .canvas,
@@ -125,6 +128,9 @@ pub const CompositorConfig = struct {
     default_file_manager: []const u8 = "",
     default_terminal: []const u8 = "",
     dock_enabled: bool = false,
+    dock_height: u32 = dock_height_default,
+    dock_hidden_apps: []const []const u8 = &.{},
+    dock_hidden_shortcuts: []const []const u8 = &.{},
     taskbar_items: TaskbarItems = .{},
     taskbar_position: enum { top, bottom } = .bottom,
     /// App identities opted into compositor tabs. Only + launches join a group.
@@ -1039,6 +1045,9 @@ const compositor_rules: std.enums.EnumFieldStruct(std.meta.FieldEnum(CompositorC
     .desktop_mode = .enumeration,
     .floating_apps = .json_string_list,
     .dock_enabled = .boolean,
+    .dock_height = .{ .uint = .{ .min = dock_height_min, .max = dock_height_max } },
+    .dock_hidden_apps = .json_string_list,
+    .dock_hidden_shortcuts = .json_string_list,
     .taskbar_items = .taskbar_items,
     .taskbar_position = .enumeration,
     .icon_theme = .string,
@@ -1770,6 +1779,7 @@ test "config field parsing preserves ranges and derived zoom state" {
         .{ "canvas_height", "1", "100000", "0", "100001" },
         .{ "window_gap", "0", "512", "513", "514" },
         .{ "border_radius", "0", "128", "129", "130" },
+        .{ "dock_height", "48", "96", "47", "97" },
     }) |fixture| {
         try applyCompositorKey(&c, a, fixture[0], fixture[1]);
         try std.testing.expectEqual(@as(@TypeOf(@field(c, fixture[0])), try std.fmt.parseInt(u32, fixture[1], 10)), @field(c, fixture[0]));

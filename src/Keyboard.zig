@@ -440,7 +440,7 @@ pub fn processKey(keyboard: *Keyboard, time_msec: u32, event_keycode: u32, state
         }
     }
 
-    if (keyboard.server.input.window_menu.target != null and keyboard.server.screenshot_selector.output == null) {
+    if (keyboard.server.input.window_menu.node != null and keyboard.server.screenshot_selector.output == null) {
         if (state == .pressed) {
             if (event_keycode < keyboard.tray_consumed.len) keyboard.tray_consumed[event_keycode] = true;
             for (xkb_state.keyGetSyms(keycode)) |sym| keyboard.server.input.window_menu.key(@intFromEnum(sym));
@@ -831,7 +831,7 @@ fn currentShellTarget(keyboard: *Keyboard) ?ShellTarget {
     if (server.screenshot_selector.output != null or server.switcher.active()) return null;
     if (server.tray) |tray| if (tray.menu_item != 0) return null;
     const input = &server.input;
-    if (input.window_menu.target != null) return null;
+    if (input.window_menu.node != null) return null;
     if (input.open_wifi) |popup| return .{ .wifi = popup };
     if (input.open_battery != null or input.open_calendar != null or input.open_power_menu != null) return null;
     if (input.open_control_center) |cc| if (cc.hasKeyboardFocus() and input.open_start_menu == null) {

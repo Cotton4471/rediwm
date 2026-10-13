@@ -14,6 +14,7 @@ pub fn snapshot(server: *Server, allocator: std.mem.Allocator) ![]const protocol
 
     var out_it = server.outputs.iterator(.forward);
     while (out_it.next()) |output| {
+        try output.dock.appendAnimations(allocator, &list, now_ms);
         if (output.taskbar) |bar| try bar.appendAnimations(allocator, &list, now_ms);
         if (output.start_menu) |menu| {
             try appendLive(allocator, &list, "start_menu.slide", menu.slide, now_ms);
@@ -150,6 +151,7 @@ fn captureLive(server: *Server, allocator: std.mem.Allocator, now_ms: i64) ![]an
 
     var out_it = server.outputs.iterator(.forward);
     while (out_it.next()) |output| {
+        try output.dock.captureAnimations(allocator, &list, now_ms);
         if (output.taskbar) |bar| try bar.captureAnimations(allocator, &list, now_ms);
         if (output.start_menu) |menu| {
             try anim.captureIfLive(allocator, &list, &menu.slide, .panel_slide, now_ms);

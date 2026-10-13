@@ -134,7 +134,7 @@ Network settings, password/hidden forms, saved and open joins, radio, wired
 details, connect/disconnect and permission errors, service restart and scrolling;
 `--settings-only` runs just the settings checks), `battery_popup.py` (fake sysfs and private power-profile
 service; charge states, missing details, selection and dismissal),
-`keyboard_shortcuts.py`, `dock.py` (opt-in Appearance toggle, persistence, launcher/input, running windows, fullscreen and scale),
+`keyboard_shortcuts.py`, `dock.py` (opt-in Appearance toggle, bounded height slider, live resizing and size persistence, launcher/input, shared shortcut icons and running pills, smooth pill animation/reversals and idle scheduling, preferred apps and terminal fallback, running windows, fullscreen, scale, live radius, context menu and remembered removal),
 `panel_damage.py`, `glass_hold.py` (holds and
 mixed-scale idle), `glass_reblur.py` (glass re-blurs for changes below it,
 never for its own client), `animations.py`, `hotspots.py`, `launch_feedback.py`,

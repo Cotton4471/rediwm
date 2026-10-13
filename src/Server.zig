@@ -1575,6 +1575,7 @@ fn handleCatalogWake(fd: c_int, mask: wl.EventMask, server: *Server) c_int {
     if (server.input.open_control_center) |cc| cc.refresh();
     var it = server.outputs.iterator(.forward);
     while (it.next()) |output| {
+        output.dock.invalidate();
         if (output.start_menu) |sm| sm.refreshCatalog();
     }
     server.startup_warmup.onCatalogReady(server);

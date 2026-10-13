@@ -241,7 +241,7 @@ pub fn peekTarget(world: *World) ?*Toplevel {
     while (keyboards.next()) |keyboard| {
         if (keyboard.device.toKeyboard().getModifiers().logo) held = true;
     }
-    if (!held or input.window_menu.target != null or (world.server.locker != null or world.server.polkit_dialog != null)) {
+    if (!held or input.window_menu.node != null or (world.server.locker != null or world.server.polkit_dialog != null)) {
         world.peek_window_id = null;
         return null;
     }

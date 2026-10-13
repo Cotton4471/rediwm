@@ -264,6 +264,8 @@ needs_attention: bool = false,
 maximized: bool = false,
 fullscreen: bool = false,
 in_world: bool = false,
+/// A dock removal without an app identity lasts for this window's lifetime.
+dock_hidden: bool = false,
 placed: bool = false,
 placeholder_source: ?*Toplevel = null,
 rules_resolved: bool = false,

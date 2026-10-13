@@ -33,6 +33,8 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
     if (!std.mem.eql(u8, old.compositor.default_file_manager, new.compositor.default_file_manager) or
         !std.mem.eql(u8, old.compositor.default_terminal, new.compositor.default_terminal))
     {
+        var output_it = server.outputs.iterator(.forward);
+        while (output_it.next()) |output| output.dock.invalidate();
         if (server.input.open_control_center) |cc| cc.refresh();
     }
     if (server.ipc) |ipc| {
@@ -204,6 +206,18 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
         if (server.input.open_control_center) |cc| cc.refresh();
     }
 
+    if (old.compositor.dock_height != new.compositor.dock_height or
+        !stringListsEql(old.compositor.dock_hidden_apps, new.compositor.dock_hidden_apps) or
+        !stringListsEql(old.compositor.dock_hidden_shortcuts, new.compositor.dock_hidden_shortcuts))
+    {
+        if (server.input.window_menu.dock != null) server.input.window_menu.close();
+        var output_it = server.outputs.iterator(.forward);
+        while (output_it.next()) |output| output.dock.invalidate();
+        if (old.compositor.dock_height != new.compositor.dock_height) {
+            if (server.input.open_control_center) |cc| cc.refresh();
+        }
+    }
+
     logKeybindDiff(old, new);
 
     for (new.autostart) |cmd| {
@@ -212,6 +226,12 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
             actions.spawnAutostartCommand(server, cmd);
         }
     }
+}
+
+fn stringListsEql(a: []const []const u8, b: []const []const u8) bool {
+    if (a.len != b.len) return false;
+    for (a, b) |left, right| if (!std.mem.eql(u8, left, right)) return false;
+    return true;
 }
 
 pub fn applyInputConfig(server: *Server, cfg: InputConfig) void {

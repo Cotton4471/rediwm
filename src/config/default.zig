@@ -118,6 +118,9 @@ pub const source =
     \\default_file_manager = ""
     \\default_terminal = ""
     \\dock_enabled = false # compact launcher alongside the taskbar
+    \\dock_height = 68 # logical px; 48-96, icons and spacing resize together
+    \\dock_hidden_apps = [] # app IDs removed from the dock's context menu
+    \\dock_hidden_shortcuts = [] # applications, files, terminal, settings
     \\# Right-side taskbar items, left to right; prefix a name with - to hide it.
     \\taskbar_position = "bottom" # top or bottom
     \\taskbar_items = ["battery", "network", "volume", "clock"]

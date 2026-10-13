@@ -300,7 +300,7 @@ pub fn motionReachesClient(input: *const Input) bool {
     if (input.cursor_mode != .passthrough or input.grabbed_toplevel != null or input.resize_session != null) return false;
     if (input.server.world.mini_map.dragging) return false;
     if (input.desktop_grab or input.seat.drag != null) return false;
-    if (input.window_menu.target != null) return false;
+    if (input.window_menu.node != null) return false;
     if (server.tray) |tray| if (tray.menu_item != 0) return false;
     return input.seat.pointer_state.focused_surface != null;
 }
@@ -315,7 +315,7 @@ pub fn directInputReachesClients(input: *Input) bool {
     if (input.cursor_mode != .passthrough or input.grabbed_toplevel != null or input.resize_session != null) return false;
     if (input.server.world.mini_map.dragging) return false;
     if (input.desktop_grab or input.seat.drag != null or input.active_buttons > 0) return false;
-    if (input.window_menu.target != null) return false;
+    if (input.window_menu.node != null) return false;
     if (server.tray) |tray| if (tray.menu_item != 0) return false;
     if (input.open_start_menu != null or input.open_power_menu != null or input.open_wifi != null or input.open_battery != null or input.open_calendar != null) return false;
     // Alt+drag moves and Super pans are pointer gestures.
@@ -1104,6 +1104,7 @@ fn beginMiddlePanAfterThreshold(session: *PanSession, x: f64, y: f64) bool {
 }
 
 pub fn detachOutput(input: *Input, output: *Output) void {
+    if (input.window_menu.output == output) input.window_menu.close();
     if (input.tiling_grab != null) input.finishTilingGrab(false);
     if (input.move_snap.output == output) {
         input.move_snap.target = null;
@@ -1419,7 +1420,7 @@ pub fn processCursorMotion(input: *Input, time_msec: u32) void {
         input.server.screenshot_selector.motion(input.cursor.x, input.cursor.y);
         return;
     }
-    if (input.window_menu.target != null) {
+    if (input.window_menu.node != null) {
         input.window_menu.motion(input.cursor.x, input.cursor.y);
         input.seat.pointerClearFocus();
         return;
@@ -1817,7 +1818,7 @@ pub fn processButton(
         input.tray_buttons &= ~screenshot_bit;
         return;
     }
-    if (input.window_menu.target != null) {
+    if (input.window_menu.node != null) {
         if (state == .pressed) {
             input.tray_buttons |= screenshot_bit;
             input.window_menu.press(input.cursor.x, input.cursor.y, button);
@@ -1837,6 +1838,12 @@ pub fn processButton(
                     return;
                 },
                 else => {},
+            }
+        } else if (picked == .dock) {
+            const hit = picked.dock;
+            if (hit.dock.contextMenu(hit.sx, hit.sy, @intFromFloat(input.cursor.x))) {
+                input.tray_buttons |= screenshot_bit;
+                return;
             }
         }
     }
@@ -2268,7 +2275,7 @@ pub fn processAxis(
     // Flip here, before zoom/UI/client branches, so `invert_scroll` behaves
     // like `natural_scroll` would if libinput's device toggle applied to
     // this device: a single, uniform reversal rather than one per consumer.
-    if (input.window_menu.target != null) return;
+    if (input.window_menu.node != null) return;
     const invert = input.server.config.input.invert_scroll;
     const delta: f64 = if (invert) -raw_delta else raw_delta;
     const delta_discrete: i32 = if (invert) -raw_delta_discrete else raw_delta_discrete;

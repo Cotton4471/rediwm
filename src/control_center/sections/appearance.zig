@@ -88,6 +88,7 @@ const px_chrome_height = 11;
 const px_chrome_control_gap = 12;
 const px_menu_width = 13;
 const px_menu_height = 14;
+const px_dock_height = 15;
 
 pub const Section = struct {
     cc: *panel.ControlCenter = undefined,
@@ -103,6 +104,7 @@ pub const Section = struct {
     family_row_children: [2]Widget = undefined,
     row_storage: [26]Widget = undefined,
     dock_children: [2]Widget = undefined,
+    dock_group_children: [2]Widget = undefined,
     focus_zoom_children: [3]Widget = undefined,
     /// Rescanned on every build, so images added meanwhile show up.
     wallpapers: []const wallpapers.Entry = &.{},
@@ -159,7 +161,7 @@ pub const Section = struct {
     inactive_opacity_header_children: [2]Widget = undefined,
     inactive_opacity_group_children: [2]Widget = undefined,
     inactive_opacity_value_buf: [16]u8 = undefined,
-    px: [15]PxControl = undefined,
+    px: [16]PxControl = undefined,
     taskbar_section_children: [8]Widget = undefined,
     taskbar_position_children: [2]Widget = undefined,
     items_children: [3]Widget = undefined,
@@ -733,6 +735,12 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
         labelWidget("RediWM dock"),
         .{ .name = "dock_enabled", .kind = .{ .toggle = .{ .on = out.cc.server.config.compositor.dock_enabled, .owner = out, .on_change = &onDockChanged } } },
     };
+    const dock_height_row = pxGroup(out, px_dock_height, "Dock height", @floatFromInt(server.config.compositor.dock_height), @floatFromInt(loader.dock_height_min), @floatFromInt(loader.dock_height_max), 2, &onDockHeightChanged);
+    out.px[px_dock_height].group_children[1].name = "dock_height";
+    out.dock_group_children = .{
+        .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.dock_children },
+        dock_height_row,
+    };
     out.row_storage = .{
         .{ .kind = .container, .direction = .column, .gap = 8, .children = pack_controls },
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.icon_theme_row },
@@ -757,7 +765,7 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
         inactive_opacity_row,
         window_gap_row,
         pxGroup(out, px_scrollbar_width, "Scrollbar width", t.scrollbar_width, 4, 24, 1, &PxHandler(px_scrollbar_width, "scrollbar_width", false).changed),
-        .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.dock_children },
+        .{ .kind = .container, .direction = .column, .gap = 12, .children = &out.dock_group_children },
         taskbar_section,
         start_menu_section,
     };
@@ -1772,5 +1780,26 @@ fn onDockChanged(owner: ?*anyopaque, _: usize, on: bool) void {
         return;
     };
     server.config.compositor.dock_enabled = on;
+    server.scheduleFrames();
+}
+
+fn onDockHeightChanged(owner: ?*anyopaque, _: usize, value: f32) void {
+    const s = section(owner);
+    const server = s.cc.server;
+    const height: u32 = @intFromFloat(std.math.clamp(@round(value), @as(f32, @floatFromInt(loader.dock_height_min)), @as(f32, @floatFromInt(loader.dock_height_max))));
+    if (height == server.config.compositor.dock_height) return;
+    setting_save.saveCompositor(main.gpa, server.io, server.config.path, "dock_height", height) catch |err| {
+        std.log.warn("could not save dock height: {}", .{err});
+        s.px[px_dock_height].group_children[1].kind.slider.value = @floatFromInt(server.config.compositor.dock_height);
+        s.px[px_dock_height].group_children[1].markDirty();
+        return;
+    };
+    server.config.compositor.dock_height = height;
+    const formatted = std.fmt.bufPrint(&s.px[px_dock_height].value_buf, "{d}px", .{height}) catch "?";
+    s.px[px_dock_height].header_children[1].kind.text.content = formatted;
+    s.px[px_dock_height].header_children[1].markDirty();
+    if (server.input.window_menu.dock != null) server.input.window_menu.close();
+    var it = server.outputs.iterator(.forward);
+    while (it.next()) |output| output.dock.invalidate();
     server.scheduleFrames();
 }

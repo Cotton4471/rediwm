@@ -1217,7 +1217,7 @@ fn runFrame(output: *Output) void {
     anim.observeBegin();
     const switcher_animating = output.server.switcher.tick(output, now_ms);
     const osd_animating = output.osd.tick(output, now_ms);
-    output.dock.tick(output);
+    const dock_animating = output.dock.tick(output, now_ms);
     const taskbar_started = stats.nowNs();
     var bar_animating = false;
     if (output.taskbar) |bar| bar_animating = bar.tick(now_ms);
@@ -1359,7 +1359,7 @@ fn runFrame(output: *Output) void {
     // Keep repainting every refresh interval until the last hover/press/FLIP
     // animation settles; otherwise chrome and the bar only redraw when a
     // client does.
-    const keep_going = mini_map_animating or switcher_animating or osd_animating or bar_animating or chrome_animating or cc_animating or sm_animating or pm_animating or taskbar_popup_animating or notif_animating or desktop_animating or lock_animating or polkit_animating;
+    const keep_going = mini_map_animating or switcher_animating or osd_animating or dock_animating or bar_animating or chrome_animating or cc_animating or sm_animating or pm_animating or taskbar_popup_animating or notif_animating or desktop_animating or lock_animating or polkit_animating;
     // A pinned clock is advanced explicitly by IPC, which schedules its own
     // frame. Global window/taskbar springs must not spin between those steps.
     if (keep_going and !anim.clockOverridden()) {
