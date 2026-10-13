@@ -1,4 +1,6 @@
 const std = @import("std");
+const popup_style = @import("../popup_style.zig");
+const glass = @import("../glass.zig");
 const wlr = @import("wlroots");
 const xkb = @import("xkbcommon");
 const Output = @import("../Output.zig");
@@ -51,6 +53,7 @@ pub const Popup = struct {
     sonar_shown: bool = false,
     sonar_fade_start: i64 = -1,
     node_data: scene.SceneData = undefined,
+    glass_effect: ?*glass.Effect = null,
     caret: Caret,
     factor: f32 = 1,
     height: f32 = 400,
@@ -130,6 +133,7 @@ pub const Popup = struct {
     pub fn tick(self: *Popup, now: i64) bool {
         _ = self.slide.sampleChanged(now, anim.quantum_alpha);
         present.applySlide(self.buffer_node, self.panel_box, self.slide.value(now), if (self.output.server.config.compositor.taskbar_position == .top) -20 else 20);
+        popup_style.configureGlass(&self.glass_effect, self.output.server.glass_engine, self.buffer_node, self.factor);
         if (self.caret.placed) |*p| p.origin_y = @floatFromInt(self.buffer_node.node.y);
         const active = self.caret.frame(now);
         self.paintSonar(now);
@@ -550,24 +554,9 @@ pub const Popup = struct {
         var r: paint.Renderer = .{ .pixels = buf.pixels, .width = buf.width, .height = buf.height, .scale = scale * self.factor };
         const t = theme.shellPalette();
         r.palette = t;
-        var bg = t.window_bg;
-        bg[3] = 1;
-        r.fillRect(0, 0, width, self.height - 12, .{ .color = bg, .radius = 9, .border_width = 1, .border_color = t.border_hover });
         const tip = std.math.clamp(@as(f32, @floatFromInt(anchor.x + @divTrunc(anchor.width, 2) - left)) / self.factor, 24, width - 24);
-        // Same taskbar pointer as the battery/calendar panels.
-        for (0..@intCast(buf.height)) |iy| {
-            const y = (@as(f32, @floatFromInt(iy)) + 0.5) / r.scale;
-            if (y < self.height - 13) continue;
-            for (0..@intCast(buf.width)) |ix| {
-                const x = (@as(f32, @floatFromInt(ix)) + 0.5) / r.scale;
-                const d = (@abs(x - tip) + y - self.height) / @sqrt(@as(f32, 2));
-                const coverage = std.math.clamp(0.5 - d * r.scale, 0, 1);
-                if (coverage == 0) continue;
-                const mix = (1 - std.math.clamp((-d - 1) * r.scale + 0.5, 0, 1)) * t.border_hover[3];
-                buf.pixels[iy * @as(usize, @intCast(buf.width)) + ix] = (@import("../color.zig").Straight{ .r = bg[0] * (1 - mix) + t.border_hover[0] * mix, .g = bg[1] * (1 - mix) + t.border_hover[1] * mix, .b = bg[2] * (1 - mix) + t.border_hover[2] * mix, .a = coverage }).argb();
-            }
-        }
-        if (self.output.server.config.compositor.taskbar_position == .top) buf.flipVertical();
+        popup_style.background(&r, buf, width, self.height, 12, tip, self.output.server.config.compositor.taskbar_position == .top);
+        const card_t = popup_style.cardPalette(t);
         self.hit_count = 0;
         label(&r, 24, 14, 180, 42, "Wi-Fi", 23, t.window_fg, true);
         // Same switch as Settings; the hit target is padded for the pointer.
@@ -577,7 +566,7 @@ pub const Popup = struct {
         r.fillRect(20, 65, width - 40, 1, .{ .color = t.border });
         r.clip = .{ .x = 12, .y = header, .w = width - 24, .h = self.height - header - footer - self.status_height };
         self.caret_reported = false;
-        if (self.item_hover.frame.alpha > 0) if (self.itemHoverBox(self.item_hover.frame.row)) |box| {
+        if (t.popup_card_bg == null and self.item_hover.frame.alpha > 0) if (self.itemHoverBox(self.item_hover.frame.row)) |box| {
             var fill = t.surface_hover;
             var border = t.border_soft;
             fill[3] *= self.item_hover.frame.alpha;
@@ -595,16 +584,29 @@ pub const Popup = struct {
                 const extra = self.shownHeight(net);
                 const box: Rect = .{ .x = 12, .y = y, .w = width - 24, .h = row_height };
                 _ = self.addHit(box, .row, i);
-                if (selected or extra > 0 or net.connected or self.focused(.row, i)) r.fillRect(12, y, width - 24, row_height + extra, .{ .color = t.surface_hover, .radius = 5 });
-                if (net.connected or selected or extra > 0) r.fillRect(12, y + 5, 3, row_height - 10 + extra, .{ .color = t.accent, .radius = 1 });
-                var signal_color = t.window_fg;
+                if (t.popup_card_bg != null) {
+                    popup_style.card(&r, 16, y + 3, width - 32, row_height - 6);
+                    const hover_alpha = self.item_hover.frame.alpha * @max(0, 1 - @abs(self.item_hover.frame.row - @as(f32, @floatFromInt(i))));
+                    const alpha: f32 = if (selected or self.focused(.row, i)) 1 else hover_alpha;
+                    if (alpha > 0) {
+                        var fill = card_t.surface_hover;
+                        var border = t.accent;
+                        fill[3] *= alpha;
+                        border[3] *= alpha;
+                        r.fillRect(16, y + 3, width - 32, row_height - 6, .{ .color = fill, .radius = t.popup_card_radius, .border_width = 1, .border_color = border });
+                    }
+                } else if (selected or extra > 0 or net.connected or self.focused(.row, i)) r.fillRect(12, y, width - 24, row_height + extra, .{ .color = t.surface_hover, .radius = 5 });
+                if (net.connected or selected or extra > 0) {
+                    if (t.popup_card_bg != null) r.fillRect(19, y + 16, 3, row_height - 32, .{ .color = t.accent, .radius = 1 }) else r.fillRect(12, y + 5, 3, row_height - 10 + extra, .{ .color = t.accent, .radius = 1 });
+                }
+                var signal_color = card_t.window_fg;
                 signal_color[3] *= 0.45 + @as(f32, @floatFromInt(net.strength)) / 100 * 0.55;
                 r.drawIcon(30, y + 18, 28, 28, .{ .id = .wifi, .color = signal_color });
-                label(&r, 78, y + 8, 272, 26, network.networkName(&net), 16, t.window_fg, false);
+                label(&r, 78, y + 8, 272, 26, network.networkName(&net), 16, card_t.window_fg, false);
                 const subtitle = network.networkSubtitle(net);
-                label(&r, 78, y + 34, 270, 22, subtitle, 12, t.window_dim, false);
-                if (net.security != .open) r.drawIcon(353, y + 23, 18, 18, .{ .id = .lock, .color = t.window_dim });
-                if (selected or net.connected) r.drawIcon(379, y + 25, 14, 14, .{ .id = if (selected) .chevron_up else .chevron_right, .color = t.window_fg });
+                label(&r, 78, y + 34, 270, 22, subtitle, 12, card_t.window_dim, false);
+                if (net.security != .open) r.drawIcon(353, y + 23, 18, 18, .{ .id = .lock, .color = card_t.window_dim });
+                if (selected or net.connected) r.drawIcon(379, y + 25, 14, 14, .{ .id = if (selected) .chevron_up else .chevron_right, .color = card_t.window_fg });
                 y += row_height;
                 if (selected) self.paintFormClipped(&r, y, extra);
                 y += extra;
@@ -636,6 +638,7 @@ pub const Popup = struct {
         self.buffer_node.setBuffer(&buf.base);
         self.buffer_node.setDestSize(w, h);
         present.applySlide(self.buffer_node, self.panel_box, self.slide.value(anim.nowMs()), if (self.output.server.config.compositor.taskbar_position == .top) -20 else 20);
+        popup_style.configureGlass(&self.glass_effect, self.output.server.glass_engine, self.buffer_node, self.factor);
         self.sonar_step = -1;
         self.paintSonar(anim.nowMs());
         if (self.caret.placed) |*p| {

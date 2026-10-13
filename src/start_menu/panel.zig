@@ -790,7 +790,8 @@ pub const StartMenu = struct {
         ui.arrange.arrange(&menu.root, 0, 0, target_width, target_height);
 
         const bottom_offset: f32 = @as(f32, @floatFromInt(Taskbar.barHeight())) + theme.global.start_menu_bottom_pad;
-        const panel_left: f32 = theme.global.start_menu_left_pad;
+        const start_offset: f32 = if (Output.fromWlr(menu.wlr_output)) |output| if (output.taskbar) |bar| @floatFromInt(bar.startButtonBox().x - output_box.x - Taskbar.startButtonLeft()) else 0 else 0;
+        const panel_left = std.math.clamp(theme.global.start_menu_left_pad + start_offset, 0, @max(0, @as(f32, @floatFromInt(output_box.width)) - target_width));
 
         menu.panel_box = .{
             .x = output_box.x + @as(i32, @intFromFloat(panel_left)),

@@ -135,7 +135,21 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
         if (server.input.open_control_center) |cc| cc.refresh();
     }
     applyWindowOpacity(server);
+    if (old.compositor.drag_feedback != new.compositor.drag_feedback or
+        old.compositor.drag_scale != new.compositor.drag_scale)
+    {
+        server.scheduleFrames();
+        if (server.input.open_control_center) |cc| cc.refresh();
+    }
     if (old.compositor.inactive_opacity != new.compositor.inactive_opacity) {
+        if (server.input.open_control_center) |cc| cc.refresh();
+    }
+    if (old.compositor.inactive_dim != new.compositor.inactive_dim or
+        old.compositor.inactive_dim_amount != new.compositor.inactive_dim_amount)
+    {
+        // The windows ease to the new dim; a hand edit while settings is open
+        // must show in its toggle.
+        server.scheduleFrames();
         if (server.input.open_control_center) |cc| cc.refresh();
     }
 
@@ -207,14 +221,17 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
         if (server.input.open_control_center) |cc| cc.refresh();
     }
 
-    if (old.compositor.dock_height != new.compositor.dock_height or
+    if (old.compositor.dock_position != new.compositor.dock_position or
+        old.compositor.dock_height != new.compositor.dock_height or
+        old.compositor.dock_hover_zoom != new.compositor.dock_hover_zoom or
         !stringListsEql(old.compositor.dock_hidden_apps, new.compositor.dock_hidden_apps) or
         !stringListsEql(old.compositor.dock_hidden_shortcuts, new.compositor.dock_hidden_shortcuts))
     {
         if (server.input.window_menu.dock != null) server.input.window_menu.close();
         var output_it = server.outputs.iterator(.forward);
         while (output_it.next()) |output| output.dock.invalidate();
-        if (old.compositor.dock_height != new.compositor.dock_height) {
+        if (old.compositor.dock_position != new.compositor.dock_position) server.scheduleFrames();
+        if (old.compositor.dock_position != new.compositor.dock_position or old.compositor.dock_height != new.compositor.dock_height or old.compositor.dock_hover_zoom != new.compositor.dock_hover_zoom) {
             if (server.input.open_control_center) |cc| cc.refresh();
         }
     }

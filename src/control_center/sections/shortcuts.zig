@@ -106,7 +106,8 @@ fn group(action: keys.Action) usize {
     };
 }
 fn text(value: []const u8, dim: bool) W {
-    return .{ .kind = .{ .text = .{ .content = value, .font_size = if (dim) 12 else 13, .weight = if (dim) 400 else 600, .color = if (dim) ui.theme.global.window_dim else ui.theme.global.window_fg } } };
+    const t = panel.palette();
+    return .{ .kind = .{ .text = .{ .content = value, .font_size = if (dim) 12 else 13, .weight = if (dim) 400 else 600, .color = if (dim) t.dim else t.fg } } };
 }
 fn button(cc: *panel.ControlCenter, id: usize, value: []const u8, icon: ?ui.layout.IconId, callback: *const fn (?*anyopaque, usize) void) W {
     return .{ .kind = .{ .button = .{ .label = value, .icon = icon, .owner = cc, .id = id, .on_click = callback } }, .height = .{ .fixed = 32 }, .width = if (icon != null) .{ .fixed = 32 } else .auto };
@@ -126,7 +127,7 @@ pub fn build(s: *Section, cc: *panel.ControlCenter) void {
 }
 
 fn buildGroups(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !void {
-    const t = ui.theme.global;
+    const t = panel.palette();
     // Config reloads can replace string payloads and reorder bindings. Retain
     // only the key identity; cancel if that row no longer denotes the same key.
     if (s.editing) |i| {

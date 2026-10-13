@@ -59,24 +59,31 @@ const pthread = std.posix.system;
 var cache_mutex: pthread.pthread_mutex_t = pthread.PTHREAD_MUTEX_INITIALIZER;
 var cache: std.StringHashMapUnmanaged(?Entry) = .empty;
 
-// Keyed by "<size_px>:<icon_name>", not name alone: the taskbar and the
-// window titlebar each ask for their own fixed size for the life of the
-// process (Server.scale never changes after startup), but they're different
-// sizes from each other, and a name-only key would let whichever asked first
-// silently hand its wrong-size raster to the other. A cached `null` records
-// "looked up, not found" so a repeatedly-unmatched app_id doesn't re-walk
-// the filesystem on every caller.
+// Generation, lookup scope and raster size are part of the key: a pack-only
+// miss must not hide an installed icon, or a small sidebar raster replace a
+// larger desktop one. Missing icons are cached too, avoiding filesystem work
+// on every repaint.
 pub fn get(cfg: icon_theme.Config, io: Io, icon_name: []const u8, size_px: i32) ?Entry {
+    return getScoped(cfg, io, icon_name, size_px, false);
+}
+
+/// Pack artwork for places that otherwise keep their built-in glyphs.
+pub fn getPack(cfg: icon_theme.Config, io: Io, icon_name: []const u8, size_px: i32) ?Entry {
+    if (cfg.override_root.len == 0) return null;
+    return getScoped(cfg, io, icon_name, size_px, true);
+}
+
+fn getScoped(cfg: icon_theme.Config, io: Io, icon_name: []const u8, size_px: i32, pack_only: bool) ?Entry {
     _ = pthread.pthread_mutex_lock(&cache_mutex);
     defer _ = pthread.pthread_mutex_unlock(&cache_mutex);
     if (icon_name.len == 0) return null;
 
     var key_buf: [512]u8 = undefined;
-    const key = std.fmt.bufPrint(&key_buf, "{d}:{d}:{s}", .{ cfg.generation, size_px, icon_name }) catch
-        return lookup(cfg, io, icon_name, size_px) catch null;
+    const key = std.fmt.bufPrint(&key_buf, "{d}:{}:{d}:{s}", .{ cfg.generation, pack_only, size_px, icon_name }) catch
+        return lookupScoped(cfg, io, icon_name, size_px, pack_only) catch null;
     if (cache.get(key)) |entry| return entry;
 
-    const entry = lookup(cfg, io, icon_name, size_px) catch |err| blk: {
+    const entry = lookupScoped(cfg, io, icon_name, size_px, pack_only) catch |err| blk: {
         log.warn("get: icon lookup failed for '{s}': {}", .{ icon_name, err });
         break :blk null;
     };
@@ -92,7 +99,11 @@ pub fn get(cfg: icon_theme.Config, io: Io, icon_name: []const u8, size_px: i32) 
 // `cache` also hold the same pixel buffers would leave it handing out a
 // dangling pointer the moment icon_service frees an evicted raster.
 pub fn lookup(cfg: icon_theme.Config, io: Io, icon_name: []const u8, size_px: i32) !?Entry {
-    if (std.mem.eql(u8, icon_name, "builtin:redi-logo")) {
+    return lookupScoped(cfg, io, icon_name, size_px, false);
+}
+
+fn lookupScoped(cfg: icon_theme.Config, io: Io, icon_name: []const u8, size_px: i32, pack_only: bool) !?Entry {
+    if (!pack_only and std.mem.eql(u8, icon_name, "builtin:redi-logo")) {
         const bytes = ui.shell_icons.redi_logo;
         var err: ?*GError = null;
         const handle = rsvg_handle_new_from_data(bytes.ptr, bytes.len, &err) orelse {
@@ -102,7 +113,7 @@ pub fn lookup(cfg: icon_theme.Config, io: Io, icon_name: []const u8, size_px: i3
         defer g_object_unref(handle);
         return Entry{ .pixels = renderSvg(handle, size_px) orelse return null, .size = size_px };
     }
-    if (std.mem.startsWith(u8, icon_name, "/")) {
+    if (!pack_only and std.mem.startsWith(u8, icon_name, "/")) {
         const is_svg = std.mem.endsWith(u8, icon_name, ".svg");
         const is_png = std.mem.endsWith(u8, icon_name, ".png");
         if (is_svg) {
@@ -136,7 +147,7 @@ pub fn lookup(cfg: icon_theme.Config, io: Io, icon_name: []const u8, size_px: i3
         }
     }
 
-    const found = (try icon_theme.find(gpa, io, cfg, icon_name, size_px)) orelse return null;
+    const found = (if (pack_only) try icon_theme.findPack(gpa, io, cfg, icon_name) else try icon_theme.find(gpa, io, cfg, icon_name, size_px)) orelse return null;
     defer gpa.free(found.path);
 
     if (found.svg) {

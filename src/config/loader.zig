@@ -30,6 +30,8 @@ pub const AccelCurve = types.AccelCurve;
 const log = std.log.scoped(.config);
 
 pub const max_zoom_steps: u8 = 8;
+pub const drag_scale_min: f32 = 1.0;
+pub const drag_scale_max: f32 = 1.10;
 const default_zoom_percents = [_]u8{ 100, 85, 70, 55 };
 
 /// Browsers smooth wheel scrolling themselves (prefixes also cover their
@@ -121,6 +123,7 @@ pub const DesktopMode = enum { canvas, workspaces };
 pub const dock_height_min: u32 = 48;
 pub const dock_height_max: u32 = 96;
 pub const dock_height_default: u32 = 68;
+pub const dock_hover_zoom_max: f32 = 1.5;
 
 pub const CompositorConfig = struct {
     desktop_mode: DesktopMode = .canvas,
@@ -128,7 +131,9 @@ pub const CompositorConfig = struct {
     default_file_manager: []const u8 = "",
     default_terminal: []const u8 = "",
     dock_enabled: bool = false,
+    dock_position: types.DockPosition = .bottom,
     dock_height: u32 = dock_height_default,
+    dock_hover_zoom: f32 = 1.05,
     dock_hidden_apps: []const []const u8 = &.{},
     dock_hidden_shortcuts: []const []const u8 = &.{},
     taskbar_items: TaskbarItems = .{},
@@ -158,12 +163,19 @@ pub const CompositorConfig = struct {
     window_gap: ?u32 = null,
     /// Dragging a window to an open screen edge tiles or maximizes it.
     snap_to_edges: bool = true,
+    /// Soft presentation-only lift while moving a window.
+    drag_feedback: bool = true,
+    drag_scale: f32 = 1.03,
     /// A file manager slides aside while a file is dragged out of it; see
     /// `input/drag_dodge.zig`.
     dodge_file_drags: bool = true,
     /// Files opens an item with one click on its icon; names still select.
     files_single_click_open: bool = true,
     inactive_opacity: f32 = 1.0,
+    /// A window that is not the focus loses `inactive_dim_amount` of its
+    /// brightness and of its colour (`Toplevel.applyDim`).
+    inactive_dim: bool = true,
+    inactive_dim_amount: f32 = 0.08,
     switcher_opacity: f32 = 1.0,
     border_radius: u32 = 10,
     allow_tearing: bool = false,
@@ -1051,7 +1063,9 @@ const compositor_rules: std.enums.EnumFieldStruct(std.meta.FieldEnum(CompositorC
     .desktop_mode = .enumeration,
     .floating_apps = .json_string_list,
     .dock_enabled = .boolean,
+    .dock_position = .enumeration,
     .dock_height = .{ .uint = .{ .min = dock_height_min, .max = dock_height_max } },
+    .dock_hover_zoom = .{ .float = .{ .min = 1, .max = dock_hover_zoom_max } },
     .dock_hidden_apps = .json_string_list,
     .dock_hidden_shortcuts = .json_string_list,
     .taskbar_items = .taskbar_items,
@@ -1078,9 +1092,13 @@ const compositor_rules: std.enums.EnumFieldStruct(std.meta.FieldEnum(CompositorC
     .focus_zoom = .enumeration,
     .window_gap = .{ .uint = .{ .min = 0, .max = 512 } },
     .snap_to_edges = .boolean,
+    .drag_feedback = .boolean,
+    .drag_scale = .{ .float = .{ .min = drag_scale_min, .max = drag_scale_max } },
     .dodge_file_drags = .boolean,
     .files_single_click_open = .boolean,
     .inactive_opacity = .{ .float = .{ .min = 0, .max = 1 } },
+    .inactive_dim = .boolean,
+    .inactive_dim_amount = .{ .float = .{ .min = 0, .max = 0.5 } },
     .switcher_opacity = .{ .float = .{ .min = 0, .max = 1 } },
     .border_radius = .{ .uint = .{ .min = 0, .max = 128 } },
     .allow_tearing = .boolean,
@@ -1774,6 +1792,12 @@ test "config field parsing preserves ranges and derived zoom state" {
     }
 
     var c = CompositorConfig{};
+    try std.testing.expectEqual(types.DockPosition.bottom, c.dock_position);
+    inline for (.{ "top", "bottom", "left", "right" }) |value| {
+        try applyCompositorKey(&c, a, "dock_position", value);
+        try std.testing.expectEqual(std.meta.stringToEnum(types.DockPosition, value).?, c.dock_position);
+    }
+    try std.testing.expectError(error.InvalidValue, applyCompositorKey(&c, a, "dock_position", "center"));
     try std.testing.expectEqual(@as(u32, 0), c.windowGap());
     c.desktop_mode = .workspaces;
     try std.testing.expectEqual(@as(u32, 8), c.windowGap());
@@ -1794,6 +1818,13 @@ test "config field parsing preserves ranges and derived zoom state" {
         try std.testing.expectError(error.InvalidValue, applyCompositorKey(&c, a, fixture[0], fixture[3]));
         try std.testing.expectError(error.InvalidValue, applyCompositorKey(&c, a, fixture[0], fixture[4]));
     }
+    inline for (.{ "1", "1.05", "1.5" }) |value| {
+        try applyCompositorKey(&c, a, "dock_hover_zoom", value);
+        try std.testing.expectEqual(try std.fmt.parseFloat(f32, value), c.dock_hover_zoom);
+    }
+    inline for (.{ "nan", "inf", "0.99", "1.51" }) |value| {
+        try std.testing.expectError(error.InvalidValue, applyCompositorKey(&c, a, "dock_hover_zoom", value));
+    }
     inline for (.{ "camera_zoom_min", "camera_zoom_max", "inactive_opacity" }) |key| {
         try applyCompositorKey(&c, a, key, "0.5");
         try std.testing.expectEqual(@as(f32, 0.5), @field(c, key));
@@ -1811,6 +1842,15 @@ test "config field parsing preserves ranges and derived zoom state" {
     try applyCompositorKey(&c, a, "inactive_opacity", "1");
     try std.testing.expectEqual(@as(f32, 1), c.inactive_opacity);
     try std.testing.expectError(error.InvalidValue, applyCompositorKey(&c, a, "inactive_opacity", "1.01"));
+    try std.testing.expect(c.inactive_dim);
+    try std.testing.expectEqual(@as(f32, 0.08), c.inactive_dim_amount);
+    try applyCompositorKey(&c, a, "inactive_dim", "false");
+    try std.testing.expect(!c.inactive_dim);
+    try applyCompositorKey(&c, a, "inactive_dim_amount", "0.5");
+    try std.testing.expectEqual(@as(f32, 0.5), c.inactive_dim_amount);
+    inline for (.{ "nan", "inf", "-0.1", "0.51" }) |v| {
+        try std.testing.expectError(error.InvalidValue, applyCompositorKey(&c, a, "inactive_dim_amount", v));
+    }
     try applyCompositorKey(&c, a, "focus_follows_mouse", "true");
     try std.testing.expect(c.focus_follows_mouse);
     try applyCompositorKey(&c, a, "xwayland", "false");

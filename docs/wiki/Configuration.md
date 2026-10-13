@@ -62,13 +62,35 @@ keep 12-hour time and Sunday first until changed.
 
 ## Handy `[compositor]` keys
 
+Settings → Appearance includes **Dock position**, **Dock size** and **Dock hover zoom**.
+Choose top, bottom, left or right; side docks stack upright icons vertically.
+`dock_position = "bottom"` is the default. `dock_height` controls thickness
+(height for top/bottom, width for left/right) from 48 to 96 logical pixels.
+`dock_hover_zoom = 1.05` is the default; choose 1.0 to disable enlargement,
+or up to 1.5. The setting applies immediately and follows the animation and
+reduced-motion preferences.
+
+The taskbar has **Left**, **Center**, and **Right** sections in Appearance.
+Start defaults to the left, the window list to the center, and application tray
+icons plus Battery, Network, Volume, and Clock to the right. Each item's section
+control moves it immediately; drag its handle (or use Up/Down while the handle
+is focused) to reorder it within that section. Visibility toggles keep its place.
+The center group stays centered on the display when it fits, and shifts or
+narrows the window list to avoid the side groups.
+
+For example, `taskbar_items = ["left:start", "center:windows", "right:tray",
+"right:battery", "right:network", "right:volume", "right:clock"]` is the default.
+Use `"-right:clock"` to hide the clock. Existing four-item status lists still
+load, preserving their order and visibility alongside Start and the window list.
+
 | Key | Default | Notes |
 | --- | --- | --- |
 | `allow_tearing` | `false` | lets focused fullscreen clients request async presentation |
 | `window_tab_apps` | `[]` | app IDs that get tabs |
 | `default_file_manager`, `default_terminal` | `""` | desktop IDs, empty means Files / auto terminal |
 | `taskbar_position` | `"bottom"` | `top` or `bottom` |
-| `taskbar_items` | battery, network, volume, clock | prefix a name with `-` to hide it |
+| `dock_position` | `"bottom"` | `top`, `bottom`, `left` or `right`; inside the usable area beside the taskbar |
+| `taskbar_items` | Start left, window list center, tray/status items right | ordered `section:item` entries; prefix with `-` to hide an item |
 | `focus_follows_mouse` | `false` | |
 | `canvas_columns`, `canvas_rows` | `3`, `3` | 1 to 10 |
 | `mini_map_enabled` | `true` | |
@@ -82,8 +104,12 @@ keep 12-hour time and Sunday first until changed.
 | `window_gap` | `0` | px between snapped windows |
 | `snap_to_edges` | `true` | |
 | `dodge_file_drags` | `true` | file manager slides aside while you drag a file out |
+| `drag_feedback` | `true` | softly lift a window during a move drag; suppressed by reduced motion |
+| `drag_scale` | `1.03` | drag lift multiplier, `1.00`–`1.10`; adjustable in Appearance |
 | `files_single_click_open` | `true` | Files opens files and folders with one click on their icon in list or icons view |
 | `switcher_opacity`, `inactive_opacity` | `1.0` | |
+| `inactive_dim` | `true` | windows that are not the focus lose a little brightness and colour; fullscreen windows never dim. Settings, Appearance has the switch |
+| `inactive_dim_amount` | `0.08` | 0.0 to 0.5, the fraction of brightness and of colour an unfocused window loses |
 | `border_radius` | `10` | Legacy frame radius; `[theme].radius_lg` takes precedence. |
 | `xwayland` | `true` | `false` means native only |
 | `xwayland_native_scaling` | `false` | sharp X11 on fractional scales, restart needed |
@@ -94,6 +120,9 @@ keep 12-hour time and Sunday first until changed.
 | `lid_close` | `"display_off"` | `display_off`, `lock`, `suspend`, `ignore` |
 | `lock_on_suspend` | `true` | |
 | `sound_theme`, `sound_enabled`, `sound_disabled_events` | `"freedesktop"`, `true`, `[]` | event sounds, used by `play_sound` |
+
+Drag lift uses a gentle spring around the grab point and returns smoothly on
+release. Its timing can be adjusted with `[animations.window_drag]`.
 
 ## Outputs
 

@@ -400,7 +400,9 @@ static bool try_scanout(struct entry *e, struct wlr_scene_output *out,
         !wlr_output_is_direct_scanout_allowed(out->output)) return false;
     struct wlr_scene_buffer *b = wlr_scene_buffer_from_node(e->transport);
     const struct rediwm_content *c = &e->item.content;
-    if (!b->buffer || c->transform != v->transform || c->opacity != 1) return false;
+    // Scanout shows the client's buffer as it is: a dimmed window needs the pass.
+    if (!b->buffer || c->transform != v->transform || c->opacity != 1 ||
+        c->dim_brightness > 0 || c->dim_saturation > 0) return false;
     const struct wlr_output_image_description *desc = state->committed & WLR_OUTPUT_STATE_IMAGE_DESCRIPTION ?
         state->image_description : out->output->image_description;
     if (desc) {
@@ -656,7 +658,12 @@ static void render_effect(struct entry *e, struct wlr_render_pass *pass, const s
         o.front_opacity = f->item.content.opacity;
         break;
     }
+    // The effect shows what is behind its window: it is dimmed with the window.
+    const struct rediwm_content *content = &e->item.content;
+    const bool graded = content->dim_brightness > 0 || content->dim_saturation > 0;
+    if (graded) rediwm_scene_pass_set_dim(pass, content->dim_brightness, content->dim_saturation);
     rediwm_scene_pass_add_backdrop(pass, &shape, dst, &o);
+    if (graded) rediwm_scene_pass_set_dim(pass, 0, 0);
 }
 // `backdrop`: drawing into an effect's quarter-size image (stage 5f), where an
 // item counts with its whole box, not what is visible of it on screen, and
@@ -669,6 +676,7 @@ static bool render_entry(struct rediwm_output_renderer *r, struct entry *e, stru
     pixman_region32_init(&clip);
     pixman_region32_init(&blend);
     pixman_region32_init(&core);
+    bool graded = false;
     if (backdrop) pixman_region32_init_rect(&clip, dst.x, dst.y, dst.width, dst.height);
     else {
         pixman_region32_copy(&clip, &e->visible);
@@ -706,6 +714,10 @@ static bool render_entry(struct rediwm_output_renderer *r, struct entry *e, stru
         pixman_region32_subtract(&clip, &clip, &core);
     }
     const struct rediwm_content *c = &e->item.content;
+    // A window that is not the focus is drawn dimmed, whole: the pass grades each
+    // draw (the interior, the rim and the ring alike) until it is reset below.
+    graded = c->dim_brightness > 0 || c->dim_saturation > 0;
+    if (graded) rediwm_scene_pass_set_dim(pass, c->dim_brightness, c->dim_saturation);
     if (e->item.kind == REDIWM_ITEM_SHADOW) {
         // The offset is taken to device pixels as the difference of two snapped
         // boxes, so an output transform turns it with them.
@@ -778,6 +790,8 @@ static bool render_entry(struct rediwm_output_renderer *r, struct entry *e, stru
         e->sampled = true;
     }
 done:
+    // What is drawn next (the next item, the software cursor) is not this item's.
+    if (graded) rediwm_scene_pass_set_dim(pass, 0, 0);
     pixman_region32_fini(&clip);
     pixman_region32_fini(&blend);
     pixman_region32_fini(&core);

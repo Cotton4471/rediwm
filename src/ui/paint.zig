@@ -1126,6 +1126,7 @@ fn paintToggle(widget: *const Widget, data: ToggleData, renderer: *Renderer) voi
 /// Shared slider styling and feedback, using the surface's theme palette.
 pub fn paintSlider(widget: *const Widget, data: SliderData, renderer: *Renderer) void {
     const t = renderer.palette orelse theme.global;
+    if (t.slider_shaded) return @import("widgets/slider.zig").paintShaded(widget, data, renderer);
     const w = widget.computed_width;
     const cy = widget.computed_y + widget.computed_height / 2;
     const settings = data.style == .settings;

@@ -83,8 +83,19 @@ with mauve accents and the bundled `wallpaper-mocha.png` Auckland skyline.
 Gold uses warm charcoal decorations, ivory app content, champagne accents,
 the bundled gold wallpaper and colour icons. It puts the taskbar at the top
 and enables the bottom dock. Notifications use tinted backdrop glass.
+Choosing Gold also applies its folder, Home and Trash artwork to the desktop,
+Files and its sidebar; no separate icon-theme selection is needed. Pack icons
+take priority, with the usual icons filling any gaps.
 RediWM Dark, RediWM Light, Redi Blue and Redi-Mocha explicitly restore the
 standard 44-pixel taskbar at the bottom with the dock disabled.
+
+Gold's switches use shaded amber/grey tracks and ivory knobs. Set
+`toggle_shaded = true` for that recessed treatment; `toggle_on` and
+`toggle_thumb` optionally override the usual `accent` and `control_thumb`,
+while `toggle_track` controls the off colour.
+Its sliders use `slider_shaded = true` for a recessed rail, luminous fill and
+round metallic thumb. `slider_highlight` sets the bright reflections over the
+accent colour; `slider_track` sets the unfilled rail.
 
 ## Layout defaults
 
@@ -94,23 +105,32 @@ Packs may include this optional section:
 [layout]
 taskbar_position = "top"   # top or bottom
 dock_enabled = true
-dock_height = 76          # 48–96 logical pixels
+dock_position = "bottom" # top, bottom, left or right
+dock_height = 76          # thickness; 48–96 logical pixels
+dock_hover_zoom = 1.05    # 1.0–1.5; 1.0 disables hover enlargement
 ```
 
 Only these appearance settings are accepted here. Resolution is compositor
 defaults → pack layout → explicit `[compositor]` settings. Choosing a theme
-or **Reset to theme** clears these three personal overrides; a pack without
+or **Reset to theme** clears these personal overrides; a pack without
 layout values returns to the ordinary bottom taskbar and disabled dock.
 Hidden dock entries and application preferences are preserved. **Save look…**
 includes the current layout.
 
 ## Separate surface palettes
 
-Optional `[theme]` colours `app_fg`, `app_sidebar_fg`, `app_sidebar_selected`, `app_menu_bg`,
+Optional `[theme]` colours `app_fg`, `app_sidebar_fg`, `app_sidebar_selected`,
+`app_sidebar_hover`, `app_surface_hover`, `app_menu_bg`,
 `app_field_bg` and `app_field_border` let client content differ from window
 decorations. The shared app loader resolves them for Files, Images, Editor
 and PDF, including their controls. Unset values keep existing theme behaviour.
 GTK colour export also uses the app and sidebar foregrounds.
+
+`app_sidebar_hover_marker` adds a bright leading bar and an accent-coloured
+glow to Files sidebar hovers. Gold enables it; unset leaves the plain fill.
+Gold uses 96% opaque hover fills and a fully opaque Files sidebar. Its sidebar
+and shell menu hovers stay brown so their ivory text remains readable; app
+content and toolbar hovers use champagne.
 
 `dock_bg` and `dock_border` override the taskbar-derived dock colours;
 `dock_radius` is in logical pixels (zero follows the window frame radius).
@@ -119,6 +139,14 @@ An explicit dock background uses its own alpha without the inherited dock's
 `notification_border`, `notification_icon_bg` and `notification_radius`
 control notification cards. `notification_blur = true` enables the existing
 backdrop renderer behind them. Defaults retain the previous appearance.
+
+Wi-Fi and battery popups accept `popup_bg`, `popup_border`, `popup_radius`
+and `popup_blur`. With blur enabled they use a rounded glass panel without a
+pointer. `popup_card_bg`, `popup_card_fg`, `popup_card_dim`,
+`popup_card_border` and `popup_card_radius` style the network rows and battery
+detail/profile cards. `popup_battery_ring` overrides the normal battery arc;
+critical charge still uses the danger colour. Gold uses 40%-opaque warm glass, ivory
+cards and an amber arc. Unset colours retain the stock appearance.
 
 ## Terminal palette
 

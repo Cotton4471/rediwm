@@ -105,11 +105,8 @@ const Theme = struct {
     }
 };
 
-// theme -> theme's Inherits (recursive, deduped) -> "hicolor" (mandatory
-// fallback even if undeclared) -> flat /usr/share/pixmaps.
-pub fn find(allocator: Allocator, io: Io, cfg: Config, icon_name: []const u8, target_px: i32) !?Found {
-    _ = pthread.pthread_mutex_lock(&index_mutex);
-    defer _ = pthread.pthread_mutex_unlock(&index_mutex);
+/// Flat artwork supplied by the active pack, without an installed-theme fallback.
+pub fn findPack(allocator: Allocator, io: Io, cfg: Config, icon_name: []const u8) !?Found {
     if (cfg.override_root.len > 0 and @import("config").theme_pack.relative(icon_name) and std.mem.indexOfScalar(u8, icon_name, '/') == null) {
         for ([_][]const u8{ "svg", "png" }) |ext| {
             const rel = try std.fmt.allocPrint(allocator, "icons/{s}.{s}", .{ icon_name, ext });
@@ -120,6 +117,15 @@ pub fn find(allocator: Allocator, io: Io, cfg: Config, icon_name: []const u8, ta
             } else |_| {}
         }
     }
+    return null;
+}
+
+// pack -> theme -> theme's Inherits (recursive, deduped) -> "hicolor"
+// (mandatory fallback even if undeclared) -> flat /usr/share/pixmaps.
+pub fn find(allocator: Allocator, io: Io, cfg: Config, icon_name: []const u8, target_px: i32) !?Found {
+    if (try findPack(allocator, io, cfg, icon_name)) |found| return found;
+    _ = pthread.pthread_mutex_lock(&index_mutex);
+    defer _ = pthread.pthread_mutex_unlock(&index_mutex);
     // Every theme-name string this call ever allocates (Inherits= entries),
     // freed once at the end. `pending`/`visited` below only ever hold slices
     // borrowed from here or from `cfg.theme_name`, so nothing can dangle.

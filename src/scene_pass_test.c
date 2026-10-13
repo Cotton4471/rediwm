@@ -739,6 +739,108 @@ static void gate_premultiplied(struct rediwm_scene_renderer *r, struct wlr_buffe
     puts("PASS: premultiplied edges, opacity and XRGB textures blend correctly through the clip");
 }
 
+// ---- Dimming: a window that is not the focus is graded in the pass ----------------
+// What rediwm_scene_pass_set_dim documents, worked out here on its own: the colour is
+// pulled toward its luminance by the saturation taken away, then everything is scaled
+// by the brightness left. On premultiplied values, as the pass has them.
+static void graded(const double in[3], double brightness, double saturation, double out[3]) {
+    const double l = .213 * in[0] + .715 * in[1] + .072 * in[2];
+    for (int i = 0; i < 3; i++) out[i] = (l + (in[i] - l) * (1 - saturation)) * (1 - brightness);
+}
+static void check_pixel(const struct image *img, int x, int y, const double want[3], const char *what) {
+    for (int ch = 0; ch < 3; ch++)
+        check(diff(at(img, x, y)[ch], (int)lround(255 * want[ch])) <= 2, "%s: (%d,%d) channel %d is %d, not %ld",
+            what, x, y, ch, at(img, x, y)[ch], lround(255 * want[ch]));
+}
+static void gate_dim(struct rediwm_scene_renderer *r, struct wlr_buffer *buf, struct image *img) {
+    const float db = .10f, ds = .20f;
+    const float c[4] = {200 / 255.f, 100 / 255.f, 50 / 255.f, 1};
+    const double cd[3] = {c[0], c[1], c[2]}, bg[3] = {BG[0], BG[1], BG[2]};
+    double want[3];
+    // A plain rect, then one after the dim is taken off: the first is graded, the
+    // second and what was drawn before are not.
+    struct wlr_render_pass *pass = begin_fill(r, buf, BG, NULL);
+    rediwm_scene_pass_set_dim(pass, db, ds);
+    wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options){.box = {20, 20, 40, 40}, .color = {c[0], c[1], c[2], 1}});
+    rediwm_scene_pass_set_dim(pass, 0, 0);
+    wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options){.box = {80, 20, 40, 40}, .color = {c[0], c[1], c[2], 1}});
+    finish(pass);
+    read_image(r, buf, img);
+    graded(cd, db, ds, want);
+    check_pixel(img, 40, 40, want, "a dimmed plain rect");
+    check_pixel(img, 100, 40, cd, "a rect after the dim is taken off");
+    check_pixel(img, 300, 300, bg, "the background before the dim");
+    // A dimmed rect through a shape: the interior and the ring are graded, the
+    // corner the shape cuts away is the backdrop, whole.
+    const struct rediwm_pass_shape ring = {.box = {140, 100, 80, 80}, .radii = {20, 20, 20, 20}, .border = 4,
+        .border_color = {.5f, 0, 0, .5f}};
+    pass = begin_fill(r, buf, BG, NULL);
+    rediwm_scene_pass_set_dim(pass, db, ds);
+    piece(pass, &ring, ring.box, c, NULL);
+    rediwm_scene_pass_set_dim(pass, 0, 0);
+    finish(pass);
+    read_image(r, buf, img);
+    graded(cd, db, ds, want);
+    check_pixel(img, 180, 140, want, "a dimmed shaped interior");
+    const double under_ring[3] = {cd[0] * .5 + .5, cd[1] * .5, cd[2] * .5};
+    graded(under_ring, db, ds, want);
+    check_pixel(img, 141, 140, want, "a dimmed ring");
+    check_pixel(img, 141, 101, bg, "the corner a dimmed shape cuts away");
+    // A half-transparent texel: graded as premultiplied, then over the backdrop,
+    // so it keeps its alpha.
+    uint32_t half[16];
+    for (int i = 0; i < 16; i++) half[i] = 0x80800000;
+    struct wlr_texture *t_half = wlr_texture_from_pixels(r->renderer, DRM_FORMAT_ARGB8888, 16, 4, 4, half);
+    check(t_half != NULL, "cannot create the test texture");
+    const struct rediwm_pass_shape card = {.box = {240, 100, 80, 80}, .radii = {20, 20, 20, 20}};
+    pass = begin_fill(r, buf, BG, NULL);
+    rediwm_scene_pass_set_dim(pass, db, ds);
+    rediwm_scene_pass_add_texture_shaped(pass, &(struct wlr_render_texture_options){
+        .texture = t_half, .dst_box = card.box}, &card);
+    rediwm_scene_pass_set_dim(pass, 0, 0);
+    finish(pass);
+    read_image(r, buf, img);
+    const double alpha = 128 / 255., src[3] = {128 / 255., 0, 0};
+    graded(src, db, ds, want);
+    for (int i = 0; i < 3; i++) want[i] += bg[i] * (1 - alpha);
+    check_pixel(img, 280, 140, want, "a dimmed half-transparent texel");
+    wlr_texture_destroy(t_half);
+    // A shadow is not graded, whatever the pass holds.
+    const struct rediwm_pass_shape cast = {.box = {340, 100, 80, 80}, .radii = {20, 20, 20, 20}};
+    const struct rediwm_pass_shadow shadow = {.softness = 12, .color = {.6f, 0, 0, .6f}};
+    uint8_t plain[3];
+    for (int dimmed = 0; dimmed < 2; dimmed++) {
+        pass = begin_fill(r, buf, BG, NULL);
+        if (dimmed) rediwm_scene_pass_set_dim(pass, db, ds);
+        rediwm_scene_pass_add_shadow(pass, &cast, &shadow);
+        finish(pass);
+        read_image(r, buf, img);
+        if (!dimmed) memcpy(plain, at(img, 380, 140), 3);
+        else for (int ch = 0; ch < 3; ch++)
+            check(diff(at(img, 380, 140)[ch], plain[ch]) <= 1, "a dimmed pass graded a shadow (channel %d)", ch);
+    }
+    // A pass that ends with the dim still set leaves none for the next one.
+    pass = begin_fill(r, buf, BG, NULL);
+    rediwm_scene_pass_set_dim(pass, .5f, .5f);
+    wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options){.box = {20, 20, 40, 40}, .color = {c[0], c[1], c[2], 1}});
+    finish(pass);
+    pass = begin_fill(r, buf, BG, NULL);
+    wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options){.box = {20, 20, 40, 40}, .color = {c[0], c[1], c[2], 1}});
+    finish(pass);
+    read_image(r, buf, img);
+    check_pixel(img, 40, 40, cd, "the first rect of a pass after one that kept its dim");
+    // A fraction outside 0 to 1 fails the pass, and the next one works.
+    const float bad[][2] = {{-.1f, 0}, {0, 1.5f}, {NAN, 0}, {0, INFINITY}};
+    for (size_t i = 0; i < COUNT(bad); i++) {
+        pass = begin_fill(r, buf, BG, NULL);
+        rediwm_scene_pass_set_dim(pass, bad[i][0], bad[i][1]);
+        check(!wlr_render_pass_submit(pass), "a dim of (%g, %g) did not fail the pass", bad[i][0], bad[i][1]);
+    }
+    pass = begin_fill(r, buf, BG, NULL);
+    finish(pass);
+    puts("PASS: a dimmed pass grades rects, shapes, rings and translucent texels, not shadows, and fails closed");
+}
+
 // ---- Gate 5: the opaque cover of the model is fully covered in real pixels -------------
 // rediwm_clip_opaque promises its rectangles are inside full coverage; the output
 // pass will draw them without blending and trust that. Painting them first with
@@ -900,6 +1002,7 @@ static void shaped_gates(struct rediwm_scene_renderer *r, struct wlr_allocator *
     gate_no_seams(r, buf, &img);
     gate_border_partition(r, buf, &img, &ref);
     gate_premultiplied(r, buf, &img);
+    gate_dim(r, buf, &img);
     gate_opaque_cover(r, buf, &img, &ref);
     gate_shadow(r, buf, &img);
     gate_damage_at_clip_edge(r, allocator, &img);
@@ -1138,12 +1241,38 @@ static void gate_backdrop_redirect(struct rediwm_scene_renderer *r, struct wlr_a
     wlr_buffer_drop(buf);
     puts("PASS: redirected draws land in the quarter-size image with their shape, offset and clip");
 }
+// The composite shows what is behind its window, so a dimmed window dims it too.
+static void gate_backdrop_dim(struct rediwm_scene_renderer *r, struct wlr_allocator *allocator, struct image *img) {
+    struct wlr_buffer *buf = target_sized(allocator, GW, GH);
+    struct rediwm_backdrop *b = NULL;
+    const struct wlr_box region = {120, 100, 400, 200}, box = {168, 148, 304, 104};
+    const float c[3] = {.2f, .4f, .6f};
+    const double in[3] = {c[0], c[1], c[2]};
+    double want[3];
+    struct wlr_render_pass *pass = begin_fill(r, buf, (float[4]){c[0], c[1], c[2], 1}, NULL);
+    rediwm_scene_pass_begin_backdrop(pass, region, 4);
+    fill(pass, (float[4]){c[0], c[1], c[2], 1});
+    rediwm_scene_pass_end_backdrop(pass, &b, 16);
+    rediwm_scene_pass_set_dim(pass, .1f, .2f);
+    rediwm_scene_pass_add_backdrop(pass, &(struct rediwm_pass_shape){.box = box}, box,
+        &(struct rediwm_pass_backdrop){.backdrop = b, .saturation = 1, .opacity = 1});
+    rediwm_scene_pass_set_dim(pass, 0, 0);
+    finish(pass);
+    read_image(r, buf, img);
+    graded(in, .1, .2, want);
+    check_pixel(img, 300, 200, want, "a dimmed backdrop");
+    check_pixel(img, 20, 20, in, "outside it");
+    rediwm_scene_renderer_destroy_backdrop(r, b);
+    wlr_buffer_drop(buf);
+    puts("PASS: a dimmed backdrop composite is graded like the window it backs");
+}
 static void backdrop_gates(struct rediwm_scene_renderer *r, struct wlr_allocator *allocator) {
     struct image img = {0};
     gate_backdrop_blur(r, allocator, &img);
     gate_backdrop_properties(r, allocator, &img);
     gate_backdrop_front(r, allocator, &img);
     gate_backdrop_redirect(r, allocator, &img);
+    gate_backdrop_dim(r, allocator, &img);
     free(img.p);
 }
 int main(void) {

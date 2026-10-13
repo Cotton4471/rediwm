@@ -205,6 +205,10 @@ zoom_scale: f64 = 1.0,
 /// Presentation-only focus boost. Neither saved geometry nor zoom_index changes.
 zoom_boost: anim.Anim = .{},
 zoom_boost_value: f64 = 0,
+/// Drag lift is presentation only; the grab point stays fixed under the pointer.
+drag_lift: anim.Anim = .{ .from = 1, .to = 1 },
+drag_lift_value: f64 = 1,
+drag_lift_anchor: geometry.Vec2 = .{ .x = 0, .y = 0 },
 zoom_anim: @import("ui").anim.Anim = .{ .from = 1, .to = 1 },
 zoom_anchor: geometry.Vec2 = .{ .x = 0, .y = 0 },
 zoom_local: geometry.Vec2 = .{ .x = 0, .y = 0 },
@@ -260,6 +264,11 @@ glow_y: f32 = 0,
 /// The window opacity the border colour of the shape was last given, so a
 /// hover or focus repaint keeps the ring as faded as the body.
 shape_opacity: f32 = 1,
+/// How dimmed the window is while it is not the focus (`applyDim`): 1 is all of
+/// `inactive_dim_amount`, eased with focus. `dim_shown` is the fraction of
+/// brightness and colour the output pass was last told to take away.
+dim_anim: anim.Anim = .{ .property = .opacity },
+dim_shown: f32 = 0,
 // Inputs that produced the buffers currently attached to the scene nodes.
 // syncChrome / syncShadow skip a re-raster when these still match.
 last_titlebar: ?chrome.TitlebarMemo = null,
@@ -1559,11 +1568,56 @@ pub fn applyVisualTransform(toplevel: *Toplevel, now_ms: i64) void {
         anim.windowMapScale(toplevel.map_motion.value(now_ms))
     else
         1.0;
-    _ = @import("projection.zig").setTreeZoom(&toplevel.frame_tree.node, zoom_scale * factor);
+    _ = @import("projection.zig").setTreeZoom(&toplevel.frame_tree.node, zoom_scale * factor * toplevel.drag_lift_value);
+    const lift = toplevel.dragLiftOffset();
     toplevel.frame_tree.node.setPosition(
-        visualX(toplevel, now_ms) + animOffset(toplevel.dodge_x, now_ms) + animOffset(toplevel.switch_x, now_ms),
-        visualY(toplevel, now_ms) + animOffset(toplevel.dodge_y, now_ms) + animOffset(toplevel.switch_y, now_ms),
+        visualX(toplevel, now_ms) + animOffset(toplevel.dodge_x, now_ms) + animOffset(toplevel.switch_x, now_ms) - lift.x,
+        visualY(toplevel, now_ms) + animOffset(toplevel.dodge_y, now_ms) + animOffset(toplevel.switch_y, now_ms) - lift.y,
     );
+}
+
+fn dragLiftOffset(toplevel: *const Toplevel) struct { x: i32, y: i32 } {
+    const extra = toplevel.worldScale() * (toplevel.drag_lift_value - 1);
+    return .{
+        .x = @intFromFloat(@round(toplevel.drag_lift_anchor.x * extra)),
+        .y = @intFromFloat(@round(toplevel.drag_lift_anchor.y * extra)),
+    };
+}
+
+pub fn tickDragLift(toplevel: *Toplevel, now_ms: i64) bool {
+    const input = &toplevel.server.input;
+    const moving = input.cursor_mode == .move and input.grabbed_toplevel == toplevel;
+    const config = toplevel.server.config.compositor;
+    const lift = moving and config.drag_feedback and !toplevel.isFullscreen() and
+        input.move_snap.unsnap_from == null and anim.enabled() and !anim.reducedMotion();
+    if (moving) {
+        const scale = toplevel.worldScale();
+        toplevel.drag_lift_anchor = if (input.tiling_grab != null)
+            .{ .x = @as(f64, @floatFromInt(toplevel.chrome_width)) / 2, .y = @as(f64, @floatFromInt(toplevel.chrome_height)) / 2 }
+        else
+            .{ .x = input.grab_x / scale, .y = input.grab_y / scale };
+    }
+    const target: f32 = if (lift) config.drag_scale else 1;
+    if (!toplevel.drag_lift.active() and toplevel.drag_lift.to == target) return false;
+    if (toplevel.drag_lift.to != target) toplevel.drag_lift.retargetTo(now_ms, target, anim.curveFor(.window_drag));
+    const live = toplevel.drag_lift.active();
+    _ = toplevel.drag_lift.sampleChanged(now_ms, 0.0001);
+    const settled = toplevel.drag_lift.settled(now_ms);
+    toplevel.drag_lift_value = std.math.clamp(if (settled) toplevel.drag_lift.to else toplevel.drag_lift.value(now_ms), 1, @import("config").loader.drag_scale_max);
+    if (settled) {
+        toplevel.drag_lift.cancel(@floatCast(toplevel.drag_lift_value));
+        if (live) {
+            toplevel.applyVisualTransform(now_ms);
+            input.processCursorMotion(0);
+        }
+    }
+    return !settled;
+}
+
+fn clearDragLift(toplevel: *Toplevel) void {
+    toplevel.drag_lift.cancel(1);
+    toplevel.drag_lift_value = 1;
+    if (toplevel.in_world) toplevel.applyVisualTransform(nowMs());
 }
 
 fn animOffset(a: anim.Anim, now_ms: i64) i32 {
@@ -1931,14 +1985,18 @@ pub fn footerHeight(toplevel: *const Toplevel) i32 {
 
 pub fn frameLocal(toplevel: *const Toplevel, lx: f64, ly: f64) geometry.Vec2 {
     const point = toplevel.server.world.toWorld(lx, ly);
-    const local = geometry.toLocal(point.x, point.y, toplevel.x, toplevel.y);
-    return .{ .x = local.x / toplevel.worldScale(), .y = local.y / toplevel.worldScale() };
+    const lift = toplevel.dragLiftOffset();
+    const local = geometry.toLocal(point.x, point.y, toplevel.x - lift.x, toplevel.y - lift.y);
+    const scale = toplevel.worldScale() * toplevel.drag_lift_value;
+    return .{ .x = local.x / scale, .y = local.y / scale };
 }
 
 pub fn frameWorld(toplevel: *const Toplevel, x: f64, y: f64) geometry.Vec2 {
+    const lift = toplevel.dragLiftOffset();
+    const scale = toplevel.worldScale() * toplevel.drag_lift_value;
     return .{
-        .x = @as(f64, @floatFromInt(toplevel.x)) + x * toplevel.worldScale(),
-        .y = @as(f64, @floatFromInt(toplevel.y)) + y * toplevel.worldScale(),
+        .x = @as(f64, @floatFromInt(toplevel.x - lift.x)) + x * scale,
+        .y = @as(f64, @floatFromInt(toplevel.y - lift.y)) + y * scale,
     };
 }
 
@@ -2559,6 +2617,7 @@ pub fn isGeometrySettled(toplevel: *Toplevel, now_ms: i64) bool {
     if (toplevel.isResizing()) return false;
     return toplevel.move_x.settled(now_ms) and toplevel.move_y.settled(now_ms) and
         toplevel.size_w.settled(now_ms) and toplevel.size_h.settled(now_ms) and
+        toplevel.drag_lift.settled(now_ms) and
         toplevel.switch_x.settled(now_ms) and toplevel.switch_y.settled(now_ms);
 }
 
@@ -2667,6 +2726,7 @@ fn clearChromeCache(toplevel: *Toplevel) void {
 /// shadow; geometry and theme changes pass true.
 pub fn syncChrome(toplevel: *Toplevel, rebuild_shadow: bool, now_ms: i64) !void {
     defer toplevel.server.scheduleFrames();
+    defer if (toplevel.server.input.grabbed_toplevel == toplevel) toplevel.server.input.updateGrabBorderGlow();
     const geometry_box = toplevel.clientGeometry();
     if (geometry_box.width <= 0 or geometry_box.height <= 0) return;
 
@@ -2913,6 +2973,7 @@ fn syncBorders(toplevel: *Toplevel, width: i32, height: i32) void {
 
 pub fn detachInput(toplevel: *Toplevel) void {
     toplevel.server.input.detachToplevel(toplevel);
+    toplevel.clearDragLift();
     toplevel.clearDodge();
     toplevel.clearZoomBoost();
     toplevel.peek_mix = .{};
@@ -2933,6 +2994,37 @@ pub fn effectiveOpacity(toplevel: *Toplevel, now_ms: i64) f32 {
     return (normal * (1 - mix) + toplevel.peek_level.value(now_ms) * mix) * toplevel.cameraFocusOpacity();
 }
 
+/// 1 for a window that should show dimmed: not the focus, unless the dim is off,
+/// the window is fullscreen (a video on another output stays as it is) or leaving.
+fn dimTarget(toplevel: *Toplevel) f32 {
+    const config = &toplevel.server.config.compositor;
+    if (!config.inactive_dim or config.inactive_dim_amount <= 0 or toplevel.closing or toplevel.isFullscreen()) return 0;
+    return if (toplevel == @import("config_runtime/actions.zig").focusedToplevel(toplevel.server)) 0 else 1;
+}
+
+/// Takes some brightness and colour from a window that is not the focus
+/// (`inactive_dim`): the output pass draws its whole frame, titlebar and ring
+/// included, graded by what is set on the tree. The level eases in and out with
+/// focus; a taskbar preview shows every window as it is. Popups are no part of it.
+fn applyDim(toplevel: *Toplevel, now_ms: i64) void {
+    const target = toplevel.dimTarget();
+    if (toplevel.dim_anim.to != target) toplevel.dim_anim.retargetTo(now_ms, target, anim.curveFor(.window_dim));
+    const level = toplevel.dim_anim.value(now_ms) * (1 - toplevel.peek_mix.value(now_ms));
+    // Whole levels of an 8-bit channel: a finer step shows nothing and would only repaint.
+    const amount = std.math.clamp(@round(level * toplevel.server.config.compositor.inactive_dim_amount * 255) / 255, 0, 1);
+    if (amount == toplevel.dim_shown) return;
+    if (!projection.setTreeDim(&toplevel.frame_tree.node, amount, amount)) {
+        log.warn("could not dim window {d} by {d}", .{ toplevel.id, amount });
+        return;
+    }
+    toplevel.dim_shown = amount;
+}
+
+/// Whether the dim is still easing, so frames keep coming until it settles.
+pub fn dimAnimating(toplevel: *const Toplevel, now_ms: i64) bool {
+    return !toplevel.dim_anim.settled(now_ms);
+}
+
 pub fn applyOpacity(toplevel: *Toplevel, now_ms: i64) void {
     var opacity = std.math.clamp(toplevel.effectiveOpacity(now_ms) * toplevel.map_opacity.value(now_ms) * toplevel.switch_fade.value(now_ms), 0, 1);
     toplevel.frame_tree.node.forEachBuffer(*f32, struct {
@@ -2944,6 +3036,7 @@ pub fn applyOpacity(toplevel: *Toplevel, now_ms: i64) void {
     for (toplevel.border_rects) |rect| col.setRect(rect, color);
     for (toplevel.frame_fills) |rect| col.setRect(rect, chrome.fillColor().scale(opacity));
     toplevel.shape_opacity = opacity;
+    toplevel.applyDim(now_ms);
     toplevel.applyShape();
     glass.Effect.configure(toplevel.glass_effect, toplevel.cornerRadius(), opacity);
     switch (toplevel.backend) {

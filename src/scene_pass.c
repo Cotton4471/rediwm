@@ -22,7 +22,9 @@ struct program {
     unsigned bit; // which bit of pass.targets_set tracks this program's target size
     GLint target, dst, color, alpha, opaque, sampler, coords;
     // Shaped programs only (-1 elsewhere): the shape, and the shadow's own terms.
-    GLint mode, origin, size, radii, border, bcolor, glow, gcolor, offset, softness, hide, use_shape;
+    GLint mode, origin, size, radii, border, bcolor, glow, gcolor, offset, softness, hide, use_shape, dim;
+    // What `dim` holds now (a uniform keeps its value between draws and passes).
+    float dim_brightness, dim_saturation;
     // The backdrop composite (shaped mode 3) and the blur program.
     GLint bmap, fmap, saturation, front, front_alpha, has_front;
     GLint step_uv, sigma, limits, src_scale;
@@ -80,6 +82,7 @@ struct pass {
     GLuint program;
     unsigned targets_set;
     int blend_mode;
+    float dim_brightness, dim_saturation; // rediwm_scene_pass_set_dim
     // Between begin_backdrop and end_backdrop draws land in a quarter-size image
     // of `region` (stage 5f): boxes move by its origin, scissors shrink by four.
     bool redirected;
@@ -194,13 +197,18 @@ static const char shaped_vertex[] =
 // when `hide` is set, which matters under translucent windows. One program for the
 // three because a program costs the driver 130-150 KiB however small it is.
 static const char shaped_fragment[] = SHAPED_HEAD
-    "uniform float alpha, opaque, mode, softness, hide; uniform vec2 offset;"
+    "uniform float alpha, opaque, mode, softness, hide; uniform vec2 offset, dim;"
     "uniform sampler2D front; uniform vec4 bmap, fmap; uniform float saturation, front_alpha, has_front, use_shape;"
+    // A dimmed window (rediwm_scene_pass_set_dim): colour pulled toward its
+    // luminance, then darker. Linear in the colour, so a premultiplied pixel and
+    // its straight colour come out the same, and an undimmed one is not touched.
+    "vec3 grade(vec3 c){ if(dim.x<=0.&&dim.y<=0.) return c;"
+    "float l=dot(c,vec3(.213,.715,.072)); return mix(vec3(l),c,1.-dim.y)*(1.-dim.x); }"
     "void main(){"
     // 3: a backdrop composite (stage 5b). `tex` is the kept blur; the alpha is
     // chosen against the surface drawn over it, so the pair has the coverage.
     "if(mode>2.5){ vec3 rgb=texture2D(tex,(local+bmap.xy)*bmap.zw).rgb;"
-    "float l=dot(rgb,vec3(.213,.715,.072)); rgb=clamp(vec3(l)+(rgb-vec3(l))*saturation,0.,1.);"
+    "float l=dot(rgb,vec3(.213,.715,.072)); rgb=clamp(vec3(l)+(rgb-vec3(l))*saturation,0.,1.);rgb=grade(rgb);"
     "float c=cov(sdf(local,radii))*alpha;"
     "float f=has_front>.5?texture2D(front,(local+fmap.xy)*fmap.zw).a*front_alpha:0.;"
     "float a=f>=.99999?0.:clamp((c-f)/(1.-f),0.,1.); gl_FragColor=vec4(rgb*a,a); return; }"
@@ -209,7 +217,7 @@ static const char shaped_fragment[] = SHAPED_HEAD
     "vec4 c=color; if(mode<.5){ c=texture2D(tex,uv); if(opaque>.5)c.a=1.; c*=alpha; }"
     // Without a shape (every plain draw) the colour is written as it is: the
     // plain programs are gone (stage 5, D4), and this costs one uniform branch.
-    "if(use_shape<.5){ gl_FragColor=c; return; }"
+    "if(use_shape<.5){ gl_FragColor=vec4(grade(c.rgb),c.a); return; }"
     "float d=sdf(local,radii);"
     "float w=border>0.?1.-cov(d+border):0.;"
     "vec4 o=c*(1.-bcolor.a*w)+bcolor*w;"
@@ -218,7 +226,7 @@ static const char shaped_fragment[] = SHAPED_HEAD
     "if(glow.z>0.){ float g=clamp(1.-length(local-glow.xy)/glow.z,0.,1.); g=g*g*(3.-2.*g);"
     "float t=glow.w>0.?1.-smoothstep(0.,1.,(-d-border)/glow.w):w;"
     "o=o*(1.-gcolor.a*g*t)+gcolor*(g*t); }"
-    "gl_FragColor=o*cov(d); }";
+    "o.rgb=grade(o.rgb); gl_FragColor=o*cov(d); }";
 
 // The backdrop blur (stage 5b): glass.c's kernel, 49 taps, sigma in texels of the
 // target, reading a source texture that may be larger than the region (scratch),
@@ -297,6 +305,7 @@ static bool program_init(struct program *p, unsigned bit, const char *vertex_sou
     p->softness = glGetUniformLocation(p->id, "softness");
     p->hide = glGetUniformLocation(p->id, "hide");
     p->use_shape = glGetUniformLocation(p->id, "use_shape");
+    p->dim = glGetUniformLocation(p->id, "dim");
     p->bmap = glGetUniformLocation(p->id, "bmap");
     p->fmap = glGetUniformLocation(p->id, "fmap");
     p->saturation = glGetUniformLocation(p->id, "saturation");
@@ -447,6 +456,14 @@ static void set_shape(const struct pass *p, const struct program *g, const struc
     glUniform4f(g->glow, s->glow_center[0], s->glow_center[1], s->glow_radius, s->glow_depth);
     glUniform4f(g->gcolor, s->glow_color[0], s->glow_color[1], s->glow_color[2], s->glow_color[3]);
 }
+// The pass's dim for a draw of `g`. The uniform keeps its value, so it is set only
+// when this program last held something else (a program starts at 0, as a pass does).
+static void apply_dim(struct pass *p, struct program *g) {
+    if (g->dim_brightness == p->dim_brightness && g->dim_saturation == p->dim_saturation) return;
+    glUniform2f(g->dim, p->dim_brightness, p->dim_saturation);
+    g->dim_brightness = p->dim_brightness;
+    g->dim_saturation = p->dim_saturation;
+}
 static void add_rect(struct wlr_render_pass *base, const struct wlr_render_rect_options *o) {
     struct pass *p = wl_container_of(base, p, base);
     if (p->failed || (o->clip && !pixman_region32_not_empty(o->clip))) return;
@@ -457,6 +474,7 @@ static void add_rect(struct wlr_render_pass *base, const struct wlr_render_rect_
     glUniform4f(g->color, o->color.r, o->color.g, o->color.b, o->color.a);
     glUniform1f(g->mode, 1.f);
     glUniform1f(g->use_shape, 0.f);
+    apply_dim(p, g);
     draw(p, o->clip);
 }
 static void rect_shaped(struct pass *p, const struct wlr_render_rect_options *o,
@@ -470,6 +488,7 @@ static void rect_shaped(struct pass *p, const struct wlr_render_rect_options *o,
     glUniform4f(g->color, o->color.r, o->color.g, o->color.b, o->color.a);
     glUniform1f(g->mode, 1.f);
     set_shape(p, g, shape);
+    apply_dim(p, g);
     draw(p, o->clip);
 }
 static bool wait_point(struct pass *p, struct wlr_drm_syncobj_timeline *timeline, uint64_t point) {
@@ -527,6 +546,7 @@ static void texture_draw(struct pass *p, const struct wlr_render_texture_options
     glUniform1f(program->mode, 0.f);
     if (shape) set_shape(p, program, shape);
     else glUniform1f(program->use_shape, 0.f);
+    apply_dim(p, program);
     draw(p, o->clip);
 }
 static void texture_add(struct wlr_render_pass *base, const struct wlr_render_texture_options *o,
@@ -660,6 +680,16 @@ void rediwm_scene_pass_add_shadow(struct wlr_render_pass *base,
     glUniform1f(g->softness, softness);
     glUniform1f(g->hide, shadow->hide_inside ? 1.f : 0.f);
     draw(p, shadow->clip);
+}
+
+void rediwm_scene_pass_set_dim(struct wlr_render_pass *base, float brightness, float saturation) {
+    struct pass *p = owned_pass(base);
+    if (!(brightness >= 0 && brightness <= 1 && saturation >= 0 && saturation <= 1)) {
+        p->failed = true;
+        return;
+    }
+    p->dim_brightness = brightness;
+    p->dim_saturation = saturation;
 }
 
 // ---- Backdrops (stage 5b) -------------------------------------------------------
@@ -850,6 +880,7 @@ void rediwm_scene_pass_add_backdrop(struct wlr_render_pass *base, const struct r
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, b->tex);
     glUniform1i(g->sampler, 0);
+    apply_dim(p, g);
     draw(p, o->clip);
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, 0);

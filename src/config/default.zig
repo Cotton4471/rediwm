@@ -118,12 +118,14 @@ pub const source =
     \\default_file_manager = ""
     \\default_terminal = ""
     \\dock_enabled = false # compact launcher alongside the taskbar
-    \\dock_height = 68 # logical px; 48-96, icons and spacing resize together
+    \\dock_position = "bottom" # top, bottom, left or right
+    \\dock_height = 68 # thickness in logical px; 48-96, icons and spacing resize together
+    \\dock_hover_zoom = 1.05 # 1.0-1.5; 1.0 disables icon enlargement on hover
     \\dock_hidden_apps = [] # app IDs removed from the dock's context menu
     \\dock_hidden_shortcuts = [] # applications, files, terminal, settings
-    \\# Right-side taskbar items, left to right; prefix a name with - to hide it.
+    \\# Taskbar sections, ordered within each section; prefix with - to hide an item.
     \\taskbar_position = "bottom" # top or bottom
-    \\taskbar_items = ["battery", "network", "volume", "clock"]
+    \\taskbar_items = ["left:start", "center:windows", "right:tray", "right:battery", "right:network", "right:volume", "right:clock"]
     \\focus_follows_mouse   = false
     \\canvas_columns        = 3      # screens wide (1-10)
     \\canvas_rows           = 3      # screens tall (1-10)
@@ -139,10 +141,14 @@ pub const source =
     \\# Default tile gap: 0 px in canvas, 8 px in workspaces. Uncomment to override.
     \\# window_gap          = 8      # px around and between tiled windows
     \\snap_to_edges         = true   # drag a window to a screen edge to tile or maximize it
+    \\drag_feedback         = true   # softly lift a window while dragging it
+    \\drag_scale            = 1.03   # drag lift multiplier, 1.00-1.10
     \\dodge_file_drags      = true   # a file manager slides aside while you drag a file out of it
     \\files_single_click_open = true # Files: one click on an icon opens the file or folder
     \\switcher_opacity      = 1.0   # 0.0-1.0, background only; previews stay opaque
     \\inactive_opacity      = 1.0   # 0.0-1.0, 1.0 = no change
+    \\inactive_dim          = true  # windows that are not the focus lose a little brightness and colour
+    \\inactive_dim_amount   = 0.08  # 0.0-0.5, how much they lose (fullscreen windows never dim)
     \\border_radius         = 10    # window corner radius
     \\xwayland              = true  # X11 apps via Xwayland; false keeps native-only
     \\xwayland_native_scaling = false # sharp X11 apps on fractional scales (requires restart)

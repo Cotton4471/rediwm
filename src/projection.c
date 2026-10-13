@@ -132,18 +132,27 @@ struct leaf {
 //    evaluates it after this tree's own zoom and scale, so it follows its window
 //    and an inner scale never changes it. A clipped tree inside another replaces
 //    the outer shape for its own leaves; nothing intersects them;
-//  * unclipped: ends the inherited clip for the subtree. A popup's scene tree is a
-//    child of its parent surface's, so it sits under the window's clipped tree in
-//    the source graph while belonging to no window shape. The subtree's own clip,
-//    if it sets one, still applies;
+//  * unclipped: ends the inherited clip and dim for the subtree. A popup's scene
+//    tree is a child of its parent surface's, so it sits under the window's clipped
+//    tree in the source graph while belonging to no window frame. The subtree's own
+//    clip or dim, if it sets one, still applies;
+//  * dim: every leaf under the tree loses this fraction of its brightness and of
+//    its colour (`rediwm_content.dim_*`), inherited like the clip. It is a field of
+//    the item, so a change of it damages what the leaves show with no rule of its
+//    own, and the pass applies it per draw. A subtree's own dim replaces the outer
+//    one, and `unclipped` ends it as it ends the clip;
 //  * shadow: every leaf under the tree is the analytic shadow of this shape
 //    (REDIWM_ITEM_SHADOW), resolved like the clip;
 //  * inert: the subtree is shown but takes no input: the pick passes through it
 //    to what is below (a window sliding off a workspace it has left).
+struct dim {
+  float brightness, saturation;
+};
 struct tree_props {
   struct wlr_addon addon;
-  bool has_zoom, has_scale, has_clip, unclipped, has_shadow, inert;
+  bool has_zoom, has_scale, has_clip, unclipped, has_shadow, inert, has_dim;
   double zoom, scale;
+  struct dim dim;
   struct rediwm_clip_spec clip;
   struct rediwm_shadow_spec shadow;
   // The clip as the last resolve() saw it in layout space, to tell a changed
@@ -224,6 +233,22 @@ bool rediwm_projection_set_tree_shadow(struct wlr_scene_node *node,
   if (!props) return false;
   props->shadow = *spec;
   props->has_shadow = true;
+  return true;
+}
+bool rediwm_projection_set_tree_dim(struct wlr_scene_node *node, float brightness, float saturation) {
+  if (!isfinite(brightness) || !isfinite(saturation) || brightness < 0 || brightness > 1 ||
+      saturation < 0 || saturation > 1)
+    return false;
+  if (brightness == 0 && saturation == 0) {
+    // Nothing taken away is no dim; a tree that has none gets no addon for it.
+    struct tree_props *props = tree_props_find(node);
+    if (props) props->has_dim = false;
+    return true;
+  }
+  struct tree_props *props = tree_props_get(node);
+  if (!props) return false;
+  props->dim = (struct dim){brightness, saturation};
+  props->has_dim = true;
   return true;
 }
 bool rediwm_projection_set_tree_unclipped(struct wlr_scene_node *node, bool unclipped) {
@@ -559,7 +584,7 @@ static void damage_clip_change(struct rediwm_projection *p, const struct rediwm_
 static void resolve_node(struct rediwm_projection *p, struct group *g,
                          struct wlr_scene_node *node, double x, double y,
                          bool enabled, bool inert, struct rediwm_xform t,
-                         const struct rediwm_clip *clip,
+                         const struct rediwm_clip *clip, const struct dim *dim,
                          const struct rediwm_shadow *shadow) {
   x += node->x;
   y += node->y;
@@ -572,8 +597,12 @@ static void resolve_node(struct rediwm_projection *p, struct group *g,
       // Window zoom composes with the camera, around the frame origin.
       if (props->has_zoom) t = rediwm_xform_scale_about(t, props->zoom, x, y);
       if (props->has_scale) t = rediwm_xform_scale_about(t, props->scale, x, y);
-      if (props->unclipped) clip = NULL;
+      if (props->unclipped) {
+        clip = NULL;
+        dim = NULL;
+      }
       if (props->inert) inert = true;
+      if (props->has_dim) dim = &props->dim;
       if (props->has_clip) {
         here = rediwm_clip_resolve(t, x, y, &props->clip);
         clip = &here;
@@ -594,7 +623,7 @@ static void resolve_node(struct rediwm_projection *p, struct group *g,
     }
     struct wlr_scene_node *child;
     wl_list_for_each(child, &wlr_scene_tree_from_node(node)->children, link)
-        resolve_node(p, g, child, x, y, enabled, inert, t, clip, shadow);
+        resolve_node(p, g, child, x, y, enabled, inert, t, clip, dim, shadow);
     return;
   }
   struct leaf *l = get_leaf(p, node);
@@ -654,6 +683,10 @@ static void resolve_node(struct rediwm_projection *p, struct group *g,
     content->primaries = b->primaries;
     content->color_encoding = b->color_encoding;
     content->color_range = b->color_range;
+  }
+  if (dim) {
+    item->content.dim_brightness = dim->brightness;
+    item->content.dim_saturation = dim->saturation;
   }
   if (shadow && node->type == WLR_SCENE_NODE_BUFFER) {
     item->kind = REDIWM_ITEM_SHADOW;
@@ -1055,7 +1088,7 @@ static void resolve(struct rediwm_projection *p, double z, double cx, double cy,
     g->seen = true;
     g->enabled = node->enabled;
     wl_list_insert(p->paint.prev, &g->paint);
-    resolve_node(p, g, node, 0, 0, true, false, t, NULL, NULL);
+    resolve_node(p, g, node, 0, 0, true, false, t, NULL, NULL, NULL);
   }
 }
 static void damage_restacked(struct rediwm_projection *p);

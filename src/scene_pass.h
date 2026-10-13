@@ -79,6 +79,15 @@ void rediwm_scene_pass_add_texture_shaped(struct wlr_render_pass *,
 void rediwm_scene_pass_add_shadow(struct wlr_render_pass *, const struct rediwm_pass_shape *,
     const struct rediwm_pass_shadow *);
 
+// Takes this fraction (0 to 1) of the brightness and of the colour away from every
+// rect, texture and backdrop composite that follows, shaped or not, until it is set
+// again; 0 and 0 is how a pass starts, and what the caller restores after the item
+// it was set for, so what is drawn next (the software cursor) is never graded.
+// Colour is pulled toward the pixel's luminance, then everything is scaled, on
+// premultiplied values, so a translucent pixel keeps its alpha. A shadow is not
+// graded. A fraction outside 0 to 1 fails the pass at submit.
+void rediwm_scene_pass_set_dim(struct wlr_render_pass *, float brightness, float saturation);
+
 // Stage 5b of docs/plans/scene-graph.md: backdrop effects (glass). An effect
 // blurs what the pass has drawn so far under a region and composites it through
 // its shape, under the surface it backs. The blur is kept between frames in a

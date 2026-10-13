@@ -60,6 +60,46 @@ pub fn setSource(cr_any: *anyopaque, color: [4]f32) void {
     c.cairo_set_source_rgba(@ptrCast(cr_any), color[0], color[1], color[2], color[3]);
 }
 
+/// Sidebar hover fill and optional illuminated leading edge. Keep the glow
+/// inside the row so the existing hover damage and scrolling clips cover it.
+pub fn drawSidebarHover(cr_any: *anyopaque, box: Rect, alpha: f32) void {
+    if (box.w <= 0 or box.h <= 0 or alpha <= 0) return;
+    const cr: *c.cairo_t = @ptrCast(cr_any);
+    c.cairo_save(cr);
+    defer c.cairo_restore(cr);
+    const x: f64 = box.x;
+    const y: f64 = box.y;
+    const w: f64 = box.w;
+    const h: f64 = box.h;
+    const radius = @min(5, @min(w, h) / 2);
+    c.cairo_new_sub_path(cr);
+    c.cairo_arc(cr, x + w - radius, y + radius, radius, -std.math.pi / 2.0, 0);
+    c.cairo_arc(cr, x + w - radius, y + h - radius, radius, 0, std.math.pi / 2.0);
+    c.cairo_arc(cr, x + radius, y + h - radius, radius, std.math.pi / 2.0, std.math.pi);
+    c.cairo_arc(cr, x + radius, y + radius, radius, std.math.pi, 3 * std.math.pi / 2.0);
+    c.cairo_close_path(cr);
+    var fill = theme.global.sidebarHover();
+    fill[3] *= alpha;
+    setSource(cr, fill);
+    c.cairo_fill_preserve(cr);
+    c.cairo_clip(cr);
+    const marker = theme.global.app_sidebar_hover_marker orelse return;
+    const accent = theme.shellPalette().accent;
+    const glow = c.cairo_pattern_create_linear(x, 0, x + @min(w, 28), 0) orelse return;
+    defer c.cairo_pattern_destroy(glow);
+    c.cairo_pattern_add_color_stop_rgba(glow, 0, accent[0], accent[1], accent[2], accent[3] * alpha * 0.85);
+    c.cairo_pattern_add_color_stop_rgba(glow, 0.25, accent[0], accent[1], accent[2], accent[3] * alpha * 0.40);
+    c.cairo_pattern_add_color_stop_rgba(glow, 1, accent[0], accent[1], accent[2], 0);
+    c.cairo_set_source(cr, glow);
+    c.cairo_paint(cr);
+    c.cairo_set_source_rgba(cr, marker[0], marker[1], marker[2], marker[3] * alpha);
+    c.cairo_set_line_width(cr, 3);
+    c.cairo_set_line_cap(cr, c.CAIRO_LINE_CAP_ROUND);
+    c.cairo_move_to(cr, x + 2.5, y + 5);
+    c.cairo_line_to(cr, x + 2.5, y + h - 5);
+    c.cairo_stroke(cr);
+}
+
 pub fn drawSplitter(cr_any: *anyopaque, geometry: splitter.Geometry, engaged: bool) void {
     const cr: *c.cairo_t = @ptrCast(cr_any);
     const rect = geometry.line(engaged);

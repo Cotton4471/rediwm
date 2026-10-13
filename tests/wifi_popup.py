@@ -150,11 +150,14 @@ def start_fake():
     return process
 
 
-def run(scale):
+def run(scale, gold=False, top=False):
     fake = start_fake()
     with tempfile.TemporaryDirectory(prefix='rediwm-wifi-') as directory:
         tmp = Path(directory)
-        process, log = spawn_compositor(tmp, scale=scale, renderer=os.environ.get('REDIWM_TEST_RENDERER', 'gles2'), config_content='[compositor]\nxwayland = false\n', env_extra={
+        config = '[compositor]\nxwayland = false\ntaskbar_position = "' + ('top' if top else 'bottom') + '"\n'
+        if gold:
+            config += '[theme]\nbase = "gold"\n'
+        process, log = spawn_compositor(tmp, scale=scale, renderer=os.environ.get('REDIWM_TEST_RENDERER', 'gles2'), config_content=config, env_extra={
             'DBUS_SYSTEM_BUS_ADDRESS': os.environ['DBUS_SESSION_BUS_ADDRESS'], 'DBUS_SESSION_BUS_ADDRESS': '', 'XDG_CACHE_HOME': str(tmp),
         })
         try:
@@ -165,7 +168,8 @@ def run(scale):
                 def center(box): return box['x']+box['width']//2, box['y']+box['height']//2
                 anchor = center(boxes['network'])
                 factor = min(1, (bar['box']['width']-24)/420)
-                point = (anchor[0], bar['box']['y']-40)
+                available_h = ipc.get_outputs()[0]['logical_height'] - bar['box']['height'] - 24
+                point = (anchor[0], bar['box']['y'] + bar['box']['height'] + 40 if top else bar['box']['y']-40)
                 def settle():
                     ipc.wait_for_frame()
                     time.sleep(.25) # panel animation, not network state polling
@@ -178,7 +182,7 @@ def run(scale):
                     return round(ox+x*factor),round(oy+y*factor)
                 def click(x,y): ipc.click_at(*at(x,y)); settle()
                 def locate(widget):
-                    for y in range(75, int((bar['box']['y']-24)/factor)-64, 10):
+                    for y in range(75, int(available_h/factor)-64, 10):
                         point=at(120,y)
                         if ipc.hit_test(*point).get('widget')==widget: return point
                     raise AssertionError(f'{widget} is not visible')
@@ -189,9 +193,14 @@ def run(scale):
                     assert read_line(fake)=={'done':True}
                     settle()
                 def screenshot(name):
-                    target=Path('/tmp')/f'rediwm-wifi-{name}-{scale}-{os.environ.get("REDIWM_TEST_RENDERER", "gles2")}.png'
+                    target=Path('/tmp')/f'rediwm-wifi-{name}-{scale}-{os.environ.get("REDIWM_TEST_RENDERER", "gles2")}{"-gold" if gold else ""}{"-top" if top else ""}.png'
                     target.unlink(missing_ok=True)
                     ipc.screenshot(str(target))
+                    if gold and name == 'list':
+                        x, y = at(70, 90)
+                        with Image.open(target) as image:
+                            red, green, blue = image.convert('RGB').getpixel((round(x * float(scale)), round(y * float(scale))))
+                        assert red > 190 and green > 180 and blue > 155, ('Gold network card', (red, green, blue))
                 def tray_red():
                     box,raster,target=boxes['network'],float(scale),tmp/'tray.png'
                     target.unlink(missing_ok=True)
@@ -208,13 +217,14 @@ def run(scale):
                     return seen
                 # The tray icon follows NetworkManager's global state with no popup open:
                 # red only while nothing is connected, never while connecting.
-                assert not tray_red(), 'connected: the wifi icon is red'
-                command(global_state=20);phases=tray_phases();assert True in phases, 'disconnected: the wifi icon is not red'
-                assert phases == {True, False}, 'disconnected: the wifi icon does not blink'
-                command(global_state=40);assert not tray_red(), 'connecting: the wifi icon is red'
-                time.sleep(1.2);assert not tray_red(), 'connecting: the wifi icon still blinks'
-                command(global_state=10);assert True in tray_phases(), 'asleep: the wifi icon is not red'
-                command(global_state=70);assert not tray_red(), 'reconnected: the wifi icon is still red'
+                if '--popup-only' not in sys.argv:
+                    assert not tray_red(), 'connected: the wifi icon is red'
+                    command(global_state=20);phases=tray_phases();assert True in phases, 'disconnected: the wifi icon is not red'
+                    assert phases == {True, False}, 'disconnected: the wifi icon does not blink'
+                    command(global_state=40);assert not tray_red(), 'connecting: the wifi icon is red'
+                    time.sleep(1.2);assert not tray_red(), 'connecting: the wifi icon still blinks'
+                    command(global_state=10);assert True in tray_phases(), 'asleep: the wifi icon is not red'
+                    command(global_state=70);assert not tray_red(), 'reconnected: the wifi icon is still red'
                 open_menu()
                 wait_for(lambda: ipc.hit_test(*at(100,100)).get('widget')=='row','network rows')
                 screenshot('searching')
@@ -289,7 +299,7 @@ def run(scale):
                 fake.terminate();fake.wait(timeout=5);settle();screenshot('unavailable')
                 fake=start_fake();settle()
                 wait_for(lambda: ipc.hit_test(*at(100,100)).get('widget')=='row','service restart')
-                ipc.click_at(20,20);settle()
+                ipc.click_at(20,200);settle()
                 assert ipc.hit_test(*point)['target_type']!='wifi_popup'
                 open_menu()
                 # The footer opens the same Network page and retires the popup.
@@ -456,5 +466,5 @@ if __name__=='__main__':
         os.execvpe('dbus-run-session',['dbus-run-session','--',sys.executable,__file__,*sys.argv[1:]],{**os.environ,'REDIWM_WIFI_PRIVATE_BUS':'1'})
     os.umask(0o077)
     scale = next((arg for arg in sys.argv[1:] if not arg.startswith('--')), '1')
-    if '--settings-only' not in sys.argv: run(scale)
-    settings(scale)
+    if '--settings-only' not in sys.argv: run(scale, '--gold' in sys.argv, '--top' in sys.argv)
+    if '--popup-only' not in sys.argv: settings(scale)

@@ -41,14 +41,14 @@ pub const Menu = struct {
 
     pub fn open(self: *Menu, bar: *Taskbar, target: *Toplevel, x: i32) void {
         const output = Output.fromWlr(bar.wlr_output) orelse return;
-        self.openOn(output, bar, null, target, null, x);
+        self.openOn(output, bar, null, target, null, x, 0);
     }
 
-    pub fn openDock(self: *Menu, dock: *Dock, target: ?*Toplevel, shortcut: ?Dock.Shortcut, x: i32) void {
-        self.openOn(dock.output orelse return, null, dock, target, shortcut, x);
+    pub fn openDock(self: *Menu, dock: *Dock, target: ?*Toplevel, shortcut: ?Dock.Shortcut, x: i32, y: i32) void {
+        self.openOn(dock.output orelse return, null, dock, target, shortcut, x, y);
     }
 
-    fn openOn(self: *Menu, output: *Output, bar: ?*Taskbar, dock: ?*Dock, target: ?*Toplevel, shortcut: ?Dock.Shortcut, x: i32) void {
+    fn openOn(self: *Menu, output: *Output, bar: ?*Taskbar, dock: ?*Dock, target: ?*Toplevel, shortcut: ?Dock.Shortcut, x: i32, pointer_y: i32) void {
         self.close();
         const server = output.server;
         const input = &server.input;
@@ -68,9 +68,22 @@ pub const Menu = struct {
         self.target = target;
         const count: i32 = @intCast(self.actions().len);
         const height = padding * 2 + row_height * count + separator * (count - 1);
-        const y = if (dock) |d| if (d.box.y - height - 4 >= bounds.y) d.box.y - height - 4 else d.box.y + d.box.height + 4 else output.taskbarPopupY(height, 4);
+        var menu_x = x;
+        var y = output.taskbarPopupY(height, 4);
+        if (dock) |d| switch (d.position) {
+            .top => y = d.box.y + d.box.height + 4,
+            .bottom => y = d.box.y - height - 4,
+            .left => {
+                menu_x = d.box.x + d.box.width + 4;
+                y = pointer_y;
+            },
+            .right => {
+                menu_x = d.box.x - width - 4;
+                y = pointer_y;
+            },
+        };
         self.box = .{
-            .x = std.math.clamp(x, bounds.x, bounds.x + bounds.width - width),
+            .x = std.math.clamp(menu_x, bounds.x, bounds.x + bounds.width - width),
             .y = std.math.clamp(y, bounds.y, @max(bounds.y, bounds.y + bounds.height - height)),
             .width = width,
             .height = height,

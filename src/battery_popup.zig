@@ -1,5 +1,7 @@
 //! Battery details from the taskbar snapshot; no hardware reads or timers here.
 const std = @import("std");
+const popup_style = @import("popup_style.zig");
+const glass = @import("glass.zig");
 const wlr = @import("wlroots");
 const Output = @import("Output.zig");
 const gpa = @import("main.zig").gpa;
@@ -18,6 +20,7 @@ pub const Popup = struct {
     output: *Output,
     buffer_node: *wlr.SceneBuffer,
     node_data: scene.SceneData = undefined,
+    glass_effect: ?*glass.Effect = null,
     factor: f32 = 1,
     slide: Anim = .{},
     panel_box: wlr.Box = .{ .x = 0, .y = 0, .width = 0, .height = 0 },
@@ -40,6 +43,7 @@ pub const Popup = struct {
         _ = self.slide.sampleChanged(now_ms, anim.quantum_alpha);
         const t = self.slide.value(now_ms);
         panel_present.applySlide(self.buffer_node, self.panel_box, t, if (self.output.server.config.compositor.taskbar_position == .top) -slide_distance else slide_distance);
+        popup_style.configureGlass(&self.glass_effect, self.output.server.glass_engine, self.buffer_node, self.factor);
         return !self.slide.settled(now_ms);
     }
 
@@ -85,28 +89,8 @@ pub const Popup = struct {
         var r: paint.Renderer = .{ .pixels = buf.pixels, .width = buf.width, .height = buf.height, .scale = scale * self.factor };
         const t = theme.shellPalette();
         r.palette = t;
-        var opaque_bg = t.window_bg;
-        opaque_bg[3] = 1;
-        r.fillRect(0, 0, 368, 480, .{ .color = opaque_bg, .radius = 9, .border_width = 1, .border_color = t.border_hover });
-        // The pointer follows the battery even when taskbar items are reordered.
-        for (0..@intCast(buf.height)) |iy| {
-            const y = (@as(f32, @floatFromInt(iy)) + 0.5) / r.scale;
-            if (y < 479) continue;
-            for (0..@intCast(buf.width)) |ix| {
-                const x = (@as(f32, @floatFromInt(ix)) + 0.5) / r.scale;
-                const d = (@abs(x - tip) + y - 496) / @sqrt(@as(f32, 2));
-                const coverage = std.math.clamp(0.5 - d * r.scale, 0, 1);
-                if (coverage == 0) continue;
-                const mix = (1 - std.math.clamp((-d - 1) * r.scale + 0.5, 0, 1)) * t.border_hover[3];
-                buf.pixels[iy * @as(usize, @intCast(buf.width)) + ix] = (@import("color.zig").Straight{
-                    .r = t.window_bg[0] * (1 - mix) + t.border_hover[0] * mix,
-                    .g = t.window_bg[1] * (1 - mix) + t.border_hover[1] * mix,
-                    .b = t.window_bg[2] * (1 - mix) + t.border_hover[2] * mix,
-                    .a = coverage,
-                }).argb();
-            }
-        }
-        if (self.output.server.config.compositor.taskbar_position == .top) buf.flipVertical();
+        popup_style.background(&r, buf, 368, 496, 16, tip, self.output.server.config.compositor.taskbar_position == .top);
+        const card_t = popup_style.cardPalette(t);
         const state = bar.battery_state;
         var pct: [16]u8 = undefined;
         const percent = if (state.percent) |p| std.fmt.bufPrint(&pct, "{d}%", .{p}) catch "" else "—";
@@ -126,28 +110,34 @@ pub const Popup = struct {
         };
         for ([_][]const u8{ "Health", "Full capacity", "Cycles" }, values, 0..) |name, value, i| {
             const x: f32 = 20 + @as(f32, @floatFromInt(i)) * 112;
-            r.fillRect(x, 274, 104, 70, .{ .color = t.surface_hover, .radius = 9 });
-            label(&r, x + 10, 284, 90, 22, name, 12, t.window_dim, false);
-            label(&r, x + 10, 307, 90, 28, value, if (std.mem.eql(u8, value, "Unavailable")) 11 else 19, t.window_fg, true);
+            if (t.popup_card_bg != null) popup_style.card(&r, x, 274, 104, 70) else r.fillRect(x, 274, 104, 70, .{ .color = t.surface_hover, .radius = 9 });
+            label(&r, x + 10, 284, 90, 22, name, 12, card_t.window_dim, false);
+            label(&r, x + 10, 307, 90, 28, value, if (std.mem.eql(u8, value, "Unavailable")) 11 else 19, card_t.window_fg, true);
         }
         r.fillRect(20, 356, 328, 1, .{ .color = t.border });
+        if (t.popup_card_bg != null) popup_style.card(&r, 20, 366, 328, 96);
+        r.palette = card_t;
         const manager = self.output.server.power_profiles;
         for (0..3) |i| {
             const profile: Profile = @enumFromInt(i);
             const enabled = if (manager) |m| m.supports(profile) else false;
             const selected = if (manager) |m| m.active == profile else false;
             const y: f32 = 366 + @as(f32, @floatFromInt(i)) * 32;
-            if (self.focused == i) r.fillRect(20, y, 328, 32, .{ .color = t.surface_hover, .radius = 5 });
+            if (self.focused == i) {
+                const inset: f32 = if (t.popup_card_bg != null) 4 else 0;
+                r.fillRect(20 + inset, y + inset, 328 - 2 * inset, 32 - 2 * inset, .{ .color = card_t.surface_hover, .radius = if (t.popup_card_bg != null) t.popup_card_radius else 5 });
+            }
             if (selected) {
                 checkbox.paint(&r, .{ .x = 28, .y = y, .w = 310, .h = 32 }, profile.label(), .{ .checked = true, .disabled = !enabled });
             } else {
-                label(&r, 28 + checkbox.box_size + checkbox.gap, y, 282, 32, profile.label(), t.font_size, if (enabled) t.fg else t.faint, false);
+                label(&r, 28 + checkbox.box_size + checkbox.gap, y, 282, 32, profile.label(), t.font_size, if (enabled) card_t.fg else card_t.faint, false);
             }
         }
         self.buffer_node.setBuffer(&buf.base);
         self.buffer_node.setDestSize(width, height);
         self.panel_box = .{ .x = left, .y = self.output.taskbarPopupY(height, 12), .width = width, .height = height };
         self.buffer_node.node.setPosition(left, self.panel_box.y + panel_present.slideOffset(self.slide.value(anim.nowMs()), if (self.output.server.config.compositor.taskbar_position == .top) -slide_distance else slide_distance));
+        popup_style.configureGlass(&self.glass_effect, self.output.server.glass_engine, self.buffer_node, self.factor);
         self.output.wlr_output.scheduleFrame();
     }
 };
@@ -162,7 +152,7 @@ fn centered(r: *paint.Renderer, y: f32, h: f32, value: []const u8, size: f32, co
 }
 
 fn ring(r: *paint.Renderer, percent: u8) void {
-    const color = if (percent <= 10) theme.global.danger else if (percent <= 25) [4]f32{ 0.98, 0.8, 0.25, 1 } else [4]f32{ 32.0 / 255.0, 226.0 / 255.0, 157.0 / 255.0, 1 };
+    const color = if (percent <= 10) theme.global.danger else if (theme.global.popup_battery_ring) |color| color else if (percent <= 25) [4]f32{ 0.98, 0.8, 0.25, 1 } else [4]f32{ 32.0 / 255.0, 226.0 / 255.0, 157.0 / 255.0, 1 };
     for (0..@intCast(r.height)) |iy| {
         const y = (@as(f32, @floatFromInt(iy)) + 0.5) / r.scale - 168;
         if (@abs(y) > 96) continue;

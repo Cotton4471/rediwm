@@ -18,6 +18,84 @@ from ui_driver import UIDriver
 # client's corners are transparent and the frame's footer is the border.
 
 
+def border_glow_resize(scale):
+    """The edge highlight follows held-button motion and committed geometry."""
+    with tempfile.TemporaryDirectory(prefix="rediwm-resize-glow-") as directory:
+        tmp = Path(directory)
+        build_client(tmp)
+        config = ('[compositor]\nxwayland = false\n'
+                  '[desktop]\nenabled = false\n[animations]\nenabled = false\n'
+                  '[theme]\nwindow_bg = "#101215"\nwindow_border = "#101215"\n'
+                  'shadow = "#00000000"\nborder_glow = "#00ff00ff"\n'
+                  'border_glow_length = 72\n')
+        process, log = spawn_compositor(tmp, scale=str(scale), config_content=config,
+            renderer=os.environ.get("REDIWM_TEST_RENDERER", "gles2"),
+            env_extra={"DBUS_SESSION_BUS_ADDRESS": "", "REDIWM_NO_GLASS": "1",
+                       "REDIWM_THEME": str(tmp / "rediwm-config.toml")})
+        client = None
+        try:
+            with IPCClient(tmp) as ipc:
+                ipc.wait_for("wallpaper_presented", timeout_ms=10000)
+                display = next(p.name for p in tmp.glob("wayland-*") if not p.name.endswith(".lock"))
+                client = subprocess.Popen([str(tmp / "client"), "--app-id", "resize-glow"],
+                    env=dict(os.environ, XDG_RUNTIME_DIR=str(tmp), WAYLAND_DISPLAY=display,
+                             REDIWM_TEST_DECORATION="server"))
+                id = wait_for(lambda: next((w["id"] for w in ipc.get_windows()
+                    if w["app_id"] == "resize-glow"), None), "map resize glow client")
+                ipc.action("move_window_to", {"id": id, "x": 100, "y": 80})
+                ipc.wait_for("window_geometry_settled", window_id=id)
+
+                def frame():
+                    if owner == "shell":
+                        return next(w for w in ipc.get_windows() if w["id"] == id)
+                    return ipc.get_window_debug(id)["chrome_box"]
+
+                def green_at(x, y):
+                    path = tmp / "glow.png"
+                    ipc.wait_for_frame()
+                    path.unlink(missing_ok=True)
+                    ipc.screenshot(str(path))
+                    with Image.open(path) as image:
+                        image = image.convert("RGB")
+                    pixels = image.crop((math.floor((x - 2) * scale), math.floor((y - 2) * scale),
+                                         math.ceil((x + 2) * scale), math.ceil((y + 2) * scale)))
+                    return max(g - max(r, b) for r, g, b in pixels.getdata())
+
+                for owner in ("client", "shell"):
+                    if owner == "shell":
+                        ipc.open_control_center()
+                        UIDriver(ipc).wait_settled("control_center")
+                        id = next(w["id"] for w in ipc.get_windows()
+                                  if w.get("app_id") == "rediwm-settings")
+                        ipc.action("move_window_to", {"id": id, "x": 100, "y": 80})
+                        ipc.wait_for("window_geometry_settled", window_id=id)
+                    box = frame()
+                    x = box["x"] + box["width"] - 1
+                    y = box["y"] + box["height"] * 0.4
+                    ipc.move_cursor(round(x), round(y))
+                    assert green_at(x, y) > 100, (owner, "initial glow")
+                    ipc.pointer_button(0x110, True)
+                    assert ipc.get_input_state()["cursor_mode"] == "resize"
+                    # Tangential motion changes no size, but must move the glow.
+                    ipc.move_cursor(round(x), round(y + 100))
+                    assert green_at(x, y + 100) > 100, (owner, "glow stuck during resize")
+                    assert green_at(x, y) < 40, (owner, "old glow remains")
+                    ipc.move_cursor(round(x + 80), round(y + 100))
+                    resized = wait_for(lambda: current if (current := frame())["width"] > box["width"] + 60 else None,
+                                       "resize configure applied")
+                    edge = resized["x"] + resized["width"] - 1
+                    assert green_at(edge, y + 100) > 100, (owner, "glow missed resized edge")
+                    ipc.pointer_button(0x110, False)
+                    ipc.move_cursor(2, 2)
+                    assert green_at(edge, y + 100) < 40, (owner, "glow remains after leaving")
+            print(f"PASS scale {scale}: resize glow follows pointer and client/shell geometry")
+        finally:
+            if client is not None:
+                stop_process(client)
+            stop_process(process)
+            log.close()
+
+
 def settings_resize(scale):
     """The opaque body joins its skirt, and shadows follow shell resizes."""
     with tempfile.TemporaryDirectory(prefix="rediwm-settings-corners-") as directory:
@@ -302,6 +380,7 @@ def run(scale, background=(48, 50, 56), chrome_alpha=0.98):
 
 if __name__ == "__main__":
     for scale in (1, 1.25, 1.5, 2):
+        border_glow_resize(scale)
         workspace_focus(scale)
         settings_resize(scale)
         run(scale)

@@ -230,6 +230,10 @@ enum rediwm_item_kind {
 // What a leaf draws, apart from where. `color` is premultiplied.
 struct rediwm_content {
   float opacity;
+  // How much of the brightness and of the colour the window the leaf belongs to
+  // has lost (a fraction, set on its tree: `rediwm_projection_set_tree_dim`). 0
+  // draws the leaf as it is, so a zeroed content is the plain one.
+  float dim_brightness, dim_saturation;
   float color[4];
   struct wlr_fbox src_box;
   enum wl_output_transform transform;
@@ -243,7 +247,8 @@ struct rediwm_content {
 // compiler-rt's bytewise bcmp, which cost more than the work it skipped.
 static inline bool rediwm_content_equal(const struct rediwm_content *a,
                                         const struct rediwm_content *b) {
-  return a->opacity == b->opacity && a->color[0] == b->color[0] &&
+  return a->opacity == b->opacity && a->dim_brightness == b->dim_brightness &&
+         a->dim_saturation == b->dim_saturation && a->color[0] == b->color[0] &&
          a->color[1] == b->color[1] && a->color[2] == b->color[2] &&
          a->color[3] == b->color[3] && a->src_box.x == b->src_box.x &&
          a->src_box.y == b->src_box.y && a->src_box.width == b->src_box.width &&

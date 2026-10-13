@@ -6,13 +6,14 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 
 from PIL import Image, ImageChops
 from ipc_client import IPCClient, spawn_compositor, stop_process
 from power_profiles import start_fake, stop_fake, read_line, command, wait_for, log_text
 
 
-def run(scale):
+def run(scale, gold=False, top=False):
     with tempfile.TemporaryDirectory(prefix="rediwm-battery-") as directory:
         root = Path(directory)
         hook = root / "battery.so"
@@ -25,8 +26,11 @@ def run(scale):
             (supply / "scope").write_text("System\n")
             (supply / "uevent").write_text(f"POWER_SUPPLY_TYPE=Battery\nPOWER_SUPPLY_CAPACITY={percent}\nPOWER_SUPPLY_STATUS={state}\n" + (
                 "POWER_SUPPLY_ENERGY_FULL=57000000\nPOWER_SUPPLY_ENERGY_FULL_DESIGN=90000000\nPOWER_SUPPLY_CYCLE_COUNT=482\n" if details else ""))
+            config = '[compositor]\nxwayland = false\ntaskbar_position = "' + ('top' if top else 'bottom') + '"\n'
+            if gold:
+                config += '[theme]\nbase = "gold"\n'
             fake = start_fake()
-            process, log = spawn_compositor(tmp, scale=scale, renderer=os.environ.get("REDIWM_TEST_RENDERER", "gles2"), config_content='[compositor]\nxwayland = false\n', env_extra={
+            process, log = spawn_compositor(tmp, scale=scale, renderer=os.environ.get("REDIWM_TEST_RENDERER", "gles2"), config_content=config, env_extra={
                 "LD_PRELOAD": str(hook), "REDIWM_TEST_BATTERY_DIR": str(supply.parent),
                 "DBUS_SYSTEM_BUS_ADDRESS": os.environ["DBUS_SESSION_BUS_ADDRESS"],
                 "DBUS_SESSION_BUS_ADDRESS": "", "XDG_CACHE_HOME": str(tmp),
@@ -44,12 +48,14 @@ def run(scale):
                     battery, clock = center(boxes["battery"]), center(boxes["clock"])
                     assert ipc.hit_test(*battery)["widget"] == "battery"
                     ipc.click_at(*battery)
+                    time.sleep(0.35)  # Let the panel slide/fade finish before pixel comparisons.
                     ipc.wait_for_frame()
-                    point = battery[0], bar["box"]["y"] - 40
+                    point = battery[0], bar["box"]["y"] + bar["box"]["height"] + 40 if top else bar["box"]["y"] - 40
                     hit = ipc.hit_test(*point)
                     assert hit["target_type"] == "battery_popup", hit
                     origin = point[0] - hit["local_x"], point[1] - hit["local_y"]
-                    factor = min(1, (bar["box"]["width"] - 24) / 368, (bar["box"]["y"] - 24) / 496)
+                    output_height = ipc.get_outputs()[0]["logical_height"] if top else bar["box"]["y"] + bar["box"]["height"]
+                    factor = min(1, (bar["box"]["width"] - 24) / 368, (output_height - bar["box"]["height"] - 24) / 496)
 
                     def row(index):
                         return round(origin[0] + 180 * factor), round(origin[1] + (382 + index * 32) * factor)
@@ -62,7 +68,12 @@ def run(scale):
                             return image.convert("RGB").copy()
 
                     initial = capture("initial")
-                    initial.save(f"/tmp/rediwm-battery-{state}-{scale}.png")
+                    initial.save(f"/tmp/rediwm-battery-{state}-{scale}{'-gold' if gold else ''}{'-top' if top else ''}.png")
+                    if gold:
+                        raster = float(scale)
+                        x, y = round((origin[0] + 24 * factor) * raster), round((origin[1] + 295 * factor) * raster)
+                        red, green, blue = initial.getpixel((x, y))
+                        assert red > 190 and green > 180 and blue > 155, ("Gold detail card", (red, green, blue))
 
                     # Click selection and external changes both update the check.
                     ipc.click_at(*row(2))
@@ -117,4 +128,8 @@ if __name__ == "__main__":
         os.execvpe("dbus-run-session", ["dbus-run-session", "--", sys.executable, __file__, *sys.argv[1:]], {**os.environ, "REDIWM_BATTERY_PRIVATE_BUS": "1"})
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scale", default="1")
-    run(parser.parse_args().scale)
+    parser.add_argument("--gold", action="store_true")
+    parser.add_argument("--top", action="store_true")
+    args = parser.parse_args()
+    os.umask(0o077)
+    run(args.scale, args.gold, args.top)

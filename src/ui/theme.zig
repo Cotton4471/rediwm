@@ -67,6 +67,9 @@ pub const Theme = struct {
     app_fg: ?[4]f32 = null,
     app_sidebar_fg: ?[4]f32 = null,
     app_sidebar_selected: ?[4]f32 = null,
+    app_sidebar_hover: ?[4]f32 = null,
+    app_sidebar_hover_marker: ?[4]f32 = null,
+    app_surface_hover: ?[4]f32 = null,
     app_menu_bg: ?[4]f32 = null,
     app_field_bg: ?[4]f32 = null,
     app_field_border: ?[4]f32 = null,
@@ -199,8 +202,13 @@ pub const Theme = struct {
     // Additional appearance tokens. All fields are parsed and saved through
     // the type-derived key lists below; defaults preserve the stock look.
     toggle_track: [4]f32 = .{ 1, 1, 1, 0.12 },
+    toggle_on: ?[4]f32 = null,
+    toggle_thumb: ?[4]f32 = null,
+    toggle_shaded: bool = false,
     control_thumb: [4]f32 = .{ 1, 1, 1, 1 },
     slider_track: [4]f32 = .{ 1, 1, 1, 0.08 },
+    slider_shaded: bool = false,
+    slider_highlight: ?[4]f32 = null,
     pill_bg: [4]f32 = .{ 1, 1, 1, 0.05 },
     swatch_border: [4]f32 = .{ 1, 1, 1, 0.10 },
     swatch_border_selected: [4]f32 = .{ 1, 1, 1, 0.6 },
@@ -218,6 +226,17 @@ pub const Theme = struct {
     switcher_dim: [4]f32 = .{ 0.6, 0.62, 0.66, 1 },
     switcher_icon_bg: [4]f32 = .{ 0.10, 0.11, 0.13, 1 },
     switcher_selected_border: [4]f32 = .{ 1, 0.12, 0.20, 1 },
+    // Taskbar Wi-Fi and battery panels. Unset colours retain the stock look.
+    popup_bg: ?[4]f32 = null,
+    popup_border: ?[4]f32 = null,
+    popup_radius: f32 = 9,
+    popup_blur: bool = false,
+    popup_card_bg: ?[4]f32 = null,
+    popup_card_fg: ?[4]f32 = null,
+    popup_card_dim: ?[4]f32 = null,
+    popup_card_border: ?[4]f32 = null,
+    popup_card_radius: f32 = 12,
+    popup_battery_ring: ?[4]f32 = null,
     calendar_border: [4]f32 = .{ 1, 1, 1, 0.16 },
     osd_border: [4]f32 = .{ 1, 1, 1, 0.12 },
     screenshot_shade: [4]f32 = .{ 0, 0, 0, 0.36 },
@@ -345,6 +364,7 @@ pub const Theme = struct {
         result.window_bg = t.app_menu_bg orelse t.window_bg;
         result.field_bg = t.app_field_bg orelse t.field_bg;
         result.field_border = t.app_field_border orelse t.field_border;
+        result.surface_hover = t.app_surface_hover orelse t.surface_hover;
         return result;
     }
 
@@ -354,6 +374,10 @@ pub const Theme = struct {
 
     pub fn sidebarSelected(t: Theme) [4]f32 {
         return t.app_sidebar_selected orelse t.app_nav_selected;
+    }
+
+    pub fn sidebarHover(t: Theme) [4]f32 {
+        return t.app_sidebar_hover orelse t.app_item_hover;
     }
 
     pub fn controlFocusColor(t: Theme) [4]f32 {

@@ -58,6 +58,9 @@ for bin in rediwm rediwm-msg rediwm-theme rediwm-files rediwm-images rediwm-edit
 done
 [ -f /usr/share/wayland-sessions/rediwm-release-safe.desktop ] || die "the session entry is missing"
 [ -d /usr/local/lib/rediwm ] || die "the bundled libraries are missing"
+for asset in theme.toml icons/folder.png icons/user-home.png icons/user-trash.png wallpapers/wallpaper-gold.png; do
+    runuser -u tester -- test -r "/usr/local/share/rediwm/themes/gold/$asset" || die "Gold theme asset is missing or unreadable: $asset"
+done
 
 log "Starting the installed compositor headless"
 xdg=$(mktemp -d)

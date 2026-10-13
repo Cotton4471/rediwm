@@ -61,8 +61,13 @@ bool rediwm_projection_set_tree_clip(struct wlr_scene_node *, const struct rediw
 // radius or softness that is negative or not finite.
 struct rediwm_shadow_spec;
 bool rediwm_projection_set_tree_shadow(struct wlr_scene_node *, const struct rediwm_shadow_spec *);
-// Ends the clip inherited from an ancestor for this subtree (an xdg popup lives
-// under its parent's tree but is no part of the window's shape).
+// Every leaf under the tree is drawn with this fraction of its brightness and of
+// its colour taken away (both 0 to 1; 0 and 0 removes the dim): a window that is not
+// the focus. It is part of what the leaf shows, so a change damages the leaves
+// under the tree; a shadow is not drawn dimmed. False for a value outside 0 to 1.
+bool rediwm_projection_set_tree_dim(struct wlr_scene_node *, float brightness, float saturation);
+// Ends the clip and the dim inherited from an ancestor for this subtree (an xdg
+// popup lives under its parent's tree but is no part of the window's frame).
 bool rediwm_projection_set_tree_unclipped(struct wlr_scene_node *, bool);
 // Shows the subtree but lets the pick pass through it to what is below.
 bool rediwm_projection_set_tree_inert(struct wlr_scene_node *, bool);

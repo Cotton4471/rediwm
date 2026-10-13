@@ -2167,11 +2167,19 @@ pub const App = struct {
     fn itemInset(self: *App) i32 {
         return if (self.compactList()) 0 else 20;
     }
+    const GridCard = struct {
+        const padding_x: f64 = 10;
+        const padding_top: f64 = 8;
+        const icon_size: f64 = 54;
+        const name_baseline: f64 = 78;
+        const detail_baseline: f64 = 101;
+        const height: i32 = 112;
+    };
     fn rowHeight(self: *App) i32 {
-        return if (self.compactList()) 32 else if (self.list_view) 38 else 144;
+        return if (self.compactList()) 32 else if (self.list_view) 38 else GridCard.height + 8;
     }
     fn cardHeight(self: *App) i32 {
-        return if (self.compactList()) 30 else if (self.list_view) 36 else 136;
+        return if (self.compactList()) 30 else if (self.list_view) 36 else GridCard.height;
     }
     /// Text baseline of a list row, from the row's top.
     fn listBaseline(self: *App) f64 {
@@ -2392,9 +2400,9 @@ pub const App = struct {
         } else {
             const width: f64 = @floatFromInt(cell - 20);
             return .{
-                .x = x + 22,
-                .y = y + 102,
-                .w = @max(32, width - 44),
+                .x = x + GridCard.padding_x - 4,
+                .y = y + GridCard.detail_baseline - 15,
+                .w = @max(32, width - 2 * (GridCard.padding_x - 4)),
                 .h = 22,
             };
         }
@@ -3294,6 +3302,27 @@ pub const App = struct {
         };
     }
 
+    fn drawPackPlaceIcon(self: *App, cr: *c.cairo_t, index: usize, y: f64, alpha: f32) bool {
+        const name: []const u8 = switch (self.rowKind(index)) {
+            .builtin => |i| ([_][]const u8{ "user-home", "user-trash", "document-open-recent", "user-desktop", "folder-documents", "folder-download", "folder-pictures", "folder-music", "folder-videos", "folder" })[i],
+            .pin => |i| if (self.pins.items.items[i].kind == .file) "text-x-generic" else "folder",
+            .device => return false,
+        };
+        const size = 24 * self.scale;
+        const entry = icons.getPack(self.theme_cfg, self.io, name, size) orelse
+            (if (index >= places_start and std.mem.startsWith(u8, name, "folder-")) icons.getPack(self.theme_cfg, self.io, "folder", size) else null) orelse return false;
+        const surface = c.cairo_image_surface_create_for_data(@ptrCast(@constCast(entry.pixels.ptr)), c.CAIRO_FORMAT_ARGB32, entry.size, entry.size, entry.size * 4) orelse return false;
+        defer c.cairo_surface_destroy(surface);
+        c.cairo_save(cr);
+        defer c.cairo_restore(cr);
+        c.cairo_translate(cr, 21, y + 3);
+        const scale = 24 / @as(f64, @floatFromInt(entry.size));
+        c.cairo_scale(cr, scale, scale);
+        c.cairo_set_source_surface(cr, surface, 0, 0);
+        c.cairo_paint_with_alpha(cr, alpha);
+        return true;
+    }
+
     fn renderSidebar(self: *App, cr: *c.cairo_t) void {
         const width: f64 = @floatFromInt(self.sidebarWidth());
         if (width == 0) return;
@@ -3312,9 +3341,7 @@ pub const App = struct {
         const glide = self.nav_hover.frame;
         if (glide.alpha > 0) {
             const box = self.navHighlight(glide);
-            roundedRect(cr, box.x, box.y, box.w, box.h, 5);
-            setSource(cr, withAlpha(ui_theme.global.app_item_hover, glide.alpha));
-            c.cairo_fill(cr);
+            shell_ui.drawSidebarHover(cr, .{ .x = @floatCast(box.x), .y = @floatCast(box.y), .w = @floatCast(box.w), .h = @floatCast(box.h) }, glide.alpha);
         }
         setSource(cr, ui_theme.global.sidebarForeground());
         drawText(cr, "PLACES", 24, @floatFromInt(self.placeY(places_start) - 12), shell_ui.headingSize(), true);
@@ -3342,7 +3369,9 @@ pub const App = struct {
                 c.cairo_fill(cr);
             }
             setSource(cr, withAlpha(ui_theme.global.app_icon, alpha));
-            if (i < places_start) {
+            if (self.drawPackPlaceIcon(cr, i, y, alpha)) {
+                // The pack's colour artwork replaces this place's plain glyph.
+            } else if (i < places_start) {
                 if (shell_ui.Layer.begin(cr, .{ .x = 21, .y = @floatCast(y + 3), .w = 24, .h = 24 })) |icon_layer| {
                     var layer = icon_layer;
                     layer.renderer.drawIcon(0, 0, 24, 24, .{ .id = switch (i) {
@@ -5637,11 +5666,11 @@ pub const App = struct {
             if (cut) c.cairo_push_group(cr);
             const icon = self.itemIconRect(index);
             self.drawItemIcon(cr, item, icon.x, icon.y, icon.w);
-            const label_x = x - self.horizontalOffset() + (if (self.list_view) @as(f64, 42) else 26);
+            const label_x = x - self.horizontalOffset() + (if (self.list_view) @as(f64, 42) else GridCard.padding_x);
             setSource(cr, ui_theme.global.window_fg);
-            const name_width = if (self.list_view) self.listColumn(0).w - 46 else width - 42;
+            const name_width = if (self.list_view) self.listColumn(0).w - 46 else width - 2 * GridCard.padding_x;
             // A path that does not fit loses its head, so the file's own name stays readable.
-            const name_y = y + (if (self.list_view) baseline else 94);
+            const name_y = y + (if (self.list_view) baseline else GridCard.name_baseline);
             if (item.label.len > 0) drawHeadEllipsis(cr, item.label, label_x, name_y, name_width, shell_ui.textSize(), false) else drawEllipsis(cr, item.name, label_x, name_y, name_width, shell_ui.textSize(), false);
             var buf: [64]u8 = undefined;
             var size_buf: [64]u8 = undefined;
@@ -5678,26 +5707,26 @@ pub const App = struct {
             } else {
                 if (item.is_symlink) {
                     setSource(cr, ui_theme.global.window_fg);
-                    drawText(cr, itemType(item), x + 26, y + 117, shell_ui.textSize(), false);
+                    drawText(cr, itemType(item), label_x, y + GridCard.detail_baseline, shell_ui.textSize(), false);
                 } else if (item.is_dir) {
                     if (disp.is_running) {
                         setSource(cr, ui_theme.global.window_fg);
-                        drawText(cr, disp.text, x + 26, y + 117, shell_ui.textSize(), false);
+                        drawText(cr, disp.text, label_x, y + GridCard.detail_baseline, shell_ui.textSize(), false);
                         const tw = measureText(cr, disp.text, shell_ui.textSize(), false);
-                        drawSpinner(cr, x + 26 + tw + 10, y + 117 - 4, 4.5);
+                        drawSpinner(cr, label_x + tw + 10, y + GridCard.detail_baseline - 4, 4.5);
                     } else if (is_size_hovered and std.mem.eql(u8, disp.text, "—")) {
-                        roundedRect(cr, x + 22, y + 117 - 14, 24, 18, 4);
+                        roundedRect(cr, label_x - 4, y + GridCard.detail_baseline - 14, 24, 18, 4);
                         setSource(cr, ui_theme.global.surface_hover);
                         c.cairo_fill(cr);
                         setSource(cr, ui_theme.global.window_fg);
-                        drawText(cr, "—", x + 28, y + 117, shell_ui.textSize(), false);
+                        drawText(cr, "—", label_x + 2, y + GridCard.detail_baseline, shell_ui.textSize(), false);
                     } else {
                         setSource(cr, ui_theme.global.window_fg);
-                        drawText(cr, disp.text, x + 26, y + 117, shell_ui.textSize(), false);
+                        drawText(cr, disp.text, label_x, y + GridCard.detail_baseline, shell_ui.textSize(), false);
                     }
                 } else {
                     setSource(cr, ui_theme.global.window_fg);
-                    drawText(cr, formatSize(item.bytes, &buf), x + 26, y + 117, shell_ui.textSize(), false);
+                    drawText(cr, formatSize(item.bytes, &buf), label_x, y + GridCard.detail_baseline, shell_ui.textSize(), false);
                 }
             }
             if (cut) {
@@ -5742,10 +5771,10 @@ pub const App = struct {
     /// Where an item's icon (or thumbnail) is drawn, in window coordinates.
     fn itemIconRect(self: *App, index: i32) header.Rect {
         const cols = self.columns();
-        const size: f64 = if (self.list_view) 24 else 48;
+        const size: f64 = if (self.list_view) 24 else GridCard.icon_size;
         return .{
-            .x = @as(f64, @floatFromInt(self.sidebarWidth() + 20 + @mod(index, cols) * self.cellWidth())) + (if (self.list_view) @as(f64, 12) else 26) - self.horizontalOffset(),
-            .y = @as(f64, @floatFromInt(self.viewTop() + self.itemInset() + @divTrunc(index, cols) * self.rowHeight() - self.scroll_y)) + (if (self.compactList()) @as(f64, 3) else if (self.list_view) @as(f64, 6) else 20),
+            .x = @as(f64, @floatFromInt(self.sidebarWidth() + 20 + @mod(index, cols) * self.cellWidth())) + (if (self.list_view) @as(f64, 12) else GridCard.padding_x) - self.horizontalOffset(),
+            .y = @as(f64, @floatFromInt(self.viewTop() + self.itemInset() + @divTrunc(index, cols) * self.rowHeight() - self.scroll_y)) + (if (self.compactList()) @as(f64, 3) else if (self.list_view) @as(f64, 6) else GridCard.padding_top),
             .w = size,
             .h = size,
         };
@@ -6330,7 +6359,7 @@ test "grid hit testing respects gutters, scrolling and responsive columns" {
     try std.testing.expectEqual(@as(?usize, 3), app.itemAt(250, 308));
     try std.testing.expectEqual(@as(?usize, null), app.itemAt(220, 158));
     try std.testing.expectEqual(@as(?usize, null), app.itemAt(450, 158));
-    try std.testing.expectEqual(@as(?usize, null), app.itemAt(250, 273));
+    try std.testing.expectEqual(@as(?usize, null), app.itemAt(250, 248));
     app.scroll_y = 156;
     try std.testing.expectEqual(@as(?usize, 3), app.itemAt(250, 158));
     app.revealIndex(19);
@@ -6566,6 +6595,10 @@ test "history restores names and scroll while tolerating removed items" {
 }
 
 test "retained hover repairs match complete Cairo rasters at scale 1 and 1.5" {
+    const saved_theme = ui_theme.global;
+    defer ui_theme.global = saved_theme;
+    // Exercise the illuminated sidebar edge as it moves and fades, too.
+    ui_theme.global.app_sidebar_hover_marker = .{ 1, 0.95, 0.84, 1 };
     const before = anim.currentSettings();
     defer anim.applySettings(before);
     anim.applySettings(.{ .reduced_motion = .off });
@@ -6870,16 +6903,16 @@ test "file drag threshold preserves multi-selection and ordinary release collaps
     try testItems(&app, 10);
     app.items.items[0].selected = true;
     app.items.items[1].selected = true;
-    app.handleMotion(250, 158);
+    app.handleMotion(310, 158);
     app.handleButton(0x110, true);
     try std.testing.expect(app.items.items[1].selected);
-    app.handleMotion(253, 158);
+    app.handleMotion(313, 158);
     try std.testing.expect(!app.drag_ready);
-    app.handleMotion(270, 158);
+    app.handleMotion(330, 158);
     try std.testing.expect(app.drag_ready);
     app.handleButton(0x110, false);
     try std.testing.expect(app.items.items[1].selected);
-    app.handleMotion(250, 158);
+    app.handleMotion(310, 158);
     app.handleButton(0x110, true);
     app.handleButton(0x110, false);
     try std.testing.expect(!app.items.items[1].selected);
@@ -6888,11 +6921,11 @@ test "file drag threshold preserves multi-selection and ordinary release collaps
     app.last_click_index = null;
     app.handleButton(0x110, true);
     try std.testing.expect(app.items.items[0].selected);
-    app.handleMotion(270, 158);
+    app.handleMotion(330, 158);
     try std.testing.expect(app.drag_ready);
     app.handleButton(0x110, false);
     try std.testing.expect(app.items.items[0].selected);
-    app.handleMotion(250, 158);
+    app.handleMotion(310, 158);
     app.handleButton(0x110, true);
     app.handleButton(0x110, false);
     try std.testing.expect(!app.items.items[0].selected);

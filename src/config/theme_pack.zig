@@ -11,9 +11,11 @@ const Io = std.Io;
 pub const Layout = struct {
     taskbar_position: ?@import("types.zig").TaskbarPosition = null,
     dock_enabled: ?bool = null,
+    dock_position: ?@import("types.zig").DockPosition = null,
     dock_height: ?u32 = null,
+    dock_hover_zoom: ?f32 = null,
 
-    pub const keys = .{ "taskbar_position", "dock_enabled", "dock_height" };
+    pub const keys = .{ "taskbar_position", "dock_enabled", "dock_position", "dock_height", "dock_hover_zoom" };
 
     pub fn apply(self: Layout, compositor: anytype) void {
         inline for (keys) |key| if (@field(self, key)) |value| {
@@ -26,16 +28,22 @@ pub const Layout = struct {
             self.taskbar_position = std.meta.stringToEnum(@import("types.zig").TaskbarPosition, try theme.unquote(value)) orelse return error.InvalidLayout;
         } else if (std.mem.eql(u8, key, "dock_enabled")) {
             self.dock_enabled = if (std.mem.eql(u8, value, "true")) true else if (std.mem.eql(u8, value, "false")) false else return error.InvalidLayout;
+        } else if (std.mem.eql(u8, key, "dock_position")) {
+            self.dock_position = std.meta.stringToEnum(@import("types.zig").DockPosition, try theme.unquote(value)) orelse return error.InvalidLayout;
         } else if (std.mem.eql(u8, key, "dock_height")) {
             const height = std.fmt.parseInt(u32, value, 10) catch return error.InvalidLayout;
             if (height < 48 or height > 96) return error.InvalidLayout;
             self.dock_height = height;
+        } else if (std.mem.eql(u8, key, "dock_hover_zoom")) {
+            const zoom = std.fmt.parseFloat(f32, value) catch return error.InvalidLayout;
+            if (!std.math.isFinite(zoom) or zoom < 1 or zoom > 1.5) return error.InvalidLayout;
+            self.dock_hover_zoom = zoom;
         } else return error.InvalidLayout;
     }
 
     pub fn write(a: A, bytes: *std.ArrayList(u8), compositor: anytype) !void {
-        const text = try std.fmt.allocPrint(a, "[layout]\ntaskbar_position = \"{s}\"\ndock_enabled = {}\ndock_height = {d}\n", .{
-            @tagName(compositor.taskbar_position), compositor.dock_enabled, compositor.dock_height,
+        const text = try std.fmt.allocPrint(a, "[layout]\ntaskbar_position = \"{s}\"\ndock_enabled = {}\ndock_position = \"{s}\"\ndock_height = {d}\ndock_hover_zoom = {d}\n", .{
+            @tagName(compositor.taskbar_position), compositor.dock_enabled, @tagName(compositor.dock_position), compositor.dock_height, compositor.dock_hover_zoom,
         });
         defer a.free(text);
         try bytes.appendSlice(a, text);
@@ -237,7 +245,17 @@ test "pack metadata, future tokens and unsafe paths" {
     try std.testing.expectError(error.UnsafeAssetPath, parse(a, "[theme]\nstart_button_icon = \"../logo.svg\"", "nord", "/tmp/nord"));
     for ([_][]const u8{ "../x", "/x", "x//y", "x/./y", "x\\y" }) |path| try std.testing.expect(!relative(path));
     try std.testing.expect(!validId("../nord"));
-    for ([_][]const u8{ "dock_height = 47", "dock_height = 97", "dock_enabled = 1", "taskbar_position = \"left\"", "xwayland = true" }) |line| {
+    inline for (.{ "top", "bottom", "left", "right" }) |position| {
+        const pack = try parse(a, "[layout]\ndock_position = \"" ++ position ++ "\"\n", "test", "");
+        var compositor = @import("loader.zig").CompositorConfig{};
+        pack.layout.apply(&compositor);
+        try std.testing.expectEqualStrings(position, @tagName(compositor.dock_position));
+        var bytes: std.ArrayList(u8) = .empty;
+        try Layout.write(a, &bytes, compositor);
+        const exported = try parse(a, bytes.items, "test", "");
+        try std.testing.expectEqual(pack.layout.dock_position, exported.layout.dock_position);
+    }
+    for ([_][]const u8{ "dock_height = 47", "dock_height = 97", "dock_hover_zoom = 0.99", "dock_hover_zoom = 1.51", "dock_hover_zoom = nan", "dock_enabled = 1", "dock_position = \"center\"", "taskbar_position = \"left\"", "xwayland = true" }) |line| {
         const bytes = try std.fmt.allocPrint(a, "[layout]\n{s}\n", .{line});
         try std.testing.expectError(error.InvalidLayout, parse(a, bytes, "test", ""));
     }

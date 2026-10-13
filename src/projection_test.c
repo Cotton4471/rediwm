@@ -796,6 +796,94 @@ static void test_damage_events(struct wlr_scene *scene) {
   wlr_scene_node_destroy(&source->node);
   wlr_buffer_drop(buffer);
 }
+// A window's dim is a field of what its leaves show: inherited down the tree like
+// its shape, ended where a popup hangs under it, and a change of it restyles (so
+// damages) every leaf under the tree and no other.
+static void test_dim(struct wlr_scene *scene) {
+  struct wlr_scene_tree *source = wlr_scene_tree_create(&scene->tree);
+  struct rediwm_projection *p = rediwm_projection_create(source, scene);
+  assert(p);
+  uint64_t cursor = rediwm_projection_damage_cursor(p);
+  struct wlr_scene_tree *window = wlr_scene_tree_create(source);
+  struct wlr_scene_tree *content = wlr_scene_tree_create(window);
+  struct wlr_scene_tree *popup = wlr_scene_tree_create(content);
+  struct wlr_scene_tree *sibling = wlr_scene_tree_create(source);
+  float color[4] = {.2, .3, .1, 1};
+  struct wlr_buffer *buffer = buffer_create();
+  struct wlr_scene_rect *ring = wlr_scene_rect_create(window, 10, 10, color);
+  struct wlr_scene_buffer *client = wlr_scene_buffer_create(content, buffer);
+  struct wlr_scene_buffer *menu = wlr_scene_buffer_create(popup, buffer);
+  struct wlr_scene_buffer *other = wlr_scene_buffer_create(sibling, buffer);
+  assert(ring && client && menu && other);
+  wlr_scene_node_set_position(&window->node, 40, 30);
+  wlr_scene_node_set_position(&client->node, 0, 10);
+  wlr_scene_buffer_set_dest_size(client, 100, 60);
+  wlr_scene_node_set_position(&popup->node, 50, 20);
+  wlr_scene_buffer_set_dest_size(menu, 30, 30);
+  wlr_scene_node_set_position(&sibling->node, 300, 200);
+  wlr_scene_buffer_set_dest_size(other, 20, 20);
+  assert(rediwm_projection_set_tree_unclipped(&popup->node, true));
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  struct leaf *lring = get_leaf(p, &ring->node), *lclient = get_leaf(p, &client->node),
+              *lmenu = get_leaf(p, &menu->node), *lother = get_leaf(p, &other->node);
+  assert(events_since(p, &cursor, NULL).count == 4); // Appearing.
+
+  // Nothing is dimmed until a tree asks, and taking nothing away makes no addon.
+  assert(rediwm_projection_set_tree_dim(&sibling->node, 0, 0));
+  assert(!lring->item.content.dim_brightness && !lclient->item.content.dim_saturation);
+
+  // Every leaf of the window, not the popup under it and not another window.
+  assert(rediwm_projection_set_tree_dim(&window->node, .08f, .1f));
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  assert(lring->item.content.dim_brightness == .08f && lring->item.content.dim_saturation == .1f);
+  assert(lclient->item.content.dim_brightness == .08f && lclient->item.content.dim_saturation == .1f);
+  assert(!lmenu->item.content.dim_brightness && !lmenu->item.content.dim_saturation);
+  assert(!lother->item.content.dim_brightness && !lother->item.content.dim_saturation);
+  // The change restyles those two leaves (each reports its box as it was and as it
+  // is) and no other.
+  struct events_seen seen = events_since(p, &cursor, NULL);
+  assert(seen.count == 4 && event_is(&seen.last[1], lclient->item.id, 40, 40, 100, 60) &&
+         event_is(&seen.last[3], lring->item.id, 40, 30, 10, 10));
+  for (int i = 0; i < 4; i++) assert(seen.last[i].leaf == lclient->item.id || seen.last[i].leaf == lring->item.id);
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  assert(events_since(p, &cursor, NULL).count == 0); // Unchanged is no damage.
+  assert(rediwm_projection_set_tree_dim(&window->node, .1f, .1f));
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  assert(events_since(p, &cursor, NULL).count == 4);
+
+  // A fraction outside 0 to 1 is refused and the old dim stays.
+  assert(!rediwm_projection_set_tree_dim(&window->node, -.1f, 0));
+  assert(!rediwm_projection_set_tree_dim(&window->node, 0, 1.5f));
+  assert(!rediwm_projection_set_tree_dim(&window->node, NAN, 0));
+  assert(!rediwm_projection_set_tree_dim(&window->node, 0, INFINITY));
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  assert(lclient->item.content.dim_brightness == .1f && events_since(p, &cursor, NULL).count == 0);
+
+  // The barrier does not hide a dim the subtree sets for itself, and lifting it
+  // gives the popup the window's.
+  assert(rediwm_projection_set_tree_dim(&popup->node, .5f, 0));
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  assert(lmenu->item.content.dim_brightness == .5f && lmenu->item.content.dim_saturation == 0);
+  assert(rediwm_projection_set_tree_dim(&popup->node, 0, 0));
+  assert(rediwm_projection_set_tree_unclipped(&popup->node, false));
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  assert(lmenu->item.content.dim_brightness == .1f);
+  assert(rediwm_projection_set_tree_unclipped(&popup->node, true));
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  assert(!lmenu->item.content.dim_brightness);
+
+  // Taking nothing away undoes it, and restyles the leaves back.
+  events_since(p, &cursor, NULL);
+  assert(rediwm_projection_set_tree_dim(&window->node, 0, 0));
+  assert(rediwm_projection_set_tree_dim(&window->node, 0, 0)); // Again is fine.
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  assert(!lring->item.content.dim_brightness && !lclient->item.content.dim_saturation);
+  assert(events_since(p, &cursor, NULL).count == 4);
+
+  rediwm_projection_destroy(p);
+  wlr_scene_node_destroy(&source->node);
+  wlr_buffer_drop(buffer);
+}
 // The output pass hides what a client's opaque region covers, from the region as
 // the surface node keeps it. The buffers of a client reveal no format, like a
 // wlr_client_buffer, so only the node's own region can say they are opaque: it
@@ -1322,6 +1410,7 @@ int main(void) {
   test_clip_output(scene, out);
   test_shadow_output(scene, out);
   test_damage_events(scene);
+  test_dim(scene);
   test_graph_damage(scene, out);
   test_feedback(scene, backend, out, output);
   test_opaque();

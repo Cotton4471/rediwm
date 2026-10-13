@@ -88,6 +88,20 @@ enabled = false
                 assert not tomllib.loads((tmp / 'rediwm-config.toml').read_text())['compositor']['dock_enabled']
                 click(ui.scroll_into_view('dock_enabled'))
                 wait_for(dock, 'dock enabled again')
+                assert ui.scroll_into_view('dock_position')['selected_index'] == 1
+                for index, position in ((0, 'top'), (2, 'left'), (3, 'right'), (1, 'bottom')):
+                    area = ui.scroll_into_view('dock_position')['global_box']
+                    ipc.click_at(round(area['x'] + area['width'] * (index + .5) / 4),
+                                 round(area['y'] + area['height'] / 2))
+                    wait_for(lambda: tomllib.loads((tmp / 'rediwm-config.toml').read_text())['compositor'].get('dock_position') == position, 'dock position saved')
+                    wait_for(lambda: dock()[0]['global_box']['width' if position in ('left', 'right') else 'height'] == 68, 'dock position applied')
+                    root = dock()[0]['global_box']
+                    assert root['width' if position in ('left', 'right') else 'height'] == 68
+                    assert ui.find('dock_position', panel='control_center')['selected_index'] == index
+                ipc.action('close_panel', {'panel': 'control_center'})
+                ipc.action('open_appearance')
+                ipc.wait_for_panel_settled('control_center')
+                assert ui.scroll_into_view('dock_position')['selected_index'] == 1
                 slider = ui.scroll_into_view('dock_height')
                 assert (slider['min'], slider['max'], slider['step'], slider['value']) == (48, 96, 2, 68)
                 root = dock()[0]['global_box']
@@ -126,6 +140,28 @@ enabled = false
                         ipc.action('open_appearance')
                         ipc.wait_for_panel_settled('control_center')
                         assert ui.scroll_into_view('dock_height')['value'] == 96
+                zoom_slider = ui.scroll_into_view('dock_hover_zoom')
+                assert (zoom_slider['min'], zoom_slider['max']) == (1, 1.5)
+                assert abs(zoom_slider['step'] - .05) < .001
+                assert abs(zoom_slider['value'] - 1.05) < .001
+                for zoom in (1, 1.5, 1.05):
+                    area = ui.scroll_into_view('dock_hover_zoom')['global_box']
+                    for _ in range(3):
+                        point = (round(area['x'] + min(area['width'] - 1, area['width'] * (zoom - 1) / .5)),
+                                 round(area['y'] + area['height'] / 2))
+                        if ipc.hit_test(*point)['target_type'] != 'dock':
+                            break
+                        viewport = next(w['global_box'] for w in ui.widgets() if w['role'] == 'scroll_container')
+                        ipc.move_cursor(viewport['x'] + viewport['width'] - 8, viewport['y'] + 40)
+                        ipc.scroll(0, -130)
+                        wait_for(lambda: ui.find('dock_hover_zoom')['global_box']['y'] < area['y'], 'zoom scrolled above dock')
+                        area = ui.scroll_into_view('dock_hover_zoom')['global_box']
+                    ipc.click_at(*point)
+                    wait_for(lambda: abs(tomllib.loads((tmp / 'rediwm-config.toml').read_text())['compositor'].get('dock_hover_zoom', 0) - zoom) < .001, 'zoom saved')
+                ipc.action('close_panel', {'panel': 'control_center'})
+                ipc.action('open_appearance')
+                ipc.wait_for_panel_settled('control_center')
+                assert abs(ui.scroll_into_view('dock_hover_zoom')['value'] - 1.05) < .001
                 ipc.action('close_panel', {'panel': 'control_center'})
                 ipc.wait_for_frame()
                 assert ipc.get_shell_state()['taskbars'], 'dock must coexist with taskbar'
@@ -525,6 +561,7 @@ def pill_animation():
 
                 def pixels(name):
                     path = tmp / (name + '.png')
+                    path.unlink(missing_ok=True)
                     ipc.screenshot(str(path))
                     widgets = ui.widgets('dock')
                     b = next(w['global_box'] for w in widgets if w['name'] == 'terminal')
@@ -534,6 +571,69 @@ def pill_animation():
                         return image.convert('RGB').crop(tuple(round(v * scale) for v in
                             (x - 14, y, x + 14, root['y'] + root['height'] - 2)))
 
+                # Hover shares the dock's frame clock, reverses without jumping,
+                # and exposes the enlarged icon as a clickable widget.
+                def zoom_state():
+                    site = f'dock.{primary}.terminal.hover_zoom'
+                    return next((a for a in ipc.action('get_animations') if a['site'] == site), None)
+
+                def terminal_box():
+                    return next(w['global_box'] for w in ui.widgets('dock') if w['name'] == 'terminal')
+
+                cfg = tmp / 'rediwm-config.toml'
+                cfg.write_text(cfg.read_text().replace('[compositor]', '[compositor]\ndock_hover_zoom = 1.5'))
+                ipc.reload_config()
+                ipc.wait_for_frame(output=primary)
+                base = terminal_box()
+                x, y = round(base['x'] + base['width'] / 2), round(base['y'] + base['height'] / 2)
+                ipc.move_cursor(x, y)
+                assert zoom_state()['target'] == 1.5
+                advance(60)
+                growing_zoom = zoom_state()
+                assert 1 < growing_zoom['value'] < 1.5
+                ipc.move_cursor(5, 5)
+                shrinking_zoom = zoom_state()
+                assert shrinking_zoom['target'] == 1
+                assert abs(shrinking_zoom['value'] - growing_zoom['value']) < .001
+                assert abs(shrinking_zoom['velocity'] - growing_zoom['velocity']) < .001
+                advance(1000)
+                assert zoom_state()['value'] == 1 and zoom_state()['settled']
+                ipc.move_cursor(x, y)
+                advance(1000)
+                expanded = terminal_box()
+                assert zoom_state()['value'] == 1.5 and expanded['width'] > base['width']
+                edge = (round(expanded['x'] + 1), y)
+                assert edge[0] < base['x']
+                ipc.move_cursor(*edge)
+                assert zoom_state()['target'] == 1.5, 'expanded icon lost hover at its edge'
+                assert ipc.hit_test(*edge)['target_type'] == 'dock'
+                # Rebuild at an expanded edge preserves hover and input bounds.
+                cfg.write_text(cfg.read_text() + '\n[theme]\ndock_radius = 17\n')
+                ipc.reload_config()
+                ipc.wait_for_frame(output=primary)
+                assert zoom_state()['target'] == 1.5
+                cfg.write_text(cfg.read_text().replace('dock_hover_zoom = 1.5', 'dock_hover_zoom = 1.0'))
+                ipc.reload_config()
+                ipc.wait_for_frame(output=primary)
+                assert zoom_state() is None, '1.0 must cancel hover animation'
+                assert terminal_box()['width'] == base['width']
+                ipc.move_cursor(5, 5)
+                ipc.move_cursor(x, y)
+                assert zoom_state() is None
+                cfg.write_text(cfg.read_text().replace('dock_hover_zoom = 1.0', 'dock_hover_zoom = 1.5'))
+                ipc.reload_config()
+                ipc.wait_for_frame(output=primary)
+                advance(1000)
+                ipc.reset_perf()
+                before_hover = ipc.get_perf()
+                for _ in range(3):
+                    ipc.wait_for_frame(output=primary)
+                after_hover = ipc.get_perf()
+                assert after_hover['anim_frames_scheduled'] == 0
+                assert (after_hover['panel_allocated_bytes'] + after_hover['panel_reused_bytes'] ==
+                        before_hover['panel_allocated_bytes'] + before_hover['panel_reused_bytes']), 'settled hover repaints'
+                ipc.move_cursor(5, 5)
+                advance(1000)
                 idle = pixels('idle')
                 wid = launch('foot')
                 assert state()['target'] == 22 and state()['value'] == 0
@@ -617,6 +717,11 @@ def pill_animation():
                 assert state()['value'] == 22 and state()['settled']
                 advance(1000)
                 assert state('opacity')['settled'] and state('opacity')['value'] == 1
+                b = terminal_box()
+                ipc.move_cursor(round(b['x'] + b['width'] / 2), round(b['y'] + b['height'] / 2))
+                assert zoom_state()['value'] == 1.5 and zoom_state()['settled'], 'reduced-motion hover did not jump'
+                ipc.move_cursor(5, 5)
+                assert zoom_state()['value'] == 1 and zoom_state()['settled']
                 ipc.action('set_anim_time', {'ms': None})
                 ipc.move_cursor(5, 5)
                 ipc.wait_for_frame(output=primary)
@@ -628,7 +733,7 @@ def pill_animation():
                 assert after['anim_frames_scheduled'] == 0, 'settled pills keep requesting frames'
                 assert (after['panel_allocated_bytes'] + after['panel_reused_bytes'] ==
                         before['panel_allocated_bytes'] + before['panel_reused_bytes']), 'settled pills keep repainting'
-            print(f'PASS: dock pill growth, focus, reversal, fading, rebuild, speed, reduced motion and idle ({scale}x)')
+            print(f'PASS: dock hover zoom, input bounds, disable, pill growth, focus, reversal, fading, rebuild, speed, reduced motion and idle ({scale}x)')
         except Exception:
             log.flush()
             print((tmp / 'compositor.log').read_text()[-4000:])
@@ -640,7 +745,187 @@ def pill_animation():
             log.close()
 
 
+
+def positions():
+    """Every edge, with either taskbar edge, using real pointer input."""
+    scale = float(os.environ.get('REDIWM_TEST_SCALE', '1'))
+    with tempfile.TemporaryDirectory(prefix='rediwm-dock-position-') as directory:
+        tmp = Path(directory)
+        build_client(tmp)
+        env_extra = {'DBUS_SESSION_BUS_ADDRESS': '', 'DBUS_SYSTEM_BUS_ADDRESS': 'unix:path=/nonexistent',
+                     'XDG_CONFIG_HOME': str(tmp / 'config'), 'XDG_DATA_HOME': str(tmp / 'data'),
+                     'XDG_CACHE_HOME': str(tmp / 'cache')}
+        def config(position, taskbar, size):
+            return (f'[compositor]\nxwayland = false\ndock_enabled = true\ndock_position = "{position}"\n'
+                    f'taskbar_position = "{taskbar}"\ndock_height = {size}\ndock_hover_zoom = 1.5\n'
+                    '[animations]\nenabled = false\n')
+        process, log = spawn_compositor(tmp, scale=scale, outputs=os.environ.get('REDIWM_TEST_OUTPUTS', '1'),
+            config_content=config('bottom', 'bottom', 68), env_extra=env_extra)
+        client = None
+        overflow_clients = []
+        try:
+            with IPCClient(tmp) as ipc:
+                ipc.wait_for('wallpaper_presented', timeout_ms=10000)
+                ui = UIDriver(ipc)
+                display = wait_for(lambda: next((p.name for p in tmp.glob('wayland-*')
+                    if not p.name.endswith('.lock')), None), 'display')
+                client = subprocess.Popen([str(tmp / 'client'), '--app-id', 'dock.position'],
+                    env=dict(os.environ, XDG_RUNTIME_DIR=str(tmp), WAYLAND_DISPLAY=display),
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                wid = wait_for(lambda: next((w['id'] for w in ipc.get_windows() if w['app_id'] == 'dock.position'), None), 'position client')
+                ipc.wait_for('window_geometry_settled', window_id=wid)
+                cfg = tmp / 'rediwm-config.toml'
+                def root():
+                    return ui.widgets('dock')[0]['global_box']
+                def item(name):
+                    return next(w['global_box'] for w in ui.widgets('dock') if w['name'] == name)
+                def center(box):
+                    return round(box['x'] + box['width'] / 2), round(box['y'] + box['height'] / 2)
+                def shot(name):
+                    path = tmp / (name + '.png')
+                    path.unlink(missing_ok=True)
+                    ipc.screenshot(str(path))
+                    with Image.open(path) as image:
+                        return image.convert('RGB')
+                def crop(image, box):
+                    return image.crop(tuple(round(v * scale) for v in box))
+                for taskbar in ('bottom', 'top'):
+                    for position in ('top', 'left', 'right', 'bottom'):
+                        vertical = position in ('left', 'right')
+                        for size in (48, 96):
+                            cfg.write_text(config(position, taskbar, size))
+                            ipc.reload_config()
+                            wait_for(lambda: ui.widgets('dock') and root()['width' if vertical else 'height'] == size, 'position reload')
+                            ipc.move_cursor(5, 5)
+                            ipc.wait_for_frame()
+                            box = root()
+                            output = next(o for o in ipc.get_outputs() if o['x'] <= box['x'] < o['x'] + o['logical_width'])
+                            bar = next(b['box'] for b in ipc.get_shell_state()['taskbars'] if b['box']['x'] == output['x'])
+                            x0, y0 = output['x'], output['y'] + (bar['height'] if taskbar == 'top' else 0)
+                            width, height = output['logical_width'], output['logical_height'] - bar['height']
+                            if vertical:
+                                assert box['y'] == y0 + (height - box['height']) // 2, box
+                                assert box['x'] == (x0 + 10 if position == 'left' else x0 + width - size - 10), box
+                            else:
+                                assert box['x'] == x0 + (width - box['width']) // 2, box
+                                assert box['y'] == (y0 + 10 if position == 'top' else y0 + height - size - 10), box
+                            buttons = [w['global_box'] for w in ui.widgets('dock') if w['name']]
+                            along, cross = ('y', 'x') if vertical else ('x', 'y')
+                            assert all(a[along] < b[along] and a[cross] == b[cross] for a, b in zip(buttons, buttons[1:])), buttons
+                            for button in buttons:
+                                assert button['width'] == button['height']
+                                assert ipc.hit_test(*center(button))['target_type'] == 'dock'
+                                for other in ipc.get_outputs():
+                                    bx, by = center(button)
+                                    assert ipc.hit_test(bx + other['x'] - output['x'], by + other['y'] - output['y'])['target_type'] == 'dock'
+                            # Compare only the interior-side tooltip area; the
+                            # hovered icon and cursor are outside this crop.
+                            idle = shot('idle')
+                            ipc.move_cursor(*center(item('settings')))
+                            ipc.wait_for_frame()
+                            hovered = shot('hovered')
+                            if position == 'top':
+                                tip = (box['x'], box['y'] + box['height'] + 8, box['x'] + box['width'], box['y'] + box['height'] + 38)
+                            elif position == 'bottom':
+                                tip = (box['x'], box['y'] - 38, box['x'] + box['width'], box['y'] - 8)
+                            elif position == 'left':
+                                tip = (box['x'] + box['width'] + 8, box['y'], x0 + width, box['y'] + box['height'])
+                            else:
+                                tip = (x0, box['y'], box['x'] - 8, box['y'] + box['height'])
+                            assert ImageChops.difference(crop(idle, tip), crop(hovered, tip)).getbbox(), f'{position} tooltip missing'
+                            # A hovered icon is enlarged in either orientation.
+                            assert item('settings')['width'] > buttons[-1]['width'], 'hover zoom missing'
+                            ipc.move_cursor(5, 5)
+                            ipc.wait_for_frame()
+                            # Running-window buttons still minimize and restore.
+                            window_box = item(f'window_{wid}')
+                            cx, cy = center(window_box)
+                            thickness = max(2, 4 * size / 68)
+                            indicator_cross = (size - round(58 * size / 68) - thickness
+                                               if position in ('top', 'left') else round(58 * size / 68))
+                            if vertical:
+                                indicator = (box['x'] + indicator_cross, cy - 12 * size / 68,
+                                             box['x'] + indicator_cross + thickness, cy + 12 * size / 68)
+                            else:
+                                indicator = (cx - 12 * size / 68, box['y'] + indicator_cross,
+                                             cx + 12 * size / 68, box['y'] + indicator_cross + thickness)
+                            active = crop(shot('active'), indicator)
+                            ipc.click_at(*center(item(f'window_{wid}')))
+                            wait_for(lambda: next(w for w in ipc.get_windows() if w['id'] == wid)['is_minimized'], 'side dock minimize')
+                            ipc.move_cursor(5, 5)
+                            ipc.wait_for_frame()
+                            minimized = crop(shot('minimized'), indicator)
+                            assert ImageChops.difference(active, minimized).getbbox(), f'{position} running indicator missing'
+                            ipc.click_at(*center(item(f'window_{wid}')))
+                            wait_for(lambda: not next(w for w in ipc.get_windows() if w['id'] == wid)['is_minimized'], 'side dock restore')
+                            ipc.action('fullscreen_window', {'id': wid})
+                            wait_for(lambda: not ui.widgets('dock'), 'fullscreen hides positioned dock')
+                            ipc.action('fullscreen_window', {'id': wid})
+                            wait_for(lambda: ui.widgets('dock'), 'positioned dock restored after fullscreen')
+                            # Remove Settings by clicking the actual inward menu.
+                            px, py = center(item('settings'))
+                            ipc.move_cursor(px, py)
+                            ipc.pointer_button(273, True)
+                            ipc.pointer_button(273, False)
+                            ipc.wait_for_frame()
+                            if position == 'top':
+                                mx, my = px, box['y'] + box['height'] + 4
+                            elif position == 'bottom':
+                                mx, my = px, box['y'] - 48
+                            elif position == 'left':
+                                mx, my = box['x'] + box['width'] + 4, py
+                            else:
+                                mx, my = box['x'] - 220, py
+                            mx = min(max(mx, x0), x0 + width - 216)
+                            my = min(max(my, y0), y0 + height - 44)
+                            ipc.click_at(mx + 30, my + 22)
+                            wait_for(lambda: not any(w['name'] == 'settings' for w in ui.widgets('dock')), f'{position} menu not usable')
+                            assert tomllib.loads(cfg.read_text())['compositor']['dock_hidden_shortcuts'] == ['settings']
+                # Restart preserves a side dock without an Appearance window.
+                cfg.write_text(config('right', 'top', 96))
+                ipc.reload_config()
+                wait_for(lambda: root()['width'] == 96, 'overflow dock')
+                capacity = (height - round(12 * 96 / 68) * 2 - 16) // round(56 * 96 / 68) - 4
+                for index in range(capacity + 1):
+                    overflow_clients.append(subprocess.Popen([str(tmp / 'client'), '--app-id', f'dock.side.overflow{index}'],
+                        env=dict(os.environ, XDG_RUNTIME_DIR=str(tmp), WAYLAND_DISPLAY=display),
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+                wait_for(lambda: len(ipc.get_windows()) == capacity + 2, 'vertical overflow clients')
+                def shown():
+                    return {w['name'] for w in ui.widgets('dock') if (w['name'] or '').startswith('window_')}
+                wait_for(lambda: len(shown()) == capacity, 'vertical dock capacity')
+                first = shown()
+                ipc.move_cursor(*center(item('terminal')))
+                ipc.scroll(0, -120)
+                try:
+                    wait_for(lambda: shown() != first, 'vertical overflow scroll', timeout=2)
+                except AssertionError:
+                    ipc.scroll(0, 120)
+                    wait_for(lambda: shown() != first, 'vertical overflow windows unreachable')
+                box = root()
+                assert box['y'] >= y0 and box['y'] + box['height'] <= y0 + height, box
+            stop_process(process)
+            log.close()
+            process, log = spawn_compositor(tmp, scale=scale, outputs=os.environ.get('REDIWM_TEST_OUTPUTS', '1'),
+                config_content=cfg.read_text(), env_extra=env_extra)
+            with IPCClient(tmp) as ipc:
+                ui = UIDriver(ipc)
+                wait_for(lambda: ui.widgets('dock'), 'side dock after restart')
+                box = ui.widgets('dock')[0]['global_box']
+                assert box['width'] == 96 and box['height'] > box['width'], box
+            print(f'PASS: dock four edges, both taskbar edges, size, input, hover, tooltips, menus, fullscreen, vertical overflow and restart ({scale}x)')
+        finally:
+            for overflow_client in overflow_clients:
+                stop_process(overflow_client)
+            if client:
+                stop_process(client)
+            stop_process(process)
+            log.close()
+
 if __name__ == '__main__':
-    run()
-    context_menu()
-    pill_animation()
+    import sys
+    if '--positions-only' not in sys.argv:
+        run()
+        context_menu()
+        pill_animation()
+    positions()

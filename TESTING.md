@@ -13,10 +13,10 @@ debugging on the host, see AGENTS.md, "Rendering".
 
 | Command | What it checks |
 | --- | --- |
-| `zig build test` | In-process unit tests: rasterizers vs. full rasters, UI, config, IPC parser/serializer fixtures, glass damage, projection damage, restack and visibility cuts, hit tests and surface feedback from its typed graph (paint order, unrounded edges, list lifetime), lifecycle/allocation failures, Files/desktop logic. No compositor or bus. |
+| `zig build test` | In-process unit tests: rasterizers vs. full rasters, UI, config, IPC parser/serializer fixtures, glass damage, projection damage, restack and visibility cuts, hit tests and surface feedback from its typed graph (paint order, unrounded edges, list lifetime), a tree's dim (inheritance, the popup barrier, damage), lifecycle/allocation failures, Files/desktop logic. No compositor or bus. |
 | `zig build test-glass` | The glass registry and an effect's geometry in the graph at every zoom (no GPU). Glass pixels are gated in `test-scene-pass` (stage 5b) and by `tests/glass_reblur.py`. |
 | `zig build test-pass-spike` | The owned-pass spike of `docs/plans/scene-graph-stage1.md`: rounded clip, border, shadow, external-OES texture, backdrop blur, buffer-age damage and cost on headless GLES2 (needs a render node; `-Doptimize=ReleaseSafe` for cost). |
-| `zig build test-scene-pass` | Stage 3's owned GLES2 drawing backend against wlroots: transforms, crops, filters, premultiplied alpha, damage, external-OES (an RGB EGLImage and a linear NV12 dmabuf; needs gbm), GL/EGL state and acquire/release timelines. Needs a compatible render node (`WLR_RENDER_DRM_DEVICE` on multi-GPU machines); also run with `-Doptimize=ReleaseSafe`. The unavailable-acquire test intentionally logs `drmSyncobjTransfer failed`. Stage 4b's rounded-shape gates are in the same fixture: clip against a supersampled reference, piece joins, border/body, premultiplied edges, the opaque cover, shadow, and partial repaint across a clip edge; the 128 parity cases also run through the shaped programs. Stage 4d's shadow gate compares every pixel with the CPU chrome's shadow formula. |
+| `zig build test-scene-pass` | Stage 3's owned GLES2 drawing backend against wlroots: transforms, crops, filters, premultiplied alpha, damage, external-OES (an RGB EGLImage and a linear NV12 dmabuf; needs gbm), GL/EGL state and acquire/release timelines. Needs a compatible render node (`WLR_RENDER_DRM_DEVICE` on multi-GPU machines); also run with `-Doptimize=ReleaseSafe`. The unavailable-acquire test intentionally logs `drmSyncobjTransfer failed`. Stage 4b's rounded-shape gates are in the same fixture: clip against a supersampled reference, piece joins, border/body, premultiplied edges, the opaque cover, shadow, and partial repaint across a clip edge; the 128 parity cases also run through the shaped programs. Stage 4d's shadow gate compares every pixel with the CPU chrome's shadow formula. The dim gates (`rediwm_scene_pass_set_dim`, inactive window dimming) compare a dimmed pass's rects, shapes, rings, translucent texels and glass composite with a C reference of the grade, and check that shadows are not graded, that a pass starts undimmed and that a bad fraction fails the pass. |
 | `zig build test-lock` | Lock/greeter painter, password editing, PAM transitions (PAM is replaced at link time in test binaries only), greeter↔rediwm-dm conversation. |
 | `zig build test-dm` | rediwm-dm relay state machine and framing. |
 | `zig build test-dbus`, `test-polkit`, `test-polkit-ui`, `test-notifications`, `test-settings-portal`, `test-power`, `test-power-profiles`, `test-tray`, `test-app-activation`, `test-rediwm-session`, `test-layout-autosave`, `test-files`, `test-images` | Subsystem suites; the D-Bus ones re-exec under `dbus-run-session`. |
@@ -134,7 +134,7 @@ Network settings, password/hidden forms, saved and open joins, radio, wired
 details, connect/disconnect and permission errors, service restart and scrolling;
 `--settings-only` runs just the settings checks), `battery_popup.py` (fake sysfs and private power-profile
 service; charge states, missing details, selection and dismissal),
-`keyboard_shortcuts.py`, `dock.py` (opt-in Appearance toggle, bounded height slider, live resizing and size persistence, launcher/input, shared shortcut icons and running pills, smooth pill animation/reversals and idle scheduling, preferred apps and terminal fallback, running windows, fullscreen, scale, live radius, context menu and remembered removal),
+`keyboard_shortcuts.py`, `dock.py` (opt-in Appearance toggle, four-edge position selector, bounded size and hover-zoom sliders, live placement/resizing and persistence, vertical icon/indicator layout, inward tooltips and menus, launcher/input, shared shortcut icons and running pills, hover zoom and pill animation/reversals, reduced motion and idle scheduling, preferred apps and terminal fallback, running windows, fullscreen, scale, live radius, context menu and remembered removal; `--positions-only` isolates placement),
 `panel_damage.py`, `glass_hold.py` (holds and
 mixed-scale idle), `glass_reblur.py` (glass re-blurs for changes below it,
 never for its own client), `animations.py`, `hotspots.py`, `launch_feedback.py`,
@@ -144,6 +144,17 @@ never for its own client), `animations.py`, `hotspots.py`, `launch_feedback.py`,
 `mini_map_windows.py` (window outline pixels, size, movement, zoom and lifetime),
 `mini_map_canvas.py` (live canvas growth/shrink with open windows, minimap fit
 and off-canvas reachability).
+
+`taskbar_sections.py` checks left/center/right defaults, live section controls,
+ordering and visibility, centered window groups, nonoverlapping input bounds,
+the moved Start menu, legacy item lists and restart persistence. It supports
+`REDIWM_TEST_SCALE=1.5` and `REDIWM_TEST_OUTPUTS=2`.
+
+`wifi_popup.py --popup-only --gold --top 1.5` and
+`battery_popup.py --gold --top --scale 1.5` also check Gold's cream cards,
+control contrast and popup interactions with a top taskbar at fractional scale.
+Omit `--top` to exercise bottom placement, or `--gold` for the default palette.
+`--popup-only` skips the separate tray-blink and Settings-page checks.
 
 `window_tabs.py` covers the Appearance checkbox list, opt-in persistence, explicit
 + launches, independent groups, tab focus, shared geometry, overflow, closing and

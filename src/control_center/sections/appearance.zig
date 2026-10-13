@@ -89,6 +89,7 @@ const px_chrome_control_gap = 12;
 const px_menu_width = 13;
 const px_menu_height = 14;
 const px_dock_height = 15;
+const px_dock_hover_zoom = 16;
 
 pub const Section = struct {
     cc: *panel.ControlCenter = undefined,
@@ -102,10 +103,15 @@ pub const Section = struct {
     cursor_themes: ?[]cursor_theme.Theme = null,
     cursor_row_children: [2]Widget = undefined,
     family_row_children: [2]Widget = undefined,
-    row_storage: [27]Widget = undefined,
+    row_storage: [30]Widget = undefined,
     dock_children: [2]Widget = undefined,
-    dock_group_children: [2]Widget = undefined,
+    dock_position_children: [2]Widget = undefined,
+    dock_group_children: [4]Widget = undefined,
     focus_zoom_children: [3]Widget = undefined,
+    drag_feedback_children: [2]Widget = undefined,
+    drag_scale_header_children: [2]Widget = undefined,
+    drag_scale_children: [2]Widget = undefined,
+    drag_scale_value_buf: [16]u8 = undefined,
     /// Rescanned on every build, so images added meanwhile show up.
     wallpapers: []const wallpapers.Entry = &.{},
     wallpaper_children: [3]Widget = undefined,
@@ -140,6 +146,8 @@ pub const Section = struct {
     splash_label_children: [2]Widget = undefined,
     dodge_row_children: [2]Widget = undefined,
     dodge_label_children: [2]Widget = undefined,
+    dim_row_children: [2]Widget = undefined,
+    dim_label_children: [2]Widget = undefined,
     anim_enabled_row_children: [2]Widget = undefined,
     anim_enabled_label_children: [2]Widget = undefined,
     anim_speed_row_children: [2]Widget = undefined,
@@ -163,12 +171,13 @@ pub const Section = struct {
     inactive_opacity_header_children: [2]Widget = undefined,
     inactive_opacity_group_children: [2]Widget = undefined,
     inactive_opacity_value_buf: [16]u8 = undefined,
-    px: [16]PxControl = undefined,
+    px: [17]PxControl = undefined,
     taskbar_section_children: [8]Widget = undefined,
     taskbar_position_children: [2]Widget = undefined,
-    items_children: [3]Widget = undefined,
+    items_children: [5]Widget = undefined,
+    items_section_children: [3][2]Widget = undefined,
     item_rows: [taskbar_items.count]Widget = undefined,
-    item_controls: [taskbar_items.count][3]Widget = undefined,
+    item_controls: [taskbar_items.count][4]Widget = undefined,
     item_drag: ?struct { index: usize, press_y: f32, moved: bool = false, items: taskbar_items.Config } = null,
     item_focus: ?taskbar_items.Item = null,
     start_menu_section_children: [9]Widget = undefined,
@@ -423,6 +432,15 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
         .{ .name = "dodge_file_drags", .kind = .{ .toggle = .{ .on = dodge_on, .owner = out, .on_change = &onDodgeFileDragsChanged } } },
     };
 
+    out.dim_label_children = .{
+        .{ .kind = .{ .text = .{ .content = "Dim inactive windows", .font_size = 13, .weight = 600, .color = pal.fg } } },
+        .{ .kind = .{ .text = .{ .content = "Slightly darken and mute windows that are not focused", .font_size = 12, .color = pal.dim } } },
+    };
+    out.dim_row_children = .{
+        .{ .kind = .container, .direction = .column, .gap = 2, .width = .{ .flex = 1 }, .children = &out.dim_label_children },
+        .{ .name = "inactive_dim", .kind = .{ .toggle = .{ .on = out.cc.server.config.compositor.inactive_dim, .owner = out, .on_change = &onInactiveDimChanged } } },
+    };
+
     const anim_enabled = out.cc.server.config.animations.enabled;
     out.anim_enabled_label_children = .{
         .{ .kind = .{ .text = .{ .content = "Animations", .font_size = 13, .weight = 600, .color = pal.fg } } },
@@ -458,6 +476,25 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
         labelWidget("Window switching zoom"),
         .{ .name = "focus_zoom", .kind = .{ .segmented = .{ .labels = &focus_zoom_labels, .selected = @intFromEnum(focus_zoom), .owner = out, .on_change = &onFocusZoomChanged } }, .width = .{ .percent = 1 } },
         .{ .kind = .{ .text = .{ .content = focus_zoom_descriptions[@intFromEnum(focus_zoom)], .font_size = 12, .color = pal.dim } } },
+    };
+
+    out.drag_feedback_children = .{
+        labelWidget("Drag feedback"),
+        .{ .name = "drag_feedback", .kind = .{ .toggle = .{ .on = out.cc.server.config.compositor.drag_feedback, .owner = out, .on_change = &onDragFeedbackChanged } } },
+    };
+    const drag_scale = out.cc.server.config.compositor.drag_scale;
+    const drag_formatted = std.fmt.bufPrint(&out.drag_scale_value_buf, "{d:.2}×", .{drag_scale}) catch "?";
+    out.drag_scale_header_children = .{ labelWidget("Drag lift scale"), pillWidget(drag_formatted) };
+    out.drag_scale_children = .{
+        .{ .kind = .container, .direction = .row, .justify = .space_between, .children = &out.drag_scale_header_children },
+        .{ .name = "drag_scale", .kind = .{ .slider = .{
+            .value = drag_scale,
+            .min = loader.drag_scale_min,
+            .max = loader.drag_scale_max,
+            .step = 0.01,
+            .owner = out,
+            .on_change = &onDragScaleChanged,
+        } } },
     };
 
     if (out.font_families == null) {
@@ -627,15 +664,28 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
         const item = items.order[i];
         out.item_controls[i] = .{
             .{ .kind = .{ .text = .{ .content = item.label(), .font_size = 13, .weight = 600, .color = pal.fg } }, .width = .{ .flex = 1 } },
-            .{ .kind = .{ .button = .{ .label = "Drag to reorder", .icon = .drag_handle, .owner = out, .id = i } }, .width = .{ .fixed = 32 }, .height = .{ .fixed = 30 } },
-            .{ .kind = .{ .toggle = .{ .on = items.shown(item), .owner = out, .on_change = &ItemToggle(i).changed } } },
+            .{ .name = std.fmt.allocPrint(arena, "taskbar_{s}_order", .{@tagName(item)}) catch null, .kind = .{ .button = .{ .label = "Drag to reorder", .icon = .drag_handle, .owner = out, .id = i } }, .width = .{ .fixed = 32 }, .height = .{ .fixed = 30 } },
+            .{ .name = std.fmt.allocPrint(arena, "taskbar_{s}_visible", .{@tagName(item)}) catch null, .kind = .{ .toggle = .{ .on = items.shown(item), .owner = out, .on_change = &ItemToggle(i).changed } } },
+            .{ .name = std.fmt.allocPrint(arena, "taskbar_{s}_section", .{@tagName(item)}) catch null, .kind = .{ .segmented = .{ .labels = &.{ "Left", "Center", "Right" }, .selected = @intFromEnum(items.section(item)), .owner = out, .id = i, .on_change = &onItemSectionChanged } }, .width = .{ .fixed = 180 } },
         };
         out.item_rows[i] = .{ .kind = .container, .direction = .row, .gap = 8, .@"align" = .center, .children = &out.item_controls[i] };
     }
+    var item_start: usize = 0;
+    inline for (.{ "LEFT", "CENTER", "RIGHT" }, 0..) |label, zone| {
+        var item_end = item_start;
+        while (item_end < taskbar_items.count and @intFromEnum(items.section(items.order[item_end])) == zone) item_end += 1;
+        out.items_section_children[zone] = .{
+            sectionLabel(label),
+            .{ .kind = .container, .direction = .column, .gap = 8, .children = out.item_rows[item_start..item_end] },
+        };
+        item_start = item_end;
+    }
     out.items_children = .{
-        labelWidget("Right-side items (left to right)"),
-        .{ .kind = .{ .text = .{ .content = "Drag to reorder; toggle visibility. Battery appears when available.", .font_size = 12, .color = pal.dim } } },
-        .{ .kind = .container, .direction = .column, .gap = 8, .children = &out.item_rows },
+        labelWidget("Taskbar sections"),
+        .{ .kind = .{ .text = .{ .content = "Choose a section; drag to reorder within it. Toggle visibility. Battery appears when available.", .font_size = 12, .color = pal.dim } } },
+        .{ .kind = .container, .direction = .column, .gap = 8, .children = &out.items_section_children[0] },
+        .{ .kind = .container, .direction = .column, .gap = 8, .children = &out.items_section_children[1] },
+        .{ .kind = .container, .direction = .column, .gap = 8, .children = &out.items_section_children[2] },
     };
     const items_group: Widget = .{ .kind = .container, .direction = .column, .gap = 8, .children = &out.items_children };
     out.taskbar_section_children = .{ sectionLabel("TASKBAR"), position_row, taskbar_row, chip_width_row, chip_gap_row, start_gap_row, start_icon_row, items_group };
@@ -746,11 +796,20 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
         labelWidget("RediWM dock"),
         .{ .name = "dock_enabled", .kind = .{ .toggle = .{ .on = out.cc.server.config.compositor.dock_enabled, .owner = out, .on_change = &onDockChanged } } },
     };
-    const dock_height_row = pxGroup(out, px_dock_height, "Dock height", @floatFromInt(server.config.compositor.dock_height), @floatFromInt(loader.dock_height_min), @floatFromInt(loader.dock_height_max), 2, &onDockHeightChanged);
+    out.dock_position_children = .{
+        labelWidget("Dock position"),
+        .{ .name = "dock_position", .kind = .{ .segmented = .{ .labels = &.{ "Top", "Bottom", "Left", "Right" }, .selected = @intFromEnum(server.config.compositor.dock_position), .owner = out, .on_change = &onDockPositionChanged } }, .width = .{ .fixed = segmented_width } },
+    };
+    const dock_height_row = pxGroup(out, px_dock_height, "Dock size", @floatFromInt(server.config.compositor.dock_height), @floatFromInt(loader.dock_height_min), @floatFromInt(loader.dock_height_max), 2, &onDockHeightChanged);
     out.px[px_dock_height].group_children[1].name = "dock_height";
+    const dock_zoom_row = pxGroup(out, px_dock_hover_zoom, "Dock hover zoom (1.00× disables)", server.config.compositor.dock_hover_zoom, 1, loader.dock_hover_zoom_max, 0.05, &onDockHoverZoomChanged);
+    out.px[px_dock_hover_zoom].group_children[1].name = "dock_hover_zoom";
+    updateDockZoomLabel(out);
     out.dock_group_children = .{
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.dock_children },
+        .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.dock_position_children },
         dock_height_row,
+        dock_zoom_row,
     };
     out.row_storage = .{
         .{ .kind = .container, .direction = .column, .gap = 8, .children = pack_controls },
@@ -766,6 +825,8 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.anim_speed_row_children },
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.reduced_motion_row_children },
         .{ .kind = .container, .direction = .column, .gap = 8, .children = &out.focus_zoom_children },
+        .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.drag_feedback_children },
+        .{ .kind = .container, .direction = .column, .gap = 8, .children = &out.drag_scale_children },
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.cursor_row_children },
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.family_row_children },
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.font_row_children },
@@ -774,6 +835,7 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.glow_row_children },
         chrome_row,
         buildWindowTabs(out),
+        .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.dim_row_children },
         inactive_opacity_row,
         window_gap_row,
         pxGroup(out, px_scrollbar_width, "Scrollbar width", t.scrollbar_width, 4, 24, 1, &PxHandler(px_scrollbar_width, "scrollbar_width", false).changed),
@@ -1431,6 +1493,18 @@ fn onChromeDarknessChanged(owner: ?*anyopaque, _: usize, value: f32) void {
     applyThemeChange(section(owner));
 }
 
+/// Live first, then saved: the windows ease to the new dim.
+fn onInactiveDimChanged(owner: ?*anyopaque, _: usize, on: bool) void {
+    const server = section(owner).cc.server;
+    if (server.config.compositor.inactive_dim == on) return;
+    server.config.compositor.inactive_dim = on;
+    @import("../../config_runtime/apply.zig").applyWindowOpacity(server);
+    server.scheduleFrames();
+    setting_save.saveCompositor(main.gpa, server.io, server.config.path, "inactive_dim", on) catch |err| {
+        std.log.warn("could not save inactive_dim: {}", .{err});
+    };
+}
+
 fn onInactiveOpacityChanged(owner: ?*anyopaque, _: usize, value: f32) void {
     const s = section(owner);
     const server = section(owner).cc.server;
@@ -1502,6 +1576,29 @@ fn onFocusZoomChanged(owner: ?*anyopaque, _: usize, index: usize) void {
     server.world.refreshFocusZoom();
     s.focus_zoom_children[2].kind.text.content = focus_zoom_descriptions[index];
     s.focus_zoom_children[2].markDirty();
+}
+
+fn onDragFeedbackChanged(owner: ?*anyopaque, _: usize, on: bool) void {
+    const server = section(owner).cc.server;
+    setting_save.saveCompositor(main.gpa, server.io, server.config.path, "drag_feedback", on) catch |err| {
+        std.log.warn("could not save drag_feedback: {}", .{err});
+        return;
+    };
+    server.config.compositor.drag_feedback = on;
+    server.scheduleFrames();
+}
+
+fn onDragScaleChanged(owner: ?*anyopaque, _: usize, value: f32) void {
+    const s = section(owner);
+    const server = s.cc.server;
+    const scale = std.math.clamp(value, loader.drag_scale_min, loader.drag_scale_max);
+    server.config.compositor.drag_scale = scale;
+    server.scheduleFrames();
+    s.drag_scale_header_children[1].kind.text.content = std.fmt.bufPrint(&s.drag_scale_value_buf, "{d:.2}×", .{scale}) catch "?";
+    s.drag_scale_header_children[1].markDirty();
+    setting_save.saveCompositor(main.gpa, server.io, server.config.path, "drag_scale", scale) catch |err| {
+        std.log.warn("could not save drag_scale: {}", .{err});
+    };
 }
 
 fn onAnimationsEnabledChanged(owner: ?*anyopaque, _: usize, on: bool) void {
@@ -1635,6 +1732,7 @@ fn previewItems(s: *Section) void {
         controls[1].kind.button.state = if (drag != null and drag.?.index == i) .press else .idle;
         controls[1].kind.button.variant = if (drag != null and drag.?.index == i) .primary else .secondary;
         controls[2].kind.toggle.on = items.shown(item);
+        controls[3].kind.segmented.selected = @intFromEnum(items.section(item));
         for (controls) |*control| control.markDirty();
     }
     s.cc.requestRepaint();
@@ -1646,8 +1744,8 @@ pub fn moveItemDrag(s: *Section, y: f32) void {
     drag.moved = true;
     var target = drag.index;
     // Cross the neighbouring row's centre before shifting it out of the way.
-    while (target + 1 < taskbar_items.count and y > s.item_rows[target + 1].computed_y + s.item_rows[target + 1].computed_height / 2) target += 1;
-    while (target > 0 and y < s.item_rows[target - 1].computed_y + s.item_rows[target - 1].computed_height / 2) target -= 1;
+    while (target + 1 < taskbar_items.count and drag.items.section(drag.items.order[target + 1]) == drag.items.section(drag.items.order[drag.index]) and y > s.item_rows[target + 1].computed_y + s.item_rows[target + 1].computed_height / 2) target += 1;
+    while (target > 0 and drag.items.section(drag.items.order[target - 1]) == drag.items.section(drag.items.order[drag.index]) and y < s.item_rows[target - 1].computed_y + s.item_rows[target - 1].computed_height / 2) target -= 1;
     if (target == drag.index) return;
     while (drag.index != target) {
         const down = target > drag.index;
@@ -1665,6 +1763,7 @@ pub fn endItemDrag(s: *Section, commit: bool) void {
         // A config reload during the grab can change visibility independently.
         var items = s.cc.server.config.compositor.taskbar_items;
         items.order = drag.items.order;
+        items.normalize();
         saveItems(s, items);
     }
     previewItems(s);
@@ -1707,6 +1806,14 @@ pub fn itemKey(s: *Section, key: @import("ui").input.Key) bool {
         return true;
     }
     return false;
+}
+
+fn onItemSectionChanged(owner: ?*anyopaque, index: usize, zone: usize) void {
+    if (index >= taskbar_items.count or zone >= 3) return;
+    const s = section(owner);
+    var items = s.cc.server.config.compositor.taskbar_items;
+    items.setSection(items.order[index], @enumFromInt(zone));
+    saveItems(s, items);
 }
 
 fn ItemToggle(comptime index: usize) type {
@@ -1801,6 +1908,25 @@ fn onDockChanged(owner: ?*anyopaque, _: usize, on: bool) void {
     server.scheduleFrames();
 }
 
+fn onDockPositionChanged(owner: ?*anyopaque, _: usize, index: usize) void {
+    if (index >= 4) return;
+    const s = section(owner);
+    const server = s.cc.server;
+    const position: @TypeOf(server.config.compositor.dock_position) = @enumFromInt(index);
+    if (position == server.config.compositor.dock_position) return;
+    setting_save.saveCompositor(main.gpa, server.io, server.config.path, "dock_position", position) catch |err| {
+        std.log.warn("could not save dock position: {}", .{err});
+        s.dock_position_children[1].kind.segmented.selected = @intFromEnum(server.config.compositor.dock_position);
+        s.dock_position_children[1].markDirty();
+        return;
+    };
+    server.config.compositor.dock_position = position;
+    if (server.input.window_menu.dock != null) server.input.window_menu.close();
+    var it = server.outputs.iterator(.forward);
+    while (it.next()) |output| output.dock.invalidate();
+    server.scheduleFrames();
+}
+
 fn onDockHeightChanged(owner: ?*anyopaque, _: usize, value: f32) void {
     const s = section(owner);
     const server = s.cc.server;
@@ -1817,6 +1943,29 @@ fn onDockHeightChanged(owner: ?*anyopaque, _: usize, value: f32) void {
     s.px[px_dock_height].header_children[1].kind.text.content = formatted;
     s.px[px_dock_height].header_children[1].markDirty();
     if (server.input.window_menu.dock != null) server.input.window_menu.close();
+    var it = server.outputs.iterator(.forward);
+    while (it.next()) |output| output.dock.invalidate();
+    server.scheduleFrames();
+}
+
+fn updateDockZoomLabel(s: *Section) void {
+    s.px[px_dock_hover_zoom].header_children[1].kind.text.content = std.fmt.bufPrint(&s.px[px_dock_hover_zoom].value_buf, "{d:.2}×", .{s.cc.server.config.compositor.dock_hover_zoom}) catch "?";
+    s.px[px_dock_hover_zoom].header_children[1].markDirty();
+}
+
+fn onDockHoverZoomChanged(owner: ?*anyopaque, _: usize, value: f32) void {
+    const s = section(owner);
+    const server = s.cc.server;
+    const zoom = std.math.clamp(@round(value * 20) / 20, 1, loader.dock_hover_zoom_max);
+    if (zoom == server.config.compositor.dock_hover_zoom) return;
+    setting_save.saveCompositor(main.gpa, server.io, server.config.path, "dock_hover_zoom", zoom) catch |err| {
+        std.log.warn("could not save dock hover zoom: {}", .{err});
+        s.px[px_dock_hover_zoom].group_children[1].kind.slider.value = server.config.compositor.dock_hover_zoom;
+        s.px[px_dock_hover_zoom].group_children[1].markDirty();
+        return;
+    };
+    server.config.compositor.dock_hover_zoom = zoom;
+    updateDockZoomLabel(s);
     var it = server.outputs.iterator(.forward);
     while (it.next()) |output| output.dock.invalidate();
     server.scheduleFrames();

@@ -58,6 +58,18 @@ cp -R "$release_dir/share/rediwm/wallpapers" /usr/local/share/rediwm/.wallpapers
 chmod -R u=rwX,go=rX /usr/local/share/rediwm/.wallpapers-new
 rm -rf /usr/local/share/rediwm/wallpapers
 mv -T /usr/local/share/rediwm/.wallpapers-new /usr/local/share/rediwm/wallpapers
+# Packs carry artwork as well as the palettes embedded in the executables.
+# Replace bundled packs individually, preserving any other installed packs.
+for pack in "$release_dir"/share/rediwm/themes/*/; do
+    [ -d "$pack" ] || continue
+    name=$(basename "$pack")
+    install -d /usr/local/share/rediwm/themes
+    rm -rf "/usr/local/share/rediwm/themes/.$name-new"
+    cp -R "$pack" "/usr/local/share/rediwm/themes/.$name-new"
+    chmod -R u=rwX,go=rX "/usr/local/share/rediwm/themes/.$name-new"
+    rm -rf "/usr/local/share/rediwm/themes/$name"
+    mv -T "/usr/local/share/rediwm/themes/.$name-new" "/usr/local/share/rediwm/themes/$name"
+done
 for binary in rediwm rediwm-msg rediwm-theme rediwm-files rediwm-images rediwm-editor rediwm-pdf rediwm-share-picker rediwm-session rediwm-dm rediwm-accounts-helper; do
     mv -fT "$stage/$binary" "/usr/local/bin/$binary"
 done

@@ -272,13 +272,16 @@ test "Files keeps theme colours and font names alive after parsing" {
     defer _ = c.close(fd);
     defer _ = c.unlink(&theme_path);
     const io = std.testing.io;
-    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = &theme_path, .data = "[theme]\nfont = \"Inter\"\napp_bg = \"#102030\"\n" });
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = &theme_path, .data = "[theme]\nfont = \"Inter\"\napp_bg = \"#102030\"\napp_surface_hover = \"rgba(229,214,195,0.96)\"\napp_sidebar_hover = \"rgba(116,92,72,0.96)\"\n" });
     var settings = Settings{ .theme_path = &theme_path };
     const t = settings.poll(std.testing.allocator, io).?;
     defer t.deinit();
     try std.testing.expectApproxEqAbs(@as(f32, 0x20) / 255.0, t.value.app_bg[1], 1e-6);
     try std.testing.expectEqualStrings("Inter", t.value.font);
     try std.testing.expectEqualStrings((theme.Theme{}).mono_font, t.value.mono_font);
+    try std.testing.expectEqual(t.value.app_surface_hover.?, t.value.forApp().surface_hover);
+    try std.testing.expectEqual(t.value.app_sidebar_hover.?, t.value.sidebarHover());
+    try std.testing.expectEqual((theme.Theme{}).app_item_hover, (theme.Theme{}).sidebarHover());
 }
 
 // Reuse the shell's value parsers, without importing compositor dependencies

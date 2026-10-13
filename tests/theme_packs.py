@@ -21,6 +21,8 @@ ROOT = Path(__file__).resolve().parents[1]
 HELPER = ROOT / "zig-out/bin/rediwm-theme"
 FIXTURE = ROOT / "tests/fixtures/theme-pack"
 PINK = (244, 44, 160)
+HOME_COLOR = (32, 211, 231)
+TRASH_COLOR = (180, 91, 237)
 
 
 def helper(env, *args, ok=True):
@@ -81,13 +83,16 @@ def run():
         env = dict(os.environ, XDG_DATA_HOME=str(tmp / "data"), XDG_STATE_HOME=str(tmp / "state"),
                    XDG_CONFIG_HOME=str(tmp / "config"), XDG_CACHE_HOME=str(tmp / "cache"),
                    DBUS_SESSION_BUS_ADDRESS="", DBUS_SYSTEM_BUS_ADDRESS="unix:path=/nonexistent",
-                   REDIWM_FILES_DEVICES="0", REDIWM_DESKTOP_BUILTINS="0", REDIWM_DESKTOP_DIR=str(tmp / "desktop"))
+                   REDIWM_FILES_DEVICES="0", REDIWM_DESKTOP_BUILTINS="1", REDIWM_DESKTOP_DIR=str(tmp / "desktop"))
         env.pop("REDIWM_THEME", None)
         env.pop("REDIWM_CONFIG", None)
         env.pop("REDIWM_SOCKET", None)
         hostile_archives(tmp, env)
         pack = tmp / "source"
         shutil.copytree(FIXTURE, pack)
+        for name, color in (("user-home", HOME_COLOR), ("user-trash", TRASH_COLOR)):
+            fill = "#%02x%02x%02x" % color
+            (pack / f"icons/{name}.svg").write_text((pack / "icons/folder.svg").read_text().replace("#f42ca0", fill))
         # A real built cursor with the sole allowed alias form.
         (pack / "cursors/cursors").mkdir(parents=True)
         shutil.copyfile(ROOT / "zig-out/share/icons/phinger-cursors-dark/cursors/default", pack / "cursors/cursors/left_ptr")
@@ -122,21 +127,25 @@ def run():
                 gold = ipc.action("get_theme")
                 assert gold["tokens"]["notification_blur"] is True
                 assert gold["tokens"]["app_fg"] != gold["tokens"]["window_fg"]
+                assert gold["tokens"]["app_sidebar"][3] == 1
+                for key in ("app_item_hover", "app_sidebar_hover", "app_surface_hover",
+                            "surface_hover", "start_menu_selected_bg"):
+                    assert abs(gold["tokens"][key][3] - 0.96) < .001, key
                 wait_for(lambda: UIDriver(ipc).widgets("dock"), "Gold dock did not appear")
                 assert ipc.get_shell_state()["taskbars"][0]["box"]["y"] == 0
                 assert UIDriver(ipc).widgets("dock")[0]["global_box"]["height"] == 76
                 wait_for(lambda: (ipc.query("get_wallpaper")["displayed_path"] or "").endswith("/wallpaper-gold.png"), "Gold wallpaper was not presented")
                 cfg = tomllib.loads((tmp / "rediwm-config.toml").read_text())
-                assert not {"dock_enabled", "dock_height", "taskbar_position"} & cfg["compositor"].keys()
+                assert not {"dock_enabled", "dock_position", "dock_height", "dock_hover_zoom", "taskbar_position"} & cfg["compositor"].keys()
                 if shutil.which("foot"):
                     helper(dict(env, REDIWM_CONFIG=str(tmp / "rediwm-config.toml")), "terminal", "foot", "--check-config", "--config=/dev/null")
                 config_path = tmp / "rediwm-config.toml"
-                config_path.write_text(config_path.read_text().replace("[compositor]", '[compositor]\ndock_enabled = false\ntaskbar_position = "bottom"\ndock_height = 48', 1))
+                config_path.write_text(config_path.read_text().replace("[compositor]", '[compositor]\ndock_enabled = false\ndock_position = "left"\ntaskbar_position = "bottom"\ndock_height = 48\ndock_hover_zoom = 1.5', 1))
                 wait_for(lambda: not UIDriver(ipc).widgets("dock"), "explicit dock override did not win")
                 assert ipc.get_shell_state()["taskbars"][0]["box"]["y"] > 0
                 ipc.action("theme.apply", {"id": "gold"})
                 wait_for(lambda: UIDriver(ipc).widgets("dock"), "reset did not restore Gold layout")
-                assert not {"dock_enabled", "dock_height", "taskbar_position"} & tomllib.loads(config_path.read_text())["compositor"].keys()
+                assert not {"dock_enabled", "dock_position", "dock_height", "dock_hover_zoom", "taskbar_position"} & tomllib.loads(config_path.read_text())["compositor"].keys()
                 # Every other bundled theme restores the standard bar and no dock.
                 for theme_id in ("rediwm-dark", "rediwm-light", "redi-blue", "redi-mocha"):
                     ipc.action("theme.apply", {"id": "gold"})
@@ -171,11 +180,13 @@ def run():
                 ipc.screenshot(str(shot))
                 colors = dict((color, count) for count, color in Image.open(shot).convert("RGB").getcolors(1280 * 720 * 4))
                 assert colors.get((18, 90, 130), 0) > 5000, "pack wallpaper pixels missing"
-                def desktop_has_folder():
+                def desktop_has_icons():
                     shot.unlink(missing_ok=True)
                     ipc.screenshot(str(shot))
-                    return any(color == PINK for color in Image.open(shot).convert("RGB").getdata())
-                wait_for(desktop_has_folder, "desktop folder did not use pack icon")
+                    with Image.open(shot) as image:
+                        colors = dict((color, count) for count, color in image.convert("RGB").getcolors(image.width * image.height))
+                    return all(colors.get(color, 0) > 100 for color in (PINK, HOME_COLOR, TRASH_COLOR))
+                wait_for(desktop_has_icons, "desktop folder, Home or Trash did not use pack icons")
                 assert colors.get((33, 219, 175), 0) > 10, "pack start logo pixels missing"
                 # App clients resolve base through their normal settings worker.
                 display = next(p.name for p in tmp.glob("wayland-*") if not p.name.endswith(".lock"))
@@ -193,16 +204,29 @@ def run():
                     pixels = Image.open(files_shot).convert("RGB").crop((box["x"], box["y"], box["x"] + box["width"], box["y"] + box["height"]))
                     return any(color == PINK for color in pixels.getdata())
                 wait_for(files_has_folder, "Files did not use pack folder icon")
+                def files_has_sidebar_icons():
+                    files_shot.unlink(missing_ok=True)
+                    ipc.screenshot(str(files_shot))
+                    box = ipc.get_window_debug(win["id"])["client_box"]
+                    with Image.open(files_shot) as image:
+                        sidebar = image.convert("RGB").crop((box["x"], box["y"], box["x"] + 50, box["y"] + box["height"]))
+                        colors = dict((color, count) for count, color in sidebar.getcolors(sidebar.width * sidebar.height))
+                    return all(colors.get(color, 0) > 50 for color in (PINK, HOME_COLOR, TRASH_COLOR))
+                wait_for(files_has_sidebar_icons, "Files sidebar did not use pack folder, Home and Trash icons")
                 ipc.action("theme.apply", {"id": "gold"})
                 def files_has_gold_palette():
                     files_shot.unlink(missing_ok=True)
                     ipc.screenshot(str(files_shot))
                     with Image.open(files_shot) as image:
                         colors = dict((color, count) for count, color in image.convert("RGB").getcolors(image.width * image.height))
-                    return colors.get((238, 230, 219), 0) > 5000 and colors.get((57, 51, 46), 0) > 100 and colors.get((241, 231, 219), 0) > 100
+                    return (colors.get((238, 230, 219), 0) > 5000
+                            and colors.get((68, 61, 58), 0) > 5000
+                            and colors.get((57, 51, 46), 0) > 100
+                            and colors.get((241, 231, 219), 0) > 100)
                 wait_for(files_has_gold_palette, "Gold app, sidebar and chrome foregrounds were not separated")
                 ipc.action("theme.apply", {"id": "test-pack"})
                 wait_for(files_has_folder, "Files did not restore pack icons after Gold")
+                wait_for(files_has_sidebar_icons, "Files sidebar did not restore pack icons after Gold")
                 ipc.action("set_accent_color", {"color": "#112233"})
                 cfg = tomllib.loads((tmp / "rediwm-config.toml").read_text())
                 assert set(cfg["theme"]) == {"base", "accent"}, cfg["theme"]

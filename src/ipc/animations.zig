@@ -90,6 +90,8 @@ fn appendWindow(
     try appendLive(allocator, list, zoom_site, toplevel.zoom_anim, now_ms);
     const boost_site = try std.fmt.allocPrint(allocator, "window.{d}.zoom_boost", .{toplevel.id});
     try appendLive(allocator, list, boost_site, toplevel.zoom_boost, now_ms);
+    const lift_site = try std.fmt.allocPrint(allocator, "window.{d}.drag_lift", .{toplevel.id});
+    try appendLive(allocator, list, lift_site, toplevel.drag_lift, now_ms);
     const mix_site = try std.fmt.allocPrint(allocator, "window.{d}.peek_mix", .{toplevel.id});
     try appendLive(allocator, list, mix_site, toplevel.peek_mix, now_ms);
     const level_site = try std.fmt.allocPrint(allocator, "window.{d}.peek_level", .{toplevel.id});
@@ -209,8 +211,10 @@ fn captureWindow(
     try anim.captureIfLive(allocator, list, &toplevel.chip_alpha, .titlebar_chip_fade, now_ms);
     try anim.captureIfLive(allocator, list, &toplevel.zoom_anim, .window_zoom, now_ms);
     try anim.captureIfLive(allocator, list, &toplevel.zoom_boost, .window_zoom, now_ms);
+    try anim.captureIfLive(allocator, list, &toplevel.drag_lift, .window_drag, now_ms);
     try anim.captureIfLive(allocator, list, &toplevel.peek_mix, .window_peek, now_ms);
     try anim.captureIfLive(allocator, list, &toplevel.peek_level, .window_peek, now_ms);
+    try anim.captureIfLive(allocator, list, &toplevel.dim_anim, .window_dim, now_ms);
     try anim.captureIfLive(allocator, list, &toplevel.map_motion, .window_open, now_ms);
     try anim.captureIfLive(allocator, list, &toplevel.map_opacity, if (toplevel.closing) .window_close else .window_open, now_ms);
     try anim.captureIfLive(allocator, list, &toplevel.move_x, .window_move, now_ms);

@@ -661,7 +661,10 @@ pub fn startMove(input: *Input, toplevel: *Toplevel) void {
     toplevel.finishZoomAnimation();
     toplevel.finishMoveAnimation();
     toplevel.finishSizeAnimation();
-    if (@import("tiling_grab.zig").begin(input, toplevel, null, 0x110)) return;
+    if (@import("tiling_grab.zig").begin(input, toplevel, null, 0x110)) {
+        input.server.scheduleFrames();
+        return;
+    }
     toplevel.pending_restore = null;
     const snapped = toplevel.layout() != .floating and !toplevel.isFullscreen();
     input.move_snap.preview.hide();
@@ -684,6 +687,7 @@ pub fn startMove(input: *Input, toplevel: *Toplevel) void {
     input.setNamedCursor("grabbing");
     input.grab_x = origin.x;
     input.grab_y = origin.y;
+    input.server.scheduleFrames();
     // Snapshot current geometry for undo. Press folding: if a focus change
     // already fired on this press, begin() will inherit its focus id.
     const geom = toplevel.clientGeometry();
@@ -1417,6 +1421,7 @@ pub fn warpCursor(input: *Input, x: f64, y: f64, time_msec: u32) void {
 
 pub fn processCursorMotion(input: *Input, time_msec: u32) void {
     if (input.server.locker != null or input.server.polkit_dialog != null or input.server.switcher.active()) return;
+    defer input.updateGrabBorderGlow();
     input.positionDragIcon();
     input.drag_dodge.motion();
     if (input.server.screenshot_selector.output != null) {
@@ -2233,6 +2238,17 @@ fn updateBorderGlow(input: *Input, hit: scene_data.Hit) void {
         };
         if (clear) target = top;
     }
+    input.setBorderGlowTarget(target);
+}
+
+/// A compositor grab owns the pointer even outside the window's current box.
+/// Refresh again when chrome applies a size: client replies can follow motion.
+pub fn updateGrabBorderGlow(input: *Input) void {
+    if (input.cursor_mode != .move and input.cursor_mode != .resize) return;
+    input.setBorderGlowTarget(input.grabbed_toplevel);
+}
+
+fn setBorderGlowTarget(input: *Input, target: ?*Toplevel) void {
     if (input.glow_toplevel) |previous| {
         if (previous != target) previous.setGlow(null);
     }

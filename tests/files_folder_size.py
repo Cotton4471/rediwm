@@ -112,10 +112,10 @@ def run():
                 time.sleep(.1)
 
                 # In grid view, cell width is ~235px. Card 0 starts at x = 228 (sidebar 208 + 20).
-                # Subtitle (sizeButtonRect) for item 0 is at (x + 22, y + 102), with y = 112 + 20 = 132.
-                # So button 0 is around x = 255, y = 240.
+                # Subtitle (sizeButtonRect) for item 0 is at (x + 6, y + 86), with y = 112 + 20 = 132.
+                # So button 0 is around x = 250, y = 225.
                 # Click the dash button of item 0 (big_folder)
-                click(255, 240)
+                click(250, 225)
                 time.sleep(.2)
 
                 # Clicking dash must NOT select big_folder (item 1 small_folder must still be active/selected)

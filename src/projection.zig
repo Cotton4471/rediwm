@@ -79,8 +79,14 @@ pub fn setTreeShadow(node: *wlr.SceneNode, spec: ?ShadowSpec) bool {
     if (spec) |value| return rediwm_projection_set_tree_shadow(node, &value);
     return rediwm_projection_set_tree_shadow(node, null);
 }
-/// Ends the clip inherited from an ancestor for this subtree: an xdg popup or a
-/// window's shadow hangs under the window's tree but is no part of its shape.
+/// Every leaf under the tree loses this fraction of its brightness and of its
+/// colour in the output pass (see `rediwm_projection_set_tree_dim`); both zero
+/// removes it. False for a fraction outside 0 to 1.
+extern fn rediwm_projection_set_tree_dim(node: *wlr.SceneNode, brightness: f32, saturation: f32) bool;
+pub const setTreeDim = rediwm_projection_set_tree_dim;
+/// Ends the clip and the dim inherited from an ancestor for this subtree: an xdg
+/// popup or a window's shadow hangs under the window's tree but is no part of its
+/// frame.
 extern fn rediwm_projection_set_tree_unclipped(node: *wlr.SceneNode, unclipped: bool) bool;
 pub const setTreeUnclipped = rediwm_projection_set_tree_unclipped;
 /// Shows the subtree but lets the pick pass through it to what is below: a

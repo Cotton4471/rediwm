@@ -286,7 +286,7 @@ pub fn handleRequest(
                             .window_id = chip.toplevel.id,
                             .title = chip.toplevel.title(),
                             .box = .{
-                                .x = tb.box.x + @as(i32, @intFromFloat(chip.target_x)),
+                                .x = tb.box.x + @as(i32, @intFromFloat(@round(chip.renderX(now)))),
                                 .y = tb.box.y + @divTrunc(tb.box.height - 42, 2),
                                 .width = @as(i32, @intFromFloat(chip.width)),
                                 .height = 42,
@@ -298,6 +298,8 @@ pub fn handleRequest(
                     var right_items = std.ArrayList(protocol.TaskbarItemData).empty;
                     const items = server.config.compositor.taskbar_items;
                     for (items.order) |item| {
+                        // Keep the existing status-item IPC contract.
+                        if (item == .start or item == .windows or item == .tray) continue;
                         const box = tb.itemBox(item);
                         try right_items.append(allocator, .{
                             .name = @tagName(item),
@@ -2256,7 +2258,7 @@ pub fn buildTaskbarWidgetTree(
         .label = "Start",
         .box = .{ .x = sbox.x - bar.box.x, .y = sbox.y - bar.box.y, .width = sbox.width, .height = sbox.height },
         .global_box = .{ .x = sbox.x, .y = sbox.y, .width = sbox.width, .height = sbox.height },
-        .visible = true,
+        .visible = server.config.compositor.taskbar_items.shown(.start),
         .is_disabled = false,
     });
 

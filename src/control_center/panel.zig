@@ -61,7 +61,8 @@ const page_icons = [_]layout.IconId{ .settings, .mouse, .display, .music, .wifi,
 const max_devices = 16;
 
 pub fn palette() theme.Theme {
-    var t = theme.global;
+    // Settings paints app surfaces even though its host is compositor-owned.
+    var t = theme.global.forApp();
     t.bg = t.window_bg;
     t.fg = t.window_fg;
     t.dim = t.window_dim;
@@ -459,12 +460,14 @@ pub const ControlCenter = struct {
         const nav_count = page_names.len - @as(usize, @intFromBool(!has_services));
         const nav_gap: f32 = if (cc.panel_box.height < 550) 2 else 5;
         const nav_height = @min(52, @max(24, (@as(f32, @floatFromInt(cc.panel_box.height)) - 48 - nav_gap * @as(f32, @floatFromInt(nav_count - 1))) / @as(f32, @floatFromInt(nav_count))));
+        const nav_fg = theme.global.sidebarForeground();
         for (cc.nav_rows[0..nav_count], 0..) |*row, i| {
             const selected = i == @intFromEnum(cc.page);
             cc.nav_children[i] = .{
-                .{ .kind = .{ .icon = .{ .id = page_icons[i], .color = if (selected) t.accent else t.fg } }, .width = .{ .fixed = 22 }, .height = .{ .fixed = 22 } },
+                .{ .kind = .{ .icon = .{ .id = page_icons[i], .color = if (selected) t.accent else nav_fg } }, .width = .{ .fixed = 22 }, .height = .{ .fixed = 22 } },
                 label(page_labels[i], 14, false),
             };
+            cc.nav_children[i][1].kind.text.color = nav_fg;
             cc.nav_children[i][1].width = .{ .flex = 1 };
             row.* = .{
                 .name = page_names[i],
@@ -1109,7 +1112,7 @@ pub const ControlCenter = struct {
         }
         const box = navRowBox(list, cc.nav_selected_row);
         renderer.fillRect(box.x, box.y, box.w, box.h, .{
-            .color = t.start_menu_selected_bg,
+            .color = t.sidebarSelected(),
             .radius = t.radius,
             .border_width = 1,
             .border_color = t.start_menu_selected_border,

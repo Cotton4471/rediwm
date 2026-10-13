@@ -1,6 +1,16 @@
 const std = @import("std");
 pub const PanModifier = enum { super, super_alt };
 pub const TaskbarPosition = enum { top, bottom };
+pub const DockPosition = enum {
+    top,
+    bottom,
+    left,
+    right,
+
+    pub fn vertical(self: DockPosition) bool {
+        return self == .left or self == .right;
+    }
+};
 
 pub const AccelProfile = enum {
     flat,

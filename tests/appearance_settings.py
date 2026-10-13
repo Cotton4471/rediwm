@@ -287,6 +287,19 @@ def test_appearance_settings():
                 assert read_config()["compositor"]["dodge_file_drags"] is True
                 assert ui.scroll_into_view("dodge_file_drags").get("on") is True
 
+                # --- 3c. Dim inactive windows (default on) ---
+                dim_toggle = ui.scroll_into_view("inactive_dim")
+                assert dim_toggle is not None
+                assert dim_toggle.get("on") is True, "the setting should default to on"
+                assert "inactive_dim" not in read_config()["compositor"], "an untouched default is not written"
+                click_widget(dim_toggle)
+                assert read_config()["compositor"]["inactive_dim"] is False
+                dim_toggle = ui.scroll_into_view("inactive_dim")
+                assert dim_toggle.get("on") is False
+                click_widget(dim_toggle)
+                assert read_config()["compositor"]["inactive_dim"] is True
+                assert ui.scroll_into_view("inactive_dim").get("on") is True
+
                 # --- 4. Animation speed segmented control ---
                 # Options: 0.5× (idx 0), 1.0× (idx 1), 1.5× (idx 2), 2.0× (idx 3)
                 speed_seg = ui.scroll_into_view("anim_speed")
@@ -529,6 +542,57 @@ def test_appearance_settings():
             stop_process(process)
 
 
+def test_gold_settings_palette():
+    """Light app content and dark chrome/sidebar must keep separate palettes."""
+    with tempfile.TemporaryDirectory(prefix="rediwm-settings-palette-") as directory:
+        tmp = Path(directory)
+        env = {"DBUS_SESSION_BUS_ADDRESS": "", "REDIWM_FILES_DEVICES": "0",
+               "XDG_CONFIG_HOME": str(tmp / "config"), "XDG_DATA_HOME": str(tmp / "data"),
+               "XDG_CACHE_HOME": str(tmp / "cache")}
+        process, log = spawn_compositor(tmp, config_content='[compositor]\nxwayland = false\n[animations]\nenabled = false\n', env_extra=env)
+        try:
+            with IPCClient(tmp, timeout=15) as ipc:
+                ui = UIDriver(ipc)
+                ipc.action("open_appearance")
+                ipc.wait_for_panel_settled("control_center")
+                ipc.action("theme.apply", {"id": "gold"})
+
+                def capture():
+                    ipc.move_cursor(2, 2)
+                    ipc.wait_for_panel_settled("control_center")
+                    ipc.wait_for_frame()
+                    shot = tmp / "settings.png"
+                    shot.unlink(missing_ok=True)
+                    ipc.screenshot(str(shot))
+                    with Image.open(shot) as image:
+                        return image.convert("RGB")
+
+                def contains_color(image, widget, color):
+                    assert widget["visible"] and not widget["clipped"], widget
+                    b = widget["global_box"]
+                    crop = image.crop((b["x"], b["y"], b["x"] + b["width"], b["y"] + b["height"]))
+                    count = sum(n for n, pixel in crop.getcolors(crop.width * crop.height)
+                                if max(abs(a - b) for a, b in zip(pixel, color)) <= 2)
+                    assert count > 10, (widget["name"], widget["label"], color, count)
+
+                for reload in (False, True):
+                    if reload:
+                        ipc.reload_config()
+                    ui.scroll_into_view("theme")
+                    image = capture()
+                    contains_color(image, ui.find("Theme", role="text"), (57, 51, 46))
+                    contains_color(image, ui.find("theme", role="select"), (57, 51, 46))
+                    contains_color(image, ui.find("general", role="row"), (241, 231, 219))
+                    contains_color(image, ui.find("appearance", role="row"), (116, 92, 72))
+                    ui.scroll_into_view("apply_gtk_colors")
+                    image = capture()
+                    contains_color(image, ui.find("apply_gtk_colors"), (57, 51, 46))
+        finally:
+            stop_process(process)
+            log.close()
+    print("PASS: Gold Settings content, controls and sidebar colors, live and reloaded")
+
+
 def test_app_colors():
     with tempfile.TemporaryDirectory(prefix="rediwm-app-colors-") as directory:
         tmp = Path(directory)
@@ -679,6 +743,7 @@ Path(sys.argv[1]).write_text(json.dumps({k: os.environ[k] for k in keys if k in 
 
 if __name__ == "__main__":
     if "--app-colors-only" not in sys.argv:
+        test_gold_settings_palette()
         test_appearance_settings()
         print("PASS: appearance settings (chrome opacity, inactive opacity, animations controls, bundled themes)")
     test_app_colors()

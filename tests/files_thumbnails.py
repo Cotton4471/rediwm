@@ -169,13 +169,16 @@ def run():
 
                 def screenshot():
                     win = windows()[0]
+                    # Inspect client pixels: the window icon can itself match
+                    # a thumbnail colour (the default Files icon contains red).
+                    box = request({"version": 1, "command": "get_window_debug", "params": {"id": win["id"]}})["WindowDebug"]["client_box"]
                     shot.unlink(missing_ok=True)
                     action('screenshot', {"path": str(shot)})
                     wait_for(shot.exists, "no screenshot")
                     time.sleep(0.05)
                     with Image.open(shot) as full:
-                        return full.crop((win["x"], win["y"], win["x"] + win["width"],
-                                          win["y"] + win["height"])).convert("RGB")
+                        return full.crop((box["x"], box["y"], box["x"] + box["width"],
+                                          box["y"] + box["height"])).convert("RGB")
 
                 def launch(folder=pics, **extra):
                     p = start("rediwm-files", str(folder), WAYLAND_DISPLAY=display, **extra)
@@ -207,19 +210,19 @@ def run():
 
                 # --- First visit: decode, draw, write to the shared cache. ---
                 files = launch()
-                wait_blob(GREEN, (48, 36), "800x600 PNG thumbnail (48x36)")
-                wait_blob(BLUE, (16, 48), "300x900 PNG thumbnail keeps its shape (16x48)")
-                wait_blob(RED, (48, 36), "1600x1200 JPEG thumbnail (48x36)")
-                image = wait_blob(CYAN, (48, 48), "seeded shared-cache entry (48x48)")
+                wait_blob(GREEN, (54, 40), "800x600 PNG thumbnail (54x40)")
+                wait_blob(BLUE, (18, 54), "300x900 PNG thumbnail keeps its shape (18x54)")
+                wait_blob(RED, (54, 40), "1600x1200 JPEG thumbnail (54x40)")
+                image = wait_blob(CYAN, (54, 54), "seeded shared-cache entry (54x54)")
                 # The seeded entry replaced the real picture: no 900x900 red square
-                # in that cell, only the JPEG's 48x36 red one counted above.
+                # in that cell, only the JPEG's 54x40 red one counted above.
                 yellow_box, _ = blob(image, YELLOW)
                 magenta_box, _ = blob(image, MAGENTA)
                 assert yellow_box and magenta_box, "EXIF-rotated thumbnail missing"
-                # Orientation 6 turns the landscape picture upright: 24x48, with
+                # Orientation 6 turns the landscape picture upright: 27x54, with
                 # yellow (the original top half) on the right of magenta.
-                assert close(size_of(yellow_box), (12, 48), 3), yellow_box
-                assert close(size_of(magenta_box), (12, 48), 3), magenta_box
+                assert close(size_of(yellow_box), (14, 54), 3), yellow_box
+                assert close(size_of(magenta_box), (14, 54), 3), magenta_box
                 assert magenta_box[0] < yellow_box[0], (magenta_box, yellow_box)
                 print("Thumbnails drawn with correct shape, colour and EXIF orientation.")
                 # Nothing was drawn for the corrupt picture or the text file:
@@ -247,7 +250,7 @@ def run():
 
                 # --- Editing a file replaces its thumbnail. ---
                 Image.new("RGB", (1000, 400), LIME).save(pics / "a_red.jpg", quality=90)
-                wait_blob(LIME, (48, 19), "edited picture's new thumbnail (48x19)", slack=3)
+                wait_blob(LIME, (54, 22), "edited picture's new thumbnail (54x22)", slack=3)
                 assert blob(screenshot(), RED)[1] < 100, "stale red thumbnail still drawn"
                 print("Editing a picture refreshes its thumbnail.")
 
@@ -262,7 +265,7 @@ def run():
 
                 # --- A later visit shows the same pictures from the cache. ---
                 files = launch()
-                wait_blob(GREEN, (48, 36), "cached thumbnail on second visit")
+                wait_blob(GREEN, (54, 40), "cached thumbnail on second visit")
                 stop(files)
 
                 # --- The environment switch turns the feature off. ---

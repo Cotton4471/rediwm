@@ -276,6 +276,7 @@ pub fn tickHover(world: *World, now_ms: i64) bool {
         if (toplevel.tickGlow(now_ms)) animating = true;
         if (toplevel.tickZoom(now_ms)) animating = true;
         if (toplevel.tickZoomBoost(now_ms)) animating = true;
+        if (toplevel.tickDragLift(now_ms)) animating = true;
         if (toplevel.tickMap(now_ms)) animating = true;
         if (toplevel.tickMove(now_ms)) animating = true;
         if (toplevel.tickDodge(now_ms)) animating = true;
@@ -301,6 +302,7 @@ pub fn tickHover(world: *World, now_ms: i64) bool {
             if (toplevel.peek_level.to != level) toplevel.peek_level.retargetTo(now_ms, level, anim.curveFor(.window_peek));
         }
         toplevel.applyOpacity(now_ms);
+        if (toplevel.dimAnimating(now_ms)) animating = true;
         _ = toplevel.peek_mix.sampleChanged(now_ms, anim.quantum_alpha);
         _ = toplevel.peek_level.sampleChanged(now_ms, anim.quantum_alpha);
         if (!toplevel.peek_mix.settled(now_ms) or !toplevel.peek_level.settled(now_ms)) animating = true;

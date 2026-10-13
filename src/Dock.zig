@@ -38,11 +38,12 @@ const Metrics = struct {
     }
 };
 
-const Pill = struct {
+const ItemAnimation = struct {
     shortcut: ?Shortcut = null,
     id: u64 = 0,
     width: anim.Anim = .{},
     opacity: anim.Anim = .{ .property = .opacity },
+    zoom: anim.Anim = .{ .from = 1, .to = 1 },
 };
 
 output: ?*Output = null,
@@ -52,6 +53,7 @@ tooltip: ?*wlr.SceneBuffer = null,
 glass_effect: ?*glass.Effect = null,
 data: SceneData = undefined,
 box: wlr.Box = .{ .x = 0, .y = 0, .width = 0, .height = config.dock_height_default },
+position: @import("config").types.DockPosition = .bottom,
 scale: f32 = 0,
 dirty: bool = true,
 visible: bool = false,
@@ -59,8 +61,8 @@ root: ui.layout.Widget = .{ .kind = .container },
 buttons: [max_items]ui.layout.Widget = undefined,
 ids: [max_items]u64 = @splat(0),
 shortcuts: [max_items]?Shortcut = @splat(null),
-pills: [max_items]Pill = @splat(.{}),
-pills_animating: bool = false,
+animations: [max_items]ItemAnimation = @splat(.{}),
+animating: bool = false,
 count: usize = 0,
 offset: usize = 0,
 windows: usize = 0,
@@ -113,8 +115,11 @@ pub fn tick(self: *Self, output: *Output, now_ms: i64) bool {
     const usable = output.usableBox();
     const m: Metrics = .{ .height = @intCast(server.config.compositor.dock_height) };
     const shortcut_count = self.shortcutCount();
-    const min_width = @max(260, @as(i32, @intCast(shortcut_count)) * m.itemStep() + m.padding() * 2 + 12);
-    const visible = server.locker == null and usable.width >= min_width and usable.height >= @max(140, m.height + 72) and
+    const position = server.config.compositor.dock_position;
+    const available_length = if (position.vertical()) usable.height else usable.width;
+    const available_thickness = if (position.vertical()) usable.width else usable.height;
+    const min_length = @max(260, @as(i32, @intCast(shortcut_count)) * m.itemStep() + m.padding() * 2 + 12);
+    const visible = server.locker == null and available_length >= min_length and available_thickness >= @max(140, m.height + 72) and
         !(if (focused) |top| top.fullscreen and top.currentOutput() == output else false);
     self.tree.?.node.setEnabled(visible);
     if (self.visible != visible) {
@@ -127,22 +132,24 @@ pub fn tick(self: *Self, output: *Output, now_ms: i64) bool {
         return false;
     }
     if (self.scale != output.wlr_output.scale) self.dirty = true;
-    if (self.box.height != m.height) self.dirty = true;
+    if (self.position != position or self.metrics().height != m.height) self.dirty = true;
     // Output geometry can change without a window or theme notification.
-    const capacity: usize = @intCast(@min(max_items - shortcut_count, @max(0, @divTrunc(usable.width - m.padding() * 2 - 16, m.itemStep()) - @as(i32, @intCast(shortcut_count)))));
+    const capacity: usize = @intCast(@min(max_items - shortcut_count, @max(0, @divTrunc(available_length - m.padding() * 2 - 16, m.itemStep()) - @as(i32, @intCast(shortcut_count)))));
     const wanted = @min(capacity, self.windows) + shortcut_count;
-    if (self.box.width != @as(i32, @intCast(wanted)) * m.itemStep() + m.padding() * 2) self.dirty = true;
+    if ((if (position.vertical()) self.box.height else self.box.width) != @as(i32, @intCast(wanted)) * m.itemStep() + m.padding() * 2) self.dirty = true;
     const rebuilt = self.dirty;
     if (rebuilt) self.rebuild(capacity, usable) catch return false;
     self.tree.?.node.setEnabled(self.count > 0);
     if (self.count == 0) {
-        self.pills_animating = false;
+        self.animating = false;
         return false;
     }
-    if (rebuilt or self.pills_animating) self.paint(now_ms) catch return false;
     self.place(usable);
+    if (rebuilt or self.animating) {
+        self.paint(now_ms) catch return false;
+    } else self.paintTooltip() catch {};
     self.tree.?.node.setPosition(self.box.x, self.box.y);
-    return self.pills_animating;
+    return self.animating;
 }
 
 fn hidden(items: []const []const u8, name: []const u8) bool {
@@ -164,11 +171,23 @@ fn shortcutCount(self: *Self) usize {
 
 fn place(self: *Self, usable: wlr.Box) void {
     self.box.x = usable.x + @divTrunc(usable.width - self.box.width, 2);
-    self.box.y = usable.y + usable.height - self.box.height - 10;
+    self.box.y = usable.y + @divTrunc(usable.height - self.box.height, 2);
+    switch (self.position) {
+        .top => self.box.y = usable.y + 10,
+        .bottom => self.box.y = usable.y + usable.height - self.box.height - 10,
+        .left => self.box.x = usable.x + 10,
+        .right => self.box.x = usable.x + usable.width - self.box.width - 10,
+    }
 }
 
 fn metrics(self: *const Self) Metrics {
-    return .{ .height = self.box.height };
+    return .{ .height = if (self.position.vertical()) self.box.width else self.box.height };
+}
+
+/// Put the running indicator on the output-edge side of each upright icon.
+fn buttonCross(self: *const Self) i32 {
+    const m = self.metrics();
+    return if (self.position == .top or self.position == .left) m.height - m.length(8) - m.length(48) else m.length(8);
 }
 
 const AppMatch = struct {
@@ -212,7 +231,7 @@ fn shortcutApps(self: *Self, entries: []const apps.AppEntry, scratch: std.mem.Al
 
 fn rebuild(self: *Self, capacity: usize, usable: wlr.Box) !void {
     const output = self.output.?;
-    const previous_pills = self.pills;
+    const previous_animations = self.animations;
     const previous_count = self.count;
     const snapshot = output.server.start_menu_catalog.retainSnapshot();
     defer snapshot.release();
@@ -249,9 +268,11 @@ fn rebuild(self: *Self, capacity: usize, usable: wlr.Box) !void {
     self.offset = @min(self.offset, self.windows -| capacity);
     const window_count = @min(capacity, self.windows);
     self.count = window_count + self.shortcutCount();
-    self.box.height = @intCast(output.server.config.compositor.dock_height);
-    const m = self.metrics();
-    self.box.width = @as(i32, @intCast(self.count)) * m.itemStep() + m.padding() * 2;
+    self.position = output.server.config.compositor.dock_position;
+    const m: Metrics = .{ .height = @intCast(output.server.config.compositor.dock_height) };
+    const length = @as(i32, @intCast(self.count)) * m.itemStep() + m.padding() * 2;
+    self.box.width = if (self.position.vertical()) m.height else length;
+    self.box.height = if (self.position.vertical()) length else m.height;
     self.scale = output.wlr_output.scale;
     const hovered = self.dispatcher.hovered != null;
     self.dispatcher.reset();
@@ -268,18 +289,19 @@ fn rebuild(self: *Self, capacity: usize, usable: wlr.Box) !void {
         index += 1;
     }
     if (self.shortcutShown(.settings)) self.setButton(index, .settings, if (targets[@intFromEnum(Shortcut.settings)]) |top| top.id else 0);
-    for (self.pills[0..self.count], 0..) |*pill, i| {
+    for (self.animations[0..self.count], 0..) |*pill, i| {
         const shortcut = self.shortcuts[i];
         const id = self.ids[i];
         pill.* = .{ .shortcut = shortcut, .id = id };
         // Widget indexes move as windows open or items are removed. A
         // shortcut keeps its animation when its representative window changes.
-        for (previous_pills[0..previous_count]) |previous| {
+        for (previous_animations[0..previous_count]) |previous| {
             if (previous.shortcut == shortcut and (shortcut != null or previous.id == id)) {
                 pill.* = previous;
                 break;
             }
         }
+        self.setButtonZoom(i, std.math.clamp(pill.zoom.value(anim.nowMs()), 1, output.server.config.compositor.dock_hover_zoom));
     }
     // The pointer rests on a replaced button: hover it before painting, so
     // the rebuild paints once.
@@ -298,8 +320,8 @@ fn setButton(self: *Self, index: usize, shortcut: ?Shortcut, id: u64) void {
     self.buttons[index] = .{
         .name = if (shortcut) |s| @tagName(s) else std.fmt.allocPrint(self.arena.allocator(), "window_{d}", .{id}) catch "window",
         .kind = .{ .button = .{ .label = self.arena.allocator().dupe(u8, self.label(index)) catch "Application", .variant = .ghost, .owner = self, .id = index, .on_click = clicked } },
-        .computed_x = @floatFromInt(@as(i32, @intCast(index)) * m.itemStep() + m.padding()),
-        .computed_y = @floatFromInt(m.length(8)),
+        .computed_x = @floatFromInt(if (self.position.vertical()) self.buttonCross() else @as(i32, @intCast(index)) * m.itemStep() + m.padding()),
+        .computed_y = @floatFromInt(if (self.position.vertical()) @as(i32, @intCast(index)) * m.itemStep() + m.padding() else self.buttonCross()),
         .computed_width = @floatFromInt(m.length(48)),
         .computed_height = @floatFromInt(m.length(48)),
     };
@@ -311,6 +333,19 @@ fn topAt(self: *Self, index: usize) ?*Toplevel {
     var it = self.output.?.server.world.toplevels.iterator(.forward);
     while (it.next()) |top| if (top.id == id and top.in_world and !top.backend_gone and !top.closing) return top;
     return null;
+}
+
+fn setButtonZoom(self: *Self, index: usize, zoom: f32) void {
+    const m = self.metrics();
+    const base: f32 = @floatFromInt(m.length(48));
+    const side = @max(base, @as(f32, @floatFromInt(m.length(36))) * zoom);
+    const button = &self.buttons[index];
+    const along = @as(f32, @floatFromInt(@as(i32, @intCast(index)) * m.itemStep() + m.padding())) + (base - side) / 2;
+    const cross = @as(f32, @floatFromInt(self.buttonCross())) + (base - side) / 2;
+    button.computed_x = if (self.position.vertical()) cross else along;
+    button.computed_y = if (self.position.vertical()) along else cross;
+    button.computed_width = side;
+    button.computed_height = side;
 }
 
 fn label(self: *Self, index: usize) []const u8 {
@@ -345,6 +380,7 @@ const Look = struct {
     icon: ?IconEntry,
     pill_width: f32,
     pill_opacity: f32,
+    zoom: f32,
 };
 
 fn paint(self: *Self, now_ms: i64) !void {
@@ -355,9 +391,9 @@ fn paint(self: *Self, now_ms: i64) !void {
     if (pal.dock_bg == null) bg[3] = @max(bg[3], 0.86);
     const focused = @import("ipc/handlers.zig").findFocusedToplevel(output.server);
     var looks: [max_items]Look = undefined;
-    self.pills_animating = false;
+    self.animating = false;
     var hasher = std.hash.Wyhash.init(0);
-    hashValue(&hasher, .{ pal, bg, self.scale, self.box.width, self.box.height, self.count, self.offset, self.windows });
+    hashValue(&hasher, .{ pal, bg, self.scale, self.position, self.box.width, self.box.height, self.count, self.offset, self.windows });
     for (self.buttons[0..self.count], looks[0..self.count], 0..) |button, *look, index| {
         const top = self.topAt(index);
         const icon_name = if (self.shortcuts[index]) |shortcut| switch (shortcut) {
@@ -366,24 +402,35 @@ fn paint(self: *Self, now_ms: i64) !void {
             .terminal => "utilities-terminal",
             .settings => "preferences-system",
         } else if (top) |t| t.appId() else "";
-        const lookup = output.server.iconLookup(icon_name, @import("geometry.zig").devicePixels(m.length(36), self.scale));
+        // Retain one raster at the configured maximum, not a new size each frame.
+        const hover_zoom = output.server.config.compositor.dock_hover_zoom;
+        const lookup = output.server.iconLookup(icon_name, @import("geometry.zig").devicePixels(@intFromFloat(@ceil(@as(f32, @floatFromInt(m.length(36))) * hover_zoom)), self.scale));
         const active = top != null and top == focused;
         const width: f32 = if (top == null) 0 else if (active) 22 else 10;
         const opacity: f32 = if (top) |t| if (t.minimized) 0.4 else 1 else 0;
-        const pill = &self.pills[index];
+        const pill = &self.animations[index];
+        const zoom: f32 = if (self.dispatcher.hovered == &self.buttons[index]) hover_zoom else 1;
+        if (hover_zoom == 1) {
+            pill.zoom.cancel(1);
+        } else if (pill.zoom.to != zoom) pill.zoom.retargetTo(now_ms, zoom, anim.curveFor(.taskbar_hover));
         if (pill.width.to != width) pill.width.retargetTo(now_ms, width, anim.curveFor(.taskbar_hover));
         if (pill.opacity.to != opacity) pill.opacity.retargetTo(now_ms, opacity, anim.curveFor(.taskbar_hover));
         _ = pill.width.sampleChanged(now_ms, anim.rasterPixelQuantum(self.scale) / (4 * m.size(1)));
         _ = pill.opacity.sampleChanged(now_ms, anim.rasterAlphaQuantum());
-        self.pills_animating = self.pills_animating or !pill.width.settled(now_ms) or !pill.opacity.settled(now_ms);
+        _ = pill.zoom.sampleChanged(now_ms, anim.rasterPixelQuantum(self.scale) / (4 * m.size(36)));
+        self.animating = self.animating or !pill.width.settled(now_ms) or !pill.opacity.settled(now_ms) or !pill.zoom.settled(now_ms);
         look.* = .{
             .focused = active,
             .icon = if (lookup == .ready) lookup.ready else null,
             .pill_width = @max(0, pill.width.last_quantised),
             .pill_opacity = std.math.clamp(pill.opacity.last_quantised, 0, 1),
+            .zoom = std.math.clamp(pill.zoom.last_quantised, 1, hover_zoom),
         };
+        // Input covers the painted icon even at 1.5×. Keep centres fixed so
+        // moving between neighbours cannot make the row chase the pointer.
+        self.setButtonZoom(index, look.zoom);
         const icon_id: ?u64 = if (look.icon) |icon| icon.id else null;
-        hashValue(&hasher, .{ self.shortcuts[index], button.kind.button.state, look.focused, icon_id, look.pill_width, look.pill_opacity });
+        hashValue(&hasher, .{ self.shortcuts[index], button.kind.button.state, look.focused, icon_id, look.pill_width, look.pill_opacity, look.zoom });
     }
     const key = hasher.final();
     if (key != self.drawn) try self.paintDock(pal, bg, looks[0..self.count]);
@@ -400,7 +447,7 @@ fn paintDock(self: *Self, pal: ui.theme.Theme, bg: [4]f32, looks: []const Look) 
     var border = pal.accent;
     border[3] = 0.55;
     border = pal.dock_border orelse border;
-    const radius = @min(if (pal.dock_radius > 0) pal.dock_radius else ui.window_chrome.frameRadius(), @as(f32, @floatFromInt(self.box.height)) / 2);
+    const radius = @min(if (pal.dock_radius > 0) pal.dock_radius else ui.window_chrome.frameRadius(), @as(f32, @floatFromInt(m.height)) / 2);
     glass.Effect.configure(self.glass_effect, radius, 1);
     r.fillRect(0, 0, @floatFromInt(self.box.width), @floatFromInt(self.box.height), .{ .color = bg, .radius = radius, .border_width = 1, .border_color = border });
     for (self.buttons[0..self.count], looks, 0..) |button, look, index| {
@@ -409,10 +456,10 @@ fn paintDock(self: *Self, pal: ui.theme.Theme, bg: [4]f32, looks: []const Look) 
         const cy = button.computed_y + button.computed_height / 2;
         ui.widgets.button.paintBackground(&r, .{ .x = x, .y = button.computed_y, .w = button.computed_width, .h = button.computed_height }, .{ .variant = .ghost, .radius = m.size(12) }, .{ .pointer = button.kind.button.state, .selected = look.focused });
         if (look.icon) |icon| {
-            const size: f32 = @floatFromInt(m.length(36));
+            const size = @as(f32, @floatFromInt(m.length(36))) * look.zoom;
             r.drawImageCover(cx - size / 2, cy - size / 2, size, size, 0, .{ .pixels = icon.pixels, .width = icon.size, .height = icon.size });
         } else {
-            const size: f32 = @floatFromInt(m.length(34));
+            const size = @as(f32, @floatFromInt(m.length(34))) * look.zoom;
             r.drawIcon(cx - size / 2, cy - size / 2, size, size, .{ .id = if (self.shortcuts[index]) |shortcut| switch (shortcut) {
                 .applications => .grid,
                 .files => .folder,
@@ -425,14 +472,24 @@ fn paintDock(self: *Self, pal: ui.theme.Theme, bg: [4]f32, looks: []const Look) 
             accent[3] *= look.pill_opacity;
             const width = m.size(look.pill_width);
             const thickness = @max(2, m.size(4));
-            r.fillRect(cx - width / 2, @floatFromInt(m.length(58)), width, thickness, .{ .color = accent, .radius = @min(width, thickness) / 2 });
+            const cross: f32 = if (self.position == .top or self.position == .left) @as(f32, @floatFromInt(m.height - m.length(58))) - thickness else @floatFromInt(m.length(58));
+            if (self.position.vertical()) {
+                r.fillRect(cross, cy - width / 2, thickness, width, .{ .color = accent, .radius = @min(width, thickness) / 2 });
+            } else r.fillRect(cx - width / 2, cross, width, thickness, .{ .color = accent, .radius = @min(width, thickness) / 2 });
         }
     }
     var divider = pal.window_fg;
     divider[3] = 0.16;
-    if (self.count > 1 and self.shortcuts[0] == .applications) r.fillRect(@floatFromInt(m.itemStep() + m.padding() - m.length(4)), m.size(18), 1, m.size(30), .{ .color = divider });
-    if (self.offset > 0) r.drawIcon(1, m.size(28), m.size(10), m.size(12), .{ .id = .chevron_left, .color = pal.accent });
-    if (self.offset + self.count - self.shortcutCount() < self.windows) r.drawIcon(@as(f32, @floatFromInt(self.box.width)) - m.size(11), m.size(28), m.size(10), m.size(12), .{ .id = .chevron_right, .color = pal.accent });
+    if (self.count > 1 and self.shortcuts[0] == .applications) {
+        const along: f32 = @floatFromInt(m.itemStep() + m.padding() - m.length(4));
+        if (self.position.vertical()) r.fillRect(m.size(18), along, m.size(30), 1, .{ .color = divider }) else r.fillRect(along, m.size(18), 1, m.size(30), .{ .color = divider });
+    }
+    if (self.offset > 0) {
+        if (self.position.vertical()) r.drawIcon(m.size(28), 1, m.size(12), m.size(10), .{ .id = .chevron_up, .color = pal.accent }) else r.drawIcon(1, m.size(28), m.size(10), m.size(12), .{ .id = .chevron_left, .color = pal.accent });
+    }
+    if (self.offset + self.count - self.shortcutCount() < self.windows) {
+        if (self.position.vertical()) r.drawIcon(m.size(28), @as(f32, @floatFromInt(self.box.height)) - m.size(11), m.size(12), m.size(10), .{ .id = .chevron_down, .color = pal.accent }) else r.drawIcon(@as(f32, @floatFromInt(self.box.width)) - m.size(11), m.size(28), m.size(10), m.size(12), .{ .id = .chevron_right, .color = pal.accent });
+    }
     self.node.?.setBuffer(&image.base);
     self.node.?.setDestSize(self.box.width, self.box.height);
 }
@@ -450,16 +507,17 @@ fn paintTooltip(self: *Self) !void {
     const pal = ui.theme.shellPalette();
     const value = self.label(index);
     var hasher = std.hash.Wyhash.init(0);
-    hashValue(&hasher, .{ pal, self.scale, self.box.width, value });
+    const usable = self.output.?.usableBox();
+    hashValue(&hasher, .{ pal, self.scale, self.position, self.box.width, usable.width, value });
     const key = hasher.final();
     if (key == self.tip_drawn) {
         // Same text: only the button under it may differ.
-        const width = self.tooltip.?.dst_width;
-        self.tooltip.?.node.setPosition(std.math.clamp(@as(i32, @intFromFloat(hovered.computed_x + hovered.computed_width / 2)) - @divTrunc(width, 2), 0, self.box.width - width), -38);
+        self.placeTooltip(hovered, self.tooltip.?.dst_width, usable);
         self.tooltip.?.node.setEnabled(true);
         return;
     }
-    const width: i32 = @intFromFloat(@min(@as(f32, @floatFromInt(self.box.width)), @max(80, (ui.text.measureWidthF(value, .manrope, pal.font_size, 1) catch 100) + 24)));
+    const max_width = if (self.position.vertical()) usable.width - self.box.width - 18 else self.box.width;
+    const width: i32 = @intFromFloat(@min(@as(f32, @floatFromInt(max_width)), @max(80, (ui.text.measureWidthF(value, .manrope, pal.font_size, 1) catch 100) + 24)));
     const image = try PanelBuffer.create(width, 30, self.scale);
     defer image.base.drop();
     var r = ui.paint.Renderer.init(image.pixels, image.width, image.height, self.scale);
@@ -470,9 +528,23 @@ fn paintTooltip(self: *Self) !void {
     r.drawText(10, 0, @floatFromInt(width - 20), 30, .{ .content = value, .font_size = pal.font_size, .color = pal.window_fg });
     self.tooltip.?.setBuffer(&image.base);
     self.tooltip.?.setDestSize(width, 30);
-    self.tooltip.?.node.setPosition(std.math.clamp(@as(i32, @intFromFloat(hovered.computed_x + hovered.computed_width / 2)) - @divTrunc(width, 2), 0, self.box.width - width), -38);
+    self.placeTooltip(hovered, width, usable);
     self.tooltip.?.node.setEnabled(true);
     self.tip_drawn = key;
+}
+
+fn placeTooltip(self: *Self, hovered: *ui.layout.Widget, width: i32, usable: wlr.Box) void {
+    var x = self.box.x + @as(i32, @intFromFloat(hovered.computed_x + hovered.computed_width / 2)) - @divTrunc(width, 2);
+    var y = self.box.y + @as(i32, @intFromFloat(hovered.computed_y + hovered.computed_height / 2)) - 15;
+    switch (self.position) {
+        .top => y = self.box.y + self.box.height + 8,
+        .bottom => y = self.box.y - 38,
+        .left => x = self.box.x + self.box.width + 8,
+        .right => x = self.box.x - width - 8,
+    }
+    x = std.math.clamp(x, usable.x, @max(usable.x, usable.x + usable.width - width));
+    y = std.math.clamp(y, usable.y, @max(usable.y, usable.y + usable.height - 30));
+    self.tooltip.?.node.setPosition(x - self.box.x, y - self.box.y);
 }
 
 pub fn motion(self: *Self, x: f64, y: f64) void {
@@ -509,7 +581,7 @@ pub fn contextMenu(self: *Self, x: f64, y: f64, screen_x: i32) bool {
     const shortcut = self.shortcuts[index];
     if (target == null and shortcut == null) return false;
     const input = &self.output.?.server.input;
-    input.window_menu.openDock(self, target, shortcut, screen_x);
+    input.window_menu.openDock(self, target, shortcut, screen_x, self.box.y + @as(i32, @intFromFloat(y)));
     return input.window_menu.node != null;
 }
 
@@ -560,20 +632,22 @@ pub fn scroll(self: *Self, delta: f64) void {
 }
 
 pub fn captureAnimations(self: *Self, allocator: std.mem.Allocator, list: *std.ArrayList(anim.LiveCapture), now_ms: i64) !void {
-    for (self.pills[0..self.count]) |*pill| {
+    for (self.animations[0..self.count]) |*pill| {
         try anim.captureIfLive(allocator, list, &pill.width, .taskbar_hover, now_ms);
         try anim.captureIfLive(allocator, list, &pill.opacity, .taskbar_hover, now_ms);
+        try anim.captureIfLive(allocator, list, &pill.zoom, .taskbar_hover, now_ms);
     }
 }
 
 pub fn appendAnimations(self: *const Self, allocator: std.mem.Allocator, list: *std.ArrayList(@import("ipc/protocol.zig").AnimationData), now_ms: i64) !void {
     const output = self.output orelse return;
     const inspector = @import("ipc/animations.zig");
-    for (self.pills[0..self.count], self.buttons[0..self.count]) |pill, button| {
+    for (self.animations[0..self.count], self.buttons[0..self.count]) |pill, button| {
         const prefix = try std.fmt.allocPrint(allocator, "dock.{s}.{s}", .{ std.mem.span(output.wlr_output.name), button.name orelse "item" });
         defer allocator.free(prefix);
         try inspector.appendLive(allocator, list, try std.fmt.allocPrint(allocator, "{s}.pill_width", .{prefix}), pill.width, now_ms);
         try inspector.appendLive(allocator, list, try std.fmt.allocPrint(allocator, "{s}.pill_opacity", .{prefix}), pill.opacity, now_ms);
+        try inspector.appendLive(allocator, list, try std.fmt.allocPrint(allocator, "{s}.hover_zoom", .{prefix}), pill.zoom, now_ms);
     }
 }
 

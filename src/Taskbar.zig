@@ -118,7 +118,7 @@ pub fn startButtonLeft() i32 {
 pub fn startButtonBox(bar: *Taskbar) wlr.Box {
     const size = buttonSize();
     return .{
-        .x = bar.box.x + startButtonLeft(),
+        .x = bar.box.x + bar.startX(),
         .y = bar.box.y + @divTrunc(bar.box.height - size, 2),
         .width = size,
         .height = size,
@@ -167,6 +167,7 @@ battery_shimmer: battery_highlight.Highlight = .{},
 node_data: scene_data.SceneData = undefined,
 timer: *wl.EventSource,
 box: wlr.Box = .{ .x = 0, .y = 0, .width = 0, .height = default_bar_height },
+item_layout: taskbar_items.Layout = .{},
 dirty: bool = true,
 paint_causes: u8 = 0,
 background_dirty: bool = true,
@@ -749,22 +750,29 @@ fn clockColumnWidth(bar: *Taskbar) f32 {
 }
 
 fn rightLayout(bar: *Taskbar) taskbar_items.Layout {
-    return taskbar_items.arrange(bar.server.config.compositor.taskbar_items, @floatFromInt(bar.box.width - edge_pad), .{ battery_width, @floatFromInt(trayHit()), @floatFromInt(trayHit()), bar.clockColumnWidth() }, bar.battery_state.percent != null, tray_gap, clock_gap);
+    return bar.item_layout;
+}
+
+fn startX(bar: *Taskbar) i32 {
+    return @intFromFloat(@round(bar.item_layout.x[@intFromEnum(taskbar_items.Item.start)] orelse @as(f32, @floatFromInt(startButtonLeft()))));
+}
+
+fn calculateLayout(bar: *Taskbar, window_count: usize) taskbar_items.Layout {
+    var items = bar.server.config.compositor.taskbar_items;
+    const tray_count = bar.appTrayCount();
+    const app_width: f32 = @floatFromInt(tray_count * @as(usize, @intCast(trayHit() + tray_gap)));
+    const capture_width: f32 = if (bar.capturing()) @floatFromInt(bar.captureWidth()) else 0;
+    // Screen sharing remains accessible even when application icons are hidden.
+    if (bar.capturing()) items.visible[@intFromEnum(taskbar_items.Item.tray)] = true;
+    const windows_width = if (window_count == 0) 0 else @as(f32, @floatFromInt(window_count)) * @max(@as(f32, @floatFromInt(chipSize())), ui_theme.global.chip_width) +
+        @as(f32, @floatFromInt(window_count - 1)) * @as(f32, @floatFromInt(chipGap()));
+    return taskbar_items.arrange(items, @floatFromInt(startButtonLeft()), @floatFromInt(bar.box.width - edge_pad), @as(f32, @floatFromInt(bar.box.width)) / 2, .{ if (bar.battery_state.percent != null) battery_width else 0, @floatFromInt(trayHit()), @floatFromInt(trayHit()), bar.clockColumnWidth(), @floatFromInt(buttonSize()), windows_width, app_width + capture_width }, tray_gap, clock_gap);
 }
 
 pub fn itemBox(bar: *Taskbar, item: taskbar_items.Item) ?wlr.Box {
     const x = bar.rightLayout().x[@intFromEnum(item)] orelse return null;
-    const width: i32 = switch (item) {
-        .battery => battery_width,
-        .clock => @intFromFloat(@ceil(bar.clockColumnWidth())),
-        else => trayHit(),
-    };
+    const width: i32 = @intFromFloat(@ceil(bar.item_layout.widths[@intFromEnum(item)]));
     return .{ .x = bar.box.x + @as(i32, @intFromFloat(@round(x))), .y = bar.box.y, .width = width, .height = bar.box.height };
-}
-
-fn chipsRightEdge(bar: *Taskbar) f32 {
-    const left = bar.appTrayLeft();
-    return left - @as(f32, @floatFromInt(chip_clock_gap));
 }
 
 const battery_width = battery_badge.width;
@@ -802,7 +810,7 @@ fn captureLabelWidth(bar: *Taskbar) i32 {
 }
 
 fn captureX(bar: *Taskbar) f32 {
-    return bar.rightLayout().left - @as(f32, @floatFromInt(tray_gap + bar.captureWidth()));
+    return bar.appTrayLeft() + @as(f32, @floatFromInt(bar.appTrayCount() * @as(usize, @intCast(trayHit() + tray_gap))));
 }
 
 pub fn captureIndicatorBox(bar: *Taskbar) ?wlr.Box {
@@ -820,11 +828,11 @@ fn sharedChipWidth(bar: *Taskbar, count: usize) f32 {
     const min_w: f32 = @floatFromInt(chipSize());
     const max_w = @max(min_w, ui_theme.global.chip_width);
     if (count == 0) return max_w;
-    const available = chipsRightEdge(bar) - @as(f32, @floatFromInt(firstChipX()));
+    const available = bar.item_layout.widths[@intFromEnum(taskbar_items.Item.windows)];
     const extra_gaps: usize = if (count > 1) count - 1 else 0;
     const gap_total = @as(f32, @floatFromInt(chipGap())) * @as(f32, @floatFromInt(extra_gaps));
     const each = (available - gap_total) / @as(f32, @floatFromInt(count));
-    return @max(min_w, @min(max_w, each));
+    return @max(1, @min(max_w, each));
 }
 
 fn refreshStartLogo(bar: *Taskbar) void {
@@ -876,14 +884,26 @@ fn reconcile(bar: *Taskbar, now_ms: i64) bool {
     defer visible.deinit(gpa);
     var it = bar.server.world.toplevels.iterator(.forward);
     while (it.next()) |toplevel| {
-        if (!@import("workspaces.zig").visible(toplevel) or (bar.server.world.workspaces.active and toplevel.currentOutput() != Output.fromWlr(bar.wlr_output)) or toplevel.tab_hidden or (toplevel.live_rules.skip_taskbar orelse false)) continue;
+        if (!bar.itemShown(.windows) or !@import("workspaces.zig").visible(toplevel) or (bar.server.world.workspaces.active and toplevel.currentOutput() != Output.fromWlr(bar.wlr_output)) or toplevel.tab_hidden or (toplevel.live_rules.skip_taskbar orelse false)) continue;
         visible.append(gpa, toplevel) catch break;
     }
     std.mem.sort(*Toplevel, visible.items, {}, taskbarOrderLessThan);
 
+    const layout = bar.calculateLayout(visible.items.len);
+    if (!std.meta.eql(layout, bar.item_layout)) {
+        bar.item_layout = layout;
+        bar.start_dirty = true;
+        bar.clock_dirty = true;
+        bar.tray_dirty = .{ true, true };
+        bar.battery_dirty = true;
+        bar.capture_dirty = true;
+        bar.app_tray_generation = 0;
+        bar.markDirty(paint_start | paint_clock | paint_tray | paint_capture);
+        changed = true;
+    }
     const chip_w = sharedChipWidth(bar, visible.items.len);
     var next: std.ArrayList(ChipState) = .empty;
-    var x: f32 = @floatFromInt(firstChipX());
+    var x: f32 = bar.item_layout.x[@intFromEnum(taskbar_items.Item.windows)] orelse 0;
     for (visible.items) |toplevel| {
         const new_target = x;
         var state: ChipState = found: {
@@ -1128,7 +1148,7 @@ pub fn hitTest(bar: *Taskbar, sx: f64, sy: f64) Target {
     if (sy < 0 or sy >= @as(f64, @floatFromInt(bh))) return .none;
     if (bar.itemShown(.clock) and sx >= bar.clockX() and sx < bar.clockX() + bar.clockColumnWidth()) return .clock;
     if (bar.itemShown(.battery) and sx >= bar.batteryX() and sx < bar.batteryX() + battery_width) return .battery;
-    if (start_button.hitTest(sx, sy, bh, startButtonLeft(), buttonSize())) return .start_button;
+    if (bar.itemShown(.start) and start_button.hitTest(sx, sy, bh, bar.startX(), buttonSize())) return .start_button;
     const now_ms = nowMs();
     for (bar.chips.items) |chip| {
         const x = chip.renderX(now_ms);
@@ -1560,8 +1580,9 @@ fn render(bar: *Taskbar, now_ms: i64, causes: u8) void {
         renderPart(bar, now_ms, .background, 0, 0, bar.box.width, bh, bar.buffer_node, null);
         bar.background_dirty = false;
     }
-    if (bar.start_dirty) {
-        renderPart(bar, now_ms, .start, startButtonLeft() - 2, 0, buttonSize() + 4, bh, bar.start_node, null);
+    bar.start_node.node.setEnabled(bar.itemShown(.start));
+    if (bar.itemShown(.start) and bar.start_dirty) {
+        renderPart(bar, now_ms, .start, bar.startX() - 2, 0, buttonSize() + 4, bh, bar.start_node, null);
         bar.start_dirty = false;
     }
     const positions = bar.trayPositions();
@@ -1680,8 +1701,7 @@ fn renderPart(bar: *Taskbar, now_ms: i64, part: Part, origin_x: i32, origin_y: i
             var danger = Color.fromRgba(ui_theme.taskbar(.danger));
             if (@as(TrayKind, @enumFromInt(i)) == .wifi and bar.blink_dim) danger.a *= 0.25;
             break :blk danger;
-        } else
-            Color.lerp(Color.tray_icon(), Color.tray_icon_hover(), hover);
+        } else Color.lerp(Color.tray_icon(), Color.tray_icon_hover(), hover);
         const size = 20 * press;
         var renderer = @import("ui").paint.Renderer.init(buf.pixels, buf.width, buf.height, scale);
         renderer.drawIcon(bar.trayPositions()[i] + @as(f32, @floatFromInt(trayHit())) / 2 - size / 2 - @as(f32, @floatFromInt(origin_x)), @as(f32, @floatFromInt(bar.box.height)) / 2 - size / 2 - @as(f32, @floatFromInt(origin_y)), size, size, .{ .id = if (i == @intFromEnum(TrayKind.wifi)) .wifi else if (bar.audio_muted) .volume_muted else .volume, .color = .{ color.r, color.g, color.b, color.a } });
@@ -1715,9 +1735,9 @@ fn paintPartPixel(bar: *Taskbar, sampled_start: start_button.Paint, hover: f32, 
         .start => {
             const btn_size = buttonSize();
             var color = Color{ .r = 0, .g = 0, .b = 0, .a = 0 };
-            if (start_button.paintPixel(sampled_start, px, py, bar.box.height, scale, startButtonLeft(), btn_size)) |sb| color = (Color{ .r = sb.r, .g = sb.g, .b = sb.b, .a = sb.a }).over(color);
+            if (start_button.paintPixel(sampled_start, px, py, bar.box.height, scale, bar.startX(), btn_size)) |sb| color = (Color{ .r = sb.r, .g = sb.g, .b = sb.b, .a = sb.a }).over(color);
             if (bar.start_logo) |icon| {
-                const mapped = start_button.mapPoint(sampled_start, px, py, bar.box.height, startButtonLeft(), btn_size);
+                const mapped = start_button.mapPoint(sampled_start, px, py, bar.box.height, bar.startX(), btn_size);
                 const pad: f32 = @floatFromInt(@divTrunc(btn_size - startIconSize(), 2));
                 const ix: i32 = @intFromFloat(@floor((mapped.x - (mapped.box_x + pad)) * scale));
                 const iy: i32 = @intFromFloat(@floor((mapped.y - (mapped.box_y + pad)) * scale));
@@ -1993,7 +2013,7 @@ fn drawPartText(bar: *Taskbar, now_ms: i64, part: Part, buf: *BarBuffer, ox: i32
         .start => if (bar.start_logo == null) {
             const btn_size = buttonSize();
             const w = text.measureWidth("R", .mono_bold, start_button.glyph_size_px, scale) catch 0;
-            drawCenteredText(buf.pixels, buf.width, buf.height, local(startButtonLeft() + @divTrunc(btn_size - w, 2), @intFromFloat(@round(start_button.top(bar.box.height, btn_size))), btn_size, btn_size, ox, oy), "R", textColor(Color.fromRgba(ui_theme.taskbar(.start_button_logo_color) orelse .{ 1, 1, 1, 1 })), scale, .mono_bold, start_button.glyph_size_px) catch {};
+            drawCenteredText(buf.pixels, buf.width, buf.height, local(bar.startX() + @divTrunc(btn_size - w, 2), @intFromFloat(@round(start_button.top(bar.box.height, btn_size))), btn_size, btn_size, ox, oy), "R", textColor(Color.fromRgba(ui_theme.taskbar(.start_button_logo_color) orelse .{ 1, 1, 1, 1 })), scale, .mono_bold, start_button.glyph_size_px) catch {};
         },
         .clock => {
             const time = std.mem.trimStart(u8, std.mem.sliceTo(&bar.clock_time, 0), " ");
@@ -2263,15 +2283,21 @@ test "battery artwork remains centered as taskbar height and item gap change" {
 }
 
 pub fn appTrayCount(bar: *Taskbar) usize {
+    if (!bar.itemShown(.tray)) return 0;
     const mgr = bar.server.tray orelse return 0;
-    const right = if (bar.capturing()) bar.captureX() else bar.rightLayout().left;
-    const room = @max(0, right - @as(f32, @floatFromInt(firstChipX() + 80)));
+    var fixed: f32 = @floatFromInt(edge_pad + startButtonLeft() + 80 + 5 * clock_gap);
+    if (bar.itemShown(.start)) fixed += @floatFromInt(buttonSize());
+    if (bar.itemShown(.battery)) fixed += battery_width;
+    if (bar.itemShown(.network)) fixed += @floatFromInt(trayHit());
+    if (bar.itemShown(.volume)) fixed += @floatFromInt(trayHit());
+    if (bar.itemShown(.clock)) fixed += bar.clockColumnWidth();
+    if (bar.capturing()) fixed += @floatFromInt(bar.captureWidth());
+    const room = @max(0, @as(f32, @floatFromInt(bar.box.width)) - fixed);
     return @min(mgr.visibleCount(), @as(usize, @intFromFloat(room / @as(f32, @floatFromInt(trayHit() + tray_gap)))));
 }
 
 fn appTrayLeft(bar: *Taskbar) f32 {
-    const right = if (bar.capturing()) bar.captureX() else bar.rightLayout().left;
-    return right - @as(f32, @floatFromInt(bar.appTrayCount() * @as(usize, @intCast(trayHit() + tray_gap))));
+    return bar.item_layout.x[@intFromEnum(taskbar_items.Item.tray)] orelse 0;
 }
 
 pub fn appTrayBox(bar: *Taskbar, index: usize) wlr.Box {

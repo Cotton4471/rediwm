@@ -6,6 +6,106 @@ const anim = @import("../anim.zig");
 const layout = @import("../layout.zig");
 const scrollbar = @import("scrollbar.zig");
 const Widget = layout.Widget;
+const Renderer = @import("../paint.zig").Renderer;
+const theme = @import("../theme.zig");
+const sdf = @import("../sdf.zig");
+const text = @import("../text.zig");
+
+/// A recessed rail with a luminous fill and a reflective, round thumb.
+/// All light stays inside the widget so partial repaints erase it completely.
+pub fn paintShaded(widget: *const Widget, data: layout.SliderData, r: *Renderer) void {
+    const t = r.palette orelse theme.global;
+    const w = widget.computed_width;
+    const h = widget.computed_height;
+    if (w <= 2 or h <= 2) return;
+    r.clean = false;
+    const s = r.scale;
+    var left = widget.computed_x * s;
+    var top = widget.computed_y * s;
+    var right = (widget.computed_x + w) * s;
+    var bottom = (widget.computed_y + h) * s;
+    if (r.effectiveClip()) |clip| {
+        left = @max(left, clip.x * s);
+        top = @max(top, clip.y * s);
+        right = @min(right, (clip.x + clip.w) * s);
+        bottom = @min(bottom, (clip.y + clip.h) * s);
+    }
+    const x0: i32 = @intFromFloat(@floor(@max(0, left)));
+    const y0: i32 = @intFromFloat(@floor(@max(0, top)));
+    const x1: i32 = @intFromFloat(@ceil(@min(@as(f32, @floatFromInt(r.width)), right)));
+    const y1: i32 = @intFromFloat(@ceil(@min(@as(f32, @floatFromInt(r.height)), bottom)));
+    const settings = data.style == .settings;
+    const track_h = @min(h - 2, @max(0.5, (if (settings) t.slider_settings_track_height else t.slider_track_height) * (1 + t.slider_track_grow * data.feel.wide)));
+    const diameter = @min(@min(w, h) - 2, @max(1, @min(t.slider_thumb_size, if (settings) t.slider_settings_thumb_height else t.slider_thumb_size)));
+    const radius = diameter / 2;
+    const fraction = if (data.max > data.min) std.math.clamp((data.value - data.min) / (data.max - data.min), 0, 1) else 0;
+    const cx = std.math.clamp(fraction * w, radius + 1, w - radius - 1);
+    const cy = h / 2;
+    const highlight = t.slider_highlight orelse t.control_thumb;
+    const intensity = std.math.clamp(data.feel.accent, 0, 1);
+    var py = y0;
+    while (py < y1) : (py += 1) {
+        const y = (@as(f32, @floatFromInt(py)) + 0.5) / s - widget.computed_y;
+        var px = x0;
+        while (px < x1) : (px += 1) {
+            const x = (@as(f32, @floatFromInt(px)) + 0.5) / s - widget.computed_x;
+            const pixel = &r.pixels[@intCast(py * r.width + px)];
+            const dx = x - cx;
+            const dy = y - cy;
+            const rail = sdf.sdRoundedBox(x, y, 0, cy - track_h / 2, w, track_h, track_h / 2);
+            const fill = sdf.sdRoundedBox(x, y, 0, cy - track_h / 2, cx, track_h, track_h / 2);
+            // A warm halo along the filled rail, brightest beside the knob.
+            const tip = falloff(dx / (radius * 3));
+            const edge_fade = std.math.clamp(@min(@min(x, w - x), @min(y, h - y)), 0, 1);
+            const halo = std.math.clamp(1 - @max(0, fill) / 3, 0, 1);
+            if (fraction > 0) blend(pixel, t.accent, halo * halo * (0.12 + 0.16 * tip + 0.10 * intensity) * edge_fade);
+            const rail_y = std.math.clamp((dy + track_h / 2) / track_h, 0, 1);
+            blend(pixel, shade(t.slider_track, -0.24 + 0.32 * rail_y), sdf.coverage(rail * s));
+            if (fraction > 0) {
+                const streak = falloff((dy + track_h * 0.16) / (track_h * 0.38));
+                const gold = mix(t.accent, highlight, 0.18 + 0.50 * streak + 0.25 * tip);
+                blend(pixel, gold, sdf.coverage(fill * s));
+            }
+            const shadow = @sqrt(dx * dx + (dy - 1) * (dy - 1)) - radius;
+            blend(pixel, .{ 0, 0, 0, 0.28 }, std.math.clamp(1 - shadow / 1.5, 0, 1) * edge_fade);
+            const distance = @sqrt(dx * dx + dy * dy) - radius;
+            const coverage = sdf.coverage(distance * s);
+            if (coverage <= 0) continue;
+            const nx = dx / radius;
+            const ny = dy / radius;
+            const nz = @sqrt(@max(0, 1 - nx * nx - ny * ny));
+            const light = std.math.clamp(-0.45 * nx - 0.55 * ny + 0.70 * nz, 0, 1);
+            var knob = shade(t.accent, -0.48 + 0.68 * light);
+            // Broad upper-left reflection and a smaller lower-right glint.
+            const specular = falloff((nx + 0.32) / 0.48) * falloff((ny + 0.42) / 0.43);
+            const glint = falloff((nx - 0.40) / 0.30) * falloff((ny - 0.57) / 0.25);
+            knob = mix(knob, highlight, @min(1, 0.95 * specular + 0.70 * glint));
+            const rim = 1 - std.math.clamp(-distance / 1.2, 0, 1);
+            knob = mix(knob, highlight, rim * (0.50 + 0.35 * light));
+            blend(pixel, knob, coverage);
+        }
+    }
+}
+
+fn falloff(value: f32) f32 {
+    const v = @max(0, 1 - value * value);
+    return v * v;
+}
+
+fn mix(a: [4]f32, b: [4]f32, amount: f32) [4]f32 {
+    var result: [4]f32 = undefined;
+    for (&result, a, b) |*out, start, end| out.* = start + (end - start) * amount;
+    return result;
+}
+
+fn shade(color: [4]f32, amount: f32) [4]f32 {
+    const light: f32 = if (amount > 0) 1 else 0;
+    return mix(color, .{ light, light, light, color[3] }, @abs(amount));
+}
+
+fn blend(pixel: *u32, color: [4]f32, coverage: f32) void {
+    text.blendPixel(pixel, .{ .r = color[0], .g = color[1], .b = color[2], .a = color[3] }, coverage);
+}
 
 fn snap(value: f32, min: f32, max: f32, step: f32) f32 {
     const clamped = std.math.clamp(value, min, max);

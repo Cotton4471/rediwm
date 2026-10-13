@@ -53,7 +53,7 @@ fn tableText(value: []const u8, secondary: bool) W {
     return .{ .kind = .{ .text = .{
         .content = value,
         .font_size = @floatCast(if (secondary) cairo.statusSize() else cairo.textSize()),
-        .color = ui.theme.global.window_fg,
+        .color = panel.palette().fg,
     } } };
 }
 /// Empty-table message, painted like a row so the table keeps its shape.
@@ -83,9 +83,9 @@ fn columnHeader(a: std.mem.Allocator, cc: *panel.ControlCenter, s: *Section, lab
     caption.width = .{ .flex = 1 };
     var children: std.ArrayList(W) = .empty;
     try tryAppend(&children, a, caption);
-    if (sorted) try tryAppend(&children, a, .{ .kind = .{ .icon = .{ .id = if (s.descending) .chevron_down else .chevron_up, .color = ui.theme.global.window_fg } }, .width = .{ .fixed = 8 }, .height = .{ .fixed = 8 } });
+    if (sorted) try tryAppend(&children, a, .{ .kind = .{ .icon = .{ .id = if (s.descending) .chevron_down else .chevron_up, .color = panel.palette().fg } }, .width = .{ .fixed = 8 }, .height = .{ .fixed = 8 } });
     if (index < column_widths.len - 1) {
-        var divider = ui.theme.global.window_fg;
+        var divider = panel.palette().fg;
         divider[3] *= 0.2;
         try tryAppend(&children, a, .{ .kind = .{ .rect = .{ .color = divider } }, .width = .{ .fixed = 1 }, .height = .{ .fixed = 18 } });
     }
