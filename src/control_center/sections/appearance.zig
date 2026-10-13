@@ -861,7 +861,7 @@ fn onApplyAppColors(owner: ?*anyopaque, id: usize) void {
 fn appColorsFailure(s: *Section, err: anyerror) void {
     s.app_colors_message = switch (err) {
         error.QtToolsMissing => "Install qt5ct for Qt 5 apps or qt6ct for Qt 6 apps, then apply again.",
-        error.ManagedSymlink => "A toolkit file is managed by a symlink. Update its source configuration before applying colors.",
+        error.ManagedSymlink => "A toolkit config folder is a symlink. Apply the colors in its real location, or make it a regular folder.",
         error.InvalidManagedCss => "The RediWM block in gtk.css is incomplete. Repair it before applying colors.",
         else => std.fmt.bufPrint(&s.app_colors_message_buf, "Could not apply app colors: {s}. Check your configuration files and permissions.", .{@errorName(err)}) catch "Could not apply app colors. Check your configuration files and permissions.",
     };

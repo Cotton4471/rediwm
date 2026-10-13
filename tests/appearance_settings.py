@@ -449,11 +449,15 @@ def test_appearance_settings():
                 ipc.wait_for_panel_settled("control_center")
                 assert ui.scroll_into_view("theme")["selected_index"] == 1
                 # Redi Blue applies every supplied token and survives reload.
+                blue_index = next(i for i, pack in enumerate(ipc.query("theme.list")["packs"])
+                                  if pack["id"] == "redi-blue")
                 click_widget(ui.scroll_into_view("theme"))
-                ipc.key_press("End")
+                ipc.key_press("Home")
+                for _ in range(blue_index):
+                    ipc.key_press("Down")
                 ipc.key_press("Return")
                 ipc.wait_for_panel_settled("control_center")
-                assert ui.scroll_into_view("theme")["selected_index"] == 2
+                assert ui.scroll_into_view("theme")["selected_index"] == blue_index
                 blue_theme = tomllib.loads((Path(__file__).resolve().parents[1] /
                                            "assets/themes/redi-blue.toml").read_text())["theme"]
 
@@ -478,7 +482,7 @@ def test_appearance_settings():
                 ipc.wait_for("control_center_closed", timeout_ms=5000)
                 ipc.action("open_appearance")
                 ipc.wait_for_panel_settled("control_center")
-                assert ui.scroll_into_view("theme")["selected_index"] == 2
+                assert ui.scroll_into_view("theme")["selected_index"] == blue_index
                 check_blue()
                 click_widget(ui.scroll_into_view("theme"))
                 ipc.key_press("Home")
@@ -634,16 +638,16 @@ Path(sys.argv[1]).write_text(json.dumps({k: os.environ[k] for k in keys if k in 
                     if "qt6_accent" in colors:
                         assert colors["qt6_accent"] == "#abcdef", colors
 
-                # A managed symlink must fail without touching either toolkit.
+                # A symlinked gtk.css becomes a regular file with its content merged.
                 gtk4_css = config / "gtk-4.0/gtk.css"
                 gtk4_css.unlink()
                 external = tmp / "external.css"
                 external.write_text("/* external */\n")
                 gtk4_css.symlink_to(external)
-                before = (config / "gtk-3.0/rediwm-colors.css").read_bytes()
-                apply("apply_gtk_colors", "managed by a symlink")
+                apply("apply_gtk_colors", "GTK colors applied")
+                wait_for(lambda: not gtk4_css.is_symlink(), "gtk.css replaced")
+                assert "/* external */" in gtk4_css.read_text() and "rediwm-colors.css" in gtk4_css.read_text()
                 assert external.read_text() == "/* external */\n"
-                assert before == (config / "gtk-3.0/rediwm-colors.css").read_bytes()
                 gtk4_css.unlink()
                 (config / "qt6ct/qt6ct.conf").unlink()
                 (config / "qt6ct/qt6ct.conf").mkdir()

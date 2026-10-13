@@ -1,5 +1,7 @@
 //! Explicit palette exports. User styles and toolkit preferences are merged;
-//! the first originals are kept beside them as .rediwm-backup files.
+//! the first originals are kept beside them as .rediwm-backup files. A file
+//! that is a symlink (another tool's generated output) is replaced by a regular
+//! file holding its current contents; a rollback puts the link back.
 const std = @import("std");
 const theme = @import("ui").theme;
 const Allocator = std.mem.Allocator;
@@ -255,16 +257,16 @@ pub fn patchCss(a: Allocator, content: []const u8) ![]u8 {
 }
 
 fn readOptional(a: Allocator, io: Io, path: []const u8) !?[]u8 {
-    const stat = Io.Dir.cwd().statFile(io, path, .{ .follow_symlinks = false }) catch |err| switch (err) {
+    // Follows a file symlink: the link target's content is what gets merged.
+    const stat = Io.Dir.cwd().statFile(io, path, .{}) catch |err| switch (err) {
         error.FileNotFound => return null,
         else => return err,
     };
-    if (stat.kind == .sym_link) return error.ManagedSymlink;
     if (stat.kind != .file) return error.InvalidFile;
     return try Io.Dir.cwd().readFileAlloc(io, path, a, .limited(1 << 20));
 }
 
-const Change = struct { path: []const u8, data: []const u8, original: ?[]const u8, temp: []const u8, permissions: Io.File.Permissions };
+const Change = struct { path: []const u8, data: []const u8, original: ?[]const u8, link: ?[]const u8, temp: []const u8, permissions: Io.File.Permissions };
 const Transaction = struct {
     a: Allocator,
     io: Io,
@@ -280,16 +282,21 @@ const Transaction = struct {
             };
             if (stat.kind == .sym_link) return error.ManagedSymlink;
         }
+        var link_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+        const link: ?[]const u8 = if (Io.Dir.cwd().readLink(self.io, path, &link_buf)) |n| try self.a.dupe(u8, link_buf[0..n]) else |err| switch (err) {
+            error.NotLink, error.FileNotFound => null,
+            else => return err,
+        };
         const original = try readOptional(self.a, self.io, path);
         if (original) |old| {
-            if (std.mem.eql(u8, old, data)) return;
+            if (link == null and std.mem.eql(u8, old, data)) return;
             if (backup) {
                 const saved = try std.fmt.allocPrint(self.a, "{s}.rediwm-backup", .{path});
                 if (try readOptional(self.a, self.io, saved) == null) try self.add(saved, old, false);
             }
         }
         const permissions = if (original != null) (try Io.Dir.cwd().statFile(self.io, path, .{})).permissions else Io.File.Permissions.fromMode(0o600);
-        try self.changes.append(self.a, .{ .path = path, .data = data, .original = original, .temp = try std.fmt.allocPrint(self.a, "{s}.rediwm-tmp", .{path}), .permissions = permissions });
+        try self.changes.append(self.a, .{ .path = path, .data = data, .original = original, .link = link, .temp = try std.fmt.allocPrint(self.a, "{s}.rediwm-tmp", .{path}), .permissions = permissions });
     }
 
     fn commit(self: *Transaction) !void {
@@ -309,7 +316,15 @@ const Transaction = struct {
         errdefer {
             var rollback_failed = false;
             for (self.changes.items[0..published]) |change| {
-                if (change.original) |original| {
+                if (change.link) |target| {
+                    Io.Dir.cwd().symLink(self.io, target, change.temp, .{}) catch {
+                        rollback_failed = true;
+                        continue;
+                    };
+                    Io.Dir.rename(.cwd(), change.temp, .cwd(), change.path, self.io) catch {
+                        rollback_failed = true;
+                    };
+                } else if (change.original) |original| {
                     const file = Io.Dir.cwd().createFile(self.io, change.temp, .{ .exclusive = true, .permissions = change.permissions }) catch {
                         rollback_failed = true;
                         continue;
@@ -436,7 +451,7 @@ test "app colors publishes both GTK versions and keeps the first backup" {
     try std.testing.expectError(error.FileNotFound, tmp.dir.access(io, "qt5ct/qt5ct.conf", .{}));
 }
 
-test "app colors rejects symlinks and staging failures before publishing" {
+test "app colors replaces a file symlink, and rejects linked directories and staging failures" {
     const a = std.testing.allocator;
     const io = std.testing.io;
     var tmp = std.testing.tmpDir(.{});
@@ -447,8 +462,20 @@ test "app colors rejects symlinks and staging failures before publishing" {
     try tmp.dir.writeFile(io, .{ .sub_path = "user.css", .data = "/* owned elsewhere */\n" });
     try tmp.dir.symLink(io, "../user.css", "gtk-4.0/gtk.css", .{});
     const p = Palette.fromTheme(.{});
-    try std.testing.expectError(error.ManagedSymlink, apply(a, io, home, .gtk, p, .{ .qt5 = false, .qt6 = false }));
-    try std.testing.expectError(error.FileNotFound, tmp.dir.access(io, "gtk-3.0/gtk.css", .{}));
+    try apply(a, io, home, .gtk, p, .{ .qt5 = false, .qt6 = false });
+    var buf: [64]u8 = undefined;
+    try std.testing.expectError(error.NotLink, tmp.dir.readLink(io, "gtk-4.0/gtk.css", &buf));
+    const merged = try tmp.dir.readFileAlloc(io, "gtk-4.0/gtk.css", a, .limited(4096));
+    defer a.free(merged);
+    try std.testing.expect(std.mem.startsWith(u8, merged, css_begin));
+    try std.testing.expect(std.mem.endsWith(u8, merged, "/* owned elsewhere */\n"));
+    const target = try tmp.dir.readFileAlloc(io, "user.css", a, .limited(64));
+    defer a.free(target);
+    try std.testing.expectEqualStrings("/* owned elsewhere */\n", target);
+    const saved = try tmp.dir.readFileAlloc(io, "gtk-4.0/gtk.css.rediwm-backup", a, .limited(64));
+    defer a.free(saved);
+    try std.testing.expectEqualStrings("/* owned elsewhere */\n", saved);
+    try tmp.dir.deleteTree(io, "gtk-3.0");
     try tmp.dir.deleteFile(io, "gtk-4.0/gtk.css");
     try tmp.dir.writeFile(io, .{ .sub_path = "gtk-4.0/gtk.css.rediwm-tmp", .data = "busy" });
     try std.testing.expectError(error.PathAlreadyExists, apply(a, io, home, .gtk, p, .{ .qt5 = false, .qt6 = false }));

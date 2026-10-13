@@ -105,7 +105,18 @@ def run():
         try:
             with IPCClient(tmp, timeout=30) as ipc:
                 before = ipc.query("theme.list")
-                assert {p["id"] for p in before["packs"]} >= {"rediwm-dark", "rediwm-light", "redi-blue"}
+                assert {p["id"] for p in before["packs"]} >= {"rediwm-dark", "rediwm-light", "redi-blue", "redi-mocha"}
+                mocha = next(p for p in before["packs"] if p["id"] == "redi-mocha")
+                assert mocha["name"] == "Redi-Mocha" and not mocha["user_installed"], mocha
+                ipc.action("theme.apply", {"id": "redi-mocha"})
+                look = ipc.action("get_theme")
+                assert look["dark_mode"]
+                manifest = tomllib.loads((ROOT / "assets/themes/redi-mocha.toml").read_text())
+                for key in ("app_bg", "window_fg", "shell_accent", "desktop_selection_border", "switcher_selected_border"):
+                    expected = tuple(int(manifest["theme"][key][i:i+2], 16) / 255 for i in (1, 3, 5)) + (1,)
+                    assert all(abs(a - b) < .001 for a, b in zip(look["tokens"][key], expected)), key
+                wait_for(lambda: (ipc.query("get_wallpaper")["displayed_path"] or "").endswith("/wallpaper-mocha.png"), "Mocha wallpaper was not presented")
+                assert tomllib.loads((tmp / "rediwm-config.toml").read_text())["theme"] == {"base": "redi-mocha"}
                 installed = ipc.action("theme.install", {"path": str(archive)})
                 assert installed["id"] == "test-pack", installed
                 try:

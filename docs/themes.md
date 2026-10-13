@@ -74,8 +74,11 @@ watched and no additional polling is introduced.
 
 Discovery uses the first occurrence of an ID: `$XDG_DATA_HOME/rediwm/themes`,
 legacy config presets, the binary's `../share/rediwm/themes`,
-`$XDG_DATA_DIRS/rediwm/themes`, then the embedded RediWM Dark, RediWM Light
-and Redi Blue packs. Without `XDG_DATA_HOME`, use `~/.local/share`.
+`$XDG_DATA_DIRS/rediwm/themes`, then the embedded RediWM Dark, RediWM Light,
+Redi Blue and Redi-Mocha packs. Without `XDG_DATA_HOME`, use `~/.local/share`.
+
+Redi-Mocha uses the [Catppuccin Mocha palette](https://catppuccin.com/palette/#mocha)
+with mauve accents and the bundled `wallpaper-mocha.png` Auckland skyline.
 
 The helper is also available from a terminal:
 
