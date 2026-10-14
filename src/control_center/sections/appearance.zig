@@ -90,6 +90,9 @@ const px_menu_width = 13;
 const px_menu_height = 14;
 const px_dock_height = 15;
 const px_dock_hover_zoom = 16;
+const px_taskbar_edge_gap = 17;
+const px_taskbar_length = 18;
+const px_taskbar_radius = 19;
 
 pub const Section = struct {
     cc: *panel.ControlCenter = undefined,
@@ -171,8 +174,8 @@ pub const Section = struct {
     inactive_opacity_header_children: [2]Widget = undefined,
     inactive_opacity_group_children: [2]Widget = undefined,
     inactive_opacity_value_buf: [16]u8 = undefined,
-    px: [17]PxControl = undefined,
-    taskbar_section_children: [8]Widget = undefined,
+    px: [20]PxControl = undefined,
+    taskbar_section_children: [11]Widget = undefined,
     taskbar_position_children: [2]Widget = undefined,
     items_children: [5]Widget = undefined,
     items_section_children: [3][2]Widget = undefined,
@@ -290,7 +293,12 @@ fn sectionLabel(content: []const u8) Widget {
 /// Builds one "label ... value / slider" pixel-value row and formats its
 /// initial value into `out.px[idx].value_buf`.
 fn pxGroup(out: *Section, idx: usize, label_text: []const u8, value: f32, min: f32, max: f32, step: f32, on_change: *const fn (?*anyopaque, usize, f32) void) Widget {
-    const formatted = std.fmt.bufPrint(&out.px[idx].value_buf, "{d}px", .{@as(i32, @intFromFloat(@round(value)))}) catch "?";
+    return unitGroup(out, idx, label_text, value, min, max, step, on_change, "px");
+}
+
+/// `pxGroup` for a value that isn't in pixels, such as a percentage.
+fn unitGroup(out: *Section, idx: usize, label_text: []const u8, value: f32, min: f32, max: f32, step: f32, on_change: *const fn (?*anyopaque, usize, f32) void, unit: []const u8) Widget {
+    const formatted = std.fmt.bufPrint(&out.px[idx].value_buf, "{d}{s}", .{ @as(i32, @intFromFloat(@round(value))), unit }) catch "?";
     out.px[idx].header_children = .{ labelWidget(label_text), pillWidget(formatted) };
     const header: Widget = .{ .kind = .container, .direction = .row, .justify = .space_between, .children = &out.px[idx].header_children };
     const slider: Widget = .{ .kind = .{ .slider = .{ .value = value, .min = min, .max = max, .step = step, .owner = out, .on_change = on_change } } };
@@ -309,11 +317,15 @@ fn pxGroup(out: *Section, idx: usize, label_text: []const u8, value: f32, min: f
 /// thing the cheap height-guarded refresh notices; the start-menu-popup
 /// padding fields don't touch taskbar geometry at all.
 fn PxHandler(comptime idx: usize, comptime field: []const u8, comptime taskbar_geometry: bool) type {
+    return UnitHandler(idx, field, taskbar_geometry, "px");
+}
+
+fn UnitHandler(comptime idx: usize, comptime field: []const u8, comptime taskbar_geometry: bool, comptime unit: []const u8) type {
     return struct {
         fn changed(owner: ?*anyopaque, _: usize, value: f32) void {
             const s = section(owner);
             @field(theme.global, field) = value;
-            const formatted = std.fmt.bufPrint(&s.px[idx].value_buf, "{d}px", .{@as(i32, @intFromFloat(@round(value)))}) catch "?";
+            const formatted = std.fmt.bufPrint(&s.px[idx].value_buf, "{d}" ++ unit, .{@as(i32, @intFromFloat(@round(value)))}) catch "?";
             s.px[idx].header_children[1].kind.text.content = formatted;
             s.px[idx].header_children[1].markDirty();
             applyThemeChangeImpl(section(owner), taskbar_geometry);
@@ -652,6 +664,14 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
     const position_row: Widget = .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.taskbar_position_children };
     const taskbar_min: f32 = @floatFromInt(Taskbar.min_bar_height);
     const taskbar_row = pxGroup(out, px_taskbar_size, "Taskbar size", std.math.clamp(t.taskbar_size, taskbar_min, 84.0), taskbar_min, 84, 2, &PxHandler(px_taskbar_size, "taskbar_size", true).changed);
+    // A floating bar: its gap from the edge, its length and its corners. At
+    // 0 px, 100 % and 0 px it is the original flush, full-width, square bar.
+    const edge_gap_row = pxGroup(out, px_taskbar_edge_gap, "Taskbar gap from edge", std.math.clamp(t.taskbar_edge_gap, 0.0, 48.0), 0, 48, 2, &PxHandler(px_taskbar_edge_gap, "taskbar_edge_gap", true).changed);
+    out.px[px_taskbar_edge_gap].group_children[1].name = "taskbar_edge_gap";
+    const length_row = unitGroup(out, px_taskbar_length, "Taskbar length", std.math.clamp(t.taskbar_length, 30.0, 100.0), 30, 100, 2, &UnitHandler(px_taskbar_length, "taskbar_length", true, "%").changed, "%");
+    out.px[px_taskbar_length].group_children[1].name = "taskbar_length";
+    const radius_row = pxGroup(out, px_taskbar_radius, "Taskbar corner radius", std.math.clamp(t.taskbar_radius, 0.0, 42.0), 0, 42, 1, &PxHandler(px_taskbar_radius, "taskbar_radius", true).changed);
+    out.px[px_taskbar_radius].group_children[1].name = "taskbar_radius";
     // Also sets each pill's top/bottom margin within the bar (capped) —
     // see Taskbar.chipVerticalMargin — so this one slider spaces chips on
     // every side at once instead of only widening the horizontal gap.
@@ -688,7 +708,7 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
         .{ .kind = .container, .direction = .column, .gap = 8, .children = &out.items_section_children[2] },
     };
     const items_group: Widget = .{ .kind = .container, .direction = .column, .gap = 8, .children = &out.items_children };
-    out.taskbar_section_children = .{ sectionLabel("TASKBAR"), position_row, taskbar_row, chip_width_row, chip_gap_row, start_gap_row, start_icon_row, items_group };
+    out.taskbar_section_children = .{ sectionLabel("TASKBAR"), position_row, taskbar_row, edge_gap_row, length_row, radius_row, chip_width_row, chip_gap_row, start_gap_row, start_icon_row, items_group };
     const taskbar_section: Widget = .{ .kind = .container, .direction = .column, .gap = 12, .children = &out.taskbar_section_children };
 
     var output_box: wlr.Box = undefined;

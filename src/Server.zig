@@ -1179,15 +1179,17 @@ pub fn refreshTaskbars(server: *Server) void {
         server.taskbar_hold_pending = true;
         return;
     }
-    const desired_h = Taskbar.barHeight();
+    var strip_moved = false;
     var it = server.outputs.iterator(.forward);
     while (it.next()) |output| {
         output.dock.invalidate();
         if (output.taskbar) |bar| {
-            if (bar.box.height != desired_h) {
-                var box: wlr.Box = undefined;
-                server.output_layout.getBox(output.wlr_output, &box);
+            var box: wlr.Box = undefined;
+            server.output_layout.getBox(output.wlr_output, &box);
+            if (box.width > 0 and box.height > 0 and !bar.isPlaced(box)) {
+                const strip = bar.reserved;
                 bar.relayout(box);
+                strip_moved = strip_moved or bar.reserved != strip;
                 if (server.input.open_start_menu) |sm| {
                     if (sm.wlr_output == output.wlr_output) sm.relayout();
                 }
@@ -1197,6 +1199,7 @@ pub fn refreshTaskbars(server: *Server) void {
     }
     server.taskbar_tree.node.placeBelow(&server.overlay_tree.node);
     server.updateTaskbarFullscreenVisibility();
+    if (strip_moved) server.applyTaskbarPosition();
 }
 
 // Coalesces taskbar refreshes until the matching `releaseTaskbars`, which
@@ -1224,13 +1227,16 @@ pub fn releaseTaskbars(server: *Server) void {
 // hot-reload), not the frequent per-window-event ones, so the extra full
 // raster pass here is rare and not a hot-path concern.
 pub fn refreshTaskbarsGeometry(server: *Server) void {
+    var strip_moved = false;
     var it = server.outputs.iterator(.forward);
     while (it.next()) |output| {
         output.dock.invalidate();
         if (output.taskbar) |bar| {
             var box: wlr.Box = undefined;
             server.output_layout.getBox(output.wlr_output, &box);
+            const strip = bar.reserved;
             bar.relayout(box);
+            strip_moved = strip_moved or bar.reserved != strip;
             if (server.input.open_start_menu) |sm| {
                 if (sm.wlr_output == output.wlr_output) sm.relayout();
             }
@@ -1238,9 +1244,11 @@ pub fn refreshTaskbarsGeometry(server: *Server) void {
     }
     server.taskbar_tree.node.placeBelow(&server.overlay_tree.node);
     server.updateTaskbarFullscreenVisibility();
+    if (strip_moved) server.applyTaskbarPosition();
 }
 
-/// Apply a changed taskbar edge to panels, reserved space and fixed layouts.
+/// Apply a changed taskbar edge, or a changed strip (size or gap), to panels,
+/// reserved space and fixed layouts.
 pub fn applyTaskbarPosition(server: *Server) void {
     Output.syncLayout(server);
     var it = server.world.toplevels.iterator(.forward);
@@ -1257,7 +1265,7 @@ pub fn applyTaskbarPosition(server: *Server) void {
             const usable = output.usableBox();
             const position = server.world.toLayout(@floatFromInt(toplevel.x), @floatFromInt(toplevel.y));
             const top: f64 = @floatFromInt(usable.y);
-            const bar_height: f64 = if (output.taskbar) |bar| @floatFromInt(bar.box.height) else 0;
+            const bar_height: f64 = if (output.taskbar) |bar| @floatFromInt(bar.reserved) else 0;
             if (position.y >= top - bar_height and position.y < top) {
                 const target = server.world.toWorld(position.x, top);
                 toplevel.finishMoveAnimation();

@@ -401,4 +401,6 @@ Keyring unlock and browser/OBS sharing remain unverified. See
 failures, and [screen sharing](docs/screen-sharing.md#remaining-qualification)
 for the remaining capture acceptance checks.
 
+`python3 tests/taskbar_shape.py` covers the floating taskbar: the Appearance sliders for gap from the edge, length and corner radius, the same geometry from the theme file on both edges, the strip a maximized window leaves, and the pixels of the rounded ends.
+
 `python3 tests/theme_packs.py` covers theme ZIP installation, refusal of unsafe paths/links/special files/bombs, pack discovery, base plus overrides, live wallpaper and folder icons, reset, cursors and removal in isolated data/config/state directories.

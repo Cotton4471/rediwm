@@ -32,6 +32,11 @@ pub const source =
     \\scrollbar_width = 8.0      # every scrollbar, 4–24 logical px
     \\selection_alpha = 0.35       # highlight opacity when it follows the accent
     \\taskbar_size = 44.0         # taskbar height in pixels (36.0 to 84.0)
+    \\# taskbar_edge_gap = 0       # floating taskbar: px between it and the screen edge (0–64)
+    \\# taskbar_length   = 100     # percent of the screen edge it spans, centred (20–100)
+    \\# taskbar_radius   = 0       # corner radius in px; a pill at half the taskbar size
+    \\# taskbar_outline_width = 1  # the bar's outline, px (0–8); colour: taskbar_outline
+    \\# taskbar_outline = "rgba(255,255,255,0.06)"   # unset follows border_soft
     \\chip_width  = 220.0        # preferred window item width, 64–400px; shrinks to fit
     \\chip_gap     = 4.0          # gap between taskbar window-item pills; also sets
     \\                            # each pill's top/bottom margin in the bar (capped)

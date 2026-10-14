@@ -695,7 +695,8 @@ pub fn atLayout(server: *Server, lx: f64, ly: f64) ?*Output {
 }
 
 // The output's usable area for compositor-driven placement (currently just
-// maximize), excluding the taskbar's reserved strip.
+// maximize), excluding the taskbar's reserved strip: the bar and its gap. A
+// short bar leaves the strip beside it whole.
 pub fn usableBox(output: *Output) wlr.Box {
     var box: wlr.Box = if (output.idle_blanked) output.cached_box else blk: {
         var b: wlr.Box = undefined;
@@ -703,8 +704,8 @@ pub fn usableBox(output: *Output) wlr.Box {
         break :blk b;
     };
     if (output.taskbar) |bar| {
-        if (output.server.config.compositor.taskbar_position == .top) box.y += bar.box.height;
-        box.height = @max(1, box.height - bar.box.height);
+        if (output.server.config.compositor.taskbar_position == .top) box.y += bar.reserved;
+        box.height = @max(1, box.height - bar.reserved);
     }
     return box;
 }

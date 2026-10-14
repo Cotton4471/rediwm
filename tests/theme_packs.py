@@ -168,6 +168,19 @@ def run():
                 assert ipc.query("theme.list")["active"] == "test-pack"
                 cfg = tomllib.loads((tmp / "rediwm-config.toml").read_text())
                 assert cfg["theme"] == {"base": "test-pack"}, cfg["theme"]
+                # A pack arranges the taskbar's items; an explicit list wins until a theme is chosen again.
+                def clock_x():
+                    items = ipc.get_shell_state()["taskbars"][0]["right_items"]
+                    return next(i for i in items if i["name"] == "clock")["box"]["x"]
+                wait_for(lambda: clock_x() < 300, "pack did not move the clock to the left section")
+                config_file = tmp / "rediwm-config.toml"
+                default_items = '["left:start", "center:windows", "right:tray", "right:battery", "right:network", "right:volume", "right:clock"]'
+                config_file.write_text(config_file.read_text().replace("[compositor]", f"[compositor]\ntaskbar_items = {default_items}", 1))
+                ipc.reload_config()
+                wait_for(lambda: clock_x() > 900, "explicit taskbar_items did not win over the pack")
+                ipc.action("theme.apply", {"id": "test-pack"})
+                assert "taskbar_items" not in tomllib.loads(config_file.read_text())["compositor"]
+                wait_for(lambda: clock_x() < 300, "choosing the pack did not restore its arrangement")
                 assert cfg["compositor"]["wallpaper"] == ""
                 assert cfg["compositor"]["dark_mode"]
                 assert cfg["input"]["pointer_speed"] == .4

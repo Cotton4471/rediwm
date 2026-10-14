@@ -9,6 +9,8 @@ license = "CC0-1.0"
 accent = "#f42ca0"
 window_bg = "#142850"
 start_button_icon = "logo.svg"
+[layout]
+taskbar_items = ["left:start", "left:clock", "center:windows", "right:tray", "right:battery", "right:network", "right:volume"]
 [assets]
 wallpaper = "test.png"
 color_scheme = "dark"

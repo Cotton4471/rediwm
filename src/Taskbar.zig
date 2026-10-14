@@ -30,6 +30,7 @@ const taskbar_items = @import("config").taskbar_items;
 const battery_highlight = @import("taskbar/battery_highlight.zig");
 const battery_badge = @import("ui").widgets.battery;
 const start_button = @import("taskbar/start_button.zig");
+const shape = @import("taskbar/shape.zig");
 const text = @import("ui").text;
 const ui_theme = @import("ui").theme;
 const stats = @import("ipc/stats.zig");
@@ -49,6 +50,19 @@ pub const default_bar_height: i32 = 54;
 pub const bar_height: i32 = default_bar_height;
 pub fn barHeight() i32 {
     return @intFromFloat(@round(ui_theme.global.taskbar_size));
+}
+/// Logical px between the bar and the output edge it sits on, kept small
+/// enough that a bad theme can't push the bar off the screen.
+const max_edge_gap: f32 = 64;
+fn edgeGap() i32 {
+    return @intFromFloat(@round(std.math.clamp(ui_theme.global.taskbar_edge_gap, 0, max_edge_gap)));
+}
+/// What the bar claims from its output edge: its height and its gap.
+pub fn reservedHeight() i32 {
+    return barHeight() + edgeGap();
+}
+fn barRadius() f32 {
+    return shape.effectiveRadius(ui_theme.global.taskbar_radius, barHeight());
 }
 const edge_pad: i32 = 20;
 // Anchor sizes at the original 54px bar / 8px item gap (a
@@ -113,7 +127,14 @@ pub fn startButtonGap() i32 {
     return @intFromFloat(@round(ui_theme.global.start_button_gap));
 }
 pub fn startButtonLeft() i32 {
-    return startButtonGap();
+    return startButtonGap() + endInset();
+}
+// Items keep clear of the curve at either end of a rounded bar.
+fn endInset() i32 {
+    return shape.cornerInset(barRadius(), chipVerticalMargin());
+}
+fn rightPad() i32 {
+    return @max(edge_pad, endInset() + startButtonGap());
 }
 pub fn startButtonBox(bar: *Taskbar) wlr.Box {
     const size = buttonSize();
@@ -167,6 +188,12 @@ battery_shimmer: battery_highlight.Highlight = .{},
 node_data: scene_data.SceneData = undefined,
 timer: *wl.EventSource,
 box: wlr.Box = .{ .x = 0, .y = 0, .width = 0, .height = default_bar_height },
+// The strip it claims from the output edge, as last laid out: `box.height`
+// plus the gap. Beside a short bar the strip stays whole.
+reserved: i32 = default_bar_height,
+// The original look: edge to edge, on the output's edge, square.
+flush: bool = true,
+glass_effect: ?*glass.Effect = null,
 item_layout: taskbar_items.Layout = .{},
 dirty: bool = true,
 paint_causes: u8 = 0,
@@ -386,7 +413,7 @@ pub fn create(server: *Server, wlr_output: *wlr.Output) !*Taskbar {
     // Preserve glyph coverage when fractional-scale destination rounding
     // makes the scene box differ from the raster by a device pixel.
     buffer_node.setFilterMode(.bilinear);
-    _ = glass.Engine.attach(server.glass_engine, buffer_node, &buffer_node.node, .taskbar);
+    const glass_effect = glass.Engine.attach(server.glass_engine, buffer_node, &buffer_node.node, .taskbar);
 
     bar.* = .{
         .server = server,
@@ -399,6 +426,7 @@ pub fn create(server: *Server, wlr_output: *wlr.Output) !*Taskbar {
         .app_tray_node = app_tray_node,
         .capture_node = capture_node,
         .battery_node = battery_node,
+        .glass_effect = glass_effect,
         .battery_state = battery.read(server.io, gpa),
         .network_offline = if (server.network) |network| network.offline() else false,
         .clock_minute = @divFloor(c_time.time(null), 60),
@@ -635,18 +663,33 @@ fn updateClockStrings(bar: *Taskbar) bool {
     return true;
 }
 
+/// Where the bar belongs on `output_box` under the current theme and edge.
+pub fn placement(bar: *Taskbar, output_box: wlr.Box) shape.Placement {
+    return shape.place(output_box, .{
+        .height = barHeight(),
+        .edge_gap = edgeGap(),
+        .length = ui_theme.global.taskbar_length,
+        .radius = barRadius(),
+        .top = bar.server.config.compositor.taskbar_position == .top,
+    });
+}
+
+/// Whether the bar already sits where `placement` puts it.
+pub fn isPlaced(bar: *Taskbar, output_box: wlr.Box) bool {
+    const wanted = bar.placement(output_box);
+    return std.meta.eql(bar.box, wanted.box) and bar.reserved == wanted.reserved;
+}
+
 // Repositions the strip along the configured output edge.
 pub fn relayout(bar: *Taskbar, output_box: wlr.Box) void {
     if (bar.server.input.window_menu.bar == bar) bar.server.input.window_menu.close();
     if (bar.server.tray) |tray_mgr| tray_mgr.closeMenu();
     bar.refreshStartLogo();
-    const h = barHeight();
-    bar.box = .{
-        .x = output_box.x,
-        .y = if (bar.server.config.compositor.taskbar_position == .top) output_box.y else output_box.y + output_box.height - h,
-        .width = output_box.width,
-        .height = h,
-    };
+    const placed = bar.placement(output_box);
+    bar.box = placed.box;
+    bar.reserved = placed.reserved;
+    bar.flush = shape.flush(output_box, bar.box, barRadius());
+    glass.Effect.configure(bar.glass_effect, barRadius(), 1);
     bar.tree.node.setPosition(bar.box.x, bar.box.y);
     const now_ms = nowMs();
     bar.pointerLeave();
@@ -766,7 +809,7 @@ fn calculateLayout(bar: *Taskbar, window_count: usize) taskbar_items.Layout {
     if (bar.capturing()) items.visible[@intFromEnum(taskbar_items.Item.tray)] = true;
     const windows_width = if (window_count == 0) 0 else @as(f32, @floatFromInt(window_count)) * @max(@as(f32, @floatFromInt(chipSize())), ui_theme.global.chip_width) +
         @as(f32, @floatFromInt(window_count - 1)) * @as(f32, @floatFromInt(chipGap()));
-    return taskbar_items.arrange(items, @floatFromInt(startButtonLeft()), @floatFromInt(bar.box.width - edge_pad), @as(f32, @floatFromInt(bar.box.width)) / 2, .{ if (bar.battery_state.percent != null) battery_width else 0, @floatFromInt(trayHit()), @floatFromInt(trayHit()), bar.clockColumnWidth(), @floatFromInt(buttonSize()), windows_width, app_width + capture_width }, tray_gap, clock_gap);
+    return taskbar_items.arrange(items, @floatFromInt(startButtonLeft()), @floatFromInt(bar.box.width - rightPad()), @as(f32, @floatFromInt(bar.box.width)) / 2, .{ if (bar.battery_state.percent != null) battery_width else 0, @floatFromInt(trayHit()), @floatFromInt(trayHit()), bar.clockColumnWidth(), @floatFromInt(buttonSize()), windows_width, app_width + capture_width }, tray_gap, clock_gap);
 }
 
 pub fn itemBox(bar: *Taskbar, item: taskbar_items.Item) ?wlr.Box {
@@ -1366,6 +1409,10 @@ const Color = struct {
     fn hairline() Color {
         return fromRgba(ui_theme.taskbar(.border_soft));
     }
+    // The bar's own outline; unset it is the hairline `border_soft` always drew.
+    fn outline() Color {
+        return fromRgba(ui_theme.taskbar(.taskbar_outline) orelse ui_theme.taskbar(.border_soft));
+    }
     fn chip_idle() Color {
         return fromRgba(ui_theme.taskbar(.taskbar_surface));
     }
@@ -1727,11 +1774,14 @@ fn renderPart(bar: *Taskbar, now_ms: i64, part: Part, origin_x: i32, origin_y: i
 
 fn paintPartPixel(bar: *Taskbar, sampled_start: start_button.Paint, hover: f32, press: f32, part_x: f32, part_width: f32, part: Part, px: f32, py: f32, scale: f32) Color {
     switch (part) {
-        .background => {
-            var color = Color.bar_fill();
-            if (py < 1) color = Color.hairline().over(color);
-            return color;
-        },
+        .background => return shape.background(Color, .{
+            .width = @floatFromInt(bar.box.width),
+            .height = @floatFromInt(bar.box.height),
+            .radius = barRadius(),
+            .outline = ui_theme.global.taskbar_outline_width,
+            .flush = bar.flush,
+            .top = bar.server.config.compositor.taskbar_position == .top,
+        }, px, py, scale, Color.bar_fill(), Color.outline()),
         .start => {
             const btn_size = buttonSize();
             var color = Color{ .r = 0, .g = 0, .b = 0, .a = 0 };
@@ -2285,7 +2335,7 @@ test "battery artwork remains centered as taskbar height and item gap change" {
 pub fn appTrayCount(bar: *Taskbar) usize {
     if (!bar.itemShown(.tray)) return 0;
     const mgr = bar.server.tray orelse return 0;
-    var fixed: f32 = @floatFromInt(edge_pad + startButtonLeft() + 80 + 5 * clock_gap);
+    var fixed: f32 = @floatFromInt(rightPad() + startButtonLeft() + 80 + 5 * clock_gap);
     if (bar.itemShown(.start)) fixed += @floatFromInt(buttonSize());
     if (bar.itemShown(.battery)) fixed += battery_width;
     if (bar.itemShown(.network)) fixed += @floatFromInt(trayHit());

@@ -36,6 +36,7 @@ test {
     _ = @import("ui").widgets.arrangement;
     _ = @import("ui").anim;
     _ = @import("taskbar/battery.zig");
+    _ = @import("taskbar/shape.zig");
     _ = @import("config").taskbar_items;
     _ = @import("tray.zig");
     _ = @import("taskbar/battery_highlight.zig");

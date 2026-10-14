@@ -108,6 +108,16 @@ pub const Theme = struct {
     scrollbar_thumb_active: ?[4]f32 = null,
     taskbar_title_size: f32 = 12.5,
     taskbar_size: f32 = 44.0,
+    // A floating bar: distance from the output edge it sits on (logical px),
+    // its length as a percentage of that edge (centred), and its corner
+    // radius. The defaults are the flush, full-width, square bar. The strip
+    // the bar claims is its height plus the gap (`Taskbar.reservedHeight`).
+    taskbar_edge_gap: f32 = 0,
+    taskbar_length: f32 = 100,
+    taskbar_radius: f32 = 0,
+    // Thickness of the bar's own outline (colour: `taskbar_outline`). With a
+    // flush, full-width, square bar only the edge facing the windows is drawn.
+    taskbar_outline_width: f32 = 1,
     // Gap between adjacent taskbar window-item pills, logical px. Also
     // drives each pill's top/bottom margin within the bar (capped — see
     // Taskbar.chipVerticalMargin), so one slider spaces pills on every side
@@ -141,6 +151,10 @@ pub const Theme = struct {
     taskbar_surface: [4]f32 = .{ 1, 1, 1, 0.025 },
     taskbar_hover: [4]f32 = .{ 1, 1, 1, 0.05 },
     taskbar_border: [4]f32 = .{ 1, 1, 1, 0.07 },
+    /// The bar's own outline; unset follows `border_soft`, which drew the
+    /// bar's hairline before this token existed. `taskbar_border` stays the
+    /// window buttons' and battery's.
+    taskbar_outline: ?[4]f32 = null,
     on_accent: [4]f32 = .{ 8.0 / 255.0, 33.0 / 255.0, 28.0 / 255.0, 1 },
     border_focus: [4]f32 = .{ 94.0 / 255.0, 234.0 / 255.0, 212.0 / 255.0, 0.40 }, // rgba(94,234,212,0.40)
     // Text insertion caret (paint.zig's `paintTextInput`), not the mouse
@@ -416,6 +430,7 @@ pub const TaskbarToken = enum {
     taskbar_surface,
     taskbar_hover,
     taskbar_border,
+    taskbar_outline,
     border_soft,
     surface_hover,
     window_fg,
@@ -488,10 +503,20 @@ pub fn applyTaskbarKey(allocator: Allocator, t: *Theme, key: []const u8, value: 
 /// radii remain the source of truth and repeated picks never compound.
 pub const RadiusPreset = enum { sharp, default, round };
 
+/// Whether a token is one the Sharp/Default/Round presets rescale. The
+/// taskbar's corner radius is a shape of its own (its square default has
+/// nothing to scale), so a preset must neither reset nor be undone by it.
+fn presetRadius(comptime field: std.builtin.Type.StructField) bool {
+    if (field.type != f32) return false;
+    if (!std.mem.startsWith(u8, field.name, "radius") and !std.mem.endsWith(u8, field.name, "_radius")) return false;
+    return !std.mem.eql(u8, field.name, "taskbar_radius");
+}
+
 pub fn applyRadiusPreset(t: *Theme, preset: RadiusPreset) void {
+    @setEvalBranchQuota(10000);
     const defaults: Theme = .{};
     inline for (std.meta.fields(Theme)) |field| {
-        if (comptime field.type == f32 and (std.mem.startsWith(u8, field.name, "radius") or std.mem.endsWith(u8, field.name, "_radius"))) {
+        if (comptime presetRadius(field)) {
             const base = @field(defaults, field.name);
             @field(t, field.name) = switch (preset) {
                 .sharp => @min(base, 4),
@@ -505,12 +530,13 @@ pub fn applyRadiusPreset(t: *Theme, preset: RadiusPreset) void {
 /// Custom numeric radii need not match any preset: show no selected segment
 /// so choosing Default can restore every radius, even when `radius` is still 5.
 pub fn radiusPreset(t: Theme) ?RadiusPreset {
+    @setEvalBranchQuota(10000);
     for ([_]RadiusPreset{ .sharp, .default, .round }) |preset| {
         var candidate: Theme = .{};
         applyRadiusPreset(&candidate, preset);
         var matches = true;
         inline for (std.meta.fields(Theme)) |field| {
-            if (comptime field.type == f32 and (std.mem.startsWith(u8, field.name, "radius") or std.mem.endsWith(u8, field.name, "_radius"))) {
+            if (comptime presetRadius(field)) {
                 if (@abs(@field(t, field.name) - @field(candidate, field.name)) > 0.001) matches = false;
             }
         }
@@ -684,6 +710,12 @@ pub fn applyKey(allocator: Allocator, t: *Theme, key: []const u8, value: []const
             }
             if (comptime std.mem.eql(u8, name, "chrome_control_gap")) {
                 if (number > 24) return error.InvalidSize;
+            }
+            if (comptime std.mem.eql(u8, name, "taskbar_length")) {
+                if (number < 20 or number > 100) return error.InvalidSize;
+            }
+            if (comptime std.mem.eql(u8, name, "taskbar_outline_width")) {
+                if (number > 8) return error.InvalidSize;
             }
             if (comptime std.mem.endsWith(u8, name, "_alpha") or std.mem.endsWith(u8, name, "_opacity") or std.mem.eql(u8, name, "dialog_glyph_lift")) {
                 if (number > 1) return error.InvalidSize;
@@ -970,6 +1002,31 @@ test "theme sizes reject non-finite and unsafe geometry" {
         var t: Theme = .{};
         try std.testing.expectError(error.InvalidSize, applyKey(std.testing.allocator, &t, "radius_lg", value));
     }
+}
+
+test "floating taskbar tokens check their ranges and sit outside the radius presets" {
+    var t: Theme = .{};
+    try applyKey(std.testing.allocator, &t, "taskbar_edge_gap", "12");
+    try applyKey(std.testing.allocator, &t, "taskbar_length", "60");
+    try applyKey(std.testing.allocator, &t, "taskbar_radius", "22");
+    try applyKey(std.testing.allocator, &t, "taskbar_outline_width", "2");
+    try applyKey(std.testing.allocator, &t, "taskbar_outline", "\"#ff0000\"");
+    try std.testing.expectEqual(@as(f32, 60), t.taskbar_length);
+    try std.testing.expectEqual(@as(f32, 2), t.taskbar_outline_width);
+    try std.testing.expect(t.taskbar_outline != null);
+    for ([_][2][]const u8{ .{ "taskbar_length", "19" }, .{ "taskbar_length", "101" }, .{ "taskbar_outline_width", "9" }, .{ "taskbar_edge_gap", "-1" } }) |bad| {
+        try std.testing.expectError(error.InvalidSize, applyKey(std.testing.allocator, &t, bad[0], bad[1]));
+    }
+    // A preset rescales window radii; the taskbar's own corner is neither
+    // reset by it nor stops the preset from being recognised.
+    applyRadiusPreset(&t, .round);
+    try std.testing.expectEqual(@as(f32, 22), t.taskbar_radius);
+    try std.testing.expectEqual(RadiusPreset.round, radiusPreset(t).?);
+    // The default look is the flush, full-width, square bar.
+    const flush: Theme = .{};
+    try std.testing.expectEqual(@as(f32, 0), flush.taskbar_edge_gap);
+    try std.testing.expectEqual(@as(f32, 100), flush.taskbar_length);
+    try std.testing.expectEqual(@as(f32, 0), flush.taskbar_radius);
 }
 
 test "caret colour follows the accent in effect until the file sets one" {

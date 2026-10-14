@@ -51,7 +51,10 @@ icon_theme = "Adwaita"    # optional installed theme, behind icons/
 cursor_theme = "pack"    # cursors/, or an installed cursor-theme name
 ```
 
-`[taskbar_theme]` optionally supplies the taskbar's own colours. Unknown
+`[taskbar_theme]` optionally supplies the taskbar's own colours. A pack can
+also float the bar with `[theme]` tokens `taskbar_edge_gap`, `taskbar_length`,
+`taskbar_radius` and `taskbar_outline_width`, and colour its outline with
+`taskbar_outline` (see `docs/wiki/Theme.md`). Unknown
 `[theme]` tokens are logged and skipped. Relative asset paths stay inside the
 pack; absolute paths, `..` and symlinks are refused. The only symlink exception
 is a cursor alias in `cursors/cursors/` whose target is a regular cursor file
@@ -104,6 +107,9 @@ Packs may include this optional section:
 ```toml
 [layout]
 taskbar_position = "top"   # top or bottom
+# Section (left, center, right), order and visibility of each taskbar item, as
+# in [compositor]; prefix an entry with - to hide it. All seven items are listed.
+taskbar_items = ["left:start", "left:clock", "center:windows", "right:tray", "right:battery", "right:network", "right:volume"]
 dock_enabled = true
 dock_position = "bottom" # top, bottom, left or right
 dock_height = 76          # thickness; 48–96 logical pixels
@@ -112,8 +118,9 @@ dock_hover_zoom = 1.05    # 1.0–1.5; 1.0 disables hover enlargement
 
 Only these appearance settings are accepted here. Resolution is compositor
 defaults → pack layout → explicit `[compositor]` settings. Choosing a theme
-or **Reset to theme** clears these personal overrides; a pack without
-layout values returns to the ordinary bottom taskbar and disabled dock.
+or **Reset to theme** clears these personal overrides (including a taskbar
+item arrangement made in Appearance); a pack without layout values returns to
+the ordinary bottom taskbar, its usual item sections and a disabled dock.
 Hidden dock entries and application preferences are preserved. **Save look…**
 includes the current layout.
 

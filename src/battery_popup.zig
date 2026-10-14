@@ -77,7 +77,7 @@ pub const Popup = struct {
         const anchor = bar.itemBox(.battery) orelse return;
         var box: wlr.Box = undefined;
         self.output.server.output_layout.getBox(self.output.wlr_output, &box);
-        const available_h = @max(1, box.height - @import("Taskbar.zig").barHeight() - 24);
+        const available_h = @max(1, box.height - @import("Taskbar.zig").reservedHeight() - 24);
         self.factor = @min(1, @min(@as(f32, @floatFromInt(@max(1, box.width - 24))) / 368, @as(f32, @floatFromInt(available_h)) / 496));
         const width: i32 = @max(1, @as(i32, @intFromFloat(@round(368 * self.factor))));
         const height: i32 = @max(1, @as(i32, @intFromFloat(@round(496 * self.factor))));

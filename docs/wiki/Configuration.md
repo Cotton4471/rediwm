@@ -82,6 +82,10 @@ For example, `taskbar_items = ["left:start", "center:windows", "right:tray",
 "right:battery", "right:network", "right:volume", "right:clock"]` is the default.
 Use `"-right:clock"` to hide the clock. Existing four-item status lists still
 load, preserving their order and visibility alongside Start and the window list.
+A theme pack can set the same list in its `[layout]` section
+(see `docs/themes.md`); a `taskbar_items` of your own here takes precedence over
+the theme's until you choose a theme again. The bar's gap from the screen edge,
+length, corner radius and outline are `[theme]` tokens (`docs/wiki/Theme.md`).
 
 | Key | Default | Notes |
 | --- | --- | --- |

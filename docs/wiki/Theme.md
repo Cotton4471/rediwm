@@ -16,7 +16,7 @@ Appearance also has a **Taskbar theme** picker under Theme, with the same
 presets plus "Same as theme". It gives the taskbar the preset's colours and
 leaves every other surface on the theme above. It is saved as a
 `[taskbar_theme]` section holding only these keys: `taskbar_bg`,
-`taskbar_surface`, `taskbar_hover`, `taskbar_border`, `border_soft`,
+`taskbar_surface`, `taskbar_hover`, `taskbar_border`, `taskbar_outline`, `border_soft`,
 `surface_hover`, `window_fg`, `window_dim`, `danger`, `window_close_hover`,
 `start_button_hover`, `start_button_indicator`, `start_button_logo_color` and
 the `battery_*` colours. Unlisted keys are ignored, so a whole theme file's
@@ -166,6 +166,7 @@ geometry retain their content or structural dimensions.
 | `taskbar_surface` | `"rgba(255,255,255,0.025)"` |
 | `taskbar_hover` | `"rgba(255,255,255,0.05)"` |
 | `taskbar_border` | `"rgba(255,255,255,0.07)"` |
+| `taskbar_outline` | `unset` |
 | `on_accent` | `"rgba(8,33,28,1)"` |
 | `border_focus` | `"rgba(94,234,212,0.4)"` |
 | `caret` | `unset` |
@@ -278,6 +279,10 @@ Numeric tokens accept 0–4096 unless constrained below. Fractions ending in
 | `chrome_control_gap` | `4.0` |
 | `taskbar_title_size` | `12.5` |
 | `taskbar_size` | `48.0` |
+| `taskbar_edge_gap` | `0.0` |
+| `taskbar_length` | `100.0` |
+| `taskbar_radius` | `0.0` |
+| `taskbar_outline_width` | `1.0` |
 | `chip_gap` | `4.0` |
 | `chip_width` | `220.0` |
 | `start_button_gap` | `4.0` |
@@ -362,11 +367,24 @@ Numeric tokens accept 0–4096 unless constrained below. Fractions ending in
 | `chrome_height` | 28–84 |
 | `chrome_control_gap` | 0–24 |
 | `chip_width` | 64–400 |
+| `taskbar_length` | 20–100 (percent) |
+| `taskbar_outline_width` | 0–8 |
 | `scrollbar_width` | 4–24 |
 | `scrollbar_rest_width`, `scrollbar_active_width` | 0.25–1.125 times the configured width |
 | `image_checker_size` | 1–128 |
 
-`taskbar_height` is an alias for `taskbar_size`. Layouts cap some dimensions to
+`taskbar_height` is an alias for `taskbar_size`. The taskbar is a flush,
+full-width, square bar by default. `taskbar_edge_gap` (0–64 logical px, in
+Appearance as **Taskbar gap from edge**) floats it off the screen edge it sits
+on, `taskbar_length` (a percentage of that edge, centred; never narrower than
+its items need, 420 px) shortens it, and `taskbar_radius` (px; a pill at half
+the bar's height) rounds its corners. Windows and panels treat the bar and its
+gap as reserved space. `taskbar_outline_width` is the thickness of the bar's own
+outline and the optional colour `taskbar_outline` its colour (unset: `border_soft`,
+which drew the bar's single hairline before). A flush bar draws the outline on the
+side facing the windows only; a floating or rounded one draws it all round.
+`taskbar_border` stays the colour of the window buttons' and battery's outlines.
+The Radius presets (Sharp, Default, Round) leave `taskbar_radius` alone. Layouts cap some dimensions to
 fit their available space. The scrollbar reserves room for its maximum width;
 `slider_*` keys control slider geometry while sharing the scrollbar feedback.
 
