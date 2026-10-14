@@ -11,7 +11,7 @@ const theme = @import("../theme.zig");
 const sdf = @import("../sdf.zig");
 const text = @import("../text.zig");
 
-/// A recessed rail with a luminous fill and a reflective, round thumb.
+/// A softly lit rail with a luminous fill and a shallow metallic disc thumb.
 /// All light stays inside the widget so partial repaints erase it completely.
 pub fn paintShaded(widget: *const Widget, data: layout.SliderData, r: *Renderer) void {
     const t = r.palette orelse theme.global;
@@ -60,28 +60,26 @@ pub fn paintShaded(widget: *const Widget, data: layout.SliderData, r: *Renderer)
             const halo = std.math.clamp(1 - @max(0, fill) / 3, 0, 1);
             if (fraction > 0) blend(pixel, t.accent, halo * halo * (0.12 + 0.16 * tip + 0.10 * intensity) * edge_fade);
             const rail_y = std.math.clamp((dy + track_h / 2) / track_h, 0, 1);
-            blend(pixel, shade(t.slider_track, -0.24 + 0.32 * rail_y), sdf.coverage(rail * s));
+            blend(pixel, shade(t.slider_track, -0.10 + 0.14 * rail_y), sdf.coverage(rail * s));
             if (fraction > 0) {
                 const streak = falloff((dy + track_h * 0.16) / (track_h * 0.38));
-                const gold = mix(t.accent, highlight, 0.18 + 0.50 * streak + 0.25 * tip);
+                const gold = mix(t.accent, highlight, 0.30 + 0.24 * streak + 0.28 * tip);
                 blend(pixel, gold, sdf.coverage(fill * s));
             }
-            const shadow = @sqrt(dx * dx + (dy - 1) * (dy - 1)) - radius;
-            blend(pixel, .{ 0, 0, 0, 0.28 }, std.math.clamp(1 - shadow / 1.5, 0, 1) * edge_fade);
+            const shadow = @sqrt(dx * dx + (dy - 0.4) * (dy - 0.4)) - radius;
+            blend(pixel, .{ 0, 0, 0, 0.12 }, std.math.clamp(1 - shadow / 0.8, 0, 1) * edge_fade);
             const distance = @sqrt(dx * dx + dy * dy) - radius;
             const coverage = sdf.coverage(distance * s);
             if (coverage <= 0) continue;
             const nx = dx / radius;
             const ny = dy / radius;
-            const nz = @sqrt(@max(0, 1 - nx * nx - ny * ny));
-            const light = std.math.clamp(-0.45 * nx - 0.55 * ny + 0.70 * nz, 0, 1);
-            var knob = shade(t.accent, -0.48 + 0.68 * light);
-            // Broad upper-left reflection and a smaller lower-right glint.
-            const specular = falloff((nx + 0.32) / 0.48) * falloff((ny + 0.42) / 0.43);
-            const glint = falloff((nx - 0.40) / 0.30) * falloff((ny - 0.57) / 0.25);
-            knob = mix(knob, highlight, @min(1, 0.95 * specular + 0.70 * glint));
-            const rim = 1 - std.math.clamp(-distance / 1.2, 0, 1);
-            knob = mix(knob, highlight, rim * (0.50 + 0.35 * light));
+            // Opposing brushed-metal reflections sit across a flat face.
+            // Keep the centre continuous and the bevel confined to a fine rim.
+            const reflection = 0.5 + nx * ny / @max(0.08, nx * nx + ny * ny);
+            var knob = mix(t.accent, highlight, 0.16 + 0.64 * reflection);
+            knob = shade(knob, -0.06 * std.math.clamp(ny, 0, 1));
+            const rim = 1 - std.math.clamp(-distance / 0.75, 0, 1);
+            knob = mix(knob, highlight, rim * 0.85);
             blend(pixel, knob, coverage);
         }
     }

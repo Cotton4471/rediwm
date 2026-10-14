@@ -1411,6 +1411,29 @@ pub const StartMenu = struct {
         if (revision != ui.layout.paint_revision) menu.requestWidgetRepaint();
     }
 
+    /// The application whose row or card the pointer is held down on, which
+    /// can be dragged to the dock. Valid until the results change.
+    pub fn pressedApp(menu: *StartMenu) ?struct { id: []const u8, icon: ?[]const u8 } {
+        const widget = menu.dispatcher.pressed orelse return null;
+        const index = switch (widget.kind) {
+            .row => |data| if (data.owner == @as(?*anyopaque, menu) and (data.on_click == onRowClick or data.on_click == onCardClick)) data.id else return null,
+            else => return null,
+        };
+        if (index >= menu.model.results.len) return null;
+        const result = menu.model.results[index];
+        if (result.app_entry == null) return null;
+        return .{ .id = result.id, .icon = result.icon };
+    }
+
+    /// A press became a drag: rebuild so no row stays pressed and the release
+    /// is not a click.
+    pub fn cancelPress(menu: *StartMenu) void {
+        const scroll = menu.currentScrollOffset();
+        menu.buildTree();
+        menu.restoreScrollOffset(scroll);
+        menu.requestRepaint();
+    }
+
     pub fn pointerButtonDown(menu: *StartMenu, sx: f64, sy: f64) void {
         menu.dispatcher.pointerButtonDown(&menu.root, @floatCast(sx), @floatCast(sy));
         // A click or a drag-select moves the caret, and the next

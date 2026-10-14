@@ -87,9 +87,10 @@ static void registry_checks(void)
 	rediwm_glass_detach(other);
 	assert(engine->held == NULL && wl_list_empty(&engine->effects));
 	assert(wl_list_length(&scene->tree.children) == 1);
-	other = rediwm_glass_attach(engine, panel, &panel->node, GLASS_PANEL);
+	other = rediwm_glass_attach(engine, panel, &panel->node, GLASS_SIDEBAR);
 	assert(other && rediwm_glass_effect_info(&other->node->node, &info));
 	assert(info.serial != other_info.serial);
+	assert(info.sigma == 8 && info.saturation == 1.6f);
 	rediwm_glass_destroy(engine);
 	assert(wl_list_length(&scene->tree.children) == 1); // the panel; its effect went
 	wlr_scene_node_destroy(&scene->tree.node);

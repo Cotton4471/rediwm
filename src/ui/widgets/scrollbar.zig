@@ -8,6 +8,8 @@
 const std = @import("std");
 const anim = @import("../anim.zig");
 const theme = @import("../theme.zig");
+const sdf = @import("../sdf.zig");
+const text = @import("../text.zig");
 
 pub const Axis = enum { vertical, horizontal };
 
@@ -135,11 +137,14 @@ pub const Drag = struct {
     }
 };
 
-/// What to draw: the thumb's rounded box and colour.
+/// What to draw: the thumb's rounded box, colour and illuminated edge.
 pub const Look = struct {
     rect: Rect,
     radius: f32,
     color: [4]f32,
+    axis: Axis = .vertical,
+    highlight: [4]f32 = .{ 1, 1, 1, 1 },
+    shine: f32 = 0,
 };
 
 /// The thumb for `state`: centred in the gutter across its thickness, as wide
@@ -158,13 +163,61 @@ pub fn look(g: Geometry, state: Appearance, configured: f32, palette: theme.Them
     }
     var color = palette.scrollbar_thumb;
     for (&color, palette.scrollbar_thumb_active orelse palette.accent) |*channel, target| channel.* += (target - channel.*) * state.accent;
-    return .{ .rect = rect, .radius = cornerRadius(thickness), .color = color };
+    var highlight = palette.border_glow;
+    // A pale reflection of the frame's glow reads as light on every palette.
+    for (highlight[0..3]) |*channel| channel.* += (1 - channel.*) * 0.55;
+    return .{ .rect = rect, .radius = cornerRadius(thickness), .color = color, .axis = g.axis, .highlight = highlight, .shine = state.shine };
 }
 
-/// Paints `l` into anything with `paint.Renderer`'s `fillRect`; Cairo clients
-/// use `ui/cairo.zig`'s `drawScrollbar`.
-pub fn paint(r: anytype, l: Look) void {
-    r.fillRect(l.rect.x, l.rect.y, l.rect.w, l.rect.h, .{ .color = l.color, .radius = l.radius });
+/// The light stays inside the thumb, so ordinary scrollbar damage erases it.
+/// Cairo clients use this same painter through `ui/cairo.zig`'s `drawScrollbar`.
+pub fn paint(r: *@import("../paint.zig").Renderer, l: Look) void {
+    if (l.shine <= 0) {
+        r.fillRect(l.rect.x, l.rect.y, l.rect.w, l.rect.h, .{ .color = l.color, .radius = l.radius });
+        return;
+    }
+    const box = l.rect;
+    if (box.w <= 0 or box.h <= 0) return;
+    const s = r.scale;
+    var left = box.x * s;
+    var top = box.y * s;
+    var right = (box.x + box.w) * s;
+    var bottom = (box.y + box.h) * s;
+    if (r.effectiveClip()) |clip| {
+        left = @max(left, clip.x * s);
+        top = @max(top, clip.y * s);
+        right = @min(right, (clip.x + clip.w) * s);
+        bottom = @min(bottom, (clip.y + clip.h) * s);
+    }
+    const x0: i32 = @intFromFloat(@floor(@max(0, left)));
+    const y0: i32 = @intFromFloat(@floor(@max(0, top)));
+    const x1: i32 = @intFromFloat(@ceil(@min(@as(f32, @floatFromInt(r.width)), right)));
+    const y1: i32 = @intFromFloat(@ceil(@min(@as(f32, @floatFromInt(r.height)), bottom)));
+    r.clean = false;
+    var py = y0;
+    while (py < y1) : (py += 1) {
+        const y = (@as(f32, @floatFromInt(py)) + 0.5) / s - box.y;
+        var px = x0;
+        while (px < x1) : (px += 1) {
+            const x = (@as(f32, @floatFromInt(px)) + 0.5) / s - box.x;
+            const distance = sdf.sdRoundedBox(x, y, 0, 0, box.w, box.h, l.radius);
+            const coverage = sdf.coverage(distance * s);
+            if (coverage <= 0) continue;
+            const length = if (l.axis == .vertical) box.h else box.w;
+            const thickness = if (l.axis == .vertical) box.w else box.h;
+            const u = (if (l.axis == .vertical) y else x) / length;
+            const v = (if (l.axis == .vertical) x else y) / thickness;
+            const along_light = (u - 0.38) / 0.62;
+            const falloff = @max(0, 1 - along_light * along_light);
+            const light = falloff * falloff;
+            const edge = 1 - std.math.clamp(-distance / 1.1, 0, 1);
+            const face = @max(0, 1 - @abs(v - 0.30) / 0.65);
+            const strength = l.shine * l.highlight[3] * light * (0.24 * face + 0.68 * edge);
+            var color = l.color;
+            for (color[0..3], l.highlight[0..3]) |*channel, target| channel.* += (target - channel.*) * strength;
+            text.blendPixel(&r.pixels[@intCast(py * r.width + px)], .{ .r = color[0], .g = color[1], .b = color[2], .a = color[3] }, coverage);
+        }
+    }
 }
 
 /// Presentation only: callers retain their scroll mechanics and fixed hit area.
@@ -172,32 +225,39 @@ pub fn paint(r: anytype, l: Look) void {
 pub const Appearance = struct {
     tint: anim.Anim = .{},
     expansion: anim.Anim = .{},
+    illumination: anim.Anim = .{},
     accent: f32 = 0,
     wide: f32 = 0,
+    shine: f32 = 0,
     deadline: ?i64 = null,
     active: bool = false,
 
     pub fn step(self: *Appearance, now: i64, moved: bool, hovered: bool, dragging: bool, overflowing: bool) bool {
         const old_accent = self.accent;
         const old_wide = self.wide;
+        const old_shine = self.shine;
         if (moved and overflowing) self.deadline = now + 400;
         if (!overflowing or (self.deadline != null and now >= self.deadline.?)) self.deadline = null;
         const engaged = overflowing and (hovered or dragging);
         // Scrolling only tints; hover and drag own expansion independently.
         const target: f32 = if (engaged) 1 else if (self.deadline != null) 0.35 else 0;
+        const light: f32 = if (!overflowing) 0 else if (dragging or self.deadline != null) 1 else if (hovered) 0.38 else 0;
         const static = anim.reducedMotion() or !anim.enabled();
         if (static) {
             self.tint.cancel(target);
             self.expansion.cancel(0);
+            self.illumination.cancel(light);
         } else {
             if (self.tint.to != target) self.tint.retarget(now, target, 180, .out_cubic);
             const expand: f32 = if (engaged) 1 else 0;
             if (self.expansion.to != expand) self.expansion.retarget(now, expand, 180, .out_cubic);
+            if (self.illumination.to != light) self.illumination.retarget(now, light, 180, .out_cubic);
         }
         self.accent = self.tint.value(now);
         self.wide = self.expansion.value(now);
-        self.active = !self.tint.settled(now) or !self.expansion.settled(now);
-        return self.accent != old_accent or self.wide != old_wide;
+        self.shine = self.illumination.value(now);
+        self.active = !self.tint.settled(now) or !self.expansion.settled(now) or !self.illumination.settled(now);
+        return self.accent != old_accent or self.wide != old_wide or self.shine != old_shine;
     }
 
     /// Resting width is 0.75 of `configured`; hover and drag grow it to 1.125.
@@ -216,6 +276,7 @@ test "scrollbar feedback holds, reverses, and respects reduced motion" {
     _ = state.step(0, true, false, false, true);
     _ = state.step(180, false, false, false, true);
     try std.testing.expectEqual(@as(f32, 0.35), state.accent);
+    try std.testing.expectEqual(@as(f32, 1), state.shine);
     try std.testing.expectEqual(@as(f32, 6), state.width(8));
     try std.testing.expect(!state.active);
     _ = state.step(400, false, false, false, true);
@@ -227,13 +288,16 @@ test "scrollbar feedback holds, reverses, and respects reduced motion" {
     _ = state.step(890, false, false, false, true);
     _ = state.step(1070, false, false, false, true);
     try std.testing.expectEqual(@as(f32, 0), state.accent);
+    try std.testing.expectEqual(@as(f32, 0), state.shine);
     anim.applySettings(.{ .reduced_motion = .on });
     _ = state.step(900, true, true, true, true);
     try std.testing.expectEqual(@as(f32, 1), state.accent);
+    try std.testing.expectEqual(@as(f32, 1), state.shine);
     try std.testing.expectEqual(@as(f32, 6), state.width(8));
     try std.testing.expect(!state.active);
     _ = state.step(901, false, false, false, false);
     try std.testing.expectEqual(@as(f32, 0), state.accent);
+    try std.testing.expectEqual(@as(f32, 0), state.shine);
     try std.testing.expect(state.deadline == null);
 }
 
@@ -245,12 +309,14 @@ test "scrolling after drag release retains only a subtle tint" {
     _ = state.step(0, false, true, false, true);
     _ = state.step(180, false, true, false, true);
     try std.testing.expectEqual(@as(f32, 9), state.width(8));
+    try std.testing.expectEqual(@as(f32, 0.38), state.shine);
     _ = state.step(200, true, false, true, true);
     try std.testing.expectEqual(@as(f32, 9), state.width(8));
     // Release outside the thumb while further wheel/trackpad/key input arrives.
     _ = state.step(220, true, false, false, true);
     _ = state.step(400, true, false, false, true);
     try std.testing.expectEqual(@as(f32, 0.35), state.accent);
+    try std.testing.expectEqual(@as(f32, 1), state.shine);
     try std.testing.expectEqual(@as(f32, 6), state.width(8));
     try std.testing.expect(!state.active);
     _ = state.step(600, true, false, false, true);

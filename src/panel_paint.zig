@@ -281,7 +281,7 @@ test "partial panel paint repairs recycled buffers with exact fractional-scale p
         defer bg.deinit(allocator);
         var children = [_]ui.layout.Widget{
             .{ .kind = .{ .button = .{ .label = "Hover me" } }, .computed_x = 10, .computed_y = 12, .computed_width = 100, .computed_height = 30 },
-            .{ .kind = .{ .rect = .{ .color = .{ 0.5, 0.1, 0.2, 0.4 }, .radius = 4 } }, .computed_x = 95, .computed_y = 25, .computed_width = 30, .computed_height = 35 },
+            .{ .kind = .{ .rect = .{ .color = .{ 0.5, 0.1, 0.2, 0.4 }, .radius = 4, .replace = true } }, .computed_x = 95, .computed_y = 25, .computed_width = 30, .computed_height = 35 },
         };
         var root: ui.layout.Widget = .{ .kind = .{ .rect = .{ .color = .{ 0.1, 0.2, 0.3, 0.6 }, .radius = 12 } }, .computed_width = 160, .computed_height = 90, .children = &children };
         root.linkParents();

@@ -62,6 +62,7 @@ const RoundedFill = struct {
     border: f32,
     fg: text_mod.Color,
     border_color: text_mod.Color,
+    replace: bool = false,
 
     inline fn shade(f: RoundedFill, pixels: []u32, index: usize, sx: f32, sy: f32) void {
         const outer = sdf.coverage(sdf.sdRoundedBox(sx, sy, f.box_x, f.box_y, f.box_w, f.box_h, f.radius));
@@ -71,7 +72,11 @@ const RoundedFill = struct {
             const inner = sdf.coverage(sdf.sdRoundedBox(sx, sy, f.box_x + f.border, f.box_y + f.border, f.box_w - 2 * f.border, f.box_h - 2 * f.border, @max(f.radius - f.border, 0)));
             color = lerpColor(f.border_color, f.fg, inner);
         }
-        blendPixel(&pixels[index], color, outer);
+        if (f.replace) {
+            var source: u32 = 0;
+            blendPixel(&source, color, outer);
+            pixels[index] = blendConstOver(pixels[index], source, 255 - byte(outer));
+        } else blendPixel(&pixels[index], color, outer);
     }
 };
 
@@ -180,6 +185,7 @@ pub const Renderer = struct {
             .border = style.border_width * s,
             .fg = toColor(style.color),
             .border_color = toColor(style.border_color),
+            .replace = style.replace,
         };
 
         // Interior fast path. Away from the corners the rounded-box SDF is just
@@ -219,7 +225,7 @@ pub const Renderer = struct {
         const inv_alpha = 255 - alpha8;
         const premul_fg = (alpha8 << 24) | (byte(shape.fg.r * shape.fg.a) << 16) |
             (byte(shape.fg.g * shape.fg.a) << 8) | byte(shape.fg.b * shape.fg.a);
-        const store_interior = on_clear or style.color[3] >= 1;
+        const store_interior = on_clear or style.replace or style.color[3] >= 1;
 
         var py = y0;
         while (py < y1) : (py += 1) {
@@ -325,6 +331,18 @@ pub const Renderer = struct {
     /// `pixels` scaled to cover the box, centre-cropped (CSS `object-fit:
     /// cover`), and clipped to a rounded rect: an avatar.
     pub fn drawImageCover(r: *Renderer, x: f32, y: f32, w: f32, h: f32, radius: f32, image: Image) void {
+        r.drawImageSampled(x, y, w, h, radius, image, false);
+    }
+
+    /// `drawImageCover` for an image that animates in size or sits at a
+    /// fractional position (the dock's hover zoom): every pixel is the area
+    /// average of the source it covers, so edges neither stair-step nor crawl
+    /// from frame to frame.
+    pub fn drawImageSmooth(r: *Renderer, x: f32, y: f32, w: f32, h: f32, radius: f32, image: Image) void {
+        r.drawImageSampled(x, y, w, h, radius, image, true);
+    }
+
+    fn drawImageSampled(r: *Renderer, x: f32, y: f32, w: f32, h: f32, radius: f32, image: Image, comptime smooth: bool) void {
         r.clean = false;
         if (w <= 0 or h <= 0 or image.width <= 0 or image.height <= 0) return;
         const s = r.scale;
@@ -351,18 +369,28 @@ pub const Renderer = struct {
         const k = @min(src_w / (w * s), src_h / (h * s));
         const off_x = (src_w - w * s * k) / 2;
         const off_y = (src_h - h * s * k) / 2;
+        // Source pixels one device pixel spans, at least one so that enlarging
+        // blends neighbours (bilinear) rather than repeating them.
+        const footprint = std.math.clamp(k, 1, max_footprint);
         const stride: usize = @intCast(image.width);
         var py = y0;
         while (py < y1) : (py += 1) {
+            const sy = @as(f32, @floatFromInt(py)) + 0.5;
+            const v = off_y + (sy - y * s) * k;
+            // A row shares its vertical taps.
+            const down = if (smooth) Taps.init(v, footprint / 2, image.height) else undefined;
             var px = x0;
             while (px < x1) : (px += 1) {
                 const sx = @as(f32, @floatFromInt(px)) + 0.5;
-                const sy = @as(f32, @floatFromInt(py)) + 0.5;
                 const cov = sdf.coverage(sdf.sdRoundedBox(sx, sy, x * s, y * s, w * s, h * s, radius * s));
                 if (cov <= 0) continue;
-                const ix: usize = @intFromFloat(std.math.clamp(@floor(off_x + (sx - x * s) * k), 0, src_w - 1));
-                const iy: usize = @intFromFloat(std.math.clamp(@floor(off_y + (sy - y * s) * k), 0, src_h - 1));
-                blendPremultipliedPixel(&r.pixels[@intCast(py * r.width + px)], image.pixels[iy * stride + ix], cov);
+                const u = off_x + (sx - x * s) * k;
+                const sample = if (smooth)
+                    boxAverage(image, Taps.init(u, footprint / 2, image.width), down)
+                else
+                    image.pixels[@as(usize, @intFromFloat(std.math.clamp(@floor(v), 0, src_h - 1))) * stride +
+                        @as(usize, @intFromFloat(std.math.clamp(@floor(u), 0, src_w - 1)))];
+                blendPremultipliedPixel(&r.pixels[@intCast(py * r.width + px)], sample, cov);
             }
         }
     }
@@ -900,6 +928,83 @@ inline fn overPremultiplied(dst: u32, src: u32) u32 {
     return src +% (rb_done | ag_done);
 }
 
+/// Wider footprints sample more than a few taps a pixel; the dock only ever
+/// shrinks by its hover zoom (at most 1.5).
+const max_footprint: f32 = 8;
+const max_taps = 10;
+
+/// The source pixels one axis of a footprint covers and how much of each: the
+/// overlap of [centre - half, centre + half], cut to [0, limit], with pixel i
+/// spanning [i, i + 1).
+const Taps = struct {
+    first: usize = 0,
+    count: usize = 0,
+    weight: [max_taps]f32 = undefined,
+    sum: f32 = 0,
+
+    fn init(centre: f32, half: f32, limit: i32) Taps {
+        var taps: Taps = .{};
+        const lo = @max(centre - half, 0);
+        const hi = @min(centre + half, @as(f32, @floatFromInt(limit)));
+        if (lo >= hi) return taps;
+        taps.first = @intFromFloat(@floor(lo));
+        const last = @min(@as(usize, @intFromFloat(@ceil(hi))), @as(usize, @intCast(limit)));
+        taps.count = @min(last -| taps.first, max_taps);
+        for (0..taps.count) |i| {
+            const at: f32 = @floatFromInt(taps.first + i);
+            const weight = @min(at + 1, hi) - @max(at, lo);
+            taps.weight[i] = weight;
+            taps.sum += weight;
+        }
+        return taps;
+    }
+};
+
+/// Area average of the footprint whose axes are `across` and `down`: each source
+/// pixel weighs by how much of the footprint it covers. At a width of one this is
+/// bilinear interpolation. Premultiplied channels average correctly; the part of
+/// the footprint outside the image is left out.
+fn boxAverage(image: Image, across: Taps, down: Taps) u32 {
+    const total = across.sum * down.sum;
+    if (total <= 0) return 0;
+    const stride: usize = @intCast(image.width);
+    var a: f32 = 0;
+    var red: f32 = 0;
+    var green: f32 = 0;
+    var blue: f32 = 0;
+    for (0..down.count) |j| {
+        const row = image.pixels[(down.first + j) * stride + across.first ..][0..across.count];
+        var ra: f32 = 0;
+        var rr: f32 = 0;
+        var rg: f32 = 0;
+        var rb: f32 = 0;
+        for (row, across.weight[0..across.count]) |pixel, weight| {
+            ra += weight * @as(f32, @floatFromInt(pixel >> 24));
+            rr += weight * @as(f32, @floatFromInt((pixel >> 16) & 0xff));
+            rg += weight * @as(f32, @floatFromInt((pixel >> 8) & 0xff));
+            rb += weight * @as(f32, @floatFromInt(pixel & 0xff));
+        }
+        const weight = down.weight[j];
+        a += weight * ra;
+        red += weight * rr;
+        green += weight * rg;
+        blue += weight * rb;
+    }
+    const scale = 1 / total;
+    // Averages of premultiplied channels stay premultiplied: no channel exceeds alpha.
+    const out_a: u32 = @intFromFloat(@round(a * scale));
+    const out_r: u32 = @min(@as(u32, @intFromFloat(@round(red * scale))), out_a);
+    const out_g: u32 = @min(@as(u32, @intFromFloat(@round(green * scale))), out_a);
+    const out_b: u32 = @min(@as(u32, @intFromFloat(@round(blue * scale))), out_a);
+    return out_a << 24 | out_r << 16 | out_g << 8 | out_b;
+}
+
+/// `boxAverage` of the `width`-wide square centred on (u, v), in source pixels.
+fn boxSample(image: Image, u: f32, v: f32, width: f32) u32 {
+    const half = width / 2;
+    return boxAverage(image, Taps.init(u, half, image.width), Taps.init(v, half, image.height));
+}
+
 fn blendPremultipliedPixel(dst: *u32, sample: u32, coverage: f32) void {
     if (coverage <= 0) return;
     const sa_raw = @as(f32, @floatFromInt((sample >> 24) & 0xff)) / 255.0;
@@ -1120,7 +1225,13 @@ fn paintToggle(widget: *const Widget, data: ToggleData, renderer: *Renderer) voi
         .y = widget.computed_y,
         .w = widget.computed_width,
         .h = widget.computed_height,
-    }, .{ .on = data.on, .style = data.style, .disabled = data.disabled, .focused = ui_input.isFocused(widget) });
+    }, .{
+        .on = data.on,
+        .position = if (std.math.isNan(data.shown)) null else data.shown,
+        .style = data.style,
+        .disabled = data.disabled,
+        .focused = ui_input.isFocused(widget),
+    });
 }
 
 /// Shared slider styling and feedback, using the surface's theme palette.
@@ -1354,6 +1465,24 @@ test "fillRect respects the active clip rect" {
     r.fillRect(0, 0, 10, 10, .{ .color = .{ 1, 1, 1, 1 } });
     try std.testing.expect(pixels[5 * 10 + 2] != 0); // column 2: inside the 5px-wide clip
     try std.testing.expectEqual(@as(u32, 0), pixels[5 * 10 + 7]); // column 7: outside it
+}
+
+test "replacement fills preserve alpha, rounded corners and damage clips" {
+    for ([_]f32{ 1, 1.5 }) |scale| {
+        var pixels = [_]u32{0xffeeeeee} ** (30 * 30);
+        var r = Renderer.init(&pixels, 30, 30, scale);
+        const style: RectStyle = .{ .color = .{ 0.4, 0.2, 0.1, 0.5 }, .radius = 4, .replace = true };
+        r.fillRect(2, 2, 16, 16, style);
+        const centre: usize = @intFromFloat(10 * scale);
+        try std.testing.expectEqual(@as(u32, 128), pixels[centre * 30 + centre] >> 24);
+        try std.testing.expectEqual(@as(u32, 0xffeeeeee), pixels[0]);
+        const corner: usize = @intFromFloat(2 * scale);
+        try std.testing.expectEqual(@as(u32, 0xffeeeeee), pixels[corner * 30 + corner]);
+        const expected = pixels;
+        r.damage_clip = .{ .x = 8, .y = 8, .w = 4, .h = 4 };
+        r.fillRect(2, 2, 16, 16, style);
+        try std.testing.expectEqualSlices(u32, &expected, &pixels);
+    }
 }
 
 test "rounded fill spans match per-pixel shading at fractional scales" {
@@ -1655,4 +1784,33 @@ test "typing reveals text behind the gliding caret and preserves the suffix" {
             try std.testing.expect(!dispatcher.caret.revealing);
         }
     }
+}
+
+test "smooth image sampling is exact at one to one, blends between pixels and shrinks flat colour unchanged" {
+    const black: u32 = 0xff000000;
+    const white: u32 = 0xffffffff;
+    const checker = [_]u32{ black, white, white, black };
+    const image: Image = .{ .pixels = &checker, .width = 2, .height = 2 };
+    // Centred on a source pixel, one pixel wide: that pixel, untouched.
+    try std.testing.expectEqual(black, boxSample(image, 0.5, 0.5, 1));
+    try std.testing.expectEqual(white, boxSample(image, 1.5, 0.5, 1));
+    // Halfway between two columns: an even mix (bilinear).
+    try std.testing.expectEqual(@as(u32, 0xff808080), boxSample(image, 1.0, 0.5, 1));
+    // The whole image averages to mid grey whatever the footprint around its centre.
+    try std.testing.expectEqual(@as(u32, 0xff808080), boxSample(image, 1.0, 1.0, 2));
+
+    // Shrinking a flat translucent image by 1.3 keeps its premultiplied colour,
+    // also at the edge, where the footprint leaves the image.
+    const flat = [_]u32{0x80402010} ** 16;
+    const small: Image = .{ .pixels = &flat, .width = 4, .height = 4 };
+    for ([_]f32{ 0.1, 0.5, 2, 3.9 }) |at| try std.testing.expectEqual(@as(u32, 0x80402010), boxSample(small, at, at, 1.3));
+
+    // Placed 1:1 on a pixel boundary it reproduces the image.
+    var pixels = [_]u32{0} ** 16;
+    var r = Renderer.init(&pixels, 4, 4, 1);
+    r.drawImageSmooth(1, 1, 2, 2, 0, image);
+    try std.testing.expectEqual(black, pixels[1 * 4 + 1]);
+    try std.testing.expectEqual(white, pixels[1 * 4 + 2]);
+    try std.testing.expectEqual(white, pixels[2 * 4 + 1]);
+    try std.testing.expectEqual(black, pixels[2 * 4 + 2]);
 }

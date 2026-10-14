@@ -10,7 +10,7 @@
 #include <wlr/util/addon.h>
 #include "glass.h"
 
-enum glass_kind { GLASS_TITLEBAR, GLASS_TASKBAR, GLASS_PANEL };
+enum glass_kind { GLASS_TITLEBAR, GLASS_TASKBAR, GLASS_PANEL, GLASS_SIDEBAR };
 struct glass_effect;
 struct glass_engine {
 	struct wl_list effects;
@@ -73,8 +73,9 @@ bool rediwm_glass_effect_info(struct wlr_scene_node *node, struct rediwm_glass_i
 		return false;
 	*out = (struct rediwm_glass_info){
 	    .target = effect->target,
-	    .sigma = effect->kind == GLASS_TITLEBAR ? 22 : effect->kind == GLASS_TASKBAR ? 24 : 26,
-	    .saturation = effect->kind == GLASS_PANEL ? 1.6f : 1.5f,
+	    // Sidebars retain background shapes through a lighter frost.
+	    .sigma = effect->kind == GLASS_SIDEBAR ? 8 : effect->kind == GLASS_TITLEBAR ? 22 : effect->kind == GLASS_TASKBAR ? 24 : 26,
+	    .saturation = effect->kind == GLASS_PANEL || effect->kind == GLASS_SIDEBAR ? 1.6f : 1.5f,
 	    .opacity = effect->opacity,
 	    .radius = effect->radius,
 	    .serial = effect->serial,

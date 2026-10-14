@@ -16,6 +16,10 @@ text and colours, secrets) are in the root `AGENTS.md` ("Shared UI").
   `.{}` for the rest look. The gutter belongs to the bar: layouts keep content
   out of it and a press in it never reaches content. Never change
   `Appearance.width` per call site: it is every bar's width.
+  Hover fades in a pale reflection of `border_glow` along the thumb's edge;
+  dragging and the scroll hold brighten it. `Appearance.illumination` shares
+  the existing frame/deadline scheduling (no idle animation). Cairo uses the
+  shared raster for the lit thumb, preserving its fractional device position.
 * **Scroll containers** (`.scroll_container`) give widget trees all of the
   above: hosts call `scroll_container.stepBars` beside `stepGlides` and carry
   `ScrollState.bar` across rebuilds. It scrolls along its `direction`, which
@@ -35,6 +39,17 @@ text and colours, secrets) are in the root `AGENTS.md` ("Shared UI").
   so `panel.rebuildTree` carries named sliders' state across on the same page
   (`slider.capture`/`restore` + `input.adoptHover`); an unnamed slider starts
   fresh.
+* **Switches slide** (`widgets/toggle.zig`): `ToggleData.knob` eases the
+  knob (and the track's off/on colour) over `slide_ms`, and `paint` takes the
+  position (`Options.position`; null rests at `on`, which hand-laid panels such
+  as the network popup still use). `scroll_container.stepBars` calls
+  `toggle.step`, which retargets when `on` changed, repaints only on a changed
+  position and snaps when animations are off or reduced; a switch no frame has
+  seen starts at rest. A page rebuild that follows a click happens before the
+  first frame moves the knob, so `ControlCenter.rebuildTree` carries named
+  switches' knobs across with `toggle.capture`/`restore` (by name hash: arena
+  names don't outlive the rebuild). A host that builds `.toggle` widgets must
+  call `stepBars` or its switches never leave their first position.
 * **The battery badge** (`widgets/battery.zig`: frame, glyph, percentage,
   charging bolt) is the taskbar's artwork. `sample` is the pixel math (per
   device pixel, badge-local units); the taskbar's per-pixel raster calls it and

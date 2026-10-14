@@ -134,8 +134,9 @@ pub const CompositorConfig = struct {
     dock_position: types.DockPosition = .bottom,
     dock_height: u32 = dock_height_default,
     dock_hover_zoom: f32 = 1.05,
-    dock_hidden_apps: []const []const u8 = &.{},
+    dock_auto_hide: bool = false,
     dock_hidden_shortcuts: []const []const u8 = &.{},
+    dock_pinned_apps: []const []const u8 = &.{},
     taskbar_items: TaskbarItems = .{},
     taskbar_position: types.TaskbarPosition = .bottom,
     /// App identities opted into compositor tabs. Only + launches join a group.
@@ -165,13 +166,16 @@ pub const CompositorConfig = struct {
     snap_to_edges: bool = true,
     /// Soft presentation-only lift while moving a window.
     drag_feedback: bool = true,
-    drag_scale: f32 = 1.03,
+    drag_scale: f32 = 1.002,
     /// A file manager slides aside while a file is dragged out of it; see
     /// `input/drag_dodge.zig`.
     dodge_file_drags: bool = true,
     /// Files opens an item with one click on its icon; names still select.
     files_single_click_open: bool = true,
     inactive_opacity: f32 = 1.0,
+    /// Background alpha handed to Foot at launch (`config/terminal_theme.zig`).
+    /// Unset keeps the `alpha` of the user's own Foot configuration.
+    terminal_opacity: ?f32 = null,
     /// A window that is not the focus loses `inactive_dim_amount` of its
     /// brightness and of its colour (`Toplevel.applyDim`).
     inactive_dim: bool = true,
@@ -1066,8 +1070,9 @@ const compositor_rules: std.enums.EnumFieldStruct(std.meta.FieldEnum(CompositorC
     .dock_position = .enumeration,
     .dock_height = .{ .uint = .{ .min = dock_height_min, .max = dock_height_max } },
     .dock_hover_zoom = .{ .float = .{ .min = 1, .max = dock_hover_zoom_max } },
-    .dock_hidden_apps = .json_string_list,
+    .dock_auto_hide = .boolean,
     .dock_hidden_shortcuts = .json_string_list,
+    .dock_pinned_apps = .json_string_list,
     .taskbar_items = .taskbar_items,
     .taskbar_position = .enumeration,
     .icon_theme = .string,
@@ -1097,6 +1102,7 @@ const compositor_rules: std.enums.EnumFieldStruct(std.meta.FieldEnum(CompositorC
     .dodge_file_drags = .boolean,
     .files_single_click_open = .boolean,
     .inactive_opacity = .{ .float = .{ .min = 0, .max = 1 } },
+    .terminal_opacity = .{ .float = .{ .min = 0, .max = 1 } },
     .inactive_dim = .boolean,
     .inactive_dim_amount = .{ .float = .{ .min = 0, .max = 0.5 } },
     .switcher_opacity = .{ .float = .{ .min = 0, .max = 1 } },
@@ -1201,7 +1207,8 @@ fn applyField(target: anytype, allocator: Allocator, comptime rules: anytype, ke
                 .output_scale => @field(target, field.name) = try parseOutputScale(value),
                 .output_transform => @field(target, field.name) = try output_transform.parse(value),
                 .float => |range| {
-                    const v = try std.fmt.parseFloat(field.type, value);
+                    const Float = if (@typeInfo(field.type) == .optional) @typeInfo(field.type).optional.child else field.type;
+                    const v = try std.fmt.parseFloat(Float, value);
                     if (!std.math.isFinite(v) or v < range.min or v > range.max or
                         (range.exclusive_min and v == range.min)) return error.InvalidValue;
                     @field(target, field.name) = v;
@@ -1842,6 +1849,12 @@ test "config field parsing preserves ranges and derived zoom state" {
     try applyCompositorKey(&c, a, "inactive_opacity", "1");
     try std.testing.expectEqual(@as(f32, 1), c.inactive_opacity);
     try std.testing.expectError(error.InvalidValue, applyCompositorKey(&c, a, "inactive_opacity", "1.01"));
+    try std.testing.expectEqual(@as(?f32, null), c.terminal_opacity);
+    try applyCompositorKey(&c, a, "terminal_opacity", "0.85");
+    try std.testing.expectEqual(@as(?f32, 0.85), c.terminal_opacity);
+    inline for (.{ "nan", "-0.1", "1.01" }) |v| {
+        try std.testing.expectError(error.InvalidValue, applyCompositorKey(&c, a, "terminal_opacity", v));
+    }
     try std.testing.expect(c.inactive_dim);
     try std.testing.expectEqual(@as(f32, 0.08), c.inactive_dim_amount);
     try applyCompositorKey(&c, a, "inactive_dim", "false");

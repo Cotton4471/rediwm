@@ -147,7 +147,7 @@ never for its own client), `animations.py`, `hotspots.py`, `launch_feedback.py`,
 and off-canvas reachability).
 
 `taskbar_sections.py` checks left/center/right defaults, live section controls,
-ordering and visibility, centered window groups, nonoverlapping input bounds,
+ordering and visibility, window groups defaulting left, nonoverlapping input bounds,
 the moved Start menu, legacy item lists and restart persistence. It supports
 `REDIWM_TEST_SCALE=1.5` and `REDIWM_TEST_OUTPUTS=2`.
 

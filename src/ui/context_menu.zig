@@ -57,6 +57,8 @@ pub const Row = struct {
 
 pub fn row(cr_any: *anyopaque, box: Rect, opts: Row, context: bool) void {
     const cr: *c.cairo_t = @ptrCast(cr_any);
+    // Desktop menus use app surfaces without resolving the compositor's theme forApp.
+    const foreground = theme.global.app_fg orelse theme.global.window_fg;
     if (opts.separator) {
         ui.setSource(cr, theme.global.app_divider);
         c.cairo_set_line_width(cr, 1);
@@ -73,16 +75,16 @@ pub fn row(cr_any: *anyopaque, box: Rect, opts: Row, context: bool) void {
         const size: f32 = if (context) 16 else 14;
         if (ui.Layer.begin(cr, .{ .x = @floatCast(box.x + (if (context) @as(f64, 10) else 4)), .y = @floatCast(box.y + (box.h - size) / 2), .w = size, .h = size })) |l| {
             var layer = l;
-            layer.renderer.drawIcon(0, 0, size, size, .{ .id = id, .color = theme.global.window_fg });
+            layer.renderer.drawIcon(0, 0, size, size, .{ .id = id, .color = foreground });
             layer.finish();
         }
     }
     const metrics = ui.fontMetrics(cr, ui.textSize());
-    ui.setSource(cr, theme.global.window_fg);
+    ui.setSource(cr, foreground);
     ui.drawText(cr, opts.label, box.x + (if (context) @as(f64, 36) else 24), box.y + (box.h + metrics.ascent - metrics.descent) / 2, ui.textSize(), false);
     if (opts.hint) |hint| {
         const hint_metrics = ui.fontMetrics(cr, ui.statusSize());
-        var ink = theme.global.window_fg;
+        var ink = foreground;
         ink[3] *= 0.4;
         ui.setSource(cr, ink);
         ui.drawText(cr, hint, box.x + box.w - 12 - ui.measureText(cr, hint, ui.statusSize(), false), box.y + (box.h + hint_metrics.ascent - hint_metrics.descent) / 2, ui.statusSize(), false);

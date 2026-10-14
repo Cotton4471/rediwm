@@ -112,6 +112,28 @@ pub fn drawSplitter(cr_any: *anyopaque, geometry: splitter.Geometry, engaged: bo
 /// `scrollbar.paint` for the widget tree.
 pub fn drawScrollbar(cr_any: *anyopaque, look: scrollbar.Look) void {
     const cr: *c.cairo_t = @ptrCast(cr_any);
+    if (look.shine > 0) {
+        // Preserve the thumb's fractional placement within the device-aligned
+        // layer, including a Cairo translation, as its animated width changes.
+        const s = scaleOf(cr);
+        var dx: f64 = look.rect.x;
+        var dy: f64 = look.rect.y;
+        c.cairo_user_to_device(cr, &dx, &dy);
+        const inset_x: f32 = @floatCast((dx - @floor(dx)) / s);
+        const inset_y: f32 = @floatCast((dy - @floor(dy)) / s);
+        var layer = Layer.begin(cr, .{
+            .x = look.rect.x - inset_x,
+            .y = look.rect.y - inset_y,
+            .w = look.rect.w + inset_x,
+            .h = look.rect.h + inset_y,
+        }) orelse return;
+        var local = look;
+        local.rect.x = inset_x;
+        local.rect.y = inset_y;
+        scrollbar.paint(&layer.renderer, local);
+        layer.finish();
+        return;
+    }
     const x: f64 = look.rect.x;
     const y: f64 = look.rect.y;
     const w: f64 = look.rect.w;
@@ -275,4 +297,21 @@ test "a scrollbar thumb paints its look through cairo" {
     try std.testing.expectEqual(@as(u32, 0xff0000ff), data[15 * 40 + 27]);
     try std.testing.expectEqual(@as(u32, 0), data[15 * 40 + 22]);
     try std.testing.expectEqual(@as(u32, 0), data[45 * 40 + 27]);
+
+    // Engaged thumbs share the shell raster, including fractional placement,
+    // Cairo translation and clipping. The highlight remains inside the thumb.
+    c.cairo_set_operator(cr, c.CAIRO_OPERATOR_CLEAR);
+    c.cairo_paint(cr);
+    c.cairo_set_operator(cr, c.CAIRO_OPERATOR_OVER);
+    c.cairo_scale(cr, 1.5, 1.5);
+    c.cairo_translate(cr, 0.25, 0.5);
+    var hot = scrollbar.look(g, .{ .wide = 1, .accent = 1, .shine = 1 }, 8, palette);
+    drawScrollbar(cr, hot);
+    c.cairo_surface_flush(surface);
+    var expected = [_]u32{0} ** (40 * 60);
+    var renderer = paint.Renderer.init(&expected, 40, 60, 1.5);
+    hot.rect.x += 0.25;
+    hot.rect.y += 0.5;
+    scrollbar.paint(&renderer, hot);
+    try std.testing.expectEqualSlices(u32, &expected, data[0..expected.len]);
 }

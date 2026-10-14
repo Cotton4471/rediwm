@@ -694,10 +694,10 @@ pub fn atLayout(server: *Server, lx: f64, ly: f64) ?*Output {
     return null;
 }
 
-// The output's usable area for compositor-driven placement (currently just
-// maximize), excluding the taskbar's reserved strip: the bar and its gap. A
-// short bar leaves the strip beside it whole.
-pub fn usableBox(output: *Output) wlr.Box {
+/// The output without the taskbar's reserved strip (the bar and its gap; a
+/// short bar leaves the strip beside it whole). The dock sits in this box and
+/// the taskbar's popups open against it: neither is placed around the dock.
+pub fn dockAreaBox(output: *Output) wlr.Box {
     var box: wlr.Box = if (output.idle_blanked) output.cached_box else blk: {
         var b: wlr.Box = undefined;
         output.server.output_layout.getBox(output.wlr_output, &b);
@@ -710,9 +710,27 @@ pub fn usableBox(output: *Output) wlr.Box {
     return box;
 }
 
+/// The output's usable area for compositor-driven placement (maximize, tiles,
+/// new windows, popups): `dockAreaBox` less the strip a docked (not
+/// auto-hiding) dock claims. Windows never open or maximize behind either.
+pub fn usableBox(output: *Output) wlr.Box {
+    var box = output.dockAreaBox();
+    const strip = @import("Dock.zig").reservedStrip(output.server, box);
+    if (strip == 0) return box;
+    switch (output.server.config.compositor.dock_position) {
+        .top => box.y += strip,
+        .left => box.x += strip,
+        .bottom, .right => {},
+    }
+    if (output.server.config.compositor.dock_position.vertical()) {
+        box.width = @max(1, box.width - strip);
+    } else box.height = @max(1, box.height - strip);
+    return box;
+}
+
 /// Place a taskbar popup on the inward side of the selected edge.
 pub fn taskbarPopupY(output: *Output, height: i32, gap: i32) i32 {
-    const box = output.usableBox();
+    const box = output.dockAreaBox();
     return if (output.server.config.compositor.taskbar_position == .top)
         box.y + gap
     else
@@ -847,6 +865,7 @@ fn openMenu(output: *Output, mode: StartMenu.Mode) void {
 
 pub fn closeStartMenu(output: *Output) void {
     const sm = output.start_menu orelse return;
+    output.server.input.dock_drag.cancel(&output.server.input);
     sm.beginClose();
     if (output.server.input.open_start_menu == sm) {
         output.server.input.open_start_menu = null;

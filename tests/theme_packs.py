@@ -127,7 +127,8 @@ def run():
                 gold = ipc.action("get_theme")
                 assert gold["tokens"]["notification_blur"] is True
                 assert gold["tokens"]["app_fg"] != gold["tokens"]["window_fg"]
-                assert gold["tokens"]["app_sidebar"][3] == 1
+                assert gold["tokens"]["app_sidebar"][3] == .5
+                assert gold["tokens"]["app_sidebar_blur"] is True
                 for key in ("app_item_hover", "app_sidebar_hover", "app_surface_hover",
                             "surface_hover", "start_menu_selected_bg"):
                     assert abs(gold["tokens"][key][3] - 0.96) < .001, key
@@ -174,7 +175,7 @@ def run():
                     return next(i for i in items if i["name"] == "clock")["box"]["x"]
                 wait_for(lambda: clock_x() < 300, "pack did not move the clock to the left section")
                 config_file = tmp / "rediwm-config.toml"
-                default_items = '["left:start", "center:windows", "right:tray", "right:battery", "right:network", "right:volume", "right:clock"]'
+                default_items = '["left:start", "left:windows", "right:tray", "right:battery", "right:network", "right:volume", "right:clock"]'
                 config_file.write_text(config_file.read_text().replace("[compositor]", f"[compositor]\ntaskbar_items = {default_items}", 1))
                 ipc.reload_config()
                 wait_for(lambda: clock_x() > 900, "explicit taskbar_items did not win over the pack")
@@ -230,10 +231,19 @@ def run():
                 def files_has_gold_palette():
                     files_shot.unlink(missing_ok=True)
                     ipc.screenshot(str(files_shot))
+                    win = next(w for w in ipc.get_windows() if w["app_id"] == "rediwm-files")
+                    box = ipc.get_window_debug(win["id"])["client_box"]
                     with Image.open(files_shot) as image:
-                        colors = dict((color, count) for count, color in image.convert("RGB").getcolors(image.width * image.height))
+                        rgb = image.convert("RGB")
+                        colors = dict((color, count) for count, color in rgb.getcolors(image.width * image.height))
+                        # Below the toolbar, the sidebar's empty leading margin
+                        # now shows the blurred backdrop through its 50% tint.
+                        sidebar = rgb.crop((box["x"] + 4, box["y"] + 130,
+                                            box["x"] + 12, box["y"] + box["height"] - 24))
+                        tinted = sum(n for n, color in sidebar.getcolors(sidebar.width * sidebar.height)
+                                     if color != (68, 61, 58) and color != (238, 230, 219))
                     return (colors.get((238, 230, 219), 0) > 5000
-                            and colors.get((68, 61, 58), 0) > 5000
+                            and tinted > sidebar.width * sidebar.height * .9
                             and colors.get((57, 51, 46), 0) > 100
                             and colors.get((241, 231, 219), 0) > 100)
                 wait_for(files_has_gold_palette, "Gold app, sidebar and chrome foregrounds were not separated")

@@ -154,6 +154,9 @@ pub const TextFamily = enum { sans, mono };
 
 pub const RectStyle = struct {
     color: [4]f32,
+    /// Replace the covered background, preserving this fill's alpha. Rounded
+    /// edges still blend by coverage; useful for translucent inset panels.
+    replace: bool = false,
     radius: f32 = 0,
     border_width: f32 = 0,
     border_color: [4]f32 = .{ 0, 0, 0, 0 },
@@ -320,6 +323,12 @@ pub const ToggleData = struct {
     style: enum { standard, settings } = .standard,
     on: bool,
     disabled: bool = false,
+    /// 0 (off) to 1 (on): where the knob slides, eased by `widgets/toggle.zig`'s
+    /// `step` so a change travels instead of jumping.
+    knob: anim.Anim = .{},
+    /// The position last painted; NaN until the first `step`, so a freshly built
+    /// switch starts at rest instead of sliding in.
+    shown: f32 = std.math.nan(f32),
     on_change: *const fn (?*anyopaque, usize, bool) void,
 };
 

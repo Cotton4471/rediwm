@@ -2,7 +2,7 @@
 // (scene_output.c); see glass.c.
 const wlr = @import("wlroots");
 
-pub const Kind = enum(c_int) { titlebar, taskbar, panel };
+pub const Kind = enum(c_int) { titlebar, taskbar, panel, sidebar };
 pub const Effect = opaque {
     extern fn rediwm_glass_detach(effect: ?*Effect) void;
     pub const detach = rediwm_glass_detach;

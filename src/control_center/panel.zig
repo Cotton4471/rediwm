@@ -564,7 +564,7 @@ pub const ControlCenter = struct {
             },
         }
         cc.body_children = .{
-            .{ .name = "nav", .kind = .{ .rect = .{ .color = t.app_sidebar, .radius = t.settings_sidebar_radius, .border_width = 1, .border_color = t.app_item_border } }, .direction = .column, .width = .{ .fixed = if (narrow) 70 else 238 }, .height = .{ .percent = 1 }, .padding = layout.Edges.all(8), .gap = nav_gap, .underlay = .{ .owner = cc, .paint = paintNavHighlights }, .children = cc.nav_rows[0..nav_count] },
+            .{ .name = "nav", .kind = .{ .rect = .{ .color = t.app_sidebar, .replace = t.app_sidebar[3] < 1, .radius = t.settings_sidebar_radius, .border_width = 1, .border_color = t.app_item_border } }, .direction = .column, .width = .{ .fixed = if (narrow) 70 else 238 }, .height = .{ .percent = 1 }, .padding = layout.Edges.all(8), .gap = nav_gap, .underlay = .{ .owner = cc, .paint = paintNavHighlights }, .children = cc.nav_rows[0..nav_count] },
             .{ .kind = .{ .scroll_container = .{} }, .direction = .column, .@"align" = .stretch, .width = .{ .flex = 1 }, .height = .{ .percent = 1 }, .padding = layout.Edges.all(12), .gap = 14, .children = cc.content_children[0..cc.content_count] },
         };
         if (cc.page == .services) {
@@ -574,7 +574,8 @@ pub const ControlCenter = struct {
             cc.body_children[1].padding.right += ui.widgets.scrollbar.gutter(theme.global.scrollbar_width);
         }
         cc.root_children[0] = .{ .kind = .container, .direction = .row, .padding = .{ .left = 16, .top = 16, .bottom = 16, .right = if (cc.page == .services) 16 else 6 }, .gap = 14, .width = .{ .percent = 1 }, .height = .{ .flex = 1 }, .children = &cc.body_children };
-        // Opaque like a client's content: only the window chrome is glass.
+        // The content stays opaque; the sidebar replaces its background with
+        // app_sidebar so translucent themes expose the scene beneath it.
         cc.root = .{
             .kind = .{ .rect = .{ .color = bodyColor() } },
             .direction = .column,
@@ -938,15 +939,20 @@ pub const ControlCenter = struct {
         }
     }
 
-    /// `buildTree`, keeping each slider's hover and feedback look across it
-    /// when the page is the same: a theme slider's save rebuilds the page the
-    /// moment the button is released, under a pointer that is still on it.
+    /// `buildTree`, keeping each slider's hover and feedback look and each
+    /// switch's slide across it when the page is the same: a theme slider's save
+    /// rebuilds the page the moment the button is released, under a pointer that
+    /// is still on it, and a switch's change rebuilds before its knob has moved.
     fn rebuildTree(cc: *ControlCenter) void {
         const hovered_nav = cc.nav_hover.target;
         const same_page = cc.built_page == cc.page;
         const bluetooth_scroll: ?layout.ScrollState = if (same_page and cc.page == .bluetooth) cc.body_children[1].kind.scroll_container else null;
         var saved: ui.widgets.slider.Saved = .{};
-        if (same_page) ui.widgets.slider.capture(&cc.root, &saved);
+        var knobs: ui.widgets.toggle.Saved = .{};
+        if (same_page) {
+            ui.widgets.slider.capture(&cc.root, &saved);
+            ui.widgets.toggle.capture(&cc.root, &knobs);
+        }
         cc.buildTree();
         if (hovered_nav) |cell| {
             const index: usize = @intCast(cell.row);
@@ -958,6 +964,7 @@ pub const ControlCenter = struct {
         if (bluetooth_scroll) |state| cc.body_children[1].kind.scroll_container = state;
         if (same_page) {
             if (ui.widgets.slider.restore(&cc.root, &saved)) |hovered| ui.input.adoptHover(&cc.root, hovered);
+            ui.widgets.toggle.restore(&cc.root, &knobs);
         }
     }
 
@@ -1104,7 +1111,7 @@ pub const ControlCenter = struct {
         if (alpha > 0) {
             const box = navRowBox(list, hover.row);
             renderer.fillRect(box.x, box.y, box.w, box.h, .{
-                .color = scaleAlpha(t.surface_hover, alpha),
+                .color = scaleAlpha(t.sidebarHover(), alpha),
                 .radius = t.radius,
                 .border_width = 1,
                 .border_color = scaleAlpha(t.border_soft, alpha),

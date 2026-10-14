@@ -632,7 +632,7 @@ fn launchPreferred(server: *Server, cmd: []const u8) void {
     defer arena.deinit();
     const args = @import("../start_menu/launch.zig").parseExec(arena.allocator(), command, null) catch return;
     if (args.len == 0) return;
-    const themed = @import("config").terminal_theme.wrap(arena.allocator(), server.io, args, server.config.theme) catch return;
+    const themed = @import("config").terminal_theme.wrap(arena.allocator(), server.io, args, server.config.theme, server.config.compositor.terminal_opacity) catch return;
     if (themed.ptr == args.ptr) return spawnProcess(server, command);
     spawnTracked(server, command, false, themed);
 }

@@ -150,6 +150,10 @@ shadow_tree: *wlr.SceneTree,
 shadow_node: *wlr.SceneBuffer,
 resize_grab: *wlr.SceneBuffer,
 glass_effect: ?*glass.Effect = null,
+// Backdrop beneath the themed app body; opaque content masks it, leaving only
+// the sidebar frosted. The bufferless target owns geometry, never pixels/input.
+sidebar_glass_target: ?*wlr.SceneBuffer = null,
+sidebar_glass_effect: ?*glass.Effect = null,
 titlebar_buffer: *wlr.SceneBuffer,
 // Body under the border ring beside and below the client (left, right, bottom).
 frame_fills: [3]*wlr.SceneRect,
@@ -281,8 +285,6 @@ needs_attention: bool = false,
 maximized: bool = false,
 fullscreen: bool = false,
 in_world: bool = false,
-/// A dock removal without an app identity lasts for this window's lifetime.
-dock_hidden: bool = false,
 placed: bool = false,
 placeholder_source: ?*Toplevel = null,
 rules_resolved: bool = false,
@@ -2729,6 +2731,7 @@ pub fn syncChrome(toplevel: *Toplevel, rebuild_shadow: bool, now_ms: i64) !void 
     defer if (toplevel.server.input.grabbed_toplevel == toplevel) toplevel.server.input.updateGrabBorderGlow();
     const geometry_box = toplevel.clientGeometry();
     if (geometry_box.width <= 0 or geometry_box.height <= 0) return;
+    defer toplevel.syncSidebarGlass(geometry_box.width, geometry_box.height);
 
     const decorated = toplevel.hasServerDecorations();
     toplevel.titlebar_buffer.node.setEnabled(decorated);
@@ -2825,6 +2828,39 @@ pub fn syncChrome(toplevel: *Toplevel, rebuild_shadow: bool, now_ms: i64) !void 
 
 /// How far an easing frame stretches its titlebar raster before rastering anew.
 const titlebar_stretch: f32 = 0.12;
+
+fn syncSidebarGlass(toplevel: *Toplevel, width: i32, height: i32) void {
+    const themed = switch (toplevel.backend) {
+        .shell => |shell| !shell.welcome,
+        .xdg => std.mem.eql(u8, toplevel.appId(), "rediwm-files") or
+            std.mem.eql(u8, toplevel.appId(), "rediwm-file-chooser"),
+        else => false,
+    };
+    const enabled = themed and theme.global.app_sidebar_blur and theme.global.app_sidebar[3] < 1;
+    if (enabled and toplevel.sidebar_glass_target == null) {
+        const target = toplevel.content_tree.createSceneBuffer(null) catch return;
+        target.point_accepts_input = struct {
+            fn accepts(_: *wlr.SceneBuffer, _: *f64, _: *f64) callconv(.c) bool {
+                return false;
+            }
+        }.accepts;
+        target.node.placeBelow(&toplevel.scene_tree.node);
+        const effect = glass.Engine.attach(toplevel.server.glass_engine, target, &target.node, .sidebar) orelse {
+            target.node.destroy();
+            return;
+        };
+        // Both nodes belong to content_tree and are freed with the window.
+        toplevel.sidebar_glass_target = target;
+        toplevel.sidebar_glass_effect = effect;
+    }
+    if (toplevel.sidebar_glass_target) |target| {
+        target.node.setEnabled(enabled);
+        if (enabled) {
+            target.setDestSize(width, height);
+            glass.Effect.configure(toplevel.sidebar_glass_effect, 0, toplevel.shape_opacity);
+        }
+    }
+}
 
 /// Whether a frame easing to a new size keeps its titlebar raster, stretched,
 /// instead of rastering it for every frame (`ChromeBuffer.create` costs
@@ -3039,6 +3075,7 @@ pub fn applyOpacity(toplevel: *Toplevel, now_ms: i64) void {
     toplevel.applyDim(now_ms);
     toplevel.applyShape();
     glass.Effect.configure(toplevel.glass_effect, toplevel.cornerRadius(), opacity);
+    glass.Effect.configure(toplevel.sidebar_glass_effect, 0, opacity);
     switch (toplevel.backend) {
         .placeholder => |*ph| col.setRect(ph.body_rect, col.Straight.fromRgba(theme.global.window_bg).premultiply().scale(opacity)),
         else => {},

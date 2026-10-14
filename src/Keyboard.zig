@@ -536,6 +536,14 @@ pub fn processKey(keyboard: *Keyboard, time_msec: u32, event_keycode: u32, state
     }
 
     if (keyboard.server.input.open_start_menu) |sm| {
+        // Escape abandons an application dragged out of the menu, not the menu.
+        if (state == .pressed and keyboard.server.input.dock_drag.active()) for (xkb_state.keyGetSyms(keycode)) |sym| {
+            if (@intFromEnum(sym) == xkb.Keysym.Escape) {
+                _ = keyboard.server.input.cancelDrag();
+                keyboard.consuming_escape = true;
+                return;
+            }
+        };
         if (state == .pressed) for (keyboard.bindingSyms(keycode)) |sym| {
             if (keyboard.server.input.isToggleStartMenu(wlr_keyboard.getModifiers(), sym)) {
                 if (event_keycode < keyboard.shortcut_consumed.len) keyboard.shortcut_consumed[event_keycode] = true;

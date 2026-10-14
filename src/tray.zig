@@ -229,7 +229,7 @@ pub const Tray = struct {
                 self.menu_item = item.id;
                 self.menu_scale = bar.wlr_output.scale;
                 self.menu_bounds = bar.box;
-                if (@import("Output.zig").fromWlr(bar.wlr_output)) |out| self.menu_bounds = out.usableBox();
+                if (@import("Output.zig").fromWlr(bar.wlr_output)) |out| self.menu_bounds = out.dockAreaBox();
                 self.menu_box.x = x;
                 self.menu_box.y = bar.box.y;
                 self.showLevel(0);

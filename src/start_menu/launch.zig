@@ -307,7 +307,7 @@ fn launchExec(allocator: Allocator, server: *Server, entry: *const AppEntry, uri
     }
     var palette_arena = std.heap.ArenaAllocator.init(allocator);
     defer palette_arena.deinit();
-    const themed_argv = try @import("config").terminal_theme.wrap(palette_arena.allocator(), server.io, argv, server.config.theme);
+    const themed_argv = try @import("config").terminal_theme.wrap(palette_arena.allocator(), server.io, argv, server.config.theme, server.config.compositor.terminal_opacity);
 
     const token = server.activation.createToken();
     const token_name = if (token) |t| std.mem.span(t.name()) else null;
@@ -672,7 +672,7 @@ fn launchNewWindowBytes(allocator: Allocator, server: *Server, entry: *const App
     defer snapshot.release();
     const terminal = @import("../config_runtime/default_apps.zig").find(snapshot.entries, server.config.compositor.default_terminal);
     const argv = try buildLaunchArgvUris(a, &live, server.environ, &.{}, terminal);
-    const themed_argv = try @import("config").terminal_theme.wrap(a, server.io, argv, server.config.theme);
+    const themed_argv = try @import("config").terminal_theme.wrap(a, server.io, argv, server.config.theme, server.config.compositor.terminal_opacity);
     var env_map = try server.environ.createMap(a);
     defer env_map.deinit();
     try server.applyChildEnvWithToken(&env_map, token);

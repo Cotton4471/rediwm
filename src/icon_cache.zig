@@ -147,7 +147,10 @@ fn lookupScoped(cfg: icon_theme.Config, io: Io, icon_name: []const u8, size_px: 
         }
     }
 
-    const found = (if (pack_only) try icon_theme.findPack(gpa, io, cfg, icon_name) else try icon_theme.find(gpa, io, cfg, icon_name, size_px)) orelse return null;
+    const found = (if (pack_only) try icon_theme.findPack(gpa, io, cfg, icon_name) else try icon_theme.find(gpa, io, cfg, icon_name, size_px)) orelse {
+        if (!pack_only and std.mem.eql(u8, icon_name, ui.shell_icons.settings_icon_name)) return builtinPng(ui.shell_icons.settings_icon_png, size_px);
+        return null;
+    };
     defer gpa.free(found.path);
 
     if (found.svg) {
@@ -159,6 +162,12 @@ fn lookupScoped(cfg: icon_theme.Config, io: Io, icon_name: []const u8, size_px: 
         return Entry{ .pixels = pixels, .size = size_px };
     }
     return null;
+}
+
+fn builtinPng(bytes: []const u8, size_px: i32) ?Entry {
+    const decoded = png.decode(gpa, bytes) catch return null;
+    defer decoded.deinit(gpa);
+    return Entry{ .pixels = resample(decoded.pixels, decoded.width, decoded.height, size_px) catch return null, .size = size_px };
 }
 
 // A missing icon file is a permanent, expected outcome (most app_ids simply
@@ -386,6 +395,17 @@ fn resample(src: []const u32, src_w: i32, src_h: i32, dst_size: i32) ![]u32 {
         }
     }
     return dst;
+}
+
+test "the built-in Settings icon decodes at any size" {
+    for ([_]i32{ 36, 54, 96 }) |size| {
+        const entry = builtinPng(ui.shell_icons.settings_icon_png, size) orelse return error.TestUnexpectedResult;
+        defer gpa.free(entry.pixels);
+        var opaque_pixels: usize = 0;
+        for (entry.pixels) |pixel| opaque_pixels += @intFromBool(pixel >> 24 >= 0xf0);
+        // A gear, not an empty or fully opaque square.
+        try std.testing.expect(opaque_pixels > entry.pixels.len / 5 and opaque_pixels < entry.pixels.len * 9 / 10);
+    }
 }
 
 test "rectangular PNG icons keep their proportions" {

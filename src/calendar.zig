@@ -14,11 +14,14 @@ const theme = @import("ui").theme;
 const anim = @import("ui").anim;
 const panel_present = @import("panel_present.zig");
 const Anim = anim.Anim;
+const glass = @import("glass.zig");
+const popup_style = @import("popup_style.zig");
 const slide_distance: f32 = 20;
 
 pub const Calendar = struct {
     output: *Output,
     buffer_node: *wlr.SceneBuffer,
+    glass_effect: ?*glass.Effect = null,
     node_data: scene.SceneData = undefined,
     year: i32,
     month: i32,
@@ -43,6 +46,7 @@ pub const Calendar = struct {
     pub fn tick(self: *Calendar, now_ms: i64) bool {
         _ = self.slide.sampleChanged(now_ms, anim.quantum_alpha);
         panel_present.applySlide(self.buffer_node, self.panel_box, self.slide.value(now_ms), if (self.output.server.config.compositor.taskbar_position == .top) -slide_distance else slide_distance);
+        popup_style.configureGlass(&self.glass_effect, self.output.server.glass_engine, self.buffer_node, self.factor);
         return !self.slide.settled(now_ms);
     }
 
@@ -91,30 +95,38 @@ pub const Calendar = struct {
         const buf = PanelBuffer.create(@max(1, width), @max(1, height), scale) catch return;
         defer buf.base.drop();
         var r: paint.Renderer = .{ .pixels = buf.pixels, .width = buf.width, .height = buf.height, .scale = scale * self.factor };
-        const t = theme.shellPalette();
-        const fill = [4]f32{ t.window_bg[0], t.window_bg[1], t.window_bg[2], t.calendar_opacity };
-        r.fillRect(0, 0, 368, body_height, .{ .color = fill, .radius = t.calendar_radius, .border_width = 1, .border_color = t.calendar_border });
-        // The pointer joins the bottom border and points towards the clock.
-        for (0..@intCast(buf.height)) |iy| {
-            const y = (@as(f32, @floatFromInt(iy)) + 0.5) / r.scale;
-            if (y < body_height - 1) continue;
-            for (0..@intCast(buf.width)) |ix| {
-                const x = (@as(f32, @floatFromInt(ix)) + 0.5) / r.scale;
-                const distance = (@abs(x - 316) + y - body_height - 16) / @sqrt(@as(f32, 2));
-                const coverage = std.math.clamp(0.5 - distance * r.scale, 0, 1);
-                if (coverage == 0) continue;
-                const inner = std.math.clamp((-distance - 1) * r.scale + 0.5, 0, 1);
-                const border_mix = t.calendar_border[3] * (1 - inner);
-                const alpha = (fill[3] + (1 - fill[3]) * border_mix) * coverage;
-                var pixel: u32 = @as(u32, @intFromFloat(@round(alpha * 255))) << 24;
-                for (0..3) |channel| {
-                    const value = fill[channel] + (t.calendar_border[channel] - fill[channel]) * border_mix;
-                    pixel |= @as(u32, @intFromFloat(@round(value * alpha * 255))) << @as(u5, @intCast(16 - channel * 8));
+        var t = theme.shellPalette();
+        const popup_surface = t.popup_bg != null or t.popup_blur;
+        r.palette = t;
+        if (popup_surface) {
+            popup_style.background(&r, buf, 368, full_height, 16, 316, self.output.server.config.compositor.taskbar_position == .top);
+            t.text_secondary = t.window_fg;
+            t.faint = t.window_dim;
+        } else {
+            const fill = [4]f32{ t.window_bg[0], t.window_bg[1], t.window_bg[2], t.calendar_opacity };
+            r.fillRect(0, 0, 368, body_height, .{ .color = fill, .radius = t.calendar_radius, .border_width = 1, .border_color = t.calendar_border });
+            // The pointer joins the bottom border and points towards the clock.
+            for (0..@intCast(buf.height)) |iy| {
+                const y = (@as(f32, @floatFromInt(iy)) + 0.5) / r.scale;
+                if (y < body_height - 1) continue;
+                for (0..@intCast(buf.width)) |ix| {
+                    const x = (@as(f32, @floatFromInt(ix)) + 0.5) / r.scale;
+                    const distance = (@abs(x - 316) + y - body_height - 16) / @sqrt(@as(f32, 2));
+                    const coverage = std.math.clamp(0.5 - distance * r.scale, 0, 1);
+                    if (coverage == 0) continue;
+                    const inner = std.math.clamp((-distance - 1) * r.scale + 0.5, 0, 1);
+                    const border_mix = t.calendar_border[3] * (1 - inner);
+                    const alpha = (fill[3] + (1 - fill[3]) * border_mix) * coverage;
+                    var pixel: u32 = @as(u32, @intFromFloat(@round(alpha * 255))) << 24;
+                    for (0..3) |channel| {
+                        const value = fill[channel] + (t.calendar_border[channel] - fill[channel]) * border_mix;
+                        pixel |= @as(u32, @intFromFloat(@round(value * alpha * 255))) << @as(u5, @intCast(16 - channel * 8));
+                    }
+                    buf.pixels[iy * @as(usize, @intCast(buf.width)) + ix] = pixel;
                 }
-                buf.pixels[iy * @as(usize, @intCast(buf.width)) + ix] = pixel;
             }
+            if (self.output.server.config.compositor.taskbar_position == .top) buf.flipVertical();
         }
-        if (self.output.server.config.compositor.taskbar_position == .top) buf.flipVertical();
         const tm = localNow();
         var time: [32]u8 = undefined;
         var date: [96]u8 = undefined;
@@ -145,6 +157,7 @@ pub const Calendar = struct {
         self.buffer_node.setDestSize(@max(1, width), @max(1, height));
         self.panel_box = .{ .x = box.x + box.width - width - 12, .y = self.output.taskbarPopupY(height, 12), .width = @max(1, width), .height = @max(1, height) };
         panel_present.applySlide(self.buffer_node, self.panel_box, self.slide.value(anim.nowMs()), if (self.output.server.config.compositor.taskbar_position == .top) -slide_distance else slide_distance);
+        popup_style.configureGlass(&self.glass_effect, self.output.server.glass_engine, self.buffer_node, self.factor);
         self.output.wlr_output.scheduleFrame();
     }
 };

@@ -19,6 +19,7 @@ const setting_save = @import("config").setting_save;
 const settings_portal = @import("../../session/settings_portal.zig");
 const loader = @import("config").loader;
 const Taskbar = @import("../../Taskbar.zig");
+const dock_mod = @import("../../Dock.zig");
 const taskbar_items = @import("config").taskbar_items;
 const cursor_theme = @import("../../cursor_theme.zig");
 const wallpapers = @import("../../wallpapers.zig");
@@ -106,10 +107,11 @@ pub const Section = struct {
     cursor_themes: ?[]cursor_theme.Theme = null,
     cursor_row_children: [2]Widget = undefined,
     family_row_children: [2]Widget = undefined,
-    row_storage: [30]Widget = undefined,
+    row_storage: [31]Widget = undefined,
     dock_children: [2]Widget = undefined,
     dock_position_children: [2]Widget = undefined,
-    dock_group_children: [4]Widget = undefined,
+    dock_auto_hide_children: [2]Widget = undefined,
+    dock_group_children: [5]Widget = undefined,
     focus_zoom_children: [3]Widget = undefined,
     drag_feedback_children: [2]Widget = undefined,
     drag_scale_header_children: [2]Widget = undefined,
@@ -174,6 +176,9 @@ pub const Section = struct {
     inactive_opacity_header_children: [2]Widget = undefined,
     inactive_opacity_group_children: [2]Widget = undefined,
     inactive_opacity_value_buf: [16]u8 = undefined,
+    terminal_opacity_header_children: [2]Widget = undefined,
+    terminal_opacity_group_children: [2]Widget = undefined,
+    terminal_opacity_value_buf: [16]u8 = undefined,
     px: [20]PxControl = undefined,
     taskbar_section_children: [11]Widget = undefined,
     taskbar_position_children: [2]Widget = undefined,
@@ -495,7 +500,7 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
         .{ .name = "drag_feedback", .kind = .{ .toggle = .{ .on = out.cc.server.config.compositor.drag_feedback, .owner = out, .on_change = &onDragFeedbackChanged } } },
     };
     const drag_scale = out.cc.server.config.compositor.drag_scale;
-    const drag_formatted = std.fmt.bufPrint(&out.drag_scale_value_buf, "{d:.2}×", .{drag_scale}) catch "?";
+    const drag_formatted = std.fmt.bufPrint(&out.drag_scale_value_buf, "{d:.3}×", .{drag_scale}) catch "?";
     out.drag_scale_header_children = .{ labelWidget("Drag lift scale"), pillWidget(drag_formatted) };
     out.drag_scale_children = .{
         .{ .kind = .container, .direction = .row, .justify = .space_between, .children = &out.drag_scale_header_children },
@@ -503,7 +508,7 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
             .value = drag_scale,
             .min = loader.drag_scale_min,
             .max = loader.drag_scale_max,
-            .step = 0.01,
+            .step = 0.001,
             .owner = out,
             .on_change = &onDragScaleChanged,
         } } },
@@ -653,6 +658,25 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
     };
     out.inactive_opacity_group_children = .{ inactive_opacity_header, inactive_opacity_slider };
     const inactive_opacity_row: Widget = .{ .kind = .container, .direction = .column, .gap = 8, .children = &out.inactive_opacity_group_children };
+
+    // Unset means Foot keeps its own alpha; the slider then shows opaque.
+    const terminal_val = std.math.clamp(out.cc.server.config.compositor.terminal_opacity orelse 1.0, 0.0, 1.0);
+    const terminal_formatted = std.fmt.bufPrint(&out.terminal_opacity_value_buf, "{d}%", .{@as(i32, @intFromFloat(@round(terminal_val * 100.0)))}) catch "?";
+    out.terminal_opacity_header_children = .{ labelWidget("Terminal opacity (new windows)"), pillWidget(terminal_formatted) };
+    const terminal_opacity_header: Widget = .{ .kind = .container, .direction = .row, .justify = .space_between, .children = &out.terminal_opacity_header_children };
+    const terminal_opacity_slider: Widget = .{
+        .name = "terminal_opacity",
+        .kind = .{ .slider = .{
+            .value = terminal_val,
+            .min = 0.0,
+            .max = 1.0,
+            .step = 0.01,
+            .owner = out,
+            .on_change = &onTerminalOpacityChanged,
+        } },
+    };
+    out.terminal_opacity_group_children = .{ terminal_opacity_header, terminal_opacity_slider };
+    const terminal_opacity_row: Widget = .{ .kind = .container, .direction = .column, .gap = 8, .children = &out.terminal_opacity_group_children };
 
     const gap_val: f32 = @floatFromInt(@min(out.cc.server.config.compositor.windowGap(), max_window_gap));
     const window_gap_row = pxGroup(out, px_window_gap, "Snapped window gap", gap_val, 0, max_window_gap, 1, &onWindowGapChanged);
@@ -820,6 +844,10 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
         labelWidget("Dock position"),
         .{ .name = "dock_position", .kind = .{ .segmented = .{ .labels = &.{ "Top", "Bottom", "Left", "Right" }, .selected = @intFromEnum(server.config.compositor.dock_position), .owner = out, .on_change = &onDockPositionChanged } }, .width = .{ .fixed = segmented_width } },
     };
+    out.dock_auto_hide_children = .{
+        labelWidget("Auto-hide dock"),
+        .{ .name = "dock_auto_hide", .kind = .{ .toggle = .{ .on = server.config.compositor.dock_auto_hide, .owner = out, .on_change = &onDockAutoHideChanged } } },
+    };
     const dock_height_row = pxGroup(out, px_dock_height, "Dock size", @floatFromInt(server.config.compositor.dock_height), @floatFromInt(loader.dock_height_min), @floatFromInt(loader.dock_height_max), 2, &onDockHeightChanged);
     out.px[px_dock_height].group_children[1].name = "dock_height";
     const dock_zoom_row = pxGroup(out, px_dock_hover_zoom, "Dock hover zoom (1.00× disables)", server.config.compositor.dock_hover_zoom, 1, loader.dock_hover_zoom_max, 0.05, &onDockHoverZoomChanged);
@@ -828,6 +856,7 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
     out.dock_group_children = .{
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.dock_children },
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.dock_position_children },
+        .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.dock_auto_hide_children },
         dock_height_row,
         dock_zoom_row,
     };
@@ -857,6 +886,7 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
         buildWindowTabs(out),
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.dim_row_children },
         inactive_opacity_row,
+        terminal_opacity_row,
         window_gap_row,
         pxGroup(out, px_scrollbar_width, "Scrollbar width", t.scrollbar_width, 4, 24, 1, &PxHandler(px_scrollbar_width, "scrollbar_width", false).changed),
         .{ .kind = .container, .direction = .column, .gap = 12, .children = &out.dock_group_children },
@@ -1540,6 +1570,21 @@ fn onInactiveOpacityChanged(owner: ?*anyopaque, _: usize, value: f32) void {
     };
 }
 
+/// Foot reads its alpha at launch, so this only reaches terminals opened
+/// afterwards (`config/terminal_theme.zig`); nothing to apply live.
+fn onTerminalOpacityChanged(owner: ?*anyopaque, _: usize, value: f32) void {
+    const s = section(owner);
+    const server = s.cc.server;
+    const clamped = std.math.clamp(value, 0.0, 1.0);
+    server.config.compositor.terminal_opacity = clamped;
+    const formatted = std.fmt.bufPrint(&s.terminal_opacity_value_buf, "{d}%", .{@as(i32, @intFromFloat(@round(clamped * 100.0)))}) catch "?";
+    s.terminal_opacity_header_children[1].kind.text.content = formatted;
+    s.terminal_opacity_header_children[1].markDirty();
+    setting_save.saveCompositor(main.gpa, server.io, server.config.path, "terminal_opacity", clamped) catch |err| {
+        std.log.warn("could not save terminal_opacity: {}", .{err});
+    };
+}
+
 /// Slider range only; the config accepts up to 512.
 const max_window_gap = 64;
 
@@ -1611,10 +1656,11 @@ fn onDragFeedbackChanged(owner: ?*anyopaque, _: usize, on: bool) void {
 fn onDragScaleChanged(owner: ?*anyopaque, _: usize, value: f32) void {
     const s = section(owner);
     const server = s.cc.server;
-    const scale = std.math.clamp(value, loader.drag_scale_min, loader.drag_scale_max);
+    // The slider's f32 steps drift (1.0299999); keep the saved value to its step.
+    const scale = std.math.clamp(@round(value * 1000) / 1000, loader.drag_scale_min, loader.drag_scale_max);
     server.config.compositor.drag_scale = scale;
     server.scheduleFrames();
-    s.drag_scale_header_children[1].kind.text.content = std.fmt.bufPrint(&s.drag_scale_value_buf, "{d:.2}×", .{scale}) catch "?";
+    s.drag_scale_header_children[1].kind.text.content = std.fmt.bufPrint(&s.drag_scale_value_buf, "{d:.3}×", .{scale}) catch "?";
     s.drag_scale_header_children[1].markDirty();
     setting_save.saveCompositor(main.gpa, server.io, server.config.path, "drag_scale", scale) catch |err| {
         std.log.warn("could not save drag_scale: {}", .{err});
@@ -1924,7 +1970,29 @@ fn onDockChanged(owner: ?*anyopaque, _: usize, on: bool) void {
         section(owner).dock_children[1].markDirty();
         return;
     };
+    const reserved = dock_mod.reserves(&server.config.compositor);
     server.config.compositor.dock_enabled = on;
+    if (reserved or dock_mod.reserves(&server.config.compositor)) server.applyTaskbarPosition();
+    server.scheduleFrames();
+}
+
+fn onDockAutoHideChanged(owner: ?*anyopaque, _: usize, on: bool) void {
+    const s = section(owner);
+    const server = s.cc.server;
+    setting_save.saveCompositor(main.gpa, server.io, server.config.path, "dock_auto_hide", on) catch |err| {
+        std.log.warn("could not save dock auto-hide: {}", .{err});
+        s.dock_auto_hide_children[1].kind.toggle.on = server.config.compositor.dock_auto_hide;
+        s.dock_auto_hide_children[1].markDirty();
+        return;
+    };
+    const reserved = dock_mod.reserves(&server.config.compositor);
+    server.config.compositor.dock_auto_hide = on;
+    // A docked dock keeps windows out of its strip; one that hides does not.
+    if (reserved or dock_mod.reserves(&server.config.compositor)) server.applyTaskbarPosition();
+    if (server.input.window_menu.dock != null) server.input.window_menu.close();
+    var it = server.outputs.iterator(.forward);
+    while (it.next()) |output| output.dock.invalidate();
+    // A parked dock schedules no frame of its own.
     server.scheduleFrames();
 }
 
@@ -1940,7 +2008,9 @@ fn onDockPositionChanged(owner: ?*anyopaque, _: usize, index: usize) void {
         s.dock_position_children[1].markDirty();
         return;
     };
+    const reserved = dock_mod.reserves(&server.config.compositor);
     server.config.compositor.dock_position = position;
+    if (reserved) server.applyTaskbarPosition();
     if (server.input.window_menu.dock != null) server.input.window_menu.close();
     var it = server.outputs.iterator(.forward);
     while (it.next()) |output| output.dock.invalidate();
@@ -1958,7 +2028,9 @@ fn onDockHeightChanged(owner: ?*anyopaque, _: usize, value: f32) void {
         s.px[px_dock_height].group_children[1].markDirty();
         return;
     };
+    const reserved = dock_mod.reserves(&server.config.compositor);
     server.config.compositor.dock_height = height;
+    if (reserved) server.applyTaskbarPosition();
     const formatted = std.fmt.bufPrint(&s.px[px_dock_height].value_buf, "{d}px", .{height}) catch "?";
     s.px[px_dock_height].header_children[1].kind.text.content = formatted;
     s.px[px_dock_height].header_children[1].markDirty();

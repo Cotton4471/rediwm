@@ -53,6 +53,7 @@ pub const Theme = struct {
     app_bg: [4]f32 = .{ 24.0 / 255.0, 28.0 / 255.0, 34.0 / 255.0, 1 }, // #181c22, main content
     app_toolbar: [4]f32 = .{ 29.0 / 255.0, 34.0 / 255.0, 41.0 / 255.0, 1 }, // #1d2229
     app_sidebar: [4]f32 = .{ 27.0 / 255.0, 33.0 / 255.0, 40.0 / 255.0, 1 }, // #1b2128
+    app_sidebar_blur: bool = false, // backdrop behind translucent Settings/Files sidebars
     app_bar: [4]f32 = .{ 35.0 / 255.0, 42.0 / 255.0, 51.0 / 255.0, 1 }, // #232a33, column headers, status bars
     app_item: [4]f32 = .{ 34.0 / 255.0, 40.0 / 255.0, 46.0 / 255.0, 1 }, // #22282e, rows, cards, thumbnails
     app_item_hover: [4]f32 = .{ 37.0 / 255.0, 43.0 / 255.0, 50.0 / 255.0, 1 }, // #252b32

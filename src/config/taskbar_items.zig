@@ -28,7 +28,7 @@ pub const count = std.meta.fields(Item).len;
 pub const Config = struct {
     order: [count]Item = .{ .start, .windows, .tray, .battery, .network, .volume, .clock },
     visible: [count]bool = @splat(true),
-    sections: [count]Section = .{ .right, .right, .right, .right, .left, .center, .right },
+    sections: [count]Section = .{ .right, .right, .right, .right, .left, .left, .right },
 
     pub fn move(config: *Config, index: usize, right: bool) void {
         if (index >= count or (!right and index == 0) or (right and index == count - 1)) return;
@@ -175,7 +175,7 @@ test "taskbar sections and hidden state round trip, migrate old lists and reject
     try std.testing.expectEqualDeep(config, try Config.parse(encoded));
     const legacy = try Config.parse("[\"clock\", \"-network\", \"battery\", \"volume\"]");
     try std.testing.expectEqual(Section.left, legacy.section(.start));
-    try std.testing.expectEqual(Section.center, legacy.section(.windows));
+    try std.testing.expectEqual(Section.left, legacy.section(.windows));
     try std.testing.expectEqual(Item.clock, legacy.order[3]);
     try std.testing.expect(!legacy.shown(.network));
     for ([_][]const u8{ "[]", "[\"battery\", \"network\", \"volume\", \"volume\"]", "[\"battery\", \"network\", \"volume\", \"chevron\"]", "[\"left:battery\", \"network\", \"volume\", \"clock\"]" }) |bad| {
@@ -183,9 +183,12 @@ test "taskbar sections and hidden state round trip, migrate old lists and reject
     }
 }
 
-test "taskbar centers windows, separates sections and shrinks windows before fixed items" {
+test "taskbar defaults windows left, supports centering and shrinks windows before fixed items" {
     var config: Config = .{};
     const widths = [count]f32{ 0, 34, 34, 96, 42, 200, 0 };
+    const defaults = arrange(config, 4, 980, 500, widths, 6, 16);
+    try std.testing.expectEqual(@as(?f32, 52), defaults.x[@intFromEnum(Item.windows)]);
+    config.setSection(.windows, .center);
     const full = arrange(config, 4, 980, 500, widths, 6, 16);
     try std.testing.expectEqual(@as(?f32, 400), full.x[@intFromEnum(Item.windows)]);
     try std.testing.expectEqual(@as(?f32, 884), full.x[@intFromEnum(Item.clock)]);

@@ -136,6 +136,39 @@ def run():
         print("PASS: floating taskbar gap, length, radius, strip and edges")
 
 
+def fractional_edges():
+    """Fractional scale floors the logical size (720 rows at 1.37 are 719.7): the
+    flush bar still reaches the last device row and column of the panel."""
+    with tempfile.TemporaryDirectory(prefix="rediwm-taskbar-edges-") as directory:
+        tmp = Path(directory)
+        for scale, position in (("1.37", "bottom"), ("1.37", "top"), ("1.33", "bottom")):
+            config = (f'[compositor]\nxwayland = false\ntaskbar_position = "{position}"\n[desktop]\nenabled = false\n'
+                      '[animations]\nenabled = false\n')
+            process, log = spawn_compositor(tmp, scale=scale, config_content=config,
+                                            env_extra={"DBUS_SESSION_BUS_ADDRESS": "", "XDG_DATA_HOME": str(tmp / "data")})
+            try:
+                with IPCClient(tmp, timeout=15) as ipc:
+                    info = ipc.get_outputs()[0]
+                    path = tmp / "edges.png"
+                    path.unlink(missing_ok=True)
+                    ipc.move_cursor(5, 5)
+                    ipc.wait_for_frame()
+                    ipc.screenshot(str(path))
+                    image = Image.open(path).convert("RGB")
+                    assert image.size[0] > info["logical_width"] * float(scale) - 1, (image.size, info)
+                    middle = BAR // 2 if position == "top" else image.height - BAR // 2
+                    points = [(image.width - 1, middle)]
+                    if position == "bottom":
+                        points.append((image.width // 2, image.height - 1))
+                    for point in points:
+                        assert image.getpixel(point) != (0, 0, 0), (scale, position, "bar stops short of the panel", point, image.size)
+            finally:
+                stop_process(process)
+                log.close()
+    print("PASS: flush taskbar reaches the panel edge at fractional scales")
+
+
 if __name__ == "__main__":
     os.environ.pop("REDIWM_THEME", None)
     run()
+    fractional_edges()

@@ -8,6 +8,7 @@ const anim = @import("../anim.zig");
 const wheel = @import("../wheel.zig");
 const scrollbar = @import("scrollbar.zig");
 const slider = @import("slider.zig");
+const toggle = @import("toggle.zig");
 
 const theme = @import("../theme.zig");
 
@@ -232,9 +233,10 @@ pub const BarStep = struct {
 };
 
 /// Advances the scrollbar feedback of every container under `root` and repaints
-/// each whose drawn thumb changed. Sliders share the feedback (`slider.stepFeedback`),
-/// so hosts drive both with this one call. Edge-triggered on what is painted,
-/// so an idle container or slider costs nothing.
+/// each whose drawn thumb changed. Sliders share the feedback (`slider.stepFeedback`)
+/// and switches slide their knob (`toggle.step`), so hosts drive all with this
+/// one call. Edge-triggered on what is painted, so an idle container, slider or
+/// switch costs nothing.
 pub fn stepBars(root: *Widget, now_ms: i64) BarStep {
     var result: BarStep = .{};
     switch (root.kind) {
@@ -257,6 +259,7 @@ pub fn stepBars(root: *Widget, now_ms: i64) BarStep {
             result.active = step.active;
             result.deadline = step.deadline;
         },
+        .toggle => result.active = toggle.step(root, now_ms),
         else => {},
     }
     for (root.children) |*child| {

@@ -108,14 +108,18 @@ fn run(init: std.process.Init) !void {
     if (std.mem.eql(u8, verb, "terminal")) {
         if (!std.mem.eql(u8, std.fs.path.basename(input), "foot")) return error.UnsupportedTerminal;
         var palette: theme.Theme = .{};
+        var opacity: ?f32 = null;
         if (@import("config").path.resolvePath(init.minimal.environ, a)) |path| {
-            if (@import("config").loader.load(path, a, io, init.minimal.environ)) |cfg| palette = cfg.theme else |_| {}
+            if (@import("config").loader.load(path, a, io, init.minimal.environ)) |cfg| {
+                palette = cfg.theme;
+                opacity = cfg.compositor.terminal_opacity;
+            } else |_| {}
         } else |_| {}
         const terminal = @import("config").terminal_theme;
         const raw = try a.alloc([]const u8, args.len - 2);
         for (raw, args[2..]) |*dest, arg| dest.* = std.mem.span(arg);
         var command: []const []const u8 = raw;
-        if (terminal.enabled(palette)) {
+        if (terminal.enabled(palette, opacity)) {
             // Probe an empty config, never the user's. This work happens only
             // in the short-lived helper, outside the compositor event loop.
             const probe = std.process.run(a, io, .{
@@ -125,7 +129,7 @@ fn run(init: std.process.Init) !void {
                 .timeout = .{ .duration = .{ .raw = .fromSeconds(2), .clock = .awake } },
             }) catch null;
             const modern = if (probe) |p| p.term == .exited and p.term.exited == 0 else false;
-            command = try terminal.argv(a, raw, palette, modern);
+            command = try terminal.argv(a, raw, palette, opacity, modern);
         }
         const argv = try a.allocSentinel(?[*:0]const u8, command.len, null);
         for (argv, command) |*dest, arg| dest.* = (try a.dupeZ(u8, arg)).ptr;

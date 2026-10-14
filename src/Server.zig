@@ -1247,8 +1247,8 @@ pub fn refreshTaskbarsGeometry(server: *Server) void {
     if (strip_moved) server.applyTaskbarPosition();
 }
 
-/// Apply a changed taskbar edge, or a changed strip (size or gap), to panels,
-/// reserved space and fixed layouts.
+/// Apply a changed taskbar edge, or a changed strip (size or gap, or the
+/// dock's: `Dock.reserves`), to panels, reserved space and fixed layouts.
 pub fn applyTaskbarPosition(server: *Server) void {
     Output.syncLayout(server);
     var it = server.world.toplevels.iterator(.forward);
@@ -1413,7 +1413,7 @@ fn iconNameForAppId(snap: *applications.Snapshot, app_id: []const u8) []const u8
     if (app_id.len == 0) return app_id;
     // The built-in settings window has no desktop entry.
     if (std.mem.eql(u8, app_id, @import("Toplevel.zig").welcome_app_id)) return "builtin:redi-logo";
-    if (std.mem.eql(u8, app_id, @import("Toplevel.zig").settings_app_id)) return "preferences-system";
+    if (std.mem.eql(u8, app_id, @import("Toplevel.zig").settings_app_id)) return @import("ui").shell_icons.settings_icon_name;
 
     // Pass 1: exact StartupWMClass match → use the desktop file's Icon= name.
     for (snap.entries) |e| {

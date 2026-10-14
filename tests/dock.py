@@ -190,6 +190,10 @@ enabled = false
                 ipc.wait_for_frame()
                 hover = shot('hover')
                 assert ImageChops.difference(plain, hover).getbbox(), 'no hover feedback'
+                # The enlarged icon is the feedback: no rectangle behind it, not even in the strip the icon never reaches.
+                edge = button('terminal')['global_box']
+                strip = tuple(round(v * scale) for v in (edge['x'], edge['y'] + edge['height'] / 2 - 6, edge['x'] + 3, edge['y'] + edge['height'] / 2 + 6))
+                assert not ImageChops.difference(plain.crop(strip), hover.crop(strip)).getbbox(), 'hover rectangle shown with hover zoom'
                 # Leaving in one jump unhovers the dock; motion elsewhere then paints nothing.
                 ipc.move_cursor(5, 5)
                 ipc.wait_for_frame()
@@ -268,7 +272,8 @@ enabled = false
                             ipc.key(code, True)
                             ipc.key(code, False)
                         wait_for(lambda: not any(w['name'] == 'files' for w in dock()), 'running shortcut removed')
-                        assert not any((w['name'] or '').startswith('window_') for w in dock()), 'removed shortcut left a duplicate'
+                        # Only the launcher goes: the running app still shows, as a window.
+                        wait_for(lambda: sum((w['name'] or '').startswith('window_') for w in dock()) == 1, 'removed shortcut hid its running app')
                         assert len(ipc.get_windows()) == 1, 'removing shortcut closed the app'
                         cfg.write_text(before_removal)
                         ipc.reload_config()
@@ -394,7 +399,7 @@ def context_menu():
                     ipc.pointer_button(273, True)
                     ipc.pointer_button(273, False)
                     ipc.wait_for_frame()
-                    height = 122 if name.startswith('window_') else 44
+                    height = 83 if name.startswith('window_') else 44
                     return x, ui.widgets('dock')[0]['global_box']['y'] - height - 4
 
                 def key(code):
@@ -410,15 +415,12 @@ def context_menu():
                 menu(f'window_{wid}')
                 ipc.click_at(5, 5)  # Outside dismisses without activating the dock.
                 assert len(ipc.get_windows()) == 2
-                menu(f'window_{wid}')
-                key(103)  # Up selects Remove from dock.
-                key(28)
-                wait_for(lambda: not any(n.startswith('window_') for n in names()), 'app removed')
-                assert {w['id'] for w in ipc.get_windows()} == {wid, other_id}
-                assert len(ipc.get_shell_state()['taskbars'][0]['chips']) == 2
-                assert tomllib.loads(cfg.read_text())['compositor']['dock_hidden_apps'] == ['dock.removed']
+                # A running app cannot be removed from the dock (its menu is only
+                # Close and Force Close), whatever the old config said.
+                assert {f'window_{wid}', f'window_{other_id}'} <= names(), 'a running app left the dock'
+                assert 'dock_hidden_apps' not in tomllib.loads(cfg.read_text())['compositor']
                 ipc.reload_config()
-                assert not any(n.startswith('window_') for n in names())
+                assert {f'window_{wid}', f'window_{other_id}'} <= names()
 
                 x, y = menu('terminal')
                 ipc.click_at(x + 20, y + 22)
@@ -448,14 +450,10 @@ def context_menu():
                 ipc.wait_for_frame()
                 assert process.poll() is None
 
-                # An anonymous window can be hidden without hiding other anonymous windows.
+                # Windows without an app ID show too.
                 anonymous, anon_id = launch('')
                 anonymous2, anon_id2 = launch('')
-                menu(f'window_{anon_id}')
-                key(103)
-                key(28)
-                wait_for(lambda: f'window_{anon_id}' not in names(), 'anonymous window removed')
-                assert f'window_{anon_id2}' in names()
+                assert {f'window_{anon_id}', f'window_{anon_id2}'} <= names()
                 assert len(ipc.get_windows()) == 4
                 stop_process(anonymous)
                 stop_process(anonymous2)
@@ -476,7 +474,11 @@ def context_menu():
                     key(103)
                     key(28)
                     wait_for(lambda: shortcut not in names(), 'shortcut removed')
-                assert not names(), 'empty dock should be hidden'
+                assert any(n.startswith('window_') for n in names()), 'running apps left the dock with its shortcuts'
+                stop_process(first)
+                stop_process(second)
+                wait_for(lambda: not ipc.get_windows(), 'windows closed')
+                wait_for(lambda: not names(), 'empty dock should be hidden')
                 saved = cfg.read_text()
 
             for client in clients:
@@ -491,19 +493,19 @@ def context_menu():
                     if not p.name.endswith('.lock')), None), 'display after restart')
                 assert not names(), 'removed shortcuts returned after restart'
                 client, reopened = launch('dock.removed')
-                assert not names(), 'removed app returned after restart'
+                wait_for(lambda: names() == {f'window_{reopened}'}, 'running app hidden after restart')
                 assert any(c['window_id'] == reopened for c in ipc.get_shell_state()['taskbars'][0]['chips'])
                 cfg.write_text(cfg.read_text().replace(
                     'dock_hidden_shortcuts = ["terminal", "files", "applications", "settings"]',
                     'dock_hidden_shortcuts = []').replace('[compositor]', '[compositor]\ntaskbar_position = "top"'))
                 ipc.reload_config()
-                wait_for(lambda: names() == {'applications', 'files', 'terminal', 'settings'}, 'shortcuts restored')
+                wait_for(lambda: names() == {'applications', 'files', 'terminal', 'settings', f'window_{reopened}'}, 'shortcuts restored')
                 assert ui.widgets('dock')[0]['global_box']['height'] == 96, 'dock height lost after restart'
                 # A dock menu stays above the dock with a top taskbar, too.
                 x, y = menu('settings')
                 ipc.click_at(x + 20, y + 22)
                 wait_for(lambda: 'settings' not in names(), 'menu anchored to dock')
-            print(f'PASS: dock context menu, Close, Force Close, removal, dismissal, anonymous windows, persistence ({scale}x)')
+            print(f'PASS: dock context menu, Close, Force Close, shortcut removal, running apps always shown, dismissal, anonymous windows, persistence ({scale}x)')
         except Exception:
             log.flush()
             print((tmp / 'compositor.log').read_text()[-4000:])
@@ -612,6 +614,37 @@ def pill_animation():
                 ipc.reload_config()
                 ipc.wait_for_frame(output=primary)
                 assert zoom_state()['target'] == 1.5
+                # An animation repaints only the cells it moves, over what was last
+                # painted. From a whole repaint at rest, a settled hover must look as
+                # a whole repaint of the hovered dock does (a theme change and back
+                # repaints it all).
+                def dock_image(name):
+                    path = tmp / (name + '.png')
+                    path.unlink(missing_ok=True)
+                    ipc.screenshot(str(path))
+                    root = ui.widgets('dock')[0]['global_box']
+                    with Image.open(path) as image:
+                        return image.convert('RGB').crop(tuple(round(v * scale) for v in
+                            (root['x'], root['y'], root['x'] + root['width'], root['y'] + root['height'])))
+
+                def repaint_whole():
+                    for radius in (18, 17):
+                        cfg.write_text(cfg.read_text().replace(f'dock_radius = {35 - radius}', f'dock_radius = {radius}'))
+                        ipc.reload_config()
+                        advance(1000)
+
+                ipc.move_cursor(5, 5)
+                advance(1000)
+                repaint_whole()
+                at_rest = dock_image('at_rest')
+                ipc.move_cursor(x, y)
+                advance(60)
+                advance(1000)
+                assert zoom_state()['value'] == 1.5 and zoom_state()['settled']
+                animated = dock_image('animated')
+                assert ImageChops.difference(at_rest, animated).getbbox(), 'hover did not repaint'
+                repaint_whole()
+                assert ImageChops.difference(animated, dock_image('whole')).getbbox() is None, 'animated repaint differs from a whole one'
                 cfg.write_text(cfg.read_text().replace('dock_hover_zoom = 1.5', 'dock_hover_zoom = 1.0'))
                 ipc.reload_config()
                 ipc.wait_for_frame(output=primary)
@@ -744,6 +777,171 @@ def pill_animation():
             stop_process(process)
             log.close()
 
+
+
+def pinning():
+    """Dragging applications from the start menu onto the dock pins them."""
+    scale = float(os.environ.get('REDIWM_TEST_SCALE', '1'))
+    with tempfile.TemporaryDirectory(prefix='rediwm-dock-pin-') as directory:
+        tmp = Path(directory)
+        build_client(tmp)
+        applications = tmp / 'data' / 'applications'
+        applications.mkdir(parents=True)
+        for name, app_id in (('pin-one', 'dock.pin.one'), ('pin-two', 'dock.pin.two')):
+            (applications / f'{name}.desktop').write_text(
+                f'[Desktop Entry]\nType=Application\nName={name}\nStartupWMClass={app_id}\n'
+                f'Exec={tmp / "client"} --app-id {app_id}\n')
+        env_extra = {'DBUS_SESSION_BUS_ADDRESS': '', 'DBUS_SYSTEM_BUS_ADDRESS': 'unix:path=/nonexistent',
+                     'XDG_CONFIG_HOME': str(tmp / 'config'), 'XDG_DATA_HOME': str(tmp / 'data'),
+                     'XDG_DATA_DIRS': str(tmp / 'empty'), 'XDG_CACHE_HOME': str(tmp / 'cache'),
+                     'XDG_STATE_HOME': str(tmp / 'state'), 'REDIWM_FILES_DEVICES': '0'}
+        process, log = spawn_compositor(tmp, scale=scale, outputs=os.environ.get('REDIWM_TEST_OUTPUTS', '1'),
+            config_content='# keep this comment\n[compositor]\nxwayland = false\ndock_enabled = true\n'
+                           '[animations]\nenabled = false\n', env_extra=env_extra)
+        cfg = tmp / 'rediwm-config.toml'
+        clients = []
+        try:
+            with IPCClient(tmp) as ipc:
+                ipc.wait_for('wallpaper_presented', timeout_ms=10000)
+                ui = UIDriver(ipc)
+                display = wait_for(lambda: next((p.name for p in tmp.glob('wayland-*')
+                    if not p.name.endswith('.lock')), None), 'display')
+                left, right = 272, 273
+
+                def names():
+                    return [w['name'] for w in ui.widgets('dock') if w['name']]
+
+                def pins():
+                    return tomllib.loads(cfg.read_text())['compositor'].get('dock_pinned_apps', [])
+
+                def box(name):
+                    return next(w for w in ui.widgets('dock') if w['name'] == name)['global_box']
+
+                def centre(b):
+                    return round(b['x'] + b['width'] / 2), round(b['y'] + b['height'] / 2)
+
+                def open_menu():
+                    if not ipc.get_shell_state()['start_menu']:
+                        ipc.open_start_menu()
+                    ipc.wait_for_panel_settled('start_menu')
+
+                def row(label):
+                    tree = ui.widgets('start_menu')
+                    text = next(w for w in tree if w['role'] == 'text' and w['label'] == label)
+                    x, y = centre(text['global_box'])
+                    found = next(w for w in tree if w['role'] == 'row' and
+                                 w['global_box']['y'] <= y < w['global_box']['y'] + w['global_box']['height'])
+                    return centre(found['global_box'])
+
+                def shot(name):
+                    path = tmp / (name + '.png')
+                    ipc.screenshot(str(path))
+                    root = ui.widgets('dock')[0]['global_box']
+                    with Image.open(path) as image:
+                        return image.convert('RGB').crop(tuple(round(v * scale) for v in
+                            (root['x'], root['y'], root['x'] + root['width'], root['y'] + root['height'])))
+
+                def drag_to(label, x, y, release=True):
+                    open_menu()
+                    start = row(label)
+                    ipc.move_cursor(*start)
+                    ipc.pointer_button(left, True)
+                    for step in range(1, 11):
+                        ipc.move_cursor(start[0] + (x - start[0]) * step // 10, start[1] + (y - start[1]) * step // 10)
+                    ipc.wait_for_frame()
+                    if release:
+                        ipc.pointer_button(left, False)
+                        ipc.wait_for_frame()
+
+                def launch(app):
+                    previous = {w['id'] for w in ipc.get_windows()}
+                    client = subprocess.Popen([str(tmp / 'client'), '--app-id', app],
+                        env=dict(os.environ, XDG_RUNTIME_DIR=str(tmp), WAYLAND_DISPLAY=display),
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    clients.append(client)
+                    win = wait_for(lambda: next((w for w in ipc.get_windows() if w['id'] not in previous), None), 'client')
+                    ipc.wait_for_frame()
+                    return client, win['id']
+
+                wait_for(lambda: 'terminal' in names(), 'dock')
+                dock = ui.widgets('dock')[0]['global_box']
+                dock_point = centre(dock)
+                idle = shot('idle')
+
+                # Released away from the dock: nothing is pinned, nothing launches.
+                drag_to('pin-one', 600, 100)
+                assert pins() == [] and not ipc.get_windows(), 'a drop off the dock pinned or launched'
+                assert ipc.get_shell_state()['start_menu'], 'a drag closed the menu'
+
+                # Hovering the dock marks where the app would go; Escape abandons the drag.
+                drag_to('pin-one', *dock_point, release=False)
+                assert ImageChops.difference(idle, shot('marker')).getbbox(), 'no drop marker over the dock'
+                ipc.key(1, True)
+                ipc.key(1, False)
+                ipc.wait_for_frame()
+                assert ImageChops.difference(idle, shot('cancelled')).getbbox() is None, 'Escape left the marker'
+                ipc.pointer_button(left, False)
+                ipc.wait_for_frame()
+                assert pins() == [] and not ipc.get_windows(), 'a cancelled drag pinned or launched'
+                assert ipc.get_shell_state()['start_menu'], 'Escape closed the menu'
+
+                # A drop pins it, saved without disturbing the config.
+                drag_to('pin-one', *dock_point)
+                wait_for(lambda: 'pin_pin-one.desktop' in names(), 'pinned button')
+                assert pins() == ['pin-one.desktop'] and '# keep this comment' in cfg.read_text()
+                assert not ipc.get_windows(), 'pinning launched the app'
+                assert ImageChops.difference(idle, shot('pinned')).getbbox()
+                assert names().index('pin_pin-one.desktop') == names().index('terminal') + 1
+                assert ipc.get_shell_state()['start_menu']
+
+                # Dropping on the left of a pin goes before it; pins already there are ignored.
+                one = box('pin_pin-one.desktop')
+                drag_to('pin-two', one['x'] + 4, centre(one)[1])
+                wait_for(lambda: pins() == ['pin-two.desktop', 'pin-one.desktop'], 'drop before the pin')
+                drag_to('pin-two', *dock_point)
+                ipc.wait_for_frame()
+                assert pins() == ['pin-two.desktop', 'pin-one.desktop']
+                assert [n for n in names() if n.startswith('pin_')] == ['pin_pin-two.desktop', 'pin_pin-one.desktop']
+                ipc.action('close_panel', {'panel': 'start_menu'})
+
+                # The pin survives a reload, launches its app, and a running app shares its button.
+                ipc.reload_config()
+                assert [n for n in names() if n.startswith('pin_')] == ['pin_pin-two.desktop', 'pin_pin-one.desktop']
+                ipc.click_at(*centre(box('pin_pin-one.desktop')))
+                wait_for(lambda: len(ipc.get_windows()) == 1, 'pinned app launched')
+                assert not any(n.startswith('window_') for n in names()), 'a pinned app also got a window button'
+                second, second_id = launch('dock.pin.one')
+                assert not any(n.startswith('window_') for n in names())
+                other, other_id = launch('dock.pin.free')
+                wait_for(lambda: f'window_{other_id}' in names(), 'unpinned app window')
+
+                # A click on a row still launches, and the menu closes.
+                open_menu()
+                ipc.click_at(*row('pin-two'))
+                wait_for(lambda: len(ipc.get_windows()) == 4, 'row click launched')
+                wait_for(lambda: not ipc.get_shell_state()['start_menu'], 'row click closed the menu')
+
+                # Unpinning keeps the windows, now as their own buttons. A running
+                # pin offers Close, Force Close and Unpin.
+                x, y = centre(box('pin_pin-one.desktop'))
+                ipc.move_cursor(x, y)
+                ipc.pointer_button(right, True)
+                ipc.pointer_button(right, False)
+                ipc.wait_for_frame()
+                menu_top = ui.widgets('dock')[0]['global_box']['y'] - 122 - 4
+                ipc.click_at(x + 20, menu_top + 6 + 2 * 39 + 16)
+                wait_for(lambda: pins() == ['pin-two.desktop'], 'unpinned')
+                wait_for(lambda: 'pin_pin-one.desktop' not in names(), 'pin button removed')
+                assert len([n for n in names() if n.startswith('window_')]) == 3, names()
+            print(f'PASS: dock pins by dragging from the start menu, marker, cancel, order, launch, merge and unpin ({scale}x)')
+        except Exception:
+            print((tmp / 'compositor.log').read_text()[-4000:])
+            raise
+        finally:
+            for client in clients:
+                stop_process(client)
+            stop_process(process)
+            log.close()
 
 
 def positions():
@@ -928,4 +1126,5 @@ if __name__ == '__main__':
         run()
         context_menu()
         pill_animation()
+        pinning()
     positions()

@@ -254,6 +254,17 @@ def test_appearance_settings():
                 assert abs(read_config()["compositor"]["inactive_opacity"] - 1.0) < 0.02
                 assert any(w.get("label") == "100%" for w in widgets())
 
+                # --- 2b. Terminal opacity slider (unset until moved) ---
+                assert "terminal_opacity" not in read_config()["compositor"]
+                terminal_slider = ui.scroll_into_view("terminal_opacity")
+                assert terminal_slider is not None
+                assert any(w.get("label") == "Terminal opacity (new windows)" for w in widgets())
+                click_widget(terminal_slider, fraction=0.5)
+                time.sleep(0.2)
+                terminal_val = read_config()["compositor"]["terminal_opacity"]
+                assert 0.40 <= terminal_val <= 0.60
+                assert any(w.get("label") == f"{round(terminal_val * 100)}%" for w in widgets())
+
                 # --- 3. Animations toggle ---
                 anim_toggle = ui.scroll_into_view("animations")
                 assert anim_toggle is not None

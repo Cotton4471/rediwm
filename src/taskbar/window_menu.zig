@@ -14,6 +14,11 @@ pub const Menu = struct {
     dock: ?*Dock = null,
     shortcut: ?Dock.Shortcut = null,
     target: ?*Toplevel = null,
+    /// The pinned app a dock button stands for, copied: the dock's own strings
+    /// are replaced by a rebuild while the menu is open.
+    pin_bytes: [512]u8 = undefined,
+    pin_len: usize = 0,
+    pinned: bool = false,
     node: ?*wlr.SceneBuffer = null,
     box: wlr.Box = .{ .x = 0, .y = 0, .width = 0, .height = 0 },
     selected: ?usize = null,
@@ -25,30 +30,35 @@ pub const Menu = struct {
         close,
         force_close,
         remove,
+        unpin,
 
         fn label(action: Action) []const u8 {
             return switch (action) {
                 .close => "Close",
                 .force_close => "Force Close",
                 .remove => "Remove from dock",
+                .unpin => "Unpin from dock",
             };
         }
     };
 
     fn actions(self: *const Menu) []const Action {
-        return if (self.target == null) &.{.remove} else if (self.dock != null) &.{ .close, .force_close, .remove } else &.{ .close, .force_close };
+        if (self.pinned) return if (self.target == null) &.{.unpin} else &.{ .close, .force_close, .unpin };
+        // Only a shortcut can be removed; a running app always stays.
+        if (self.shortcut != null and self.dock != null) return if (self.target == null) &.{.remove} else &.{ .close, .force_close, .remove };
+        return &.{ .close, .force_close };
     }
 
     pub fn open(self: *Menu, bar: *Taskbar, target: *Toplevel, x: i32) void {
         const output = Output.fromWlr(bar.wlr_output) orelse return;
-        self.openOn(output, bar, null, target, null, x, 0);
+        self.openOn(output, bar, null, target, null, null, x, 0);
     }
 
-    pub fn openDock(self: *Menu, dock: *Dock, target: ?*Toplevel, shortcut: ?Dock.Shortcut, x: i32, y: i32) void {
-        self.openOn(dock.output orelse return, null, dock, target, shortcut, x, y);
+    pub fn openDock(self: *Menu, dock: *Dock, target: ?*Toplevel, shortcut: ?Dock.Shortcut, pin: ?[]const u8, x: i32, y: i32) void {
+        self.openOn(dock.output orelse return, null, dock, target, shortcut, pin, x, y);
     }
 
-    fn openOn(self: *Menu, output: *Output, bar: ?*Taskbar, dock: ?*Dock, target: ?*Toplevel, shortcut: ?Dock.Shortcut, x: i32, pointer_y: i32) void {
+    fn openOn(self: *Menu, output: *Output, bar: ?*Taskbar, dock: ?*Dock, target: ?*Toplevel, shortcut: ?Dock.Shortcut, pin: ?[]const u8, x: i32, pointer_y: i32) void {
         self.close();
         const server = output.server;
         const input = &server.input;
@@ -58,7 +68,7 @@ pub const Menu = struct {
         if (input.open_battery) |other| other.output.closeBattery();
         if (input.open_calendar) |other| other.output.closeCalendar();
         if (server.tray) |tray| tray.closeMenu();
-        const bounds = output.usableBox();
+        const bounds = output.dockAreaBox();
         const width = @min(216, bounds.width);
         self.node = server.overlay_tree.createSceneBuffer(null) catch return;
         self.bar = bar;
@@ -66,6 +76,11 @@ pub const Menu = struct {
         self.dock = dock;
         self.shortcut = shortcut;
         self.target = target;
+        if (pin) |id| {
+            self.pin_len = @min(id.len, self.pin_bytes.len);
+            @memcpy(self.pin_bytes[0..self.pin_len], id[0..self.pin_len]);
+            self.pinned = true;
+        }
         const count: i32 = @intCast(self.actions().len);
         const height = padding * 2 + row_height * count + separator * (count - 1);
         var menu_x = x;
@@ -155,12 +170,15 @@ pub const Menu = struct {
         const target = self.target;
         const dock = self.dock;
         const shortcut = self.shortcut;
+        const pin_bytes = self.pin_bytes;
+        const pin = pin_bytes[0..self.pin_len];
         // Shell windows can destroy themselves synchronously when closed.
         self.close();
         switch (action) {
             .close => if (target) |t| t.sendClose(),
             .force_close => if (target) |t| t.forceClose(),
-            .remove => if (dock) |d| d.remove(shortcut, target),
+            .remove => if (dock) |d| if (shortcut) |s| d.removeShortcut(s),
+            .unpin => if (dock) |d| d.unpinApp(pin),
         }
     }
 

@@ -20,7 +20,7 @@ class UIDriver:
         except Exception:
             return []
 
-    def scroll_into_view(self, name: str, panel: str = "control_center", attempts: int = 30) -> Dict[str, Any]:
+    def scroll_into_view(self, name: str, panel: str = "control_center", attempts: int = 60) -> Dict[str, Any]:
         """Scroll the panel's content until the widget named `name` is fully
         visible, and return it with its new box."""
         # The wheel direction depends on scroll settings, so learn it: flip

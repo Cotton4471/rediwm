@@ -15,11 +15,16 @@ from PIL import Image, ImageChops
 from ipc_client import IPCClient, spawn_compositor, stop_process
 
 
-def run(scale):
+def run(scale, gold=False, top=False, popup_only=False):
     with tempfile.TemporaryDirectory(prefix="rediwm-calendar-") as directory:
         tmp = Path(directory)
         # Pixel equality checks need a settled popup, not its opening slide.
-        process, log = spawn_compositor(tmp, scale=scale, renderer=os.environ.get("REDIWM_TEST_RENDERER", "gles2"), config_content='[compositor]\nxwayland = false\n[animations]\nenabled = false\n',
+        config = '[compositor]\nxwayland = false\n'
+        config += f'taskbar_position = "{"top" if top else "bottom"}"\n'
+        config += '[animations]\nenabled = false\n'
+        if gold:
+            config += '[theme]\nbase = "gold"\n'
+        process, log = spawn_compositor(tmp, scale=scale, renderer=os.environ.get("REDIWM_TEST_RENDERER", "gles2"), config_content=config,
                                         env_extra={"DBUS_SESSION_BUS_ADDRESS": "", "XDG_CACHE_HOME": directory, "TZ": "Pacific/Auckland", "LC_ALL": "C", "LANGUAGE": "en"})
         try:
             with IPCClient(tmp, timeout=15) as ipc:
@@ -29,7 +34,7 @@ def run(scale):
                 assert ipc.hit_test(*clock)["widget"] == "clock"
                 ipc.click_at(*clock)
                 ipc.wait_for_frame()
-                point = (clock[0], bar["y"] - 50)
+                point = (clock[0], bar["y"] + bar["height"] + 50 if top else bar["y"] - 50)
                 hit = ipc.hit_test(*point)
                 assert hit["target_type"] == "calendar", hit
                 origin = (point[0] - hit["local_x"], point[1] - hit["local_y"])
@@ -53,7 +58,7 @@ def run(scale):
                 ipc.click_at(origin[0] + 100, origin[1] + 50)
                 assert not ImageChops.difference(original, capture()).getbbox()
                 # Save an isolated output preview for visual inspection.
-                preview = Path(f"/tmp/rediwm-calendar-{scale}.png")
+                preview = Path(f"/tmp/rediwm-calendar-{'gold-' if gold else ''}{'top-' if top else ''}{scale}.png")
                 preview.unlink(missing_ok=True)
                 ipc.screenshot(str(preview))
                 for dismiss in (lambda: ipc.key_down_up(1), lambda: ipc.click_at(*clock), lambda: ipc.click_at(20, 20)):
@@ -64,6 +69,9 @@ def run(scale):
                     ipc.wait_for_frame()
                     assert ipc.hit_test(*point)["target_type"] == "calendar"
                 ipc.key_down_up(1)
+                if popup_only:
+                    print(f"PASS: calendar navigation, dismissal and repainting, gold={gold}, top={top}, scale={scale}")
+                    return
                 ui = UIDriver(ipc)
                 ipc.action("open_control_center")
                 ui.wait_settled("control_center")
@@ -261,4 +269,8 @@ def run(scale):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scale", default="1")
-    run(parser.parse_args().scale)
+    parser.add_argument("--gold", action="store_true")
+    parser.add_argument("--top", action="store_true")
+    parser.add_argument("--popup-only", action="store_true")
+    args = parser.parse_args()
+    run(args.scale, args.gold, args.top, args.popup_only)

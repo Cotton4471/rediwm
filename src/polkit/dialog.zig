@@ -268,7 +268,10 @@ pub const Dialog = struct {
         const t = ui.theme.shellPalette();
         r.palette = t;
         const dialog = ui.widgets.dialog;
-        dialog.paintFrame(&r, .{ .x = 0, .y = 0, .w = 560, .h = 480 });
+        // Pair shell text and controls with the shell background, kept opaque.
+        var background = t.window_bg;
+        background[3] = 1;
+        dialog.paintFrameWithBackground(&r, .{ .x = 0, .y = 0, .w = 560, .h = 480 }, background);
         dialog.paintHeader(&r, 28, 28, 504, .{
             .icon = .lock,
             .title = if (self.hidden) "Enter Password" else "Authentication",

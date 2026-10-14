@@ -98,6 +98,16 @@ the one for the directory you work in: `src/files`, `src/editor`,
   (`Projection.damageBuffer` after `setBuffer`, or `presentOwned`). Cache keys
   include visual state, text, geometry and Cairo transform; round globally
   before subtracting projection group origins.
+* **The dock repaints cells, not itself** (`Dock.zig`). It keeps its last
+  raster and, when only some items' looks changed (hover zoom, pills), clears
+  and repaints just their `itemCell`s (each item at the largest hover zoom, across
+  the dock's thickness) under a clip, publishing that damage alone. Dock-wide
+  state (theme, scale, count, drop slot, hover zoom setting) is `base_key` and
+  repaints all. Draw nothing outside an item's cell without keying it in
+  `base_key`, or it goes stale. `tests/dock.py` compares an animated dock with a
+  whole repaint. Icons use `drawImageSmooth` (area average): `drawImageCover`
+  samples the nearest pixel and shows stair-steps at the dock's fractional
+  downscale.
 * **Projection is resolve, then present** (`projection.c`, `scene_graph.h`).
   `resolve` turns the source tree into typed items (kind, unrounded
   layout-space edges, composed scale, content) listed in paint order per group
@@ -146,6 +156,15 @@ the one for the directory you work in: `src/files`, `src/editor`,
 * **Unmapped ≠ destroyed.** `frame_tree` stays disabled until `handleMapped`;
   `focusSurface`/`minimize`/`restore` need `in_world`; `destroyNow` asserts
   `backend_gone` (or a compositor-owned backend).
+* **The dock reserves space only when it doesn't auto-hide.** `Output.usableBox`
+  is `dockAreaBox` (output less the taskbar) less `Dock.reservedStrip`, a pure
+  function of config and that box (`Dock.fits`), so it never flips with a lock
+  or fullscreen window. The dock and the taskbar's popups/menus are placed in
+  `dockAreaBox`, never `usableBox`. A setting that changes the strip calls
+  `applyTaskbarPosition` (`Dock.reserves` before/after). Auto-hide fades and
+  slides the node (`reveal`, opacity + position, no repaint) and parks it (no
+  rebuilds, no frames) once away; reveal/hide wait on one `wl` timer
+  (`Dock.pointerAt` from `Input.processCursorMotion`, `retime`).
 * **Tiles are compositor-owned geometry** like maximize (`snap.zig`,
   `forcedGeometry()`). `Toplevel.layout()` reads the `maximized` field, not
   `isMaximized()` (xdg acks later). Leaving a layout without moving goes
@@ -169,6 +188,12 @@ the one for the directory you work in: `src/files`, `src/editor`,
   `Input.cancelDrag` (wlroots doesn't); compositor drop targets
   (`desktop_drop.Target`) end the grab before negotiating;
   `wlr_data_source_send` closes its fd.
+* **Compositor-internal drags** (`dock_drag.zig`: start menu app -> dock pin)
+  are not wl_data_device ones: a press arms, motion past a threshold starts,
+  and starting rebuilds the menu so its release is no click. Closing the menu
+  or Escape (`cancelDrag`, before the menu's own Escape) abandons it. A dock
+  holds resolved pins as copies (`pin_arena`); `config_index` maps a slot back
+  into `dock_pinned_apps`, which also lists apps no longer installed.
 
 ## Xwayland
 

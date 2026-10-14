@@ -141,7 +141,9 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
         server.scheduleFrames();
         if (server.input.open_control_center) |cc| cc.refresh();
     }
-    if (old.compositor.inactive_opacity != new.compositor.inactive_opacity) {
+    if (old.compositor.inactive_opacity != new.compositor.inactive_opacity or
+        old.compositor.terminal_opacity != new.compositor.terminal_opacity)
+    {
         if (server.input.open_control_center) |cc| cc.refresh();
     }
     if (old.compositor.inactive_dim != new.compositor.inactive_dim or
@@ -214,7 +216,14 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
         if (server.input.open_control_center) |cc| cc.refresh();
     }
 
-    if (old.compositor.taskbar_position != new.compositor.taskbar_position) server.applyTaskbarPosition();
+    // A docked dock keeps windows out of its strip: refit them as it comes, goes or moves.
+    const dock = @import("../Dock.zig");
+    const dock_strip_moved = (dock.reserves(&old.compositor) or dock.reserves(&new.compositor)) and
+        (old.compositor.dock_enabled != new.compositor.dock_enabled or
+            old.compositor.dock_auto_hide != new.compositor.dock_auto_hide or
+            old.compositor.dock_position != new.compositor.dock_position or
+            old.compositor.dock_height != new.compositor.dock_height);
+    if (old.compositor.taskbar_position != new.compositor.taskbar_position or dock_strip_moved) server.applyTaskbarPosition();
 
     if (old.compositor.dock_enabled != new.compositor.dock_enabled) {
         server.scheduleFrames();
@@ -224,14 +233,16 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
     if (old.compositor.dock_position != new.compositor.dock_position or
         old.compositor.dock_height != new.compositor.dock_height or
         old.compositor.dock_hover_zoom != new.compositor.dock_hover_zoom or
-        !stringListsEql(old.compositor.dock_hidden_apps, new.compositor.dock_hidden_apps) or
-        !stringListsEql(old.compositor.dock_hidden_shortcuts, new.compositor.dock_hidden_shortcuts))
+        old.compositor.dock_auto_hide != new.compositor.dock_auto_hide or
+        !stringListsEql(old.compositor.dock_hidden_shortcuts, new.compositor.dock_hidden_shortcuts) or
+        !stringListsEql(old.compositor.dock_pinned_apps, new.compositor.dock_pinned_apps))
     {
         if (server.input.window_menu.dock != null) server.input.window_menu.close();
         var output_it = server.outputs.iterator(.forward);
         while (output_it.next()) |output| output.dock.invalidate();
-        if (old.compositor.dock_position != new.compositor.dock_position) server.scheduleFrames();
-        if (old.compositor.dock_position != new.compositor.dock_position or old.compositor.dock_height != new.compositor.dock_height or old.compositor.dock_hover_zoom != new.compositor.dock_hover_zoom) {
+        // A parked dock schedules no frame of its own.
+        if (old.compositor.dock_position != new.compositor.dock_position or old.compositor.dock_auto_hide != new.compositor.dock_auto_hide) server.scheduleFrames();
+        if (old.compositor.dock_position != new.compositor.dock_position or old.compositor.dock_height != new.compositor.dock_height or old.compositor.dock_hover_zoom != new.compositor.dock_hover_zoom or old.compositor.dock_auto_hide != new.compositor.dock_auto_hide) {
             if (server.input.open_control_center) |cc| cc.refresh();
         }
     }

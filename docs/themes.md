@@ -135,7 +135,9 @@ GTK colour export also uses the app and sidebar foregrounds.
 
 `app_sidebar_hover_marker` adds a bright leading bar and an accent-coloured
 glow to Files sidebar hovers. Gold enables it; unset leaves the plain fill.
-Gold uses 96% opaque hover fills and a fully opaque Files sidebar. Its sidebar
+Gold uses 96% opaque hover fills and 50% opaque sidebars in Settings and Files.
+`app_sidebar_blur = true` lightly blurs the backdrop through their translucent areas;
+the content, text and icons keep their own opacity. Its sidebar
 and shell menu hovers stay brown so their ivory text remains readable; app
 content and toolbar hovers use champagne.
 
@@ -147,7 +149,7 @@ An explicit dock background uses its own alpha without the inherited dock's
 control notification cards. `notification_blur = true` enables the existing
 backdrop renderer behind them. Defaults retain the previous appearance.
 
-Wi-Fi and battery popups accept `popup_bg`, `popup_border`, `popup_radius`
+Wi-Fi, battery and calendar popups accept `popup_bg`, `popup_border`, `popup_radius`
 and `popup_blur`. With blur enabled they use a rounded glass panel without a
 pointer. `popup_card_bg`, `popup_card_fg`, `popup_card_dim`,
 `popup_card_border` and `popup_card_radius` style the network rows and battery
@@ -171,6 +173,12 @@ and replaces itself with Foot. It writes no terminal configuration and keeps
 explicit launcher overrides. Existing windows, terminals started directly
 from another shell, Foot server clients and other terminal emulators retain
 their own colours. The palette applies to newly launched Foot windows.
+
+The same helper passes Foot the background opacity from `[compositor]
+terminal_opacity` (0.0 to 1.0; Settings, Appearance, "Terminal opacity"). It is
+a setting of the user, not of the pack, so switching packs keeps it. Foot
+applies it to the background only; text stays opaque. Unset keeps the `alpha`
+of Foot's own configuration, and a value, even `1.0`, takes precedence over it.
 
 The helper is also available from a terminal:
 
@@ -215,6 +223,9 @@ Glyph filenames are the names in `assets/icons/`, including `wifi.svg`,
 `folder`, `user-home`, `user-desktop`, `folder-documents`, `folder-download`,
 `folder-music`, `folder-pictures`, `folder-videos`, `folder-templates`,
 `folder-publicshare`, `user-trash`, MIME names, and application icon names.
+The Settings app (its window, dock shortcut and Start menu entry) uses
+`rediwm-settings`; without a pack or installed icon of that name RediWM draws
+its built-in gear (`assets/icons/rediwm-settings.png`).
 XDG special directories come from `user-dirs.dirs`.
 
 The small pack in `tests/fixtures/theme-pack/` supplies a glyph, folder icon,

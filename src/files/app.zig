@@ -3335,7 +3335,10 @@ pub const App = struct {
         c.cairo_clip(cr);
         const accent = ui_theme.shellPalette().accent;
         setSource(cr, ui_theme.global.app_sidebar);
+        // The sidebar's alpha describes the window, not a tint over app_bg.
+        c.cairo_set_operator(cr, c.CAIRO_OPERATOR_SOURCE);
         c.cairo_paint(cr);
+        c.cairo_set_operator(cr, c.CAIRO_OPERATOR_OVER);
         self.renderGitSidebar(cr, content_width);
         // Under the labels: the glide passes over the PLACES heading.
         const glide = self.nav_hover.frame;
@@ -6599,6 +6602,7 @@ test "retained hover repairs match complete Cairo rasters at scale 1 and 1.5" {
     defer ui_theme.global = saved_theme;
     // Exercise the illuminated sidebar edge as it moves and fades, too.
     ui_theme.global.app_sidebar_hover_marker = .{ 1, 0.95, 0.84, 1 };
+    ui_theme.global.app_sidebar[3] = 0.5;
     const before = anim.currentSettings();
     defer anim.applySettings(before);
     anim.applySettings(.{ .reduced_motion = .off });
@@ -6623,6 +6627,11 @@ test "retained hover repairs match complete Cairo rasters at scale 1 and 1.5" {
             c.cairo_scale(ref, scale, scale);
             app.stepHover(0);
             app.render(cr);
+            c.cairo_surface_flush(retained);
+            const sidebar_pixels: [*]const u32 = @ptrCast(@alignCast(c.cairo_image_surface_get_data(retained)));
+            const sidebar_x: usize = @intFromFloat(2 * scale);
+            const sidebar_y: usize = @intFromFloat(@as(f64, @floatFromInt(app.contentTop() + 2)) * scale);
+            try std.testing.expectEqual(@as(u32, 128), sidebar_pixels[sidebar_y * @as(usize, @intCast(w)) + sidebar_x] >> 24);
             app.dirty = false;
             var points: std.ArrayList([2]f64) = .empty;
             defer points.deinit(std.testing.allocator);

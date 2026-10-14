@@ -1,8 +1,13 @@
 //! Optional output-local launcher. Retained rasters; animation uses output frames.
+//! The last raster is kept (`retained`): an icon that animates repaints only its
+//! own cell over it (`itemCell`, `changedCells`) and publishes only that damage.
+//! Anything the dock draws outside every item's cell must key `base_key` instead.
 const std = @import("std");
+const wl = @import("wayland").server.wl;
 const wlr = @import("wlroots");
 const ui = @import("ui");
 const Output = @import("Output.zig");
+const Server = @import("Server.zig");
 const Toplevel = @import("Toplevel.zig");
 const IconEntry = @import("icon_service.zig").Entry;
 const PanelBuffer = @import("panel_buffer.zig").PanelBuffer;
@@ -15,7 +20,20 @@ const anim = ui.anim;
 const gpa = @import("main.zig").gpa;
 const Self = @This();
 const max_items = 64;
+/// Applications pinned to the dock by dragging them from the start menu.
+pub const max_pins = 16;
 pub const Shortcut = enum { applications, files, terminal, settings };
+/// The gap between the dock and its output edge, and again between it and the
+/// windows when it reserves its strip.
+const edge_margin = 10;
+/// Auto-hide: the outermost pixels of the edge that reveal the dock, how long
+/// the pointer must stay (so a pass over the edge shows nothing) or stay away
+/// (so a slip off the dock hides nothing), and how far the dock travels while
+/// it fades.
+const edge_band = 2;
+const reveal_delay_ms = 120;
+const hide_delay_ms = 400;
+const slide_distance = 20;
 
 /// Scale the original 68px layout in logical pixels, independently of output scale.
 const Metrics = struct {
@@ -38,8 +56,26 @@ const Metrics = struct {
     }
 };
 
+/// A pinned application as the last rebuild resolved it. Strings are copies
+/// (`pin_arena`), so they outlive the catalogue snapshot they came from.
+const PinnedApp = struct {
+    id: []const u8,
+    name: []const u8,
+    icon: []const u8,
+    wm_class: ?[]const u8,
+    /// Never 0: animations use 0 for "not a pin".
+    hash: u64,
+    /// Index in `dock_pinned_apps`, which also lists apps no longer installed.
+    config_index: usize,
+
+    fn match(self: PinnedApp) AppMatch {
+        return .{ .id = self.id, .wm_class = self.wm_class };
+    }
+};
+
 const ItemAnimation = struct {
     shortcut: ?Shortcut = null,
+    pin: u64 = 0,
     id: u64 = 0,
     width: anim.Anim = .{},
     opacity: anim.Anim = .{ .property = .opacity },
@@ -56,11 +92,33 @@ box: wlr.Box = .{ .x = 0, .y = 0, .width = 0, .height = config.dock_height_defau
 position: @import("config").types.DockPosition = .bottom,
 scale: f32 = 0,
 dirty: bool = true,
+/// The dock could be on screen: sized to fit, no lock, no fullscreen window.
+/// With auto-hide it still shows only while `reveal` is above zero.
 visible: bool = false,
+/// Auto-hide. `pointer_near` is where the pointer wants the dock (at the edge,
+/// or on a shown dock); `shown` is what the reveal heads for, which follows it
+/// after a delay (`timer`, armed for `timer_target`). `reveal` runs 0 (away) to
+/// 1 and drives the fade and slide; `parked` is hidden and settled, so nothing
+/// is rebuilt or painted.
+pointer_near: bool = false,
+shown: bool = false,
+timer: ?*wl.EventSource = null,
+timer_target: ?bool = null,
+reveal: anim.Anim = .{ .property = .opacity },
+parked: bool = false,
 root: ui.layout.Widget = .{ .kind = .container },
 buttons: [max_items]ui.layout.Widget = undefined,
 ids: [max_items]u64 = @splat(0),
 shortcuts: [max_items]?Shortcut = @splat(null),
+/// Index into `pins` for the buttons that show a pinned application.
+pin_of: [max_items]?u8 = @splat(null),
+pins: [max_pins]PinnedApp = undefined,
+pin_count: usize = 0,
+pin_arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator),
+/// Button index the first pin occupies, where a drop at slot 0 lands.
+pin_base: usize = 0,
+/// Where a dragged application would be pinned: the gap before this pin.
+drop_slot: ?usize = null,
 animations: [max_items]ItemAnimation = @splat(.{}),
 animating: bool = false,
 count: usize = 0,
@@ -73,12 +131,22 @@ arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator),
 /// repainted.
 drawn: u64 = 0,
 tip_drawn: u64 = 0,
+/// The last complete raster (`gpa`-owned) and the keys it was painted from. An
+/// animating icon repaints only its own cell on top of it, and only that cell is
+/// published as damage; anything dock-wide repaints the lot.
+retained: []u32 = &.{},
+base_drawn: u64 = 0,
+item_drawn: [max_items]u64 = @splat(0),
+items_drawn: usize = 0,
 
 pub fn deinit(self: *Self) void {
+    if (self.timer) |timer| timer.remove();
     if (self.output) |output| if (output.server.input.window_menu.dock == self) output.server.input.window_menu.close();
     self.dispatcher.reset();
     if (self.tree) |tree| tree.node.destroy();
     self.arena.deinit();
+    self.pin_arena.deinit();
+    gpa.free(self.retained);
     self.* = .{};
 }
 
@@ -98,6 +166,8 @@ fn ensureNodes(self: *Self, output: *Output) !void {
     self.node = node;
     self.tooltip = tooltip;
     self.glass_effect = glass.Engine.attach(output.server.glass_engine, node, &node.node, .taskbar);
+    // A dock that auto-hides starts away; one that does not, in place.
+    self.reveal.cancel(if (output.server.config.compositor.dock_auto_hide) 0 else 1);
 }
 
 fn ignoreInput(_: *wlr.SceneBuffer, _: *f64, _: *f64) callconv(.c) bool {
@@ -112,44 +182,197 @@ pub fn tick(self: *Self, output: *Output, now_ms: i64) bool {
     }
     self.ensureNodes(output) catch return false;
     const focused = @import("ipc/handlers.zig").findFocusedToplevel(server);
-    const usable = output.usableBox();
+    // The dock sits beside the taskbar, not beside its own reserved strip.
+    const area = output.dockAreaBox();
     const m: Metrics = .{ .height = @intCast(server.config.compositor.dock_height) };
-    const shortcut_count = self.shortcutCount();
     const position = server.config.compositor.dock_position;
-    const available_length = if (position.vertical()) usable.height else usable.width;
-    const available_thickness = if (position.vertical()) usable.width else usable.height;
-    const min_length = @max(260, @as(i32, @intCast(shortcut_count)) * m.itemStep() + m.padding() * 2 + 12);
-    const visible = server.locker == null and available_length >= min_length and available_thickness >= @max(140, m.height + 72) and
+    const visible = server.locker == null and fits(&server.config.compositor, area) and
         !(if (focused) |top| top.fullscreen and top.currentOutput() == output else false);
-    self.tree.?.node.setEnabled(visible);
     if (self.visible != visible) {
         self.visible = visible;
         self.leave();
         self.dirty = true;
     }
     if (!visible) {
+        self.tree.?.node.setEnabled(false);
+        // Coming back (fullscreen ended, unlocked) starts from rest, not from a
+        // reveal the pointer asked for before: it must not flash in.
+        self.parked = false;
+        self.pointer_near = false;
+        self.shown = false;
+        self.disarm();
+        self.reveal.cancel(if (server.config.compositor.dock_auto_hide) 0 else 1);
         if (server.input.window_menu.dock == self) server.input.window_menu.close();
         return false;
     }
+    const revealing = self.syncReveal(now_ms);
+    if (self.parked) {
+        // Away: the next reveal rebuilds and paints before the first frame it shows.
+        self.tree.?.node.setEnabled(false);
+        self.leave();
+        return false;
+    }
+    if (self.dirty) self.resolvePins();
+    const fixed_count = self.fixedCount();
+    const available_length = if (position.vertical()) area.height else area.width;
     if (self.scale != output.wlr_output.scale) self.dirty = true;
     if (self.position != position or self.metrics().height != m.height) self.dirty = true;
     // Output geometry can change without a window or theme notification.
-    const capacity: usize = @intCast(@min(max_items - shortcut_count, @max(0, @divTrunc(available_length - m.padding() * 2 - 16, m.itemStep()) - @as(i32, @intCast(shortcut_count)))));
-    const wanted = @min(capacity, self.windows) + shortcut_count;
+    const capacity: usize = @intCast(@min(max_items - fixed_count, @max(0, @divTrunc(available_length - m.padding() * 2 - 16, m.itemStep()) - @as(i32, @intCast(fixed_count)))));
+    const wanted = @min(capacity, self.windows) + fixed_count;
     if ((if (position.vertical()) self.box.height else self.box.width) != @as(i32, @intCast(wanted)) * m.itemStep() + m.padding() * 2) self.dirty = true;
     const rebuilt = self.dirty;
-    if (rebuilt) self.rebuild(capacity, usable) catch return false;
+    if (rebuilt) self.rebuild(capacity, area) catch return false;
     self.tree.?.node.setEnabled(self.count > 0);
     if (self.count == 0) {
         self.animating = false;
-        return false;
+        return revealing;
     }
-    self.place(usable);
+    self.place(area);
     if (rebuilt or self.animating) {
         self.paint(now_ms) catch return false;
     } else self.paintTooltip() catch {};
-    self.tree.?.node.setPosition(self.box.x, self.box.y);
-    return self.animating;
+    self.applyReveal(now_ms);
+    return self.animating or revealing;
+}
+
+/// What a dock reserves along `area`'s edge for windows: its thickness and the
+/// gap on either side. Nothing when it floats over them (auto-hide), is off, or
+/// does not fit and so shows nothing.
+pub fn reservedStrip(server: *const Server, area: wlr.Box) i32 {
+    const c = &server.config.compositor;
+    if (server.greeter_mode or !reserves(c) or !fits(c, area)) return 0;
+    return @as(i32, @intCast(c.dock_height)) + 2 * edge_margin;
+}
+
+/// Whether the dock, as configured, keeps windows out of its strip. A change
+/// to this (or to the dock's edge or size while it holds) moves the work area:
+/// refit windows with `Server.applyTaskbarPosition`.
+pub fn reserves(c: *const config.CompositorConfig) bool {
+    return c.dock_enabled and !c.dock_auto_hide;
+}
+
+/// Whether the dock shows at all in `area` (the output less the taskbar). Read
+/// from the configuration alone, so it agrees with what `reservedStrip` holds
+/// back wherever it is asked.
+fn fits(c: *const config.CompositorConfig, area: wlr.Box) bool {
+    const m: Metrics = .{ .height = @intCast(c.dock_height) };
+    const length = if (c.dock_position.vertical()) area.height else area.width;
+    const thickness = if (c.dock_position.vertical()) area.width else area.height;
+    const min_length = @max(260, @as(i32, @intCast(configuredFixedCount(c))) * m.itemStep() + m.padding() * 2 + 12);
+    return length >= min_length and thickness >= @max(140, m.height + 72);
+}
+
+/// `fixedCount` from the configuration alone: an uninstalled pin counts.
+fn configuredFixedCount(c: *const config.CompositorConfig) usize {
+    var count: usize = @min(c.dock_pinned_apps.len, max_pins);
+    for (std.enums.values(Shortcut)) |shortcut| {
+        if (!hidden(c.dock_hidden_shortcuts, @tagName(shortcut))) count += 1;
+    }
+    return count;
+}
+
+/// Auto-hide: lets `reveal` follow the pointer's wish, and parks the dock once
+/// it has gone. True while the reveal still moves.
+fn syncReveal(self: *Self, now_ms: i64) bool {
+    const server = self.output.?.server;
+    var target: f32 = 1;
+    if (server.config.compositor.dock_auto_hide) {
+        self.retime();
+        if (!self.shown) target = 0;
+    } else {
+        self.disarm();
+        self.pointer_near = false;
+        self.shown = false;
+    }
+    if (self.reveal.to != target) self.reveal.retargetTo(now_ms, target, anim.curveFor(.taskbar_hover));
+    const moving = !self.reveal.settled(now_ms);
+    self.parked = target == 0 and !moving;
+    return moving;
+}
+
+/// The dock fades and slides toward its edge as `reveal` falls. The raster does
+/// not change: only the node's position and opacity (glass follows both).
+fn applyReveal(self: *Self, now_ms: i64) void {
+    const t = std.math.clamp(self.reveal.value(now_ms), 0, 1);
+    var x = self.box.x;
+    var y = self.box.y;
+    if (t < 1 and !anim.reducedMotion()) {
+        const away: i32 = @intFromFloat(@round((1 - t) * slide_distance));
+        switch (self.position) {
+            .top => y -= away,
+            .bottom => y += away,
+            .left => x -= away,
+            .right => x += away,
+        }
+    }
+    self.tree.?.node.setPosition(x, y);
+    self.node.?.setOpacity(t);
+}
+
+fn menuOpen(self: *const Self) bool {
+    return self.output.?.server.input.window_menu.dock == self;
+}
+
+/// Whether the pointer at layout position `x`, `y` wants the dock: it is at the
+/// output edge the dock is on, or on the dock (and the gap beside it) once shown.
+fn nearPointer(self: *const Self, output: *Output, x: f64, y: f64) bool {
+    const c = &output.server.config.compositor;
+    if (!c.dock_auto_hide or !self.visible) return false;
+    const full = output.cached_box;
+    const px: i32 = @intFromFloat(@floor(x));
+    const py: i32 = @intFromFloat(@floor(y));
+    if (px < full.x or py < full.y or px >= full.x + full.width or py >= full.y + full.height) return false;
+    const at_edge = switch (c.dock_position) {
+        .top => py < full.y + edge_band,
+        .bottom => py >= full.y + full.height - edge_band,
+        .left => px < full.x + edge_band,
+        .right => px >= full.x + full.width - edge_band,
+    };
+    if (at_edge) return true;
+    // Only a dock that is out can be pointed at: where it would be is windows.
+    if (!self.shown) return false;
+    return px >= self.box.x - edge_margin and px < self.box.x + self.box.width + edge_margin and
+        py >= self.box.y - edge_margin and py < self.box.y + self.box.height + edge_margin;
+}
+
+/// Every pointer motion. `engaged` is false while a window is moved or resized
+/// or a button is held for a client, none of which should raise the dock.
+pub fn pointerAt(self: *Self, x: f64, y: f64, engaged: bool) void {
+    const output = self.output orelse return;
+    const near = engaged and self.nearPointer(output, x, y);
+    if (near == self.pointer_near) return;
+    self.pointer_near = near;
+    self.retime();
+}
+
+/// Starts (or drops) the delay before `shown` follows what the pointer wants.
+fn retime(self: *Self) void {
+    const wanted = self.pointer_near or self.menuOpen();
+    if (wanted == self.shown) return self.disarm();
+    if (self.timer_target == wanted) return;
+    self.timer_target = wanted;
+    const delay: i32 = if (wanted) reveal_delay_ms else hide_delay_ms;
+    const output = self.output.?;
+    if (self.timer == null) self.timer = output.server.wl_server.getEventLoop().addTimer(*Self, onTimer, self) catch null;
+    if (self.timer) |timer| {
+        if (timer.timerUpdate(delay)) return else |_| {}
+    }
+    // No timer: follow at once.
+    _ = onTimer(self);
+}
+
+fn disarm(self: *Self) void {
+    if (self.timer_target == null) return;
+    self.timer_target = null;
+    if (self.timer) |timer| timer.timerUpdate(0) catch {};
+}
+
+fn onTimer(self: *Self) c_int {
+    if (self.timer_target) |wanted| self.shown = wanted;
+    self.timer_target = null;
+    if (self.output) |output| output.wlr_output.scheduleFrame();
+    return 0;
 }
 
 fn hidden(items: []const []const u8, name: []const u8) bool {
@@ -157,11 +380,11 @@ fn hidden(items: []const []const u8, name: []const u8) bool {
     return false;
 }
 
-fn shortcutShown(self: *Self, shortcut: Shortcut) bool {
+fn shortcutShown(self: *const Self, shortcut: Shortcut) bool {
     return !hidden(self.output.?.server.config.compositor.dock_hidden_shortcuts, @tagName(shortcut));
 }
 
-fn shortcutCount(self: *Self) usize {
+fn shortcutCount(self: *const Self) usize {
     var count: usize = 0;
     for (std.enums.values(Shortcut)) |shortcut| if (self.shortcutShown(shortcut)) {
         count += 1;
@@ -169,14 +392,58 @@ fn shortcutCount(self: *Self) usize {
     return count;
 }
 
-fn place(self: *Self, usable: wlr.Box) void {
-    self.box.x = usable.x + @divTrunc(usable.width - self.box.width, 2);
-    self.box.y = usable.y + @divTrunc(usable.height - self.box.height, 2);
+/// Buttons that always show, whatever windows are open.
+fn fixedCount(self: *const Self) usize {
+    return self.shortcutCount() + self.pin_count;
+}
+
+/// Looks the configured pins up in the catalogue; apps that are no longer
+/// installed stay in the config but are not shown.
+fn resolvePins(self: *Self) void {
+    _ = self.pin_arena.reset(.retain_capacity);
+    self.pin_count = 0;
+    const server = self.output.?.server;
+    const configured = server.config.compositor.dock_pinned_apps;
+    if (configured.len == 0) return;
+    const snapshot = server.start_menu_catalog.retainSnapshot();
+    defer snapshot.release();
+    const a = self.pin_arena.allocator();
+    for (configured, 0..) |id, config_index| {
+        if (self.pin_count == max_pins) break;
+        const entry = default_apps.find(snapshot.entries, id) orelse continue;
+        self.pins[self.pin_count] = .{
+            .id = a.dupe(u8, entry.id) catch return,
+            .name = a.dupe(u8, entry.name) catch return,
+            .icon = a.dupe(u8, entry.icon orelse entry.id) catch return,
+            .wm_class = if (entry.startup_wm_class) |class| a.dupe(u8, class) catch return else null,
+            .hash = std.hash.Wyhash.hash(0, entry.id) | 1,
+            .config_index = config_index,
+        };
+        self.pin_count += 1;
+    }
+}
+
+fn pinFor(self: *const Self, top: *Toplevel) ?usize {
+    for (self.pins[0..self.pin_count], 0..) |pin, i| if (pin.match().matches(top)) return i;
+    return null;
+}
+
+/// The window standing for an app on its dock button: the focused one, then a
+/// visible one, then the most recent.
+fn prefer(current: ?*Toplevel, top: *Toplevel, focused: ?*Toplevel) bool {
+    const held = current orelse return true;
+    return held != focused and (top == focused or (held.minimized and !top.minimized));
+}
+
+/// Where the dock rests in `area`: centred along its edge, `edge_margin` in.
+fn place(self: *Self, area: wlr.Box) void {
+    self.box.x = area.x + @divTrunc(area.width - self.box.width, 2);
+    self.box.y = area.y + @divTrunc(area.height - self.box.height, 2);
     switch (self.position) {
-        .top => self.box.y = usable.y + 10,
-        .bottom => self.box.y = usable.y + usable.height - self.box.height - 10,
-        .left => self.box.x = usable.x + 10,
-        .right => self.box.x = usable.x + usable.width - self.box.width - 10,
+        .top => self.box.y = area.y + edge_margin,
+        .bottom => self.box.y = area.y + area.height - self.box.height - edge_margin,
+        .left => self.box.x = area.x + edge_margin,
+        .right => self.box.x = area.x + area.width - self.box.width - edge_margin,
     }
 }
 
@@ -229,7 +496,7 @@ fn shortcutApps(self: *Self, entries: []const apps.AppEntry, scratch: std.mem.Al
     return matches;
 }
 
-fn rebuild(self: *Self, capacity: usize, usable: wlr.Box) !void {
+fn rebuild(self: *Self, capacity: usize, area: wlr.Box) !void {
     const output = self.output.?;
     const previous_animations = self.animations;
     const previous_count = self.count;
@@ -239,22 +506,26 @@ fn rebuild(self: *Self, capacity: usize, usable: wlr.Box) !void {
     defer scratch.deinit();
     const matches = self.shortcutApps(snapshot.entries, scratch.allocator());
     var targets: [4]?*Toplevel = @splat(null);
+    var pin_targets: [max_pins]?*Toplevel = @splat(null);
     const focused = @import("ipc/handlers.zig").findFocusedToplevel(output.server);
     var tops: std.ArrayList(*Toplevel) = .empty;
     defer tops.deinit(gpa);
     var it = output.server.world.toplevels.iterator(.forward);
     windows: while (it.next()) |top| {
-        if (!top.in_world or top.closing or top.backend_gone or top.tab_hidden or top.dock_hidden or
-            hidden(output.server.config.compositor.dock_hidden_apps, top.appId()) or
+        if (!top.in_world or top.closing or top.backend_gone or top.tab_hidden or
             !@import("workspaces.zig").visible(top) or (top.live_rules.skip_taskbar orelse false) or
             (output.server.world.workspaces.active and top.currentOutput() != output)) continue;
+        // Every running app shows: on its pin, on its shortcut, or as a window.
+        if (self.pinFor(top)) |pin| {
+            if (prefer(pin_targets[pin], top, focused)) pin_targets[pin] = top;
+            continue;
+        }
         for ([_]Shortcut{ .files, .terminal, .settings }) |shortcut| {
-            if (!matches[@intFromEnum(shortcut)].matches(top)) continue;
+            // A removed shortcut is only a launcher gone: its app, once
+            // running, is an ordinary window button.
+            if (!self.shortcutShown(shortcut) or !matches[@intFromEnum(shortcut)].matches(top)) continue;
             const target = &targets[@intFromEnum(shortcut)];
-            // A removed shortcut also hides the app it represents. Keep the
-            // focused window, then a visible window, then the most recent one.
-            if (self.shortcutShown(shortcut) and (target.* == null or
-                (target.*.? != focused and (top == focused or (target.*.?.minimized and !top.minimized))))) target.* = top;
+            if (prefer(target.*, top, focused)) target.* = top;
             continue :windows;
         }
         try tops.append(gpa, top);
@@ -267,7 +538,7 @@ fn rebuild(self: *Self, capacity: usize, usable: wlr.Box) !void {
     self.windows = tops.items.len;
     self.offset = @min(self.offset, self.windows -| capacity);
     const window_count = @min(capacity, self.windows);
-    self.count = window_count + self.shortcutCount();
+    self.count = window_count + self.fixedCount();
     self.position = output.server.config.compositor.dock_position;
     const m: Metrics = .{ .height = @intCast(output.server.config.compositor.dock_height) };
     const length = @as(i32, @intCast(self.count)) * m.itemStep() + m.padding() * 2;
@@ -279,9 +550,16 @@ fn rebuild(self: *Self, capacity: usize, usable: wlr.Box) !void {
     _ = self.arena.reset(.retain_capacity);
     self.root = .{ .kind = .container, .children = self.buttons[0..self.count], .computed_width = @floatFromInt(self.box.width), .computed_height = @floatFromInt(self.box.height) };
     var index: usize = 0;
+    self.pin_of = @splat(null);
     for ([_]Shortcut{ .applications, .files, .terminal }) |shortcut| {
         if (!self.shortcutShown(shortcut)) continue;
         self.setButton(index, shortcut, if (targets[@intFromEnum(shortcut)]) |top| top.id else 0);
+        index += 1;
+    }
+    self.pin_base = index;
+    for (pin_targets[0..self.pin_count], 0..) |target, pin| {
+        self.pin_of[index] = @intCast(pin);
+        self.setButton(index, null, if (target) |top| top.id else 0);
         index += 1;
     }
     for (tops.items[self.offset .. self.offset + window_count]) |top| {
@@ -292,11 +570,12 @@ fn rebuild(self: *Self, capacity: usize, usable: wlr.Box) !void {
     for (self.animations[0..self.count], 0..) |*pill, i| {
         const shortcut = self.shortcuts[i];
         const id = self.ids[i];
-        pill.* = .{ .shortcut = shortcut, .id = id };
+        const pin: u64 = if (self.pin_of[i]) |p| self.pins[p].hash else 0;
+        pill.* = .{ .shortcut = shortcut, .pin = pin, .id = id };
         // Widget indexes move as windows open or items are removed. A
-        // shortcut keeps its animation when its representative window changes.
+        // shortcut or pin keeps its animation when its representative window changes.
         for (previous_animations[0..previous_count]) |previous| {
-            if (previous.shortcut == shortcut and (shortcut != null or previous.id == id)) {
+            if (previous.shortcut == shortcut and previous.pin == pin and (shortcut != null or pin != 0 or previous.id == id)) {
                 pill.* = previous;
                 break;
             }
@@ -306,7 +585,7 @@ fn rebuild(self: *Self, capacity: usize, usable: wlr.Box) !void {
     // The pointer rests on a replaced button: hover it before painting, so
     // the rebuild paints once.
     if (hovered) {
-        self.place(usable);
+        self.place(area);
         const cursor = output.server.input.cursor;
         self.dispatcher.pointerMotion(&self.root, @floatCast(cursor.x - @as(f64, @floatFromInt(self.box.x))), @floatCast(cursor.y - @as(f64, @floatFromInt(self.box.y))));
     }
@@ -318,7 +597,10 @@ fn setButton(self: *Self, index: usize, shortcut: ?Shortcut, id: u64) void {
     self.ids[index] = id;
     self.shortcuts[index] = shortcut;
     self.buttons[index] = .{
-        .name = if (shortcut) |s| @tagName(s) else std.fmt.allocPrint(self.arena.allocator(), "window_{d}", .{id}) catch "window",
+        .name = if (shortcut) |s| @tagName(s) else if (self.pin_of[index]) |p|
+            std.fmt.allocPrint(self.arena.allocator(), "pin_{s}", .{self.pins[p].id}) catch "pin"
+        else
+            std.fmt.allocPrint(self.arena.allocator(), "window_{d}", .{id}) catch "window",
         .kind = .{ .button = .{ .label = self.arena.allocator().dupe(u8, self.label(index)) catch "Application", .variant = .ghost, .owner = self, .id = index, .on_click = clicked } },
         .computed_x = @floatFromInt(if (self.position.vertical()) self.buttonCross() else @as(i32, @intCast(index)) * m.itemStep() + m.padding()),
         .computed_y = @floatFromInt(if (self.position.vertical()) @as(i32, @intCast(index)) * m.itemStep() + m.padding() else self.buttonCross()),
@@ -355,6 +637,7 @@ fn label(self: *Self, index: usize) []const u8 {
         .terminal => "Terminal",
         .settings => "Settings",
     };
+    if (self.pin_of[index]) |p| return self.pins[p].name;
     return if (self.topAt(index)) |top| top.title() else "Application";
 }
 
@@ -391,17 +674,23 @@ fn paint(self: *Self, now_ms: i64) !void {
     if (pal.dock_bg == null) bg[3] = @max(bg[3], 0.86);
     const focused = @import("ipc/handlers.zig").findFocusedToplevel(output.server);
     var looks: [max_items]Look = undefined;
+    var item_keys: [max_items]u64 = undefined;
     self.animating = false;
+    // Dock-wide state: a change repaints the whole raster. Each item's own look is
+    // keyed apart, so a hover repaints only the icons it moves.
+    var base_hasher = std.hash.Wyhash.init(0);
+    hashValue(&base_hasher, .{ pal, bg, self.scale, self.position, self.box.width, self.box.height, self.count, self.offset, self.windows, self.pin_base, self.drop_slot, output.server.config.compositor.dock_hover_zoom });
+    const base_key = base_hasher.final();
     var hasher = std.hash.Wyhash.init(0);
-    hashValue(&hasher, .{ pal, bg, self.scale, self.position, self.box.width, self.box.height, self.count, self.offset, self.windows });
+    hasher.update(std.mem.asBytes(&base_key));
     for (self.buttons[0..self.count], looks[0..self.count], 0..) |button, *look, index| {
         const top = self.topAt(index);
         const icon_name = if (self.shortcuts[index]) |shortcut| switch (shortcut) {
             .applications => "builtin:redi-logo",
             .files => "rediwm-files",
             .terminal => "utilities-terminal",
-            .settings => "preferences-system",
-        } else if (top) |t| t.appId() else "";
+            .settings => ui.shell_icons.settings_icon_name,
+        } else if (self.pin_of[index]) |p| self.pins[p].icon else if (top) |t| t.appId() else "";
         // Retain one raster at the configured maximum, not a new size each frame.
         const hover_zoom = output.server.config.compositor.dock_hover_zoom;
         const lookup = output.server.iconLookup(icon_name, @import("geometry.zig").devicePixels(@intFromFloat(@ceil(@as(f32, @floatFromInt(m.length(36))) * hover_zoom)), self.scale));
@@ -430,53 +719,181 @@ fn paint(self: *Self, now_ms: i64) !void {
         // moving between neighbours cannot make the row chase the pointer.
         self.setButtonZoom(index, look.zoom);
         const icon_id: ?u64 = if (look.icon) |icon| icon.id else null;
-        hashValue(&hasher, .{ self.shortcuts[index], button.kind.button.state, look.focused, icon_id, look.pill_width, look.pill_opacity, look.zoom });
+        var item_hasher = std.hash.Wyhash.init(0);
+        hashValue(&item_hasher, .{ self.shortcuts[index], self.pin_of[index], button.kind.button.state, look.focused, icon_id, look.pill_width, look.pill_opacity, look.zoom });
+        item_keys[index] = item_hasher.final();
+        hasher.update(std.mem.asBytes(&item_keys[index]));
     }
     const key = hasher.final();
-    if (key != self.drawn) try self.paintDock(pal, bg, looks[0..self.count]);
+    if (key != self.drawn) try self.paintDock(pal, bg, looks[0..self.count], base_key, item_keys[0..self.count]);
     self.drawn = key;
     try self.paintTooltip();
 }
 
-fn paintDock(self: *Self, pal: ui.theme.Theme, bg: [4]f32, looks: []const Look) !void {
+/// A device-pixel rectangle of the dock raster.
+const DeviceRect = struct {
+    x0: i32,
+    y0: i32,
+    x1: i32,
+    y1: i32,
+
+    fn area(self: DeviceRect) i64 {
+        return @as(i64, self.x1 - self.x0) * @as(i64, self.y1 - self.y0);
+    }
+
+    fn overlaps(self: DeviceRect, other: DeviceRect) bool {
+        return self.x0 < other.x1 and other.x0 < self.x1 and self.y0 < other.y1 and other.y0 < self.y1;
+    }
+
+    fn join(self: DeviceRect, other: DeviceRect) DeviceRect {
+        return .{ .x0 = @min(self.x0, other.x0), .y0 = @min(self.y0, other.y0), .x1 = @max(self.x1, other.x1), .y1 = @max(self.y1, other.y1) };
+    }
+};
+
+/// Everything item `index` can paint, at the largest hover zoom, across the dock's
+/// thickness: the cell a repaint of that item must restore. Neighbours' cells
+/// meet but do not overlap (the icon is narrower than the step).
+fn itemCell(self: *const Self, m: Metrics, index: usize, width: i32, height: i32) DeviceRect {
+    const hover_zoom = self.output.?.server.config.compositor.dock_hover_zoom;
+    const base: f32 = @floatFromInt(m.length(48));
+    const side = @max(base, @as(f32, @floatFromInt(m.length(36))) * hover_zoom);
+    const centre = @as(f32, @floatFromInt(@as(i32, @intCast(index)) * m.itemStep() + m.padding())) + base / 2;
+    const lo: i32 = @intFromFloat(@floor((centre - side / 2) * self.scale));
+    const hi: i32 = @intFromFloat(@ceil((centre + side / 2) * self.scale));
+    return if (self.position.vertical())
+        .{ .x0 = 0, .y0 = @max(0, lo), .x1 = width, .y1 = @min(height, hi) }
+    else
+        .{ .x0 = @max(0, lo), .y0 = 0, .x1 = @min(width, hi), .y1 = height };
+}
+
+/// The cells whose items changed since the retained raster, or null when the whole
+/// dock must be painted: nothing retained, dock-wide state moved, or the changed
+/// cells cover most of it anyway.
+fn changedCells(self: *const Self, m: Metrics, base_key: u64, item_keys: []const u64, width: i32, height: i32) ?DeviceRect {
+    if (self.retained.len != @as(usize, @intCast(width)) * @as(usize, @intCast(height)) or
+        self.base_drawn != base_key or self.items_drawn != item_keys.len) return null;
+    var dirty: ?DeviceRect = null;
+    for (item_keys, self.item_drawn[0..item_keys.len], 0..) |key, drawn, index| {
+        if (key == drawn) continue;
+        const cell = self.itemCell(m, index, width, height);
+        dirty = if (dirty) |d| d.join(cell) else cell;
+    }
+    const box = dirty orelse return null;
+    if (box.area() * 2 > @as(i64, width) * height) return null;
+    return box;
+}
+
+fn paintDock(self: *Self, pal: ui.theme.Theme, bg: [4]f32, looks: []const Look, base_key: u64, item_keys: []const u64) !void {
     const m = self.metrics();
-    const image = try PanelBuffer.create(self.box.width, self.box.height, self.scale);
+    const geometry = @import("geometry.zig");
+    const width = geometry.devicePixels(self.box.width, self.scale);
+    const height = geometry.devicePixels(self.box.height, self.scale);
+    const dirty = self.changedCells(m, base_key, item_keys, width, height);
+    const image = if (dirty != null)
+        try PanelBuffer.createUninitialized(self.box.width, self.box.height, self.scale)
+    else
+        try PanelBuffer.create(self.box.width, self.box.height, self.scale);
     defer image.base.drop();
     var r = ui.paint.Renderer.init(image.pixels, image.width, image.height, self.scale);
     r.palette = pal;
+    const stride: usize = @intCast(image.width);
+    if (dirty) |box| {
+        // Start from what is on screen and paint the changed cells again, from
+        // clear, exactly as a whole paint would. A quarter pixel in from the cell
+        // edge keeps every shape on whole device pixels.
+        @memcpy(image.pixels, self.retained);
+        for (@as(usize, @intCast(box.y0))..@as(usize, @intCast(box.y1))) |y| @memset(image.pixels[y * stride + @as(usize, @intCast(box.x0)) .. y * stride + @as(usize, @intCast(box.x1))], 0);
+        const x0: f32 = @floatFromInt(box.x0);
+        const y0: f32 = @floatFromInt(box.y0);
+        r.damage_clip = .{
+            .x = (x0 + 0.25) / self.scale,
+            .y = (y0 + 0.25) / self.scale,
+            .w = (@as(f32, @floatFromInt(box.x1)) - x0 - 0.5) / self.scale,
+            .h = (@as(f32, @floatFromInt(box.y1)) - y0 - 0.5) / self.scale,
+        };
+    }
     var border = pal.accent;
     border[3] = 0.55;
     border = pal.dock_border orelse border;
     const radius = @min(if (pal.dock_radius > 0) pal.dock_radius else ui.window_chrome.frameRadius(), @as(f32, @floatFromInt(m.height)) / 2);
     glass.Effect.configure(self.glass_effect, radius, 1);
     r.fillRect(0, 0, @floatFromInt(self.box.width), @floatFromInt(self.box.height), .{ .color = bg, .radius = radius, .border_width = 1, .border_color = border });
-    for (self.buttons[0..self.count], looks, 0..) |button, look, index| {
-        const x = button.computed_x;
-        const cx = x + button.computed_width / 2;
-        const cy = button.computed_y + button.computed_height / 2;
-        ui.widgets.button.paintBackground(&r, .{ .x = x, .y = button.computed_y, .w = button.computed_width, .h = button.computed_height }, .{ .variant = .ghost, .radius = m.size(12) }, .{ .pointer = button.kind.button.state, .selected = look.focused });
-        if (look.icon) |icon| {
-            const size = @as(f32, @floatFromInt(m.length(36))) * look.zoom;
-            r.drawImageCover(cx - size / 2, cy - size / 2, size, size, 0, .{ .pixels = icon.pixels, .width = icon.size, .height = icon.size });
-        } else {
-            const size = @as(f32, @floatFromInt(m.length(34))) * look.zoom;
-            r.drawIcon(cx - size / 2, cy - size / 2, size, size, .{ .id = if (self.shortcuts[index]) |shortcut| switch (shortcut) {
-                .applications => .grid,
-                .files => .folder,
-                .terminal => .terminal,
-                .settings => .settings,
-            } else .generic, .color = pal.window_fg });
+    for (looks, 0..) |look, index| {
+        if (dirty) |box| if (!box.overlaps(self.itemCell(m, index, width, height))) continue;
+        self.paintItem(&r, pal, m, index, look);
+    }
+    self.paintMarks(&r, pal, m);
+    if (dirty) |box| {
+        for (@as(usize, @intCast(box.y0))..@as(usize, @intCast(box.y1))) |y| {
+            const row = y * stride;
+            @memcpy(self.retained[row + @as(usize, @intCast(box.x0)) .. row + @as(usize, @intCast(box.x1))], image.pixels[row + @as(usize, @intCast(box.x0)) .. row + @as(usize, @intCast(box.x1))]);
         }
-        if (look.pill_width > 0 and look.pill_opacity > 0) {
-            var accent = pal.accent;
-            accent[3] *= look.pill_opacity;
-            const width = m.size(look.pill_width);
-            const thickness = @max(2, m.size(4));
-            const cross: f32 = if (self.position == .top or self.position == .left) @as(f32, @floatFromInt(m.height - m.length(58))) - thickness else @floatFromInt(m.length(58));
-            if (self.position.vertical()) {
-                r.fillRect(cross, cy - width / 2, thickness, width, .{ .color = accent, .radius = @min(width, thickness) / 2 });
-            } else r.fillRect(cx - width / 2, cross, width, thickness, .{ .color = accent, .radius = @min(width, thickness) / 2 });
-        }
+        var region: @import("pixman").Region32 = undefined;
+        region.initRect(box.x0, box.y0, @intCast(box.x1 - box.x0), @intCast(box.y1 - box.y0));
+        defer region.deinit();
+        self.node.?.setBufferWithDamage(&image.base, &region);
+    } else {
+        self.retained = gpa.realloc(self.retained, image.pixels.len) catch blk: {
+            // Without a copy the next paint is a whole one.
+            gpa.free(self.retained);
+            break :blk &.{};
+        };
+        if (self.retained.len == image.pixels.len) @memcpy(self.retained, image.pixels);
+        self.node.?.setBuffer(&image.base);
+    }
+    self.base_drawn = base_key;
+    self.items_drawn = item_keys.len;
+    @memcpy(self.item_drawn[0..item_keys.len], item_keys);
+    self.node.?.setDestSize(self.box.width, self.box.height);
+}
+
+/// One button: its backdrop, icon and running pill.
+fn paintItem(self: *Self, r: *ui.paint.Renderer, pal: ui.theme.Theme, m: Metrics, index: usize, look: Look) void {
+    const zooms = self.output.?.server.config.compositor.dock_hover_zoom > 1;
+    const button = &self.buttons[index];
+    const x = button.computed_x;
+    const cx = x + button.computed_width / 2;
+    const cy = button.computed_y + button.computed_height / 2;
+    // An enlarging icon is the hover feedback: no rectangle behind it.
+    const pointer: ui.layout.ButtonState = if (zooms) .idle else button.kind.button.state;
+    ui.widgets.button.paintBackground(r, .{ .x = x, .y = button.computed_y, .w = button.computed_width, .h = button.computed_height }, .{ .variant = .ghost, .radius = m.size(12) }, .{ .pointer = pointer, .selected = look.focused });
+    if (look.icon) |icon| {
+        const size = @as(f32, @floatFromInt(m.length(36))) * look.zoom;
+        r.drawImageSmooth(cx - size / 2, cy - size / 2, size, size, 0, .{ .pixels = icon.pixels, .width = icon.size, .height = icon.size });
+    } else {
+        const size = @as(f32, @floatFromInt(m.length(34))) * look.zoom;
+        r.drawIcon(cx - size / 2, cy - size / 2, size, size, .{ .id = if (self.shortcuts[index]) |shortcut| switch (shortcut) {
+            .applications => .grid,
+            .files => .folder,
+            .terminal => .terminal,
+            .settings => .settings,
+        } else .generic, .color = pal.window_fg });
+    }
+    if (look.pill_width > 0 and look.pill_opacity > 0) {
+        var accent = pal.accent;
+        accent[3] *= look.pill_opacity;
+        const width = m.size(look.pill_width);
+        const thickness = @max(2, m.size(4));
+        const cross: f32 = if (self.position == .top or self.position == .left) @as(f32, @floatFromInt(m.height - m.length(58))) - thickness else @floatFromInt(m.length(58));
+        if (self.position.vertical()) {
+            r.fillRect(cross, cy - width / 2, thickness, width, .{ .color = accent, .radius = @min(width, thickness) / 2 });
+        } else r.fillRect(cx - width / 2, cross, width, thickness, .{ .color = accent, .radius = @min(width, thickness) / 2 });
+    }
+}
+
+/// What lies between and beside the buttons: the drop gap, the divider after the
+/// launcher and the scroll chevrons.
+fn paintMarks(self: *Self, r: *ui.paint.Renderer, pal: ui.theme.Theme, m: Metrics) void {
+    if (self.drop_slot) |slot| {
+        // A dragged application lands in this gap between two buttons.
+        const gap: f32 = @floatFromInt(m.itemStep() - m.length(48));
+        const along = @as(f32, @floatFromInt(m.padding() + @as(i32, @intCast(self.pin_base + slot)) * m.itemStep())) - gap / 2;
+        const thickness = @max(2, m.size(3));
+        const length = m.size(36);
+        const cross = (@as(f32, @floatFromInt(m.height)) - length) / 2;
+        if (self.position.vertical()) {
+            r.fillRect(cross, along - thickness / 2, length, thickness, .{ .color = pal.accent, .radius = thickness / 2 });
+        } else r.fillRect(along - thickness / 2, cross, thickness, length, .{ .color = pal.accent, .radius = thickness / 2 });
     }
     var divider = pal.window_fg;
     divider[3] = 0.16;
@@ -487,11 +904,9 @@ fn paintDock(self: *Self, pal: ui.theme.Theme, bg: [4]f32, looks: []const Look) 
     if (self.offset > 0) {
         if (self.position.vertical()) r.drawIcon(m.size(28), 1, m.size(12), m.size(10), .{ .id = .chevron_up, .color = pal.accent }) else r.drawIcon(1, m.size(28), m.size(10), m.size(12), .{ .id = .chevron_left, .color = pal.accent });
     }
-    if (self.offset + self.count - self.shortcutCount() < self.windows) {
+    if (self.offset + self.count - self.fixedCount() < self.windows) {
         if (self.position.vertical()) r.drawIcon(m.size(28), @as(f32, @floatFromInt(self.box.height)) - m.size(11), m.size(12), m.size(10), .{ .id = .chevron_down, .color = pal.accent }) else r.drawIcon(@as(f32, @floatFromInt(self.box.width)) - m.size(11), m.size(28), m.size(10), m.size(12), .{ .id = .chevron_right, .color = pal.accent });
     }
-    self.node.?.setBuffer(&image.base);
-    self.node.?.setDestSize(self.box.width, self.box.height);
 }
 
 fn paintTooltip(self: *Self) !void {
@@ -507,16 +922,16 @@ fn paintTooltip(self: *Self) !void {
     const pal = ui.theme.shellPalette();
     const value = self.label(index);
     var hasher = std.hash.Wyhash.init(0);
-    const usable = self.output.?.usableBox();
-    hashValue(&hasher, .{ pal, self.scale, self.position, self.box.width, usable.width, value });
+    const area = self.output.?.dockAreaBox();
+    hashValue(&hasher, .{ pal, self.scale, self.position, self.box.width, area.width, value });
     const key = hasher.final();
     if (key == self.tip_drawn) {
         // Same text: only the button under it may differ.
-        self.placeTooltip(hovered, self.tooltip.?.dst_width, usable);
+        self.placeTooltip(hovered, self.tooltip.?.dst_width, area);
         self.tooltip.?.node.setEnabled(true);
         return;
     }
-    const max_width = if (self.position.vertical()) usable.width - self.box.width - 18 else self.box.width;
+    const max_width = if (self.position.vertical()) area.width - self.box.width - 18 else self.box.width;
     const width: i32 = @intFromFloat(@min(@as(f32, @floatFromInt(max_width)), @max(80, (ui.text.measureWidthF(value, .manrope, pal.font_size, 1) catch 100) + 24)));
     const image = try PanelBuffer.create(width, 30, self.scale);
     defer image.base.drop();
@@ -528,12 +943,12 @@ fn paintTooltip(self: *Self) !void {
     r.drawText(10, 0, @floatFromInt(width - 20), 30, .{ .content = value, .font_size = pal.font_size, .color = pal.window_fg });
     self.tooltip.?.setBuffer(&image.base);
     self.tooltip.?.setDestSize(width, 30);
-    self.placeTooltip(hovered, width, usable);
+    self.placeTooltip(hovered, width, area);
     self.tooltip.?.node.setEnabled(true);
     self.tip_drawn = key;
 }
 
-fn placeTooltip(self: *Self, hovered: *ui.layout.Widget, width: i32, usable: wlr.Box) void {
+fn placeTooltip(self: *Self, hovered: *ui.layout.Widget, width: i32, area: wlr.Box) void {
     var x = self.box.x + @as(i32, @intFromFloat(hovered.computed_x + hovered.computed_width / 2)) - @divTrunc(width, 2);
     var y = self.box.y + @as(i32, @intFromFloat(hovered.computed_y + hovered.computed_height / 2)) - 15;
     switch (self.position) {
@@ -542,8 +957,8 @@ fn placeTooltip(self: *Self, hovered: *ui.layout.Widget, width: i32, usable: wlr
         .left => x = self.box.x + self.box.width + 8,
         .right => x = self.box.x - width - 8,
     }
-    x = std.math.clamp(x, usable.x, @max(usable.x, usable.x + usable.width - width));
-    y = std.math.clamp(y, usable.y, @max(usable.y, usable.y + usable.height - 30));
+    x = std.math.clamp(x, area.x, @max(area.x, area.x + area.width - width));
+    y = std.math.clamp(y, area.y, @max(area.y, area.y + area.height - 30));
     self.tooltip.?.node.setPosition(x - self.box.x, y - self.box.y);
 }
 
@@ -579,28 +994,20 @@ pub fn contextMenu(self: *Self, x: f64, y: f64, screen_x: i32) bool {
     const index = button.kind.button.id;
     const target = self.topAt(index);
     const shortcut = self.shortcuts[index];
-    if (target == null and shortcut == null) return false;
+    const pin: ?[]const u8 = if (self.pin_of[index]) |p| self.pins[p].id else null;
+    if (target == null and shortcut == null and pin == null) return false;
     const input = &self.output.?.server.input;
-    input.window_menu.openDock(self, target, shortcut, screen_x, self.box.y + @as(i32, @intFromFloat(y)));
+    input.window_menu.openDock(self, target, shortcut, pin, screen_x, self.box.y + @as(i32, @intFromFloat(y)));
     return input.window_menu.node != null;
 }
 
-pub fn remove(self: *Self, shortcut: ?Shortcut, target: ?*Toplevel) void {
+/// Removes a shortcut's launcher. Its app still shows while it runs.
+pub fn removeShortcut(self: *Self, shortcut: Shortcut) void {
     const server = self.output.?.server;
-    if (shortcut) |s| {
-        self.saveHidden("dock_hidden_shortcuts", @tagName(s)) catch |err| {
-            std.log.warn("could not remove dock shortcut: {}", .{err});
-            return;
-        };
-    } else if (target) |top| {
-        const id = top.appId();
-        if (id.len == 0) {
-            top.dock_hidden = true;
-        } else self.saveHidden("dock_hidden_apps", id) catch |err| {
-            std.log.warn("could not remove dock app: {}", .{err});
-            return;
-        };
-    } else return;
+    self.saveHidden("dock_hidden_shortcuts", @tagName(shortcut)) catch |err| {
+        std.log.warn("could not remove dock shortcut: {}", .{err});
+        return;
+    };
     var it = server.outputs.iterator(.forward);
     while (it.next()) |output| output.dock.invalidate();
 }
@@ -617,16 +1024,100 @@ fn saveHidden(self: *Self, comptime key: []const u8, name: []const u8) !void {
     @field(server.config.compositor, key) = items;
 }
 
+/// Where a dragged application would be pinned for a pointer at layout
+/// position `x`, `y`: the gap before that pin. Null when it is not over the dock.
+pub fn dropSlotAt(self: *const Self, x: f64, y: f64) ?usize {
+    if (!self.reachable() or self.count == 0) return null;
+    const local_x = x - @as(f64, @floatFromInt(self.box.x));
+    const local_y = y - @as(f64, @floatFromInt(self.box.y));
+    if (local_x < 0 or local_y < 0 or local_x >= @as(f64, @floatFromInt(self.box.width)) or local_y >= @as(f64, @floatFromInt(self.box.height))) return null;
+    const m = self.metrics();
+    return slotFor(if (self.position.vertical()) local_y else local_x, m.padding(), m.itemStep(), self.pin_base, self.pin_count);
+}
+
+/// The dock is on screen enough to be pointed at: an auto-hidden one is not
+/// there until it has mostly faded in.
+fn reachable(self: *const Self) bool {
+    return self.visible and !self.parked and self.reveal.value(anim.nowMs()) >= 0.5;
+}
+
+/// The nearest gap between buttons, as a pin position: icons sit one `step`
+/// apart after `padding`, the first pin at button `base`.
+fn slotFor(along: f64, padding: i32, step: i32, base: usize, pins: usize) usize {
+    const gap = @round((along - @as(f64, @floatFromInt(padding))) / @as(f64, @floatFromInt(step)));
+    return @intFromFloat(std.math.clamp(gap - @as(f64, @floatFromInt(base)), 0, @as(f64, @floatFromInt(pins))));
+}
+
+/// Shows (or clears) the drop marker of a drag in progress.
+pub fn setDropSlot(self: *Self, slot: ?usize) void {
+    if (self.drop_slot == slot) return;
+    self.drop_slot = slot;
+    self.repaint();
+}
+
+/// Pins an application, from the start menu, at `slot` among the pins. Quietly
+/// ignores one that is already pinned, is not installed, is a shortcut's own
+/// app, or does not fit.
+pub fn pinApp(self: *Self, app_id: []const u8, slot: usize) void {
+    const server = self.output.?.server;
+    const old = server.config.compositor.dock_pinned_apps;
+    if (old.len >= max_pins or hidden(old, app_id)) return;
+    {
+        const snapshot = server.start_menu_catalog.retainSnapshot();
+        defer snapshot.release();
+        const entry = default_apps.find(snapshot.entries, app_id) orelse return;
+        var scratch = std.heap.ArenaAllocator.init(gpa);
+        defer scratch.deinit();
+        const matches = self.shortcutApps(snapshot.entries, scratch.allocator());
+        for ([_]Shortcut{ .files, .terminal }) |shortcut| {
+            if (self.shortcutShown(shortcut) and std.mem.eql(u8, matches[@intFromEnum(shortcut)].id, entry.id)) return;
+        }
+    }
+    const at = if (slot < self.pin_count) self.pins[slot].config_index else old.len;
+    const a = server.config.arena.allocator();
+    const items = a.alloc([]const u8, old.len + 1) catch return;
+    @memcpy(items[0..at], old[0..at]);
+    items[at] = a.dupe(u8, app_id) catch return;
+    @memcpy(items[at + 1 ..], old[at..]);
+    self.savePinned(items);
+}
+
+pub fn unpinApp(self: *Self, app_id: []const u8) void {
+    const server = self.output.?.server;
+    const old = server.config.compositor.dock_pinned_apps;
+    const a = server.config.arena.allocator();
+    const items = a.alloc([]const u8, old.len) catch return;
+    var len: usize = 0;
+    for (old) |id| {
+        if (std.mem.eql(u8, id, app_id)) continue;
+        items[len] = id;
+        len += 1;
+    }
+    if (len == old.len) return;
+    self.savePinned(items[0..len]);
+}
+
+fn savePinned(self: *Self, items: []const []const u8) void {
+    const server = self.output.?.server;
+    @import("config").setting_save.saveCompositor(gpa, server.io, server.config.path, "dock_pinned_apps", items) catch |err| {
+        std.log.warn("could not save pinned dock apps: {}", .{err});
+        return;
+    };
+    server.config.compositor.dock_pinned_apps = items;
+    var it = server.outputs.iterator(.forward);
+    while (it.next()) |output| output.dock.invalidate();
+}
+
 /// Windows, theme or icons changed: rebuild on the output's next frame. A
 /// hidden dock rebuilds when it is shown again.
 pub fn invalidate(self: *Self) void {
     self.dirty = true;
-    if (self.visible) self.output.?.wlr_output.scheduleFrame();
+    if (self.visible and !self.parked) self.output.?.wlr_output.scheduleFrame();
 }
 
 pub fn scroll(self: *Self, delta: f64) void {
     // A pending rebuild may add windows; it clamps the offset.
-    if (delta == 0 or (!self.dirty and self.windows + self.shortcutCount() <= self.count)) return;
+    if (delta == 0 or (!self.dirty and self.windows + self.fixedCount() <= self.count)) return;
     if (delta > 0) self.offset +|= 1 else self.offset -|= 1;
     self.invalidate();
 }
@@ -664,8 +1155,14 @@ fn clicked(owner: ?*anyopaque, index: usize) void {
             if (top.minimized) top.restore() else server.world.focus(top);
             server.world.navigateTo(top, output);
         }
+    } else if (self.pin_of[index]) |pin_index| {
+        const snapshot = server.start_menu_catalog.retainSnapshot();
+        defer snapshot.release();
+        const id = self.pins[pin_index].id;
+        const entry = default_apps.find(snapshot.entries, id) orelse return;
+        @import("start_menu/launch.zig").launch(gpa, server, entry) catch |err| std.log.warn("could not launch pinned app {s}: {}", .{ id, err });
     } else if (self.shortcuts[index]) |shortcut| switch (shortcut) {
-        .applications => output.toggleStartMenu(),
+        .applications => output.toggleAppLauncher(),
         .files, .terminal => @import("config_runtime/actions.zig").executeAction(server, .{ .spawn = if (shortcut == .files) "default-file-manager" else "default-terminal" }),
         .settings => output.toggleControlCenter(),
     };

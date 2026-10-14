@@ -54,12 +54,12 @@ def run():
                         assert a['x'] + a['width'] <= b['x'] + 1, (a, b)
                 root = bar()[0]['global_box']
                 row = chips()
-                assert abs((row[0]['x'] + row[-1]['x'] + row[-1]['width']) / 2 - (root['x'] + root['width'] / 2)) <= 1, row
+                assert 0 <= row[0]['x'] - (box('start')['x'] + box('start')['width']) <= 32, row
                 assert box('start')['x'] < row[0]['x'] < box('clock')['x']
                 check_bounds()
                 ipc.action('open_appearance')
                 ipc.wait_for_panel_settled('control_center')
-                for name, expected in (('start', 0), ('windows', 1), ('tray', 2), ('clock', 2)):
+                for name, expected in (('start', 0), ('windows', 0), ('tray', 2), ('clock', 2)):
                     assert ui.scroll_into_view(f'taskbar_{name}_section')['selected_index'] == expected
                 # Move fixed controls and both primary groups to every section.
                 for name in ('clock', 'network', 'volume', 'start', 'windows', 'tray'):
@@ -119,7 +119,7 @@ def run():
                 wait_for(lambda: not any(w['name'] == 'tray/1' for w in bar()), 'legacy hidden network')
                 assert box('clock')['x'] < box('tray/0')['x']
                 row = chips()
-                assert abs((row[0]['x'] + row[-1]['x'] + row[-1]['width']) / 2 - (root['x'] + root['width'] / 2)) <= 1
+                assert 0 <= row[0]['x'] - (box('start')['x'] + box('start')['width']) <= 32, row
                 cfg.write_text(saved)
             for client in clients:
                 stop_process(client)
@@ -134,7 +134,7 @@ def run():
                 assert ui.scroll_into_view('taskbar_start_section')['selected_index'] == 2
                 assert ui.scroll_into_view('taskbar_windows_section')['selected_index'] == 2
                 assert ui.scroll_into_view('taskbar_clock_section')['selected_index'] == 2
-            print(f'PASS: taskbar sections, center default, section moves, bounds/input, visibility, Start menu, legacy config and restart ({scale}x)')
+            print(f'PASS: taskbar sections, left default, section moves, bounds/input, visibility, Start menu, legacy config and restart ({scale}x)')
         finally:
             for client in clients:
                 stop_process(client)

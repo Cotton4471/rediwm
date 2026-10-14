@@ -169,6 +169,8 @@ grab_y: f64 = 0,
 grab_box: wlr.Box = undefined,
 move_snap: MoveSnap = .{},
 tiling_grab: ?@import("tiling_grab.zig") = null,
+/// An application being dragged from the start menu to the dock.
+dock_drag: @import("dock_drag.zig") = .{},
 /// The last titlebar press, for double-click-to-maximize.
 title_press: ?TitlePress = null,
 /// Pointer presses so far: a double-click is two presses in a row.
@@ -1419,11 +1421,21 @@ pub fn warpCursor(input: *Input, x: f64, y: f64, time_msec: u32) void {
     }
 }
 
+/// An auto-hiding dock shows when the pointer reaches its edge. Moving or
+/// resizing a window, or holding a button for a client (a selection dragged to
+/// the edge), must not raise it; dragging an app from the start menu does.
+fn updateDockReveal(input: *Input) void {
+    const engaged = input.cursor_mode == .passthrough and (input.active_buttons == 0 or input.dock_drag.active());
+    var it = input.server.outputs.iterator(.forward);
+    while (it.next()) |output| output.dock.pointerAt(input.cursor.x, input.cursor.y, engaged);
+}
+
 pub fn processCursorMotion(input: *Input, time_msec: u32) void {
     if (input.server.locker != null or input.server.polkit_dialog != null or input.server.switcher.active()) return;
     defer input.updateGrabBorderGlow();
     input.positionDragIcon();
     input.drag_dodge.motion();
+    input.updateDockReveal();
     if (input.server.screenshot_selector.output != null) {
         input.server.screenshot_selector.motion(input.cursor.x, input.cursor.y);
         return;
@@ -1453,6 +1465,7 @@ pub fn processCursorMotion(input: *Input, time_msec: u32) void {
 }
 
 fn passthroughMotion(input: *Input, time_msec: u32) void {
+    if (input.dock_drag.motion(input)) return;
     // Shell controls keep receiving motion until release, just like a client's
     // implicit grab. A scrollbar drag may leave the whole window or panel.
     if (input.open_control_center) |cc| {
@@ -1992,10 +2005,11 @@ fn processClientButton(
             const local = cc.localPoint(input.cursor.x, input.cursor.y);
             control_center.pointerButtonUp(cc, local.x, local.y);
         }
-        if (input.open_start_menu) |sm| {
+        // A drag onto the dock ends here; the menu must not see it as a click.
+        if (!input.dock_drag.release(input, button)) if (input.open_start_menu) |sm| {
             const local = scene_data.toNodeLocal(&sm.buffer_node.node, input.cursor.x, input.cursor.y);
             sm.pointerButtonUp(local.x, local.y);
-        }
+        };
         if (input.open_power_menu) |pm| {
             const local = scene_data.toNodeLocal(&pm.buffer_node.node, input.cursor.x, input.cursor.y);
             pm.pointerButtonUp(local.x, local.y);
@@ -2155,6 +2169,7 @@ fn processClientButton(
         },
         .start_menu => |res| {
             res.menu.pointerButtonDown(res.sx, res.sy);
+            if (button == btn_left) if (res.menu.pressedApp()) |app| input.dock_drag.arm(input, app.id, app.icon, res.menu.wlr_output.scale);
             return;
         },
         .power_menu => |res| {
@@ -2633,6 +2648,10 @@ pub fn finishTilingGrab(input: *Input, commit: bool) void {
 }
 
 pub fn cancelDrag(input: *Input) bool {
+    if (input.dock_drag.active()) {
+        input.dock_drag.cancel(input);
+        return true;
+    }
     if (input.tiling_grab != null) {
         input.finishTilingGrab(false);
         input.processCursorMotion(0);

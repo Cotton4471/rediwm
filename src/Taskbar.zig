@@ -193,6 +193,8 @@ box: wlr.Box = .{ .x = 0, .y = 0, .width = 0, .height = default_bar_height },
 reserved: i32 = default_bar_height,
 // The original look: edge to edge, on the output's edge, square.
 flush: bool = true,
+// How far the background raster reaches past the output's far edges.
+bleed: Bleed = .{},
 glass_effect: ?*glass.Effect = null,
 item_layout: taskbar_items.Layout = .{},
 dirty: bool = true,
@@ -674,10 +676,47 @@ pub fn placement(bar: *Taskbar, output_box: wlr.Box) shape.Placement {
     });
 }
 
+/// Logical px the bar's background reaches past the far edges of its output.
+pub const Bleed = struct { x: i32 = 0, y: i32 = 0 };
+
+/// Fractional scale floors an output's logical size (2560 / 1.5 is 1706), so a
+/// flush bar that ends there stops a device pixel short of the panel and
+/// shows whatever is under it. It reaches one logical pixel further, where no
+/// other output starts just past that edge: the raster would draw on it.
+fn bleedFor(bar: *Taskbar, output_box: wlr.Box, placed: wlr.Box) Bleed {
+    if (!shape.flush(output_box, placed, barRadius())) return .{};
+    const out = bar.wlr_output;
+    const turned = @intFromEnum(out.transform) & 1 != 0;
+    const scale: f64 = out.scale;
+    const device_width: f64 = @floatFromInt(if (turned) out.height else out.width);
+    const device_height: f64 = @floatFromInt(if (turned) out.width else out.height);
+    var bleed: Bleed = .{};
+    if (device_width > @round(scale * @as(f64, @floatFromInt(output_box.width)))) bleed.x = 1;
+    if (placed.y + placed.height == output_box.y + output_box.height and
+        device_height > @round(scale * @as(f64, @floatFromInt(output_box.height)))) bleed.y = 1;
+    if (bleed.x == 0 and bleed.y == 0) return bleed;
+    const right: wlr.Box = .{ .x = output_box.x + output_box.width, .y = output_box.y, .width = 1, .height = output_box.height };
+    const below: wlr.Box = .{ .x = output_box.x, .y = output_box.y + output_box.height, .width = output_box.width, .height = 1 };
+    var outputs = bar.server.outputs.iterator(.forward);
+    while (outputs.next()) |other| {
+        if (other.wlr_output == out) continue;
+        var box: wlr.Box = undefined;
+        bar.server.output_layout.getBox(other.wlr_output, &box);
+        if (boxesOverlap(box, right)) bleed.x = 0;
+        if (boxesOverlap(box, below)) bleed.y = 0;
+    }
+    return bleed;
+}
+
+fn boxesOverlap(a: wlr.Box, b: wlr.Box) bool {
+    return a.x < b.x + b.width and b.x < a.x + a.width and a.y < b.y + b.height and b.y < a.y + a.height;
+}
+
 /// Whether the bar already sits where `placement` puts it.
 pub fn isPlaced(bar: *Taskbar, output_box: wlr.Box) bool {
     const wanted = bar.placement(output_box);
-    return std.meta.eql(bar.box, wanted.box) and bar.reserved == wanted.reserved;
+    return std.meta.eql(bar.box, wanted.box) and bar.reserved == wanted.reserved and
+        std.meta.eql(bar.bleed, bar.bleedFor(output_box, wanted.box));
 }
 
 // Repositions the strip along the configured output edge.
@@ -689,6 +728,7 @@ pub fn relayout(bar: *Taskbar, output_box: wlr.Box) void {
     bar.box = placed.box;
     bar.reserved = placed.reserved;
     bar.flush = shape.flush(output_box, bar.box, barRadius());
+    bar.bleed = bar.bleedFor(output_box, bar.box);
     glass.Effect.configure(bar.glass_effect, barRadius(), 1);
     bar.tree.node.setPosition(bar.box.x, bar.box.y);
     const now_ms = nowMs();
@@ -1624,7 +1664,7 @@ fn render(bar: *Taskbar, now_ms: i64, causes: u8) void {
     bar.renderAppTray();
     const bh = bar.box.height;
     if (bar.background_dirty) {
-        renderPart(bar, now_ms, .background, 0, 0, bar.box.width, bh, bar.buffer_node, null);
+        renderPart(bar, now_ms, .background, 0, 0, bar.box.width + bar.bleed.x, bh + bar.bleed.y, bar.buffer_node, null);
         bar.background_dirty = false;
     }
     bar.start_node.node.setEnabled(bar.itemShown(.start));

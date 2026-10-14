@@ -577,7 +577,7 @@ pub const Worker = struct {
                     if (@import("config").loader.load(cfg_path, mem, self.io, self.environ)) |loaded| {
                         var cfg = loaded;
                         defer cfg.deinit();
-                        themed = try @import("config").terminal_theme.wrap(mem, self.io, args.items, cfg.theme);
+                        themed = try @import("config").terminal_theme.wrap(mem, self.io, args.items, cfg.theme, cfg.compositor.terminal_opacity);
                     } else |_| {}
                 }
                 var child = try std.process.spawn(self.io, .{ .argv = themed, .cwd = cwd, .environ_map = &self.child_env });

@@ -653,6 +653,17 @@ fn actionSink(_: ?*pa.pa_context, info: ?*const pa.pa_sink_info, eol: c_int, use
                     .volume_down => current - 0.05,
                     else => unreachable,
                 };
+                // Raising the volume of a muted sink unmutes it, whatever
+                // asked (keys, taskbar scroll, sliders, IPC). `volume_up`
+                // counts even when already at the maximum.
+                const raising = switch (action) {
+                    .volume_up => true,
+                    .set_volume => volumeToPa(target) > pa.pa_cvolume_max(&sink.volume),
+                    else => false,
+                };
+                if (raising and (sink.mute != 0 or self.mute_timer != null)) {
+                    if (self.setMasterMuteLocked(sink.index, false, null)) |unmute| pa.pa_operation_unref(unmute);
+                }
                 if (pa.pa_cvolume_max(&volume) == 0) {
                     _ = pa.pa_cvolume_set(&volume, volume.channels, volumeToPa(target));
                     _ = pa.pa_cvolume_set_balance(&volume, &sink.channel_map, balance);

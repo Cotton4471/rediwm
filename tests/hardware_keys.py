@@ -115,6 +115,26 @@ print('fixture,backlight,700,70%,1000')
                     assert client.get_input_state() == focus, 'OSD changed input focus/state'
                     client.key_press('XF86AudioMute')
                     wait(lambda: not audio()['master_muted'], 'speaker unmute')
+                    # Raising the volume of a muted sink unmutes it; lowering it
+                    # does not. Keys and set_master_volume share the path.
+                    client.key_press('XF86AudioMute')
+                    wait(lambda: audio()['master_muted'], 'mute before lowering')
+                    client.key_press('XF86AudioLowerVolume')
+                    wait(lambda: abs(audio()['master_volume'] - .5) < .002, 'volume down while muted')
+                    time.sleep(.1)
+                    assert audio()['master_muted'], 'lowering the volume must not unmute'
+                    client.action('set_master_volume', {'volume': .4})
+                    wait(lambda: abs(audio()['master_volume'] - .4) < .002, 'set lower while muted')
+                    time.sleep(.1)
+                    assert audio()['master_muted'], 'setting a lower volume must not unmute'
+                    client.key_press('XF86AudioRaiseVolume')
+                    wait(lambda: not audio()['master_muted'] and abs(audio()['master_volume'] - .45) < .002, 'volume up unmutes')
+                    client.key_press('XF86AudioMute')
+                    wait(lambda: audio()['master_muted'], 'mute before set')
+                    client.action('set_master_volume', {'volume': .5})
+                    wait(lambda: not audio()['master_muted'] and abs(audio()['master_volume'] - .5) < .002, 'set higher unmutes')
+                    client.action('set_master_volume', {'volume': .55})
+                    wait(lambda: abs(audio()['master_volume'] - .55) < .002, 'volume restored')
                     client.key_press('XF86AudioMicMute')
                     wait(lambda: pactl('get-source-mute', 'osd_mic') == 'Mute: yes', 'mic mute')
                     time.sleep(.08)

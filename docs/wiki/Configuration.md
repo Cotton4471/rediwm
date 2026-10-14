@@ -70,15 +70,21 @@ Choose top, bottom, left or right; side docks stack upright icons vertically.
 or up to 1.5. The setting applies immediately and follows the animation and
 reduced-motion preferences.
 
+A dock keeps maximized, tiled and newly placed windows out of its strip, beside
+the taskbar's. **Auto-hide dock** (`dock_auto_hide = true`) lets windows use that
+space instead: the dock hides, and appears when the pointer reaches the screen
+edge it is on (and stays while the pointer is on it or its menu is open). Moving
+or resizing a window, or holding a button for an app, never reveals it.
+
 The taskbar has **Left**, **Center**, and **Right** sections in Appearance.
-Start defaults to the left, the window list to the center, and application tray
+Start and the window list default to the left, and application tray
 icons plus Battery, Network, Volume, and Clock to the right. Each item's section
 control moves it immediately; drag its handle (or use Up/Down while the handle
 is focused) to reorder it within that section. Visibility toggles keep its place.
 The center group stays centered on the display when it fits, and shifts or
 narrows the window list to avoid the side groups.
 
-For example, `taskbar_items = ["left:start", "center:windows", "right:tray",
+For example, `taskbar_items = ["left:start", "left:windows", "right:tray",
 "right:battery", "right:network", "right:volume", "right:clock"]` is the default.
 Use `"-right:clock"` to hide the clock. Existing four-item status lists still
 load, preserving their order and visibility alongside Start and the window list.
@@ -94,6 +100,7 @@ length, corner radius and outline are `[theme]` tokens (`docs/wiki/Theme.md`).
 | `default_file_manager`, `default_terminal` | `""` | desktop IDs, empty means Files / auto terminal |
 | `taskbar_position` | `"bottom"` | `top` or `bottom` |
 | `dock_position` | `"bottom"` | `top`, `bottom`, `left` or `right`; inside the usable area beside the taskbar |
+| `dock_auto_hide` | `false` | `true` hides the dock until the pointer reaches its edge, and frees its strip for windows; `false` reserves it |
 | `taskbar_items` | Start left, window list center, tray/status items right | ordered `section:item` entries; prefix with `-` to hide an item |
 | `focus_follows_mouse` | `false` | |
 | `canvas_columns`, `canvas_rows` | `3`, `3` | 1 to 10 |
@@ -109,9 +116,10 @@ length, corner radius and outline are `[theme]` tokens (`docs/wiki/Theme.md`).
 | `snap_to_edges` | `true` | |
 | `dodge_file_drags` | `true` | file manager slides aside while you drag a file out |
 | `drag_feedback` | `true` | softly lift a window during a move drag; suppressed by reduced motion |
-| `drag_scale` | `1.03` | drag lift multiplier, `1.00`–`1.10`; adjustable in Appearance |
+| `drag_scale` | `1.002` | drag lift multiplier, `1.000`–`1.100`; adjustable in Appearance |
 | `files_single_click_open` | `true` | Files opens files and folders with one click on their icon in list or icons view |
 | `switcher_opacity`, `inactive_opacity` | `1.0` | |
+| `terminal_opacity` | unset | 0.0 to 1.0, background alpha of Foot windows RediWM launches (new windows only; text stays opaque). Unset keeps the `alpha` of your own Foot configuration. Adjustable in Appearance |
 | `inactive_dim` | `true` | windows that are not the focus lose a little brightness and colour; fullscreen windows never dim. Settings, Appearance has the switch |
 | `inactive_dim_amount` | `0.08` | 0.0 to 0.5, the fraction of brightness and of colour an unfocused window loses |
 | `border_radius` | `10` | Legacy frame radius; `[theme].radius_lg` takes precedence. |

@@ -7,6 +7,10 @@ const c = @cImport({
 });
 /// The start-button logo; not an `IconId` glyph because it keeps its own colours.
 pub const redi_logo = @embedFile("redi-logo");
+/// The Settings app's colour icon (`settings_icon_name`), for when neither the
+/// active pack nor an installed icon theme has one.
+pub const settings_icon_png = @embedFile("rediwm-settings-icon");
+pub const settings_icon_name = "rediwm-settings";
 
 const Handle = opaque {};
 const GError = opaque {};
