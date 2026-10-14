@@ -125,6 +125,7 @@ canvas restore and shortcut overrides; supports `REDIWM_TEST_OUTPUTS=2`,
 GLES requires a render node; `--persistence-only` runs the restart/control checks), `window_snapping.py`, `initial_window_state.py` (startup
 maximize/fullscreen placement, restore, window rules and depth), `taskbar_peek.py`,
 `taskbar_title_repaint.py`, `window_urgency.py`, `start_menu.py`,
+`start_menu.py --launcher-only` (Super+Space in canvas and workspace modes, centered placement on a second output, fractional scale, live theme changes, keyboard/card launches, pin persistence and dismissal),
 `power_menu.py` (only ever activates Log Out), `control_center.py`,
 `control_center.py --services-only` (private systemd and polkit fixture: availability, in-table loading, unlock/lock and prompt cancellation, startup settings, Notify service types and isolated drop-in edits, runtime actions, authorization refusal, analysis, in-place state updates and coalesced reloads, signal-flood resistance, nothing read until the page is shown or while it is hidden, no RefUnit or unloaded-unit reads, the IPC lease, and lifetime),
 `calendar_popup.py`, `bluetooth.py` (private BlueZ service; Settings device search,

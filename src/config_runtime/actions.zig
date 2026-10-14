@@ -173,7 +173,7 @@ fn toggleStartMenu(server: *Server) void {
         var out_it = server.outputs.iterator(.forward);
         break :blk out_it.next();
     };
-    if (output) |out| out.toggleStartMenu();
+    if (output) |out| out.toggleAppLauncher();
 }
 
 fn setFocusedDepth(server: *Server, band: u8) void {

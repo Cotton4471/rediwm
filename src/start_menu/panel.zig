@@ -1,8 +1,6 @@
 // Compositor-drawn start menu panel.
 //
-// Charcoal panel, red outlined search field, spacious
-// two-line application rows, colorful icons, red selection marker, and bottom
-// category bar.
+// Taskbar menu and centered keyboard launcher, using the same themed widgets.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const glass = @import("../glass.zig");
@@ -50,6 +48,12 @@ const Highlights = struct { sel: f32 = 0, hover: f32 = 0, hover_alpha: f32 = 0 }
 const row_pitch: f32 = 60;
 
 pub const StartMenu = struct {
+    pub const Mode = enum { start, launcher };
+    mode: Mode = .start,
+    card_indices: [5]usize = undefined,
+    card_count: usize = 0,
+    card_icons: [5]?u64 = @splat(null),
+    card_selection: ?usize = null,
     server: *Server,
     wlr_output: *wlr.Output,
     buffer_node: *wlr.SceneBuffer,
@@ -102,6 +106,10 @@ pub const StartMenu = struct {
     prefetch_initialized: bool = false,
 
     pub fn create(server: *Server, wlr_output: *wlr.Output) !*StartMenu {
+        return createMode(server, wlr_output, .start);
+    }
+
+    pub fn createMode(server: *Server, wlr_output: *wlr.Output, mode: Mode) !*StartMenu {
         const menu = try gpa.create(StartMenu);
         errdefer gpa.destroy(menu);
 
@@ -111,6 +119,7 @@ pub const StartMenu = struct {
 
         menu.* = .{
             .server = server,
+            .mode = mode,
             .wlr_output = wlr_output,
             .buffer_node = buffer_node,
             .glass_effect = glass.Engine.attach(server.glass_engine, buffer_node, &buffer_node.node, .panel),
@@ -124,6 +133,7 @@ pub const StartMenu = struct {
         defer snap.release();
         try menu.model.bindSnapshot(snap, false);
 
+        server.launcher_history.load(server);
         menu.buildTree();
         menu.slide.retargetTo(anim.nowMs(), 1, anim.curveFor(.panel_slide));
         menu.relayout();
@@ -293,7 +303,7 @@ pub const StartMenu = struct {
 
     fn syncHoverRow(menu: *StartMenu) void {
         const row: ?usize = if (menu.dispatcher.hovered) |w| switch (w.kind) {
-            .row => |data| if (data.owner == @as(?*anyopaque, menu)) data.id else null,
+            .row => |data| if (data.owner == @as(?*anyopaque, menu) and data.on_click == onRowClick) data.id else null,
             else => null,
         } else null;
         menu.setHoverRow(row);
@@ -305,6 +315,9 @@ pub const StartMenu = struct {
         const menu: *StartMenu = @ptrCast(@alignCast(owner orelse return));
         const t = renderer.palette orelse theme.global;
         if (scroll.children.len == 0) return;
+        if (menu.mode == .launcher) {
+            for (scroll.children) |*row| renderer.fillRect(row.computed_x + 8, row.computed_y + row.computed_height + 1, @max(0, row.computed_width - 16), 1, .{ .color = t.border_soft });
+        }
         // Fades out as it reaches the selected row, which draws its own fill.
         const apart = std.math.clamp(@abs(menu.hl.hover - menu.hl.sel), 0, 1);
         const hover_alpha = std.math.clamp(menu.hl.hover_alpha, 0, 1) * apart;
@@ -317,7 +330,7 @@ pub const StartMenu = struct {
                 .border_color = scaleAlpha(t.border_soft, hover_alpha),
             });
         }
-        if (menu.model.results.len == 0) return;
+        if (menu.model.results.len == 0 or menu.card_selection != null) return;
         const box = rowBox(scroll, menu.hl.sel);
         renderer.fillRect(box.x, box.y, box.w, box.h, .{
             .color = t.start_menu_selected_bg,
@@ -405,6 +418,7 @@ pub const StartMenu = struct {
     // ---- Tree building ----
 
     pub fn buildTree(menu: *StartMenu) void {
+        if (menu.mode == .start) menu.card_selection = null;
         menu.dispatcher.reset();
         // Fresh rows carry no pointer state; let the hover fill fade out.
         menu.setHoverRow(null);
@@ -419,7 +433,7 @@ pub const StartMenu = struct {
         sw_children[0] = .{
             .name = "search_input",
             .kind = .{ .text_input = .{
-                .placeholder = "Type to search…",
+                .placeholder = if (menu.mode == .launcher) "Search applications…" else "Type to search…",
                 .field = .{ .leading_icon = .search, .leading_icon_size = 24, .leading_icon_color = t.window_fg },
                 .value = query_val,
                 .cursor_pos = @min(menu.query_cursor, query_val.len),
@@ -518,7 +532,7 @@ pub const StartMenu = struct {
             title_widget.* = .{
                 .kind = .{ .text = .{
                     .content = res.name,
-                    .font_size = 13.5,
+                    .font_size = if (menu.mode == .launcher) t.app_text_size else 13.5,
                     .weight = 600,
                     .color = t.fg,
                 } },
@@ -528,7 +542,7 @@ pub const StartMenu = struct {
             desc_widget.* = .{
                 .kind = .{ .text = .{
                     .content = res.description,
-                    .font_size = 11.5,
+                    .font_size = if (menu.mode == .launcher) t.app_status_size else 11.5,
                     .weight = 400,
                     .color = t.dim,
                 } },
@@ -549,7 +563,20 @@ pub const StartMenu = struct {
 
             // Row children: image, text column, optional enter hint
             var row_kids: []Widget = undefined;
-            if (is_sel) {
+            if (menu.mode == .launcher) {
+                var output_box: wlr.Box = undefined;
+                menu.server.output_layout.getBox(menu.wlr_output, &output_box);
+                const show_id = @min(menu.wantedSize().width, @as(f32, @floatFromInt(output_box.width)) - 40) >= 700;
+                row_kids = a.alloc(Widget, if (show_id) 5 else 4) catch return;
+                row_kids[0] = img_widget.*;
+                row_kids[1] = col_widget.*;
+                if (show_id) row_kids[2] = .{
+                    .kind = .{ .text = .{ .content = res.id, .font_size = t.app_status_size, .color = t.dim } },
+                    .width = .{ .fixed = 170 },
+                };
+                row_kids[row_kids.len - 2] = menu.pinButton(idx);
+                row_kids[row_kids.len - 1] = .{ .kind = .{ .icon = .{ .id = .chevron_right, .color = t.dim } }, .width = .{ .fixed = 14 }, .height = .{ .fixed = 14 } };
+            } else if (is_sel) {
                 const hint_widget = a.create(Widget) catch return;
                 hint_widget.* = .{
                     .kind = .{ .text = .{
@@ -738,6 +765,23 @@ pub const StartMenu = struct {
             root_kids[4] = footer_widget.*;
         }
 
+        var children = root_kids;
+        if (menu.mode == .launcher) {
+            const recent = menu.buildCards(a) catch return;
+            var launcher_kids: std.ArrayList(Widget) = .empty;
+            launcher_kids.append(a, search_wrapper.*) catch return;
+            if (recent) |cards| launcher_kids.appendSlice(a, &cards) catch return;
+            launcher_kids.append(a, heading_wrapper.*) catch return;
+            if (error_widget) |err| launcher_kids.append(a, err.*) catch return;
+            launcher_kids.append(a, scroll_widget.*) catch return;
+            if (row_count == 0) launcher_kids.append(a, .{
+                .name = "no_results",
+                .kind = .{ .text = .{ .content = "No applications found", .font_size = t.app_text_size, .color = t.dim } },
+                .margin = layout.Edges.xy(24, 16),
+            }) catch return;
+            children = launcher_kids.toOwnedSlice(a) catch return;
+        }
+
         menu.root = .{
             .kind = .{ .rect = .{
                 .color = t.start_menu_bg,
@@ -748,7 +792,8 @@ pub const StartMenu = struct {
             .direction = .column,
             .width = .{ .fixed = menu.wantedSize().width },
             .height = .auto,
-            .children = root_kids,
+            .children = children,
+            .padding = if (menu.mode == .launcher) .{ .bottom = 16 } else .{},
         };
         menu.root.linkParents();
         // Bind before the opening click release, which otherwise clears search focus.
@@ -763,11 +808,136 @@ pub const StartMenu = struct {
         }
     }
 
+    fn pinButton(menu: *StartMenu, index: usize) Widget {
+        const result = menu.model.results[index];
+        const pinned = menu.server.launcher_history.pinned(result.id);
+        const full = !pinned and menu.server.launcher_history.pinCount() >= 5;
+        return .{
+            .name = "pin_app",
+            .kind = .{ .button = .{
+                .label = if (pinned) "Unpin application" else if (full) "Five applications already pinned" else "Pin application",
+                .icon = if (pinned) .checkmark else .plus,
+                .variant = if (pinned) .primary else .ghost,
+                .size = .sm,
+                .owner = menu,
+                .id = index,
+                .on_click = onPinClick,
+                .state = if (result.app_entry == null) .disabled else .idle,
+            } },
+            .width = .{ .fixed = 28 },
+            .height = .{ .fixed = 28 },
+        };
+    }
+
+    fn buildCards(menu: *StartMenu, a: Allocator) !?[2]Widget {
+        menu.card_count = 0;
+        menu.card_icons = @splat(null);
+        if (menu.model.query.items.len > 0) {
+            menu.card_selection = null;
+            return null;
+        }
+        const wanted = menu.wantedSize();
+        var box: wlr.Box = undefined;
+        menu.server.output_layout.getBox(menu.wlr_output, &box);
+        // Leave room for search and results on short/fractionally scaled outputs.
+        if (@min(wanted.height, @as(f32, @floatFromInt(box.height)) * 0.85) < 420) {
+            menu.card_selection = null;
+            return null;
+        }
+        const width = @min(wanted.width, @as(f32, @floatFromInt(box.width)) - 40);
+        const capacity: usize = @intFromFloat(std.math.clamp(@floor((width - 40) / 116), 1, 5));
+        menu.card_count = menu.server.launcher_history.cards(menu.model.results, menu.card_indices[0..capacity]);
+        const have_history = menu.card_count > 0;
+        if (!have_history) {
+            for (menu.model.results, 0..) |result, i| {
+                if (result.app_entry == null) continue;
+                menu.card_indices[menu.card_count] = i;
+                menu.card_count += 1;
+                if (menu.card_count == capacity) break;
+            }
+        }
+        if (menu.card_count == 0) {
+            menu.card_selection = null;
+            return null;
+        }
+        if (menu.card_selection) |selected| {
+            if (selected >= menu.card_count) menu.card_selection = null;
+        }
+        const t = menuPalette();
+        const cards = try a.alloc(Widget, menu.card_count);
+        for (menu.card_indices[0..menu.card_count], 0..) |index, i| {
+            const result = menu.model.results[index];
+            const top = try a.dupe(Widget, &.{
+                .{ .kind = .container, .width = .{ .flex = 1 } },
+                menu.pinButton(index),
+            });
+            const children = try a.dupe(Widget, &.{
+                .{ .kind = .container, .direction = .row, .width = .{ .percent = 1 }, .height = .{ .fixed = 28 }, .children = top },
+                .{ .kind = .{ .image = .{ .fallback_icon = .generic, .radius = t.radius } }, .width = .{ .fixed = 48 }, .height = .{ .fixed = 48 } },
+                .{ .kind = .{ .text = .{ .content = result.name, .font_size = t.app_text_size, .color = t.fg } }, .width = .{ .percent = 1 }, .height = .{ .fixed = 22 } },
+            });
+            cards[i] = .{
+                .name = "recent_app",
+                .kind = .{ .row = .{
+                    .owner = menu,
+                    .id = index,
+                    .on_click = onCardClick,
+                    .selected = menu.card_selection == i,
+                    .background = .{ .color = t.start_menu_search_bg, .radius = t.radius, .border_width = 1, .border_color = t.border_soft },
+                    .hover_background = .{ .color = t.start_menu_selected_bg, .radius = t.radius, .border_width = 1, .border_color = t.start_menu_selected_border },
+                } },
+                .direction = .column,
+                .@"align" = .center,
+                .gap = 6,
+                .padding = layout.Edges.xy(10, 6),
+                .width = .{ .fixed = (width - 40 - @as(f32, @floatFromInt(capacity - 1)) * 10) / @as(f32, @floatFromInt(capacity)) },
+                .height = .{ .fixed = 126 },
+                .children = children,
+            };
+        }
+        return .{
+            .{ .name = "recent_heading", .kind = .container, .direction = .row, .@"align" = .center, .padding = layout.Edges.xy(24, 6), .height = .{ .fixed = 34 }, .children = try a.dupe(Widget, &.{.{ .kind = .{ .text = .{
+                .content = if (have_history) "Pinned & Recent" else "Quick Launch",
+                .font_size = t.app_heading_size,
+                .weight = 600,
+                .color = t.dim,
+            } } }}) },
+            .{ .name = "recent_cards", .kind = .container, .direction = .row, .gap = 10, .padding = .{ .left = 20, .right = 20, .bottom = 16 }, .width = .{ .percent = 1 }, .children = cards },
+        };
+    }
+
+    fn onCardClick(owner: ?*anyopaque, id: usize) void {
+        const menu: *StartMenu = @ptrCast(@alignCast(owner orelse return));
+        menu.activateResult(id);
+    }
+
+    fn onPinClick(owner: ?*anyopaque, id: usize) void {
+        const menu: *StartMenu = @ptrCast(@alignCast(owner orelse return));
+        if (id >= menu.model.results.len) return;
+        const result = menu.model.results[id];
+        if (result.app_entry == null) return;
+        const scroll = menu.currentScrollOffset();
+        const history = &menu.server.launcher_history;
+        if (!history.pinned(result.id) and history.pinCount() >= 5) {
+            menu.model.error_msg = "Unpin an application first (five pins maximum).";
+        } else {
+            menu.model.error_msg = null;
+            history.togglePin(menu.server, result.id);
+        }
+        menu.buildTree();
+        menu.restoreScrollOffset(scroll);
+        menu.requestRepaint();
+    }
+
     /// The size the theme asks for on this menu's output, before the caps in
     /// `relayout`: its own values, else the automatic ones (`size.zig`).
     fn wantedSize(menu: *StartMenu) size_mod.Size {
         var box: wlr.Box = undefined;
         menu.server.output_layout.getBox(menu.wlr_output, &box);
+        if (menu.mode == .launcher) return .{
+            .width = if (theme.global.start_menu_width > 0) theme.global.start_menu_width else 760,
+            .height = if (theme.global.start_menu_max_height > 0) theme.global.start_menu_max_height else 720,
+        };
         return size_mod.wanted(theme.global, @floatFromInt(box.width), @floatFromInt(box.height));
     }
 
@@ -781,13 +951,17 @@ pub const StartMenu = struct {
         const max_allowed_h = @min(wanted.height, @as(f32, @floatFromInt(output_box.height)) * 0.85);
         const max_allowed_w = @min(wanted.width, @as(f32, @floatFromInt(output_box.width)) - 40);
 
-        const target_height = @max(240, max_allowed_h);
-        const target_width = @max(320, max_allowed_w);
+        const target_height = if (menu.mode == .launcher) @max(1, max_allowed_h) else @max(240, max_allowed_h);
+        const target_width = if (menu.mode == .launcher) @max(1, max_allowed_w) else @max(320, max_allowed_w);
 
+        const scroll_offset = menu.currentScrollOffset();
+        if (menu.mode == .launcher and menu.panel_box.width > 0 and
+            (menu.panel_box.width != @as(i32, @intFromFloat(target_width)) or menu.panel_box.height != @as(i32, @intFromFloat(target_height)))) menu.buildTree();
         menu.root.width = .{ .fixed = target_width };
         menu.root.height = .{ .fixed = target_height };
         ui.measure.measure(&menu.root, target_width, target_height);
         ui.arrange.arrange(&menu.root, 0, 0, target_width, target_height);
+        menu.restoreScrollOffset(scroll_offset);
 
         const bottom_offset: f32 = @as(f32, @floatFromInt(Taskbar.barHeight())) + theme.global.start_menu_bottom_pad;
         const start_offset: f32 = if (Output.fromWlr(menu.wlr_output)) |output| if (output.taskbar) |bar| @floatFromInt(bar.startButtonBox().x - output_box.x - Taskbar.startButtonLeft()) else 0 else 0;
@@ -799,6 +973,10 @@ pub const StartMenu = struct {
             .width = @intFromFloat(target_width),
             .height = @intFromFloat(target_height),
         };
+        if (menu.mode == .launcher) {
+            menu.panel_box.x = output_box.x + @divTrunc(output_box.width - menu.panel_box.width, 2);
+            menu.panel_box.y = output_box.y + @divTrunc(output_box.height - menu.panel_box.height, 2);
+        }
         menu.dirty = true;
         menu.paintContent();
         menu.applyPresentation(anim.nowMs());
@@ -842,6 +1020,18 @@ pub const StartMenu = struct {
             }
         }
 
+        for (menu.root.children) |*strip| {
+            if (!std.mem.eql(u8, strip.name orelse "", "recent_cards")) continue;
+            for (strip.children, 0..) |*card, i| {
+                const img = &card.children[1];
+                const result = menu.model.results[menu.card_indices[i]];
+                const lookup = if (result.icon) |name| menu.server.iconLookup(name, geometry.devicePixels(48, menu.wlr_output.scale)) else icon_service.Lookup.missing;
+                if (updateIcon(&img.kind.image, &menu.card_icons[i], lookup)) {
+                    img.markPaintDirty();
+                    changed = true;
+                }
+            }
+        }
         if (have_viewport) menu.prefetchAhead(scroll_offset, first_visible, last_visible);
         return changed;
     }
@@ -854,9 +1044,7 @@ pub const StartMenu = struct {
     // prefetch for the new one. `results.ptr` changing is a cheap, reliable
     // "new query/category" signal — `Model.update` always rebuilds
     // `results` from a fresh arena allocation, even for identical content.
-    // No favourites prefetch: this codebase has no favourites/launch-history
-    // source to prefetch from (see plan-performance-4-icon-preparation.md
-    // step 5), and none is added here just for this optimization.
+    // Recent-card icons are visible lookups handled alongside the list above.
     fn prefetchAhead(menu: *StartMenu, scroll_offset: f32, first_visible: ?usize, last_visible: usize) void {
         const results_ptr: [*]const SearchResult = menu.model.results.ptr;
         const results_changed = !menu.prefetch_initialized or results_ptr != menu.prefetch_results_ptr;
@@ -933,6 +1121,10 @@ pub const StartMenu = struct {
     // ---- Interaction & Actions ----
 
     pub fn activateSelected(menu: *StartMenu) void {
+        if (menu.card_selection) |i| {
+            if (i < menu.card_count) menu.activateResult(menu.card_indices[i]);
+            return;
+        }
         if (menu.model.selected_index < menu.model.results.len) {
             menu.activateResult(menu.model.selected_index);
         }
@@ -956,7 +1148,8 @@ pub const StartMenu = struct {
             menu.model.launching = true;
             launch.launch(gpa, menu.server, entry) catch |err| {
                 menu.model.launching = false;
-                menu.model.error_msg = std.fmt.allocPrint(menu.tree_arena.allocator(), "Launch failed: {s}", .{@errorName(err)}) catch "Launch failed";
+                log.err("launch failed: {s}", .{@errorName(err)});
+                menu.model.error_msg = "Launch failed. The application may have been removed.";
                 menu.buildTree();
                 menu.requestRepaint();
                 return;
@@ -979,6 +1172,15 @@ pub const StartMenu = struct {
         const edit_mods = ui.input.Mods{ .shift = mods.shift };
         if (state == .released) return true;
 
+        // Left/right navigate the quick-launch strip; typing returns to search.
+        if (menu.card_selection) |selected| {
+            if (@intFromEnum(keysym) == xkb.Keysym.Left or @intFromEnum(keysym) == xkb.Keysym.Right) {
+                menu.card_selection = if (@intFromEnum(keysym) == xkb.Keysym.Left) selected -| 1 else @min(selected + 1, menu.card_count - 1);
+                menu.buildTree();
+                menu.requestRepaint();
+                return true;
+            }
+        }
         // Pressed:
         switch (@intFromEnum(keysym)) {
             xkb.Keysym.Escape => {
@@ -1006,6 +1208,12 @@ pub const StartMenu = struct {
                 return true;
             },
             xkb.Keysym.Tab => {
+                if (menu.mode == .launcher) {
+                    menu.card_selection = if (menu.card_selection == null and menu.card_count > 0) 0 else null;
+                    menu.buildTree();
+                    menu.requestRepaint();
+                    return true;
+                }
                 // Cycle category
                 const next_cat: Category = if (menu.model.category == .all) .apps else .all;
                 const snap = menu.server.start_menu_catalog.retainSnapshot();
@@ -1105,7 +1313,9 @@ pub const StartMenu = struct {
     }
 
     fn navigateResults(menu: *StartMenu, delta: isize) void {
-        if (menu.model.moveSelection(delta)) {
+        const was_card = menu.card_selection != null;
+        menu.card_selection = null;
+        if (menu.model.moveSelection(delta) or was_card) {
             menu.sel_pos.retargetTo(anim.nowMs(), @floatFromInt(menu.model.selected_index), anim.curveFor(.start_glide));
             menu.syncQueryState();
             menu.buildTree();
@@ -1129,6 +1339,7 @@ pub const StartMenu = struct {
     }
 
     fn onQueryEdited(menu: *StartMenu) void {
+        menu.card_selection = null;
         // Read text input value back into model
         if (menu.dispatcher.focused) |focused| {
             if (std.meta.activeTag(focused.kind) == .text_input) {

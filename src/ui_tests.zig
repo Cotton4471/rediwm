@@ -53,6 +53,7 @@ test {
     _ = @import("start_menu/launch.zig");
     _ = @import("start_menu/search.zig");
     _ = @import("start_menu/model.zig");
+    _ = @import("start_menu/history.zig");
     _ = @import("start_menu/panel.zig");
     _ = @import("icon_cache.zig");
     _ = @import("ui").shell_icons;

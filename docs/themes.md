@@ -214,3 +214,26 @@ The small pack in `tests/fixtures/theme-pack/` supplies a glyph, folder icon,
 wallpaper and logo. `tests/theme_packs.py` adds a real cursor and exercises
 installation, live switching, restoration, overrides and hostile archives.
 The greeter never discovers or reads user packs.
+
+## Application launcher
+
+Super+Space opens the application launcher in the centre of the pointer's
+display. The taskbar Start button keeps the compact, edge-anchored menu.
+The existing `toggle_start_menu` shortcut action opens the centered launcher,
+so saved shortcut overrides continue to work.
+
+Type to filter applications, use Up/Down and Enter to launch, and Escape or
+Super+Space to dismiss. Tab switches between the list and the quick-launch
+cards; Left/Right select a card. Use the + button to pin an application and
+the checkmark to unpin it (up to five pins). Pins and recent launches are saved
+in `$XDG_STATE_HOME/rediwm/launcher`, falling back to
+`~/.local/state/rediwm/launcher`. With no history, Quick Launch offers the
+first applications in alphabetical order. On short displays, the cards are
+omitted to leave space for search results.
+
+The launcher shares the `start_menu_*` theme colours, corner radius, search
+field and selection styling with Start, as well as the shell's shared field
+and button tokens, application text sizes and icon theme.
+`start_menu_width` and `start_menu_max_height` override its automatic
+760×720 logical-pixel size; the panel is always capped to fit its display.
+Theme changes apply immediately while it is open.

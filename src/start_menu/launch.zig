@@ -220,7 +220,8 @@ pub fn launch(
     server: *Server,
     entry: *const AppEntry,
 ) !void {
-    return launchUris(allocator, server, entry, &.{});
+    try launchUris(allocator, server, entry, &.{});
+    server.launcher_history.launched(server, entry.id);
 }
 
 pub fn launchUris(allocator: Allocator, server: *Server, entry: *const AppEntry, uris: []const []const u8) !void {

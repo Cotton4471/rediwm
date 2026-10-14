@@ -4,7 +4,7 @@
 
 | Keys | Action |
 | --- | --- |
-| Super+Space | start menu |
+| Super+Space | centered app launcher |
 | Super+T / E / B | terminal / Files / browser |
 | Super+Q, Super+F, Super+M | close, fullscreen, maximize |
 | Super+Shift+arrows | tile halves and quarters |

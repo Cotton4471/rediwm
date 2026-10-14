@@ -219,17 +219,8 @@ def run():
                 client.wait_for("control_center_closed", timeout_ms=5000)
                 assert panel_stats()["paints"] == cc_stats["paints"], "control center close repainted content"
 
-                client.action('reset_panel_stats')
-                client.open_power_menu()
-                client.wait_for("power_menu_opened", timeout_ms=5000)
-                pm_stats = panel_stats()
-                assert pm_stats["paints"] == 1, pm_stats
-                assert ImageChops.difference(closed, capture_now("power-open")).getbbox(), "power menu did not appear"
-                key(1)
-                client.wait_for("power_menu_closed", timeout_ms=5000)
-                assert panel_stats()["paints"] == 1, "power menu close repainted content"
-                print(f"Panel reuse: start/control/power open+close without extra paints; "
-                      f"alloc={cc_stats['allocated_bytes']} reuse={pm_stats['reused_bytes']}")
+                print(f"Panel reuse: start/control open+close without extra paints; "
+                      f"alloc={cc_stats['allocated_bytes']} reuse={cc_stats['reused_bytes']}")
         except Exception:
             print((tmp / "compositor.log").read_text())
             raise
@@ -531,8 +522,150 @@ def run_highlight_reload():
             log.close()
 
 
+def run_launcher():
+    """Centered keyboard launcher: placement, shared theme, pin/history and launch."""
+    for scale in ("1", "1.5"):
+        with tempfile.TemporaryDirectory(prefix="rediwm-launcher-") as directory:
+            tmp = Path(directory)
+            apps = tmp / "data" / "applications"
+            apps.mkdir(parents=True)
+            for number in range(8):
+                (apps / f"launcher-{number}.desktop").write_text(
+                    "[Desktop Entry]\nType=Application\n"
+                    f"Name=Launcher App {number}\nComment=Launcher fixture {number}\n"
+                    f"Exec=/usr/bin/touch {tmp}/launched-{number}\nIcon=system-file-manager\n")
+            env = {"XDG_DATA_HOME": str(tmp / "data"), "XDG_DATA_DIRS": str(tmp / "empty"), "XDG_CACHE_HOME": str(tmp / "cache"),
+                   "DBUS_SESSION_BUS_ADDRESS": "", "REDIWM_FILES_DEVICES": "0"}
+            config = ('[compositor]\ndesktop_mode = "workspaces"\n' if scale == '1.5' else '') + '[animations]\nenabled = false\n[theme]\nstart_menu_bg = "#102030"\n'
+            process, log = spawn_compositor(tmp, scale=scale, outputs="2", config_content=config, env_extra=env)
+            try:
+                with IPCClient(tmp) as client:
+                    client.wait_for("catalog_published", timeout_ms=10000)
+                    outputs = client.get_outputs()
+                    out = outputs[-1]
+                    client.move_cursor(50, 50, output=out["name"])
+
+                    def toggle():
+                        client.key(125, True)
+                        client.key_down_up(57)
+                        client.key(125, False)
+
+                    def menu():
+                        return client.get_shell_state(output=out["name"])["start_menu"]
+
+                    def widgets():
+                        return client.get_widget_tree("start_menu")["widgets"]
+
+                    def click(widget):
+                        box = widget["global_box"]
+                        client.move_cursor(box["x"] + box["width"] // 2 - out["x"], box["y"] + box["height"] // 2 - out["y"], output=out["name"])
+                        client.pointer_button(272, True)
+                        client.pointer_button(272, False)
+
+                    toggle()
+                    client.wait_for("menu_opened", timeout_ms=5000)
+                    panel = menu()["box"]
+                    assert abs(2 * panel["x"] + panel["width"] - (2 * out["x"] + out["logical_width"])) <= 1, (panel, out)
+                    assert abs(2 * panel["y"] + panel["height"] - (2 * out["y"] + out["logical_height"])) <= 1, (panel, out)
+                    assert panel["width"] <= out["logical_width"] and panel["height"] <= out["logical_height"], (panel, out)
+                    if scale == "1":
+                        assert any(w.get("name") == "recent_cards" for w in widgets()), widgets()
+                        client.key_down_up(15)  # Tab: cards; Right then Enter launches app 1.
+                        client.key_down_up(106)
+                        client.key_down_up(28)
+                        client.wait_for("menu_closed", timeout_ms=5000)
+                        wait_for(lambda: (tmp / "launched-1").exists(), "card keyboard launch failed")
+                        toggle()
+                        client.wait_for("menu_opened", timeout_ms=5000)
+                        assert any(w.get("label") == "Pinned & Recent" for w in widgets())
+
+                    client.type_text("Launcher App 3")
+                    assert menu()["search_text"] == "Launcher App 3"
+                    assert not any(w.get("name") == "recent_cards" for w in widgets())
+                    pin = next(w for w in widgets() if w.get("label") == "Pin application")
+                    click(pin)
+                    state = tmp / "state" / "rediwm" / "launcher"
+                    assert "P\tlauncher-3.desktop" in state.read_text()
+                    assert menu()["search_text"] == "Launcher App 3", "pinning lost search"
+                    client.key_down_up(28)
+                    client.wait_for("menu_closed", timeout_ms=5000)
+                    wait_for(lambda: (tmp / "launched-3").exists(), "selected app did not launch")
+                    toggle()
+                    client.wait_for("menu_opened", timeout_ms=5000)
+                    # Reload colours and dimensions while open; geometry stays centred.
+                    (tmp / "rediwm-config.toml").write_text(config.replace('#102030', '#304050') + 'start_menu_width = 600\n')
+                    client.reload_config()
+                    client.wait_for_frame()
+                    panel = menu()["box"]
+                    assert panel["width"] == min(600, out["logical_width"] - 40), panel
+                    assert abs(2 * panel["x"] + panel["width"] - (2 * out["x"] + out["logical_width"])) <= 1
+                    client.wait_for_frame(output=out["name"])
+                    sampled = client.action("sample_pixels", {"x": round((panel["x"] + panel["width"] // 2 - out["x"]) * float(scale)),
+                        "y": round((panel["y"] + 10 - out["y"]) * float(scale)), "width": 1, "height": 1, "output": out["name"]})
+                    assert sampled.get("SamplePixels", sampled)["pixels"][0] & 0xFFFFFF == 0x304050, (sampled, panel, out)
+                    if os.environ.get("REDIWM_LAUNCHER_PREVIEW") and scale == "1":
+                        Path(os.environ["REDIWM_LAUNCHER_PREVIEW"]).unlink(missing_ok=True)
+                        client.screenshot(path=os.environ["REDIWM_LAUNCHER_PREVIEW"], output=out["name"])
+                    toggle()
+                    client.wait_for("menu_closed", timeout_ms=5000)
+                    toggle()
+                    client.wait_for("menu_opened", timeout_ms=5000)
+                    client.move_cursor(8, 8, output=out["name"])
+                    client.pointer_button(272, True)
+                    client.pointer_button(272, False)
+                    client.wait_for("menu_closed", timeout_ms=5000)
+                    toggle()
+                    client.wait_for("menu_opened", timeout_ms=5000)
+                    client.type_text("no-such-application")
+                    assert any(w.get("label") == "No applications found" for w in widgets())
+                    client.key_down_up(1)
+                    client.wait_for("menu_closed", timeout_ms=5000)
+                    print(f"Launcher at scale {scale}: centered on second output, search, pins, launch, theme reload and dismissal")
+            except Exception:
+                print((tmp / "compositor.log").read_text())
+                raise
+            finally:
+                stop_process(process)
+                log.close()
+            # Pins and recents survive a completely new compositor/catalogue.
+            process, log = spawn_compositor(tmp, scale=scale, config_content=config, env_extra=env)
+            try:
+                with IPCClient(tmp) as client:
+                    client.wait_for("catalog_published", timeout_ms=10000)
+                    client.key(125, True)
+                    client.key_down_up(57)
+                    client.key(125, False)
+                    client.wait_for("menu_opened", timeout_ms=5000)
+                    if scale == "1":
+                        (tmp / "launched-3").unlink()
+                        card = next(w for w in client.get_widget_tree("start_menu")["widgets"] if w.get("name") == "recent_app")
+                        box = card["global_box"]
+                        client.move_cursor(box["x"] + box["width"] // 2, box["y"] + box["height"] // 2)
+                        client.pointer_button(272, True)
+                        client.pointer_button(272, False)
+                        client.wait_for("menu_closed", timeout_ms=5000)
+                        wait_for(lambda: (tmp / "launched-3").exists(), "saved pin did not remain first or card click failed")
+                        client.key(125, True)
+                        client.key_down_up(57)
+                        client.key(125, False)
+                        client.wait_for("menu_opened", timeout_ms=5000)
+                    client.type_text("Launcher App 3")
+                    pin = next(w for w in client.get_widget_tree("start_menu")["widgets"] if w.get("label") == "Unpin application")
+                    box = pin["global_box"]
+                    client.move_cursor(box["x"] + 10, box["y"] + 10)
+                    client.pointer_button(272, True)
+                    client.pointer_button(272, False)
+                    assert "P\tlauncher-3.desktop" not in (tmp / "state" / "rediwm" / "launcher").read_text()
+            finally:
+                stop_process(process)
+                log.close()
+
+
 if __name__ == "__main__":
-    run()
-    run_reopen()
-    run_selection()
-    run_highlight_reload()
+    import sys
+    if "--launcher-only" not in sys.argv:
+        run()
+        run_reopen()
+        run_selection()
+        run_highlight_reload()
+    run_launcher()

@@ -5,6 +5,7 @@ pub const source =
     \\"Super+c" = "close_window"
     \\"Super+e" = "spawn default-file-manager"
     \\"Super+r" = "toggle_start_menu"
+    \\"Super+space" = "toggle_start_menu"
     \\"Super+m" = "toggle_power_menu"
     \\"Super+f" = "toggle_fullscreen"
     \\"Super+l" = "lock_screen"

@@ -185,6 +185,7 @@ config_generation: u64 = 1,
 config_reload_error: ?[]const u8 = null,
 layout_keyboard: ?*@import("Keyboard.zig") = null,
 start_menu_catalog: *applications.Catalog,
+launcher_history: @import("start_menu/history.zig").History = .{},
 /// Memoizes `iconNameForAppId`, which is three linear scans over the whole
 /// desktop-entry catalog (~400 entries here). `syncChrome` calls `iconLookup`
 /// on every client surface commit, so without this the compositor ran those

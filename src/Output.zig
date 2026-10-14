@@ -795,16 +795,40 @@ pub fn toggleStartMenu(output: *Output) void {
 /// restoring it is therefore part of opening, and a caller that only called
 /// `StartMenu.reopen` got a visible menu that no key could reach.
 pub fn openStartMenu(output: *Output) void {
+    output.openMenu(.start);
+}
+
+/// The keyboard launcher shares catalogue, focus and lifetime with Start.
+pub fn toggleAppLauncher(output: *Output) void {
+    if (output.start_menu) |sm| {
+        if (sm.mode == .launcher and sm.state != .closing) {
+            output.closeStartMenu();
+            return;
+        }
+    }
+    output.openMenu(.launcher);
+}
+
+fn openMenu(output: *Output, mode: StartMenu.Mode) void {
     output.server.input.window_menu.close();
     if (output.server.input.open_wifi) |popup| popup.output.closeWifi();
     if (output.server.input.open_battery) |popup| popup.output.closeBattery();
     if (output.server.input.open_calendar) |calendar| calendar.output.closeCalendar();
+    if (output.server.input.open_start_menu) |other| {
+        if (other.wlr_output != output.wlr_output) {
+            if (Output.fromWlr(other.wlr_output)) |owner| owner.closeStartMenu();
+        }
+    }
     if (output.start_menu) |sm| {
-        if (sm.state != .closing) return;
+        if (sm.mode != mode) {
+            sm.mode = mode;
+            sm.buildTree();
+            sm.relayout();
+        } else if (sm.state != .closing) return;
         sm.reopen();
     } else {
         if (output.power_menu != null) output.closePowerMenu();
-        output.start_menu = StartMenu.create(output.server, output.wlr_output) catch |err| blk: {
+        output.start_menu = StartMenu.createMode(output.server, output.wlr_output, mode) catch |err| blk: {
             log.err("openStartMenu: could not create panel: {}", .{err});
             break :blk null;
         };
