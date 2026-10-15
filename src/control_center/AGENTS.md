@@ -33,3 +33,8 @@ Settings is an ordinary window with a compositor-drawn body (`Backend.shell`).
   `Debug.Stats` need it).
 * Saving a theme slider rebuilds the page on release: `panel.rebuildTree`
   carries named sliders' state across (`src/ui/AGENTS.md`, "Sliders").
+* A rebuild of Appearance costs milliseconds (preset, wallpaper and icon-theme
+  scans) plus a full repaint: background wakes refresh only pages that show
+  their state (audio: General and Audio), and wallpaper thumbnails go straight
+  into their tile (`stripWake`). The nav highlights damage the rows they cross,
+  not the list.

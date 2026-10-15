@@ -34,6 +34,7 @@ pub fn paintShaded(widget: *const Widget, data: layout.SliderData, r: *Renderer)
     const y0: i32 = @intFromFloat(@floor(@max(0, top)));
     const x1: i32 = @intFromFloat(@ceil(@min(@as(f32, @floatFromInt(r.width)), right)));
     const y1: i32 = @intFromFloat(@ceil(@min(@as(f32, @floatFromInt(r.height)), bottom)));
+    if (x0 >= x1 or y0 >= y1) return;
     const settings = data.style == .settings;
     const track_h = @min(h - 2, @max(0.5, (if (settings) t.slider_settings_track_height else t.slider_track_height) * (1 + t.slider_track_grow * data.feel.wide)));
     const diameter = @min(@min(w, h) - 2, @max(1, @min(t.slider_thumb_size, if (settings) t.slider_settings_thumb_height else t.slider_thumb_size)));
@@ -43,29 +44,43 @@ pub fn paintShaded(widget: *const Widget, data: layout.SliderData, r: *Renderer)
     const cy = h / 2;
     const highlight = t.slider_highlight orelse t.control_thumb;
     const intensity = std.math.clamp(data.feel.accent, 0, 1);
+    const fill_radius = @min(cx, track_h) / 2;
+    // Include the shadow's 0.4 px offset, its 0.8 px falloff and device AA.
+    const disc_extent = radius + @max(0.4 + 0.8, 0.5 / s);
     var py = y0;
     while (py < y1) : (py += 1) {
         const y = (@as(f32, @floatFromInt(py)) + 0.5) / s - widget.computed_y;
-        var px = x0;
-        while (px < x1) : (px += 1) {
+        const dy = y - cy;
+        const rail_y = std.math.clamp((dy + track_h / 2) / track_h, 0, 1);
+        const rail_color = shade(t.slider_track, -0.10 + 0.14 * rail_y);
+        const streak = falloff((dy + track_h * 0.16) / (track_h * 0.38));
+        const knob_shade = -0.06 * std.math.clamp(dy / radius, 0, 1);
+        const rail_middle = sdf.sdRoundedBox(w / 2, y, 0, cy - track_h / 2, w, track_h, track_h / 2);
+        const fill_middle = sdf.sdRoundedBox(cx / 2, y, 0, cy - track_h / 2, cx, track_h, track_h / 2);
+        // Beyond the rail's halo only the small disc can contribute pixels.
+        const rail_visible = @abs(dy) <= track_h / 2 + @max(3, 0.5 / s);
+        if (!rail_visible and @abs(dy) > disc_extent) continue;
+        const row_x0 = if (rail_visible) x0 else @max(x0, @as(i32, @intFromFloat(@floor((widget.computed_x + cx - disc_extent) * s))));
+        const row_x1 = if (rail_visible) x1 else @min(x1, @as(i32, @intFromFloat(@ceil((widget.computed_x + cx + disc_extent) * s))));
+        var px = row_x0;
+        while (px < row_x1) : (px += 1) {
             const x = (@as(f32, @floatFromInt(px)) + 0.5) / s - widget.computed_x;
             const pixel = &r.pixels[@intCast(py * r.width + px)];
             const dx = x - cx;
-            const dy = y - cy;
-            const rail = sdf.sdRoundedBox(x, y, 0, cy - track_h / 2, w, track_h, track_h / 2);
-            const fill = sdf.sdRoundedBox(x, y, 0, cy - track_h / 2, cx, track_h, track_h / 2);
+            const rail = if (x >= track_h / 2 and x <= w - track_h / 2) rail_middle else sdf.sdRoundedBox(x, y, 0, cy - track_h / 2, w, track_h, track_h / 2);
+            const fill = if (x >= fill_radius and x <= cx - fill_radius) fill_middle else sdf.sdRoundedBox(x, y, 0, cy - track_h / 2, cx, track_h, track_h / 2);
             // A warm halo along the filled rail, brightest beside the knob.
             const tip = falloff(dx / (radius * 3));
             const edge_fade = std.math.clamp(@min(@min(x, w - x), @min(y, h - y)), 0, 1);
             const halo = std.math.clamp(1 - @max(0, fill) / 3, 0, 1);
             if (fraction > 0) blend(pixel, t.accent, halo * halo * (0.12 + 0.16 * tip + 0.10 * intensity) * edge_fade);
-            const rail_y = std.math.clamp((dy + track_h / 2) / track_h, 0, 1);
-            blend(pixel, shade(t.slider_track, -0.10 + 0.14 * rail_y), sdf.coverage(rail * s));
+            blend(pixel, rail_color, sdf.coverage(rail * s));
             if (fraction > 0) {
-                const streak = falloff((dy + track_h * 0.16) / (track_h * 0.38));
                 const gold = mix(t.accent, highlight, 0.30 + 0.24 * streak + 0.28 * tip);
                 blend(pixel, gold, sdf.coverage(fill * s));
             }
+            // The shadow and metallic reflections are local to the knob.
+            if (@abs(dx) > disc_extent or @abs(dy) > disc_extent) continue;
             const shadow = @sqrt(dx * dx + (dy - 0.4) * (dy - 0.4)) - radius;
             blend(pixel, .{ 0, 0, 0, 0.12 }, std.math.clamp(1 - shadow / 0.8, 0, 1) * edge_fade);
             const distance = @sqrt(dx * dx + dy * dy) - radius;
@@ -77,7 +92,7 @@ pub fn paintShaded(widget: *const Widget, data: layout.SliderData, r: *Renderer)
             // Keep the centre continuous and the bevel confined to a fine rim.
             const reflection = 0.5 + nx * ny / @max(0.08, nx * nx + ny * ny);
             var knob = mix(t.accent, highlight, 0.16 + 0.64 * reflection);
-            knob = shade(knob, -0.06 * std.math.clamp(ny, 0, 1));
+            knob = shade(knob, knob_shade);
             const rim = 1 - std.math.clamp(-distance / 0.75, 0, 1);
             knob = mix(knob, highlight, rim * 0.85);
             blend(pixel, knob, coverage);
@@ -102,6 +117,7 @@ fn shade(color: [4]f32, amount: f32) [4]f32 {
 }
 
 fn blend(pixel: *u32, color: [4]f32, coverage: f32) void {
+    if (coverage <= 0 or color[3] <= 0) return;
     text.blendPixel(pixel, .{ .r = color[0], .g = color[1], .b = color[2], .a = color[3] }, coverage);
 }
 
@@ -381,4 +397,52 @@ test "hover and drag light the slider, and only a drag lights its value pill" {
     _ = stepFeedback(slider, 2800);
     try std.testing.expectEqual(@as(f32, 0), slider.kind.slider.feel.accent);
     try std.testing.expect(!stepFeedback(slider, 2800).active);
+}
+
+test "shaded sliders preserve clipped pixels at fractional scales" {
+    const background = 0x98655443;
+    var actual: [320 * 100]u32 = undefined;
+    var expected: [320 * 100]u32 = undefined;
+    for ([_]f32{ 1, 1.25, 1.5, 2 }) |scale| {
+        for ([_]f32{ 0, 0.01, 0.5, 0.99, 1 }) |value| {
+            for ([_]@FieldType(layout.SliderData, "style"){ .standard, .settings }) |style| {
+                const widget = Widget{
+                    .kind = .{ .slider = .{
+                        .style = style,
+                        .value = value,
+                        .min = 0,
+                        .max = 1,
+                        .feel = .{ .accent = 0.7, .wide = 0.6 },
+                        .on_change = struct {
+                            fn call(_: ?*anyopaque, _: usize, _: f32) void {}
+                        }.call,
+                    } },
+                    .computed_x = 3.3,
+                    .computed_y = 4.7,
+                    .computed_width = 150.4,
+                    .computed_height = 22.3,
+                };
+                for ([_]f32{ 0, 70.3, 140.7, 200 }) |left| {
+                    @memset(&actual, background);
+                    @memset(&expected, background);
+                    var r = Renderer.init(&actual, 320, 100, scale);
+                    r.palette = theme.Theme{ .slider_shaded = true, .slider_settings_track_height = 5.5 };
+                    var full = r;
+                    full.pixels = &expected;
+                    paintShaded(&widget, widget.kind.slider, &full);
+                    r.clip = .{ .x = left, .y = 6.3, .w = 22.4, .h = 17.2 };
+                    r.damage_clip = .{ .x = left + 1, .y = 8.7, .w = 20, .h = 30 };
+                    paintShaded(&widget, widget.kind.slider, &r);
+                    const clip = r.effectiveClip().?;
+                    for (&expected, 0..) |*pixel, i| {
+                        const x: f32 = @floatFromInt(i % 320);
+                        const y: f32 = @floatFromInt(i / 320);
+                        if (x < @floor(clip.x * scale) or x >= @ceil((clip.x + clip.w) * scale) or
+                            y < @floor(clip.y * scale) or y >= @ceil((clip.y + clip.h) * scale)) pixel.* = background;
+                    }
+                    try std.testing.expectEqualSlices(u32, &expected, &actual);
+                }
+            }
+        }
+    }
 }

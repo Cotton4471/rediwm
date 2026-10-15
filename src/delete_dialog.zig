@@ -116,6 +116,14 @@ pub const State = struct {
         dialog.paintWindowTitle(r, layer.local(), if (self.empty_trash) "Empty Trash?" else if (self.paths.items.len > 1) "Delete items?" else if (self.folder) "Delete folder?" else "Delete file?", .trash, null);
         const hover = g.target(mx, my);
         button.paint(r, g.close, .{ .variant = .chrome, .icon = .close, .label = "Close" }, .{ .pointer = if (hover == .close) .hover else .idle });
+        // The body is the app surface: it takes the app's foreground, not the dark chrome's.
+        const app = theme.global.forApp();
+        t.fg = app.window_fg;
+        t.dim = app.window_dim;
+        t.field_bg = app.field_bg;
+        t.field_border = app.field_border;
+        t.surface_hover = app.surface_hover;
+        r.palette = t;
         r.drawText(16, g.header + 16, g.width - 32, 24, .{
             .content = if (self.permanent) "This cannot be undone." else if (self.paths.items.len == 1) "You can restore it later from Trash." else "You can restore them later from Trash.",
             .font_size = shell_ui.textSize(),

@@ -22,10 +22,13 @@ const Self = @This();
 const max_items = 64;
 /// Applications pinned to the dock by dragging them from the start menu.
 pub const max_pins = 16;
-pub const Shortcut = enum { applications, files, terminal, settings };
-/// The gap between the dock and its output edge, and again between it and the
+/// `trash` follows `dock_show_trash`; the others `dock_hidden_shortcuts`.
+pub const Shortcut = enum { applications, files, terminal, settings, trash };
+const shortcut_count = std.enums.values(Shortcut).len;
+/// The gap between the dock and its output edge, and the one between it and the
 /// windows when it reserves its strip.
-const edge_margin = 10;
+const edge_margin = 5;
+const window_margin = 10;
 /// Auto-hide: the outermost pixels of the edge that reveal the dock, how long
 /// the pointer must stay (so a pass over the edge shows nothing) or stay away
 /// (so a slip off the dock hides nothing), and how far the dock travels while
@@ -34,6 +37,9 @@ const edge_band = 2;
 const reveal_delay_ms = 120;
 const hide_delay_ms = 400;
 const slide_distance = 20;
+/// How long the pointer rests on an icon before its tooltip (the window title)
+/// shows.
+const tooltip_delay_ms = 1500;
 
 /// Scale the original 68px layout in logical pixels, independently of output scale.
 const Metrics = struct {
@@ -85,8 +91,13 @@ const ItemAnimation = struct {
 output: ?*Output = null,
 tree: ?*wlr.SceneTree = null,
 node: ?*wlr.SceneBuffer = null,
+/// Transparent, fixed-size anchor: glass follows the dock background, while
+/// the painted buffer may extend inward to fit a fully enlarged icon.
+glass_anchor: ?*wlr.SceneBuffer = null,
 tooltip: ?*wlr.SceneBuffer = null,
 glass_effect: ?*glass.Effect = null,
+/// The glass corner radius of the last paint; its opacity follows `reveal`.
+glass_radius: f32 = 0,
 data: SceneData = undefined,
 box: wlr.Box = .{ .x = 0, .y = 0, .width = 0, .height = config.dock_height_default },
 position: @import("config").types.DockPosition = .bottom,
@@ -104,9 +115,15 @@ pointer_near: bool = false,
 shown: bool = false,
 timer: ?*wl.EventSource = null,
 timer_target: ?bool = null,
+/// The tooltip waits on `tip_timer` after the pointer moves onto an icon;
+/// `tip_ready` is set once the delay has passed and held until it moves off.
+tip_timer: ?*wl.EventSource = null,
+tip_ready: bool = false,
+tip_armed: bool = false,
 reveal: anim.Anim = .{ .property = .opacity },
 parked: bool = false,
 root: ui.layout.Widget = .{ .kind = .container },
+input_root: ui.layout.Widget = .{ .kind = .container },
 buttons: [max_items]ui.layout.Widget = undefined,
 ids: [max_items]u64 = @splat(0),
 shortcuts: [max_items]?Shortcut = @splat(null),
@@ -141,6 +158,7 @@ items_drawn: usize = 0,
 
 pub fn deinit(self: *Self) void {
     if (self.timer) |timer| timer.remove();
+    if (self.tip_timer) |timer| timer.remove();
     if (self.output) |output| if (output.server.input.window_menu.dock == self) output.server.input.window_menu.close();
     self.dispatcher.reset();
     if (self.tree) |tree| tree.node.destroy();
@@ -154,6 +172,10 @@ fn ensureNodes(self: *Self, output: *Output) !void {
     if (self.tree != null) return;
     const tree = try output.server.taskbar_tree.createSceneTree();
     errdefer tree.node.destroy();
+    const anchor_buffer = try PanelBuffer.create(1, 1, 1);
+    defer anchor_buffer.base.drop();
+    const anchor = try tree.createSceneBuffer(&anchor_buffer.base);
+    anchor.point_accepts_input = ignoreInput;
     const node = try tree.createSceneBuffer(null);
     const tooltip = try tree.createSceneBuffer(null);
     node.setFilterMode(.bilinear);
@@ -162,16 +184,26 @@ fn ensureNodes(self: *Self, output: *Output) !void {
     self.output = output;
     self.data = .{ .role = .{ .dock = self } };
     self.data.attach(&node.node);
+    node.point_accepts_input = acceptsInput;
     self.tree = tree;
     self.node = node;
+    self.glass_anchor = anchor;
     self.tooltip = tooltip;
-    self.glass_effect = glass.Engine.attach(output.server.glass_engine, node, &node.node, .taskbar);
+    self.glass_effect = glass.Engine.attach(output.server.glass_engine, anchor, &anchor.node, .taskbar);
     // A dock that auto-hides starts away; one that does not, in place.
     self.reveal.cancel(if (output.server.config.compositor.dock_auto_hide) 0 else 1);
 }
 
 fn ignoreInput(_: *wlr.SceneBuffer, _: *f64, _: *f64) callconv(.c) bool {
     return false;
+}
+
+fn acceptsInput(node: *wlr.SceneBuffer, x: *f64, y: *f64) callconv(.c) bool {
+    const self = SceneData.fromNode(&node.node).?.role.dock;
+    const raster = self.rasterBox();
+    const lx: f32 = @floatCast(x.* + @as(f64, @floatFromInt(raster.x)));
+    const ly: f32 = @floatCast(y.* + @as(f64, @floatFromInt(raster.y)));
+    return self.root.contains(lx, ly) or self.buttonAt(lx, ly) != null;
 }
 
 pub fn tick(self: *Self, output: *Output, now_ms: i64) bool {
@@ -240,9 +272,19 @@ pub fn tick(self: *Self, output: *Output, now_ms: i64) bool {
 /// gap on either side. Nothing when it floats over them (auto-hide), is off, or
 /// does not fit and so shows nothing.
 pub fn reservedStrip(server: *const Server, area: wlr.Box) i32 {
+    if (!reserves(&server.config.compositor)) return 0;
+    const reach = footprint(server, area);
+    return if (reach == 0) 0 else reach + window_margin;
+}
+
+/// How far a resting dock reaches in from its edge of `area`: its thickness and
+/// the gap to the edge, whether it reserves that strip or auto-hides. Read from
+/// the configuration alone, like `reservedStrip`, so what keeps clear of it (the
+/// OSD) stays put while an auto-hiding dock comes and goes.
+pub fn footprint(server: *const Server, area: wlr.Box) i32 {
     const c = &server.config.compositor;
-    if (server.greeter_mode or !reserves(c) or !fits(c, area)) return 0;
-    return @as(i32, @intCast(c.dock_height)) + 2 * edge_margin;
+    if (server.greeter_mode or !c.dock_enabled or !fits(c, area)) return 0;
+    return @as(i32, @intCast(c.dock_height)) + edge_margin;
 }
 
 /// Whether the dock, as configured, keeps windows out of its strip. A change
@@ -267,7 +309,7 @@ fn fits(c: *const config.CompositorConfig, area: wlr.Box) bool {
 fn configuredFixedCount(c: *const config.CompositorConfig) usize {
     var count: usize = @min(c.dock_pinned_apps.len, max_pins);
     for (std.enums.values(Shortcut)) |shortcut| {
-        if (!hidden(c.dock_hidden_shortcuts, @tagName(shortcut))) count += 1;
+        if (shownIn(c, shortcut)) count += 1;
     }
     return count;
 }
@@ -292,7 +334,9 @@ fn syncReveal(self: *Self, now_ms: i64) bool {
 }
 
 /// The dock fades and slides toward its edge as `reveal` falls. The raster does
-/// not change: only the node's position and opacity (glass follows both).
+/// not change: only the node's position and opacity. Glass follows the position
+/// as part of the tree, but its opacity is its own and is given here, or the
+/// blurred backdrop would stay solid until the dock parks.
 fn applyReveal(self: *Self, now_ms: i64) void {
     const t = std.math.clamp(self.reveal.value(now_ms), 0, 1);
     var x = self.box.x;
@@ -308,6 +352,7 @@ fn applyReveal(self: *Self, now_ms: i64) void {
     }
     self.tree.?.node.setPosition(x, y);
     self.node.?.setOpacity(t);
+    glass.Effect.configure(self.glass_effect, self.glass_radius, t);
 }
 
 fn menuOpen(self: *const Self) bool {
@@ -332,8 +377,9 @@ fn nearPointer(self: *const Self, output: *Output, x: f64, y: f64) bool {
     if (at_edge) return true;
     // Only a dock that is out can be pointed at: where it would be is windows.
     if (!self.shown) return false;
-    return px >= self.box.x - edge_margin and px < self.box.x + self.box.width + edge_margin and
-        py >= self.box.y - edge_margin and py < self.box.y + self.box.height + edge_margin;
+    return (px >= self.box.x - edge_margin and px < self.box.x + self.box.width + edge_margin and
+        py >= self.box.y - edge_margin and py < self.box.y + self.box.height + edge_margin) or
+        self.buttonAt(@floatCast(x - @as(f64, @floatFromInt(self.box.x))), @floatCast(y - @as(f64, @floatFromInt(self.box.y)))) != null;
 }
 
 /// Every pointer motion. `engaged` is false while a window is moved or resized
@@ -380,8 +426,13 @@ fn hidden(items: []const []const u8, name: []const u8) bool {
     return false;
 }
 
+fn shownIn(c: *const config.CompositorConfig, shortcut: Shortcut) bool {
+    if (shortcut == .trash) return c.dock_show_trash;
+    return !hidden(c.dock_hidden_shortcuts, @tagName(shortcut));
+}
+
 fn shortcutShown(self: *const Self, shortcut: Shortcut) bool {
-    return !hidden(self.output.?.server.config.compositor.dock_hidden_shortcuts, @tagName(shortcut));
+    return shownIn(&self.output.?.server.config.compositor, shortcut);
 }
 
 fn shortcutCount(self: *const Self) usize {
@@ -472,9 +523,9 @@ const AppMatch = struct {
 
 /// Resolve the same preferred applications and fallbacks as launchPreferred.
 /// Snapshot strings stay alive for this rebuild; parsed argv lives in scratch.
-fn shortcutApps(self: *Self, entries: []const apps.AppEntry, scratch: std.mem.Allocator) [4]AppMatch {
+fn shortcutApps(self: *Self, entries: []const apps.AppEntry, scratch: std.mem.Allocator) [shortcut_count]AppMatch {
     const server = self.output.?.server;
-    var matches: [4]AppMatch = .{ .{}, .{ .id = "rediwm-files" }, .{ .id = "foot" }, .{ .id = Toplevel.settings_app_id } };
+    var matches: [shortcut_count]AppMatch = .{ .{}, .{ .id = "rediwm-files" }, .{ .id = "foot" }, .{ .id = Toplevel.settings_app_id }, .{} };
     if (default_apps.find(entries, server.config.compositor.default_file_manager)) |entry| matches[@intFromEnum(Shortcut.files)] = .fromEntry(entry);
     if (default_apps.find(entries, server.config.compositor.default_terminal)) |entry| {
         matches[@intFromEnum(Shortcut.terminal)] = .fromEntry(entry);
@@ -505,7 +556,7 @@ fn rebuild(self: *Self, capacity: usize, area: wlr.Box) !void {
     var scratch = std.heap.ArenaAllocator.init(gpa);
     defer scratch.deinit();
     const matches = self.shortcutApps(snapshot.entries, scratch.allocator());
-    var targets: [4]?*Toplevel = @splat(null);
+    var targets: [shortcut_count]?*Toplevel = @splat(null);
     var pin_targets: [max_pins]?*Toplevel = @splat(null);
     const focused = @import("ipc/handlers.zig").findFocusedToplevel(output.server);
     var tops: std.ArrayList(*Toplevel) = .empty;
@@ -549,6 +600,8 @@ fn rebuild(self: *Self, capacity: usize, area: wlr.Box) !void {
     self.dispatcher.reset();
     _ = self.arena.reset(.retain_capacity);
     self.root = .{ .kind = .container, .children = self.buttons[0..self.count], .computed_width = @floatFromInt(self.box.width), .computed_height = @floatFromInt(self.box.height) };
+    const raster = self.rasterBox();
+    self.input_root = .{ .kind = .container, .children = self.buttons[0..self.count], .computed_x = @floatFromInt(raster.x), .computed_y = @floatFromInt(raster.y), .computed_width = @floatFromInt(raster.width), .computed_height = @floatFromInt(raster.height) };
     var index: usize = 0;
     self.pin_of = @splat(null);
     for ([_]Shortcut{ .applications, .files, .terminal }) |shortcut| {
@@ -566,7 +619,12 @@ fn rebuild(self: *Self, capacity: usize, area: wlr.Box) !void {
         self.setButton(index, null, top.id);
         index += 1;
     }
-    if (self.shortcutShown(.settings)) self.setButton(index, .settings, if (targets[@intFromEnum(Shortcut.settings)]) |top| top.id else 0);
+    if (self.shortcutShown(.settings)) {
+        self.setButton(index, .settings, if (targets[@intFromEnum(Shortcut.settings)]) |top| top.id else 0);
+        index += 1;
+    }
+    // The trash is the dock's last item, past a divider; no window is its.
+    if (self.shortcutShown(.trash)) self.setButton(index, .trash, 0);
     for (self.animations[0..self.count], 0..) |*pill, i| {
         const shortcut = self.shortcuts[i];
         const id = self.ids[i];
@@ -580,14 +638,15 @@ fn rebuild(self: *Self, capacity: usize, area: wlr.Box) !void {
                 break;
             }
         }
-        self.setButtonZoom(i, std.math.clamp(pill.zoom.value(anim.nowMs()), 1, output.server.config.compositor.dock_hover_zoom));
+        const range = self.zoomRange();
+        self.setButtonZoom(i, std.math.clamp(pill.zoom.value(anim.nowMs()), range.min, range.max));
     }
     // The pointer rests on a replaced button: hover it before painting, so
     // the rebuild paints once.
     if (hovered) {
         self.place(area);
         const cursor = output.server.input.cursor;
-        self.dispatcher.pointerMotion(&self.root, @floatCast(cursor.x - @as(f64, @floatFromInt(self.box.x))), @floatCast(cursor.y - @as(f64, @floatFromInt(self.box.y))));
+        self.dispatcher.pointerMotion(&self.input_root, @floatCast(cursor.x - @as(f64, @floatFromInt(self.box.x))), @floatCast(cursor.y - @as(f64, @floatFromInt(self.box.y))));
     }
     self.dirty = false;
 }
@@ -620,14 +679,49 @@ fn topAt(self: *Self, index: usize) ?*Toplevel {
 fn setButtonZoom(self: *Self, index: usize, zoom: f32) void {
     const m = self.metrics();
     const base: f32 = @floatFromInt(m.length(48));
-    const side = @max(base, @as(f32, @floatFromInt(m.length(36))) * zoom);
+    const icon = self.iconBox(index, zoom, 36);
     const button = &self.buttons[index];
-    const along = @as(f32, @floatFromInt(@as(i32, @intCast(index)) * m.itemStep() + m.padding())) + (base - side) / 2;
-    const cross = @as(f32, @floatFromInt(self.buttonCross())) + (base - side) / 2;
-    button.computed_x = if (self.position.vertical()) cross else along;
-    button.computed_y = if (self.position.vertical()) along else cross;
-    button.computed_width = side;
-    button.computed_height = side;
+    const along: f32 = @floatFromInt(@as(i32, @intCast(index)) * m.itemStep() + m.padding());
+    const cross: f32 = @floatFromInt(self.buttonCross());
+    const x = if (self.position.vertical()) cross else along;
+    const y = if (self.position.vertical()) along else cross;
+    button.computed_x = @min(x, icon.x);
+    button.computed_y = @min(y, icon.y);
+    button.computed_width = @max(x + base, icon.x + icon.w) - button.computed_x;
+    button.computed_height = @max(y + base, icon.y + icon.h) - button.computed_y;
+}
+
+/// How far a hovered icon's zoom may go while its spring overshoots past
+/// `dock_hover_zoom` or dips under rest on the way back. Rasters and cells are
+/// sized for `max`, so a bounce never needs a larger buffer or upsamples icons.
+fn zoomRange(self: *const Self) struct { min: f32, max: f32 } {
+    const hover_zoom = self.output.?.server.config.compositor.dock_hover_zoom;
+    const headroom = (hover_zoom - 1) * 0.3;
+    return .{ .min = 1 - headroom, .max = hover_zoom + headroom };
+}
+
+/// Keep the icon's screen-edge side fixed as it grows toward the desktop.
+fn iconBox(self: *const Self, index: usize, zoom: f32, reference: f32) ui.layout.Widget.PaintBounds {
+    const m = self.metrics();
+    const base: f32 = @floatFromInt(m.length(reference));
+    const side = base * zoom;
+    const along = @as(f32, @floatFromInt(@as(i32, @intCast(index)) * m.itemStep() + m.padding())) + @as(f32, @floatFromInt(m.length(48))) / 2;
+    const inward: f32 = if (self.position == .bottom or self.position == .right) -1 else 1;
+    const cross = @as(f32, @floatFromInt(self.buttonCross())) + @as(f32, @floatFromInt(m.length(48))) / 2 + inward * (side - base) / 2;
+    return .{ .x = (if (self.position.vertical()) cross else along) - side / 2, .y = (if (self.position.vertical()) along else cross) - side / 2, .w = side, .h = side };
+}
+
+/// Only the foreground raster extends beyond the background at large zooms.
+fn rasterBox(self: *const Self) wlr.Box {
+    const icon = self.iconBox(0, self.zoomRange().max, 36);
+    const m = self.metrics();
+    const cross = if (self.position.vertical()) icon.x else icon.y;
+    const before: i32 = @intFromFloat(@ceil(@max(0, -cross)));
+    const after: i32 = @intFromFloat(@ceil(@max(0, cross + icon.w - @as(f32, @floatFromInt(m.height)))));
+    return if (self.position.vertical())
+        .{ .x = -before, .y = 0, .width = self.box.width + before + after, .height = self.box.height }
+    else
+        .{ .x = 0, .y = -before, .width = self.box.width, .height = self.box.height + before + after };
 }
 
 fn label(self: *Self, index: usize) []const u8 {
@@ -636,6 +730,7 @@ fn label(self: *Self, index: usize) []const u8 {
         .files => "Files",
         .terminal => "Terminal",
         .settings => "Settings",
+        .trash => "Trash",
     };
     if (self.pin_of[index]) |p| return self.pins[p].name;
     return if (self.topAt(index)) |top| top.title() else "Application";
@@ -670,8 +765,7 @@ fn paint(self: *Self, now_ms: i64) !void {
     const output = self.output.?;
     const m = self.metrics();
     const pal = ui.theme.shellPalette();
-    var bg = pal.dock_bg orelse ui.theme.taskbar(.taskbar_bg);
-    if (pal.dock_bg == null) bg[3] = @max(bg[3], 0.86);
+    const bg = background(&output.server.config.compositor, pal);
     const focused = @import("ipc/handlers.zig").findFocusedToplevel(output.server);
     var looks: [max_items]Look = undefined;
     var item_keys: [max_items]u64 = undefined;
@@ -679,7 +773,7 @@ fn paint(self: *Self, now_ms: i64) !void {
     // Dock-wide state: a change repaints the whole raster. Each item's own look is
     // keyed apart, so a hover repaints only the icons it moves.
     var base_hasher = std.hash.Wyhash.init(0);
-    hashValue(&base_hasher, .{ pal, bg, self.scale, self.position, self.box.width, self.box.height, self.count, self.offset, self.windows, self.pin_base, self.drop_slot, output.server.config.compositor.dock_hover_zoom });
+    hashValue(&base_hasher, .{ pal, bg, self.scale, self.position, self.box.width, self.box.height, self.count, self.offset, self.windows, self.pin_base, self.drop_slot, output.server.config.compositor.dock_hover_zoom, output.server.config.compositor.dock_active_highlight });
     const base_key = base_hasher.final();
     var hasher = std.hash.Wyhash.init(0);
     hasher.update(std.mem.asBytes(&base_key));
@@ -690,10 +784,12 @@ fn paint(self: *Self, now_ms: i64) !void {
             .files => "rediwm-files",
             .terminal => "utilities-terminal",
             .settings => ui.shell_icons.settings_icon_name,
+            .trash => "user-trash",
         } else if (self.pin_of[index]) |p| self.pins[p].icon else if (top) |t| t.appId() else "";
-        // Retain one raster at the configured maximum, not a new size each frame.
+        // Retain one raster at the largest zoom, not a new size each frame.
         const hover_zoom = output.server.config.compositor.dock_hover_zoom;
-        const lookup = output.server.iconLookup(icon_name, @import("geometry.zig").devicePixels(@intFromFloat(@ceil(@as(f32, @floatFromInt(m.length(36))) * hover_zoom)), self.scale));
+        const range = self.zoomRange();
+        const lookup = output.server.iconLookup(icon_name, self.iconRaster(m));
         const active = top != null and top == focused;
         const width: f32 = if (top == null) 0 else if (active) 22 else 10;
         const opacity: f32 = if (top) |t| if (t.minimized) 0.4 else 1 else 0;
@@ -701,7 +797,7 @@ fn paint(self: *Self, now_ms: i64) !void {
         const zoom: f32 = if (self.dispatcher.hovered == &self.buttons[index]) hover_zoom else 1;
         if (hover_zoom == 1) {
             pill.zoom.cancel(1);
-        } else if (pill.zoom.to != zoom) pill.zoom.retargetTo(now_ms, zoom, anim.curveFor(.taskbar_hover));
+        } else if (pill.zoom.to != zoom) pill.zoom.retargetTo(now_ms, zoom, anim.curveFor(.dock_hover));
         if (pill.width.to != width) pill.width.retargetTo(now_ms, width, anim.curveFor(.taskbar_hover));
         if (pill.opacity.to != opacity) pill.opacity.retargetTo(now_ms, opacity, anim.curveFor(.taskbar_hover));
         _ = pill.width.sampleChanged(now_ms, anim.rasterPixelQuantum(self.scale) / (4 * m.size(1)));
@@ -713,10 +809,10 @@ fn paint(self: *Self, now_ms: i64) !void {
             .icon = if (lookup == .ready) lookup.ready else null,
             .pill_width = @max(0, pill.width.last_quantised),
             .pill_opacity = std.math.clamp(pill.opacity.last_quantised, 0, 1),
-            .zoom = std.math.clamp(pill.zoom.last_quantised, 1, hover_zoom),
+            .zoom = std.math.clamp(pill.zoom.last_quantised, range.min, range.max),
         };
-        // Input covers the painted icon even at 1.5×. Keep centres fixed so
-        // moving between neighbours cannot make the row chase the pointer.
+        // Input covers both the resting button and the growing icon. Centres
+        // along the row stay fixed when moving between neighbours.
         self.setButtonZoom(index, look.zoom);
         const icon_id: ?u64 = if (look.icon) |icon| icon.id else null;
         var item_hasher = std.hash.Wyhash.init(0);
@@ -728,6 +824,28 @@ fn paint(self: *Self, now_ms: i64) !void {
     if (key != self.drawn) try self.paintDock(pal, bg, looks[0..self.count], base_key, item_keys[0..self.count]);
     self.drawn = key;
     try self.paintTooltip();
+}
+
+/// Device pixels of the icon raster the dock asks for: the largest size an icon
+/// is drawn at, so hovering never needs another.
+fn iconRaster(self: *const Self, m: Metrics) i32 {
+    const zoom = self.zoomRange().max;
+    return @import("geometry.zig").devicePixels(@intFromFloat(@ceil(@as(f32, @floatFromInt(m.length(36))) * zoom)), self.scale);
+}
+
+/// The dock's background: the theme's `dock_bg`, else the taskbar's with a
+/// floor on its alpha. `dock_opacity`, when set, replaces the alpha of either.
+pub fn background(c: *const config.CompositorConfig, pal: ui.theme.Theme) [4]f32 {
+    var bg = pal.dock_bg orelse ui.theme.taskbar(.taskbar_bg);
+    if (pal.dock_bg == null) bg[3] = @max(bg[3], 0.86);
+    if (c.dock_opacity) |opacity| bg[3] = std.math.clamp(opacity, 0, 1);
+    return bg;
+}
+
+/// The dock's corner radius: the theme's `dock_radius`, or the window frame's
+/// (Appearance's Radius) while that is zero. Painting caps it at half the dock.
+pub fn cornerRadius(pal: ui.theme.Theme) f32 {
+    return if (pal.dock_radius > 0) pal.dock_radius else ui.window_chrome.frameRadius();
 }
 
 /// A device-pixel rectangle of the dock raster.
@@ -752,11 +870,11 @@ const DeviceRect = struct {
 
 /// Everything item `index` can paint, at the largest hover zoom, across the dock's
 /// thickness: the cell a repaint of that item must restore. Neighbours' cells
-/// meet but do not overlap (the icon is narrower than the step).
+/// may overlap at the top of a large zoom's bounce; a partial repaint redraws
+/// every item whose cell meets the dirty box, so that stays exact.
 fn itemCell(self: *const Self, m: Metrics, index: usize, width: i32, height: i32) DeviceRect {
-    const hover_zoom = self.output.?.server.config.compositor.dock_hover_zoom;
     const base: f32 = @floatFromInt(m.length(48));
-    const side = @max(base, @as(f32, @floatFromInt(m.length(36))) * hover_zoom);
+    const side = @max(base, @as(f32, @floatFromInt(m.length(36))) * self.zoomRange().max);
     const centre = @as(f32, @floatFromInt(@as(i32, @intCast(index)) * m.itemStep() + m.padding())) + base / 2;
     const lo: i32 = @intFromFloat(@floor((centre - side / 2) * self.scale));
     const hi: i32 = @intFromFloat(@ceil((centre + side / 2) * self.scale));
@@ -786,13 +904,16 @@ fn changedCells(self: *const Self, m: Metrics, base_key: u64, item_keys: []const
 fn paintDock(self: *Self, pal: ui.theme.Theme, bg: [4]f32, looks: []const Look, base_key: u64, item_keys: []const u64) !void {
     const m = self.metrics();
     const geometry = @import("geometry.zig");
-    const width = geometry.devicePixels(self.box.width, self.scale);
-    const height = geometry.devicePixels(self.box.height, self.scale);
+    const raster = self.rasterBox();
+    const ox: f32 = @floatFromInt(-raster.x);
+    const oy: f32 = @floatFromInt(-raster.y);
+    const width = geometry.devicePixels(raster.width, self.scale);
+    const height = geometry.devicePixels(raster.height, self.scale);
     const dirty = self.changedCells(m, base_key, item_keys, width, height);
     const image = if (dirty != null)
-        try PanelBuffer.createUninitialized(self.box.width, self.box.height, self.scale)
+        try PanelBuffer.createUninitialized(raster.width, raster.height, self.scale)
     else
-        try PanelBuffer.create(self.box.width, self.box.height, self.scale);
+        try PanelBuffer.create(raster.width, raster.height, self.scale);
     defer image.base.drop();
     var r = ui.paint.Renderer.init(image.pixels, image.width, image.height, self.scale);
     r.palette = pal;
@@ -815,14 +936,15 @@ fn paintDock(self: *Self, pal: ui.theme.Theme, bg: [4]f32, looks: []const Look, 
     var border = pal.accent;
     border[3] = 0.55;
     border = pal.dock_border orelse border;
-    const radius = @min(if (pal.dock_radius > 0) pal.dock_radius else ui.window_chrome.frameRadius(), @as(f32, @floatFromInt(m.height)) / 2);
-    glass.Effect.configure(self.glass_effect, radius, 1);
-    r.fillRect(0, 0, @floatFromInt(self.box.width), @floatFromInt(self.box.height), .{ .color = bg, .radius = radius, .border_width = 1, .border_color = border });
+    const radius = @min(cornerRadius(pal), @as(f32, @floatFromInt(m.height)) / 2);
+    self.glass_radius = radius;
+    glass.Effect.configure(self.glass_effect, radius, std.math.clamp(self.reveal.value(anim.nowMs()), 0, 1));
+    r.fillRect(ox, oy, @floatFromInt(self.box.width), @floatFromInt(self.box.height), .{ .color = bg, .radius = radius, .border_width = 1, .border_color = border });
     for (looks, 0..) |look, index| {
         if (dirty) |box| if (!box.overlaps(self.itemCell(m, index, width, height))) continue;
-        self.paintItem(&r, pal, m, index, look);
+        self.paintItem(&r, pal, m, index, look, ox, oy);
     }
-    self.paintMarks(&r, pal, m);
+    self.paintMarks(&r, pal, m, ox, oy);
     if (dirty) |box| {
         for (@as(usize, @intCast(box.y0))..@as(usize, @intCast(box.y1))) |y| {
             const row = y * stride;
@@ -844,29 +966,34 @@ fn paintDock(self: *Self, pal: ui.theme.Theme, bg: [4]f32, looks: []const Look, 
     self.base_drawn = base_key;
     self.items_drawn = item_keys.len;
     @memcpy(self.item_drawn[0..item_keys.len], item_keys);
-    self.node.?.setDestSize(self.box.width, self.box.height);
+    self.node.?.node.setPosition(raster.x, raster.y);
+    self.node.?.setDestSize(raster.width, raster.height);
+    self.glass_anchor.?.setDestSize(self.box.width, self.box.height);
 }
 
 /// One button: its backdrop, icon and running pill.
-fn paintItem(self: *Self, r: *ui.paint.Renderer, pal: ui.theme.Theme, m: Metrics, index: usize, look: Look) void {
+fn paintItem(self: *Self, r: *ui.paint.Renderer, pal: ui.theme.Theme, m: Metrics, index: usize, look: Look, ox: f32, oy: f32) void {
     const zooms = self.output.?.server.config.compositor.dock_hover_zoom > 1;
     const button = &self.buttons[index];
-    const x = button.computed_x;
-    const cx = x + button.computed_width / 2;
-    const cy = button.computed_y + button.computed_height / 2;
+    const x = button.computed_x + ox;
+    const y = button.computed_y + oy;
+    const resting = self.iconBox(index, 1, 36);
+    const cx = resting.x + resting.w / 2 + ox;
+    const cy = resting.y + resting.h / 2 + oy;
     // An enlarging icon is the hover feedback: no rectangle behind it.
     const pointer: ui.layout.ButtonState = if (zooms) .idle else button.kind.button.state;
-    ui.widgets.button.paintBackground(r, .{ .x = x, .y = button.computed_y, .w = button.computed_width, .h = button.computed_height }, .{ .variant = .ghost, .radius = m.size(12) }, .{ .pointer = pointer, .selected = look.focused });
+    ui.widgets.button.paintBackground(r, .{ .x = x, .y = y, .w = button.computed_width, .h = button.computed_height }, .{ .variant = .ghost, .radius = m.size(12) }, .{ .pointer = pointer, .selected = look.focused and self.output.?.server.config.compositor.dock_active_highlight });
     if (look.icon) |icon| {
-        const size = @as(f32, @floatFromInt(m.length(36))) * look.zoom;
-        r.drawImageSmooth(cx - size / 2, cy - size / 2, size, size, 0, .{ .pixels = icon.pixels, .width = icon.size, .height = icon.size });
+        const rect = self.iconBox(index, look.zoom, 36);
+        r.drawImageSmooth(rect.x + ox, rect.y + oy, rect.w, rect.h, 0, .{ .pixels = icon.pixels, .width = icon.size, .height = icon.size });
     } else {
-        const size = @as(f32, @floatFromInt(m.length(34))) * look.zoom;
-        r.drawIcon(cx - size / 2, cy - size / 2, size, size, .{ .id = if (self.shortcuts[index]) |shortcut| switch (shortcut) {
+        const rect = self.iconBox(index, look.zoom, 34);
+        r.drawIcon(rect.x + ox, rect.y + oy, rect.w, rect.h, .{ .id = if (self.shortcuts[index]) |shortcut| switch (shortcut) {
             .applications => .grid,
             .files => .folder,
             .terminal => .terminal,
             .settings => .settings,
+            .trash => .trash_can,
         } else .generic, .color = pal.window_fg });
     }
     if (look.pill_width > 0 and look.pill_opacity > 0) {
@@ -876,14 +1003,14 @@ fn paintItem(self: *Self, r: *ui.paint.Renderer, pal: ui.theme.Theme, m: Metrics
         const thickness = @max(2, m.size(4));
         const cross: f32 = if (self.position == .top or self.position == .left) @as(f32, @floatFromInt(m.height - m.length(58))) - thickness else @floatFromInt(m.length(58));
         if (self.position.vertical()) {
-            r.fillRect(cross, cy - width / 2, thickness, width, .{ .color = accent, .radius = @min(width, thickness) / 2 });
-        } else r.fillRect(cx - width / 2, cross, width, thickness, .{ .color = accent, .radius = @min(width, thickness) / 2 });
+            r.fillRect(cross + ox, cy - width / 2, thickness, width, .{ .color = accent, .radius = @min(width, thickness) / 2 });
+        } else r.fillRect(cx - width / 2, cross + oy, width, thickness, .{ .color = accent, .radius = @min(width, thickness) / 2 });
     }
 }
 
 /// What lies between and beside the buttons: the drop gap, the divider after the
 /// launcher and the scroll chevrons.
-fn paintMarks(self: *Self, r: *ui.paint.Renderer, pal: ui.theme.Theme, m: Metrics) void {
+fn paintMarks(self: *Self, r: *ui.paint.Renderer, pal: ui.theme.Theme, m: Metrics, ox: f32, oy: f32) void {
     if (self.drop_slot) |slot| {
         // A dragged application lands in this gap between two buttons.
         const gap: f32 = @floatFromInt(m.itemStep() - m.length(48));
@@ -892,29 +1019,68 @@ fn paintMarks(self: *Self, r: *ui.paint.Renderer, pal: ui.theme.Theme, m: Metric
         const length = m.size(36);
         const cross = (@as(f32, @floatFromInt(m.height)) - length) / 2;
         if (self.position.vertical()) {
-            r.fillRect(cross, along - thickness / 2, length, thickness, .{ .color = pal.accent, .radius = thickness / 2 });
-        } else r.fillRect(along - thickness / 2, cross, thickness, length, .{ .color = pal.accent, .radius = thickness / 2 });
+            r.fillRect(cross + ox, along - thickness / 2 + oy, length, thickness, .{ .color = pal.accent, .radius = thickness / 2 });
+        } else r.fillRect(along - thickness / 2 + ox, cross + oy, thickness, length, .{ .color = pal.accent, .radius = thickness / 2 });
     }
     var divider = pal.window_fg;
     divider[3] = 0.16;
     if (self.count > 1 and self.shortcuts[0] == .applications) {
         const along: f32 = @floatFromInt(m.itemStep() + m.padding() - m.length(4));
-        if (self.position.vertical()) r.fillRect(m.size(18), along, m.size(30), 1, .{ .color = divider }) else r.fillRect(along, m.size(18), 1, m.size(30), .{ .color = divider });
+        if (self.position.vertical()) r.fillRect(m.size(18) + ox, along + oy, m.size(30), 1, .{ .color = divider }) else r.fillRect(along + ox, m.size(18) + oy, 1, m.size(30), .{ .color = divider });
+    }
+    if (self.count > 1 and self.shortcuts[self.count - 1] == .trash) {
+        const along: f32 = @floatFromInt(@as(i32, @intCast(self.count - 1)) * m.itemStep() + m.padding() - m.length(4));
+        if (self.position.vertical()) r.fillRect(m.size(18) + ox, along + oy, m.size(30), 1, .{ .color = divider }) else r.fillRect(along + ox, m.size(18) + oy, 1, m.size(30), .{ .color = divider });
     }
     if (self.offset > 0) {
-        if (self.position.vertical()) r.drawIcon(m.size(28), 1, m.size(12), m.size(10), .{ .id = .chevron_up, .color = pal.accent }) else r.drawIcon(1, m.size(28), m.size(10), m.size(12), .{ .id = .chevron_left, .color = pal.accent });
+        if (self.position.vertical()) r.drawIcon(m.size(28) + ox, 1 + oy, m.size(12), m.size(10), .{ .id = .chevron_up, .color = pal.accent }) else r.drawIcon(1 + ox, m.size(28) + oy, m.size(10), m.size(12), .{ .id = .chevron_left, .color = pal.accent });
     }
     if (self.offset + self.count - self.fixedCount() < self.windows) {
-        if (self.position.vertical()) r.drawIcon(m.size(28), @as(f32, @floatFromInt(self.box.height)) - m.size(11), m.size(12), m.size(10), .{ .id = .chevron_down, .color = pal.accent }) else r.drawIcon(@as(f32, @floatFromInt(self.box.width)) - m.size(11), m.size(28), m.size(10), m.size(12), .{ .id = .chevron_right, .color = pal.accent });
+        if (self.position.vertical()) r.drawIcon(m.size(28) + ox, @as(f32, @floatFromInt(self.box.height)) - m.size(11) + oy, m.size(12), m.size(10), .{ .id = .chevron_down, .color = pal.accent }) else r.drawIcon(@as(f32, @floatFromInt(self.box.width)) - m.size(11) + ox, m.size(28) + oy, m.size(10), m.size(12), .{ .id = .chevron_right, .color = pal.accent });
     }
+}
+
+/// The pointer is on a new icon (or off every one): its tooltip waits out the
+/// delay again.
+fn restartTip(self: *Self) void {
+    self.cancelTip();
+    const hovered = self.dispatcher.hovered orelse return;
+    if (hovered.kind != .button) return;
+    if (self.tip_timer == null) self.tip_timer = self.output.?.server.wl_server.getEventLoop().addTimer(*Self, onTipTimer, self) catch null;
+    if (self.tip_timer) |timer| {
+        if (timer.timerUpdate(tooltip_delay_ms)) {
+            self.tip_armed = true;
+            return;
+        } else |_| {}
+    }
+    // No timer: show at once.
+    self.tip_ready = true;
+}
+
+fn cancelTip(self: *Self) void {
+    self.tip_ready = false;
+    if (!self.tip_armed) return;
+    self.tip_armed = false;
+    if (self.tip_timer) |timer| timer.timerUpdate(0) catch {};
+}
+
+fn onTipTimer(self: *Self) c_int {
+    self.tip_armed = false;
+    if (self.dispatcher.hovered == null or self.tooltip == null) return 0;
+    self.tip_ready = true;
+    self.paintTooltip() catch {};
+    self.output.?.wlr_output.scheduleFrame();
+    return 0;
 }
 
 fn paintTooltip(self: *Self) !void {
     const hovered = self.dispatcher.hovered orelse {
+        // A rebuild can leave nothing hovered without a motion.
+        self.cancelTip();
         self.tooltip.?.node.setEnabled(false);
         return;
     };
-    if (hovered.kind != .button) {
+    if (hovered.kind != .button or !self.tip_ready) {
         self.tooltip.?.node.setEnabled(false);
         return;
     }
@@ -964,8 +1130,11 @@ fn placeTooltip(self: *Self, hovered: *ui.layout.Widget, width: i32, area: wlr.B
 
 pub fn motion(self: *Self, x: f64, y: f64) void {
     const old = self.dispatcher.hovered;
-    self.dispatcher.pointerMotion(&self.root, @floatCast(x), @floatCast(y));
-    if (old != self.dispatcher.hovered) self.repaint();
+    self.dispatcher.pointerMotion(&self.input_root, @floatCast(x), @floatCast(y));
+    if (old != self.dispatcher.hovered) {
+        self.restartTip();
+        self.repaint();
+    }
 }
 
 pub fn leave(self: *Self) void {
@@ -981,14 +1150,40 @@ fn repaint(self: *Self) void {
 }
 
 pub fn press(self: *Self, x: f64, y: f64) void {
-    // Shell launchers activate on press, like the taskbar.
-    self.dispatcher.pointerButtonDown(&self.root, @floatCast(x), @floatCast(y));
-    self.dispatcher.pointerButtonUp(&self.root, @floatCast(x), @floatCast(y));
+    // A pinned icon can be dragged to another place among the pins, so it acts
+    // when released in place (`clickPin`); the other launchers act on press, like
+    // the taskbar.
+    if (self.buttonAt(@floatCast(x), @floatCast(y))) |index| if (self.pin_of[index]) |p| {
+        const input = &self.output.?.server.input;
+        input.dock_drag.armReorder(input, self.pins[p].id, self.pins[p].icon, self.scale);
+        return;
+    };
+    self.dispatcher.pointerButtonDown(&self.input_root, @floatCast(x), @floatCast(y));
+    self.dispatcher.pointerButtonUp(&self.input_root, @floatCast(x), @floatCast(y));
+    self.repaint();
+}
+
+fn buttonAt(self: *const Self, x: f32, y: f32) ?usize {
+    for (self.buttons[0..self.count], 0..) |*button, index| {
+        if (button.contains(x, y)) return index;
+    }
+    return null;
+}
+
+/// A pinned icon was pressed and released without being dragged: its click,
+/// if the pointer (at layout position `x`, `y`) is still on that icon.
+pub fn clickPin(self: *Self, x: f64, y: f64, app_id: []const u8) void {
+    const local_x: f32 = @floatCast(x - @as(f64, @floatFromInt(self.box.x)));
+    const local_y: f32 = @floatCast(y - @as(f64, @floatFromInt(self.box.y)));
+    const index = self.buttonAt(local_x, local_y) orelse return;
+    const p = self.pin_of[index] orelse return;
+    if (!std.mem.eql(u8, self.pins[p].id, app_id)) return;
+    clicked(self, index);
     self.repaint();
 }
 
 pub fn contextMenu(self: *Self, x: f64, y: f64, screen_x: i32) bool {
-    self.dispatcher.pointerMotion(&self.root, @floatCast(x), @floatCast(y));
+    self.dispatcher.pointerMotion(&self.input_root, @floatCast(x), @floatCast(y));
     const button = self.dispatcher.hovered orelse return false;
     if (button.kind != .button) return false;
     const index = button.kind.button.id;
@@ -1004,7 +1199,13 @@ pub fn contextMenu(self: *Self, x: f64, y: f64, screen_x: i32) bool {
 /// Removes a shortcut's launcher. Its app still shows while it runs.
 pub fn removeShortcut(self: *Self, shortcut: Shortcut) void {
     const server = self.output.?.server;
-    self.saveHidden("dock_hidden_shortcuts", @tagName(shortcut)) catch |err| {
+    if (shortcut == .trash) {
+        @import("config").setting_save.saveCompositor(gpa, server.io, server.config.path, "dock_show_trash", false) catch |err| {
+            std.log.warn("could not remove the dock's trash: {}", .{err});
+            return;
+        };
+        server.config.compositor.dock_show_trash = false;
+    } else self.saveHidden("dock_hidden_shortcuts", @tagName(shortcut)) catch |err| {
         std.log.warn("could not remove dock shortcut: {}", .{err});
         return;
     };
@@ -1046,6 +1247,54 @@ fn reachable(self: *const Self) bool {
 fn slotFor(along: f64, padding: i32, step: i32, base: usize, pins: usize) usize {
     const gap = @round((along - @as(f64, @floatFromInt(padding))) / @as(f64, @floatFromInt(step)));
     return @intFromFloat(std.math.clamp(gap - @as(f64, @floatFromInt(base)), 0, @as(f64, @floatFromInt(pins))));
+}
+
+fn pinIndex(self: *const Self, app_id: []const u8) ?usize {
+    for (self.pins[0..self.pin_count], 0..) |pin, i| if (std.mem.eql(u8, pin.id, app_id)) return i;
+    return null;
+}
+
+/// Whether dropping `app_id`'s pin in the gap before pin `slot` changes
+/// nothing: the gaps on either side of the pin itself, or it is gone.
+pub fn staysPut(self: *const Self, app_id: []const u8, slot: usize) bool {
+    const from = self.pinIndex(app_id) orelse return true;
+    return slot == from or slot == from + 1;
+}
+
+/// The icon a pinned application's button shows, once it is loaded.
+pub fn pinIcon(self: *const Self, app_id: []const u8) ?IconEntry {
+    const output = self.output orelse return null;
+    const pin = self.pins[self.pinIndex(app_id) orelse return null];
+    const lookup = output.server.iconLookup(pin.icon, self.iconRaster(self.metrics()));
+    return if (lookup == .ready) lookup.ready else null;
+}
+
+/// Moves a pinned application to the gap before pin `slot` (`pin_count` is the
+/// end). Pins no longer installed keep their places around it.
+pub fn movePin(self: *Self, app_id: []const u8, slot: usize) void {
+    if (self.staysPut(app_id, slot)) return;
+    const from = self.pinIndex(app_id).?;
+    const server = self.output.?.server;
+    const old = server.config.compositor.dock_pinned_apps;
+    const moving = self.pins[from].config_index;
+    const items = server.config.arena.allocator().alloc([]const u8, old.len) catch return;
+    var len: usize = 0;
+    var placed = false;
+    for (old, 0..) |id, i| {
+        if (i == moving) continue;
+        if (!placed and slot < self.pin_count and i == self.pins[slot].config_index) {
+            items[len] = old[moving];
+            len += 1;
+            placed = true;
+        }
+        items[len] = id;
+        len += 1;
+    }
+    if (!placed) {
+        items[len] = old[moving];
+        len += 1;
+    }
+    self.savePinned(items[0..len]);
 }
 
 /// Shows (or clears) the drop marker of a drag in progress.
@@ -1126,7 +1375,7 @@ pub fn captureAnimations(self: *Self, allocator: std.mem.Allocator, list: *std.A
     for (self.animations[0..self.count]) |*pill| {
         try anim.captureIfLive(allocator, list, &pill.width, .taskbar_hover, now_ms);
         try anim.captureIfLive(allocator, list, &pill.opacity, .taskbar_hover, now_ms);
-        try anim.captureIfLive(allocator, list, &pill.zoom, .taskbar_hover, now_ms);
+        try anim.captureIfLive(allocator, list, &pill.zoom, .dock_hover, now_ms);
     }
 }
 
@@ -1160,10 +1409,59 @@ fn clicked(owner: ?*anyopaque, index: usize) void {
         defer snapshot.release();
         const id = self.pins[pin_index].id;
         const entry = default_apps.find(snapshot.entries, id) orelse return;
+        server.launch_feedback.setOrigin(self.launchOrigin(index));
+        defer server.launch_feedback.clearOrigin();
         @import("start_menu/launch.zig").launch(gpa, server, entry) catch |err| std.log.warn("could not launch pinned app {s}: {}", .{ id, err });
     } else if (self.shortcuts[index]) |shortcut| switch (shortcut) {
         .applications => output.toggleAppLauncher(),
-        .files, .terminal => @import("config_runtime/actions.zig").executeAction(server, .{ .spawn = if (shortcut == .files) "default-file-manager" else "default-terminal" }),
+        .files, .terminal => {
+            server.launch_feedback.setOrigin(self.launchOrigin(index));
+            defer server.launch_feedback.clearOrigin();
+            @import("config_runtime/actions.zig").executeAction(server, .{ .spawn = if (shortcut == .files) "default-file-manager" else "default-terminal" });
+        },
         .settings => output.toggleControlCenter(),
+        .trash => {
+            server.launch_feedback.setOrigin(self.launchOrigin(index));
+            defer server.launch_feedback.clearOrigin();
+            openTrash(server);
+        },
+    };
+}
+
+/// Opens the trash (`$XDG_DATA_HOME/Trash/files`) in the default file manager,
+/// as the desktop's Trash icon does.
+fn openTrash(server: *Server) void {
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const home = server.environ.getPosix("HOME") orelse return;
+    const data_home = server.environ.getPosix("XDG_DATA_HOME") orelse (std.fmt.allocPrint(a, "{s}/.local/share", .{home}) catch return);
+    const trash = std.fmt.allocPrint(a, "{s}/Trash/files", .{data_home}) catch return;
+    // Files browses the trash by path; it must exist before the first deletion.
+    std.Io.Dir.cwd().createDirPath(server.io, trash) catch {};
+    const id = server.config.compositor.default_file_manager;
+    if (id.len > 0) {
+        const snapshot = server.start_menu_catalog.retainSnapshot();
+        defer snapshot.release();
+        if (default_apps.find(snapshot.entries, id)) |entry| {
+            const uris = @import("desktop/dnd.zig").uriList(a, &.{trash}) catch return;
+            const uri = std.mem.trimEnd(u8, uris, "\r\n");
+            @import("start_menu/launch.zig").launchUris(gpa, server, entry, &.{uri}) catch |err| std.log.warn("could not open the trash in {s}: {}", .{ id, err });
+            return;
+        }
+    }
+    @import("config_runtime/actions.zig").spawnArgv(server, &.{ "rediwm-files", trash });
+}
+
+/// The layout-space square of item `index`'s icon, which a window it launches
+/// grows out of.
+fn launchOrigin(self: *const Self, index: usize) @import("launch_feedback.zig").Origin {
+    const button = &self.buttons[index];
+    const side: f64 = @min(button.computed_width, button.computed_height);
+    return .{
+        .x = @as(f64, @floatFromInt(self.box.x)) + button.computed_x + (button.computed_width - side) / 2,
+        .y = @as(f64, @floatFromInt(self.box.y)) + button.computed_y + (button.computed_height - side) / 2,
+        .width = side,
+        .height = side,
     };
 }

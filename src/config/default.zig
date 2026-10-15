@@ -127,11 +127,15 @@ pub const source =
     \\dock_height = 68 # thickness in logical px; 48-96, icons and spacing resize together
     \\dock_hover_zoom = 1.05 # 1.0-1.5; 1.0 disables icon enlargement on hover
     \\dock_auto_hide = false # show the dock only when the pointer reaches its edge; false reserves its space
+    \\# dock_opacity = 0.8 # 0.0-1.0 background alpha. Unset keeps the theme's own
+    \\dock_active_highlight = false # draw a rectangle behind the focused app's icon
+    \\dock_show_trash = true # a Trash icon at the dock's far end; opens the trash in Files
     \\dock_hidden_shortcuts = [] # applications, files, terminal, settings
     \\dock_pinned_apps = [] # desktop entry IDs pinned by dragging them from the start menu
     \\# Taskbar sections, ordered within each section; prefix with - to hide an item.
     \\taskbar_position = "bottom" # top or bottom
-    \\taskbar_items = ["left:start", "left:windows", "right:tray", "right:battery", "right:network", "right:volume", "right:clock"]
+    \\taskbar_items = ["left:start", "left:windows", "right:capture", "right:tray", "right:battery", "right:network", "right:volume", "right:clock", "-right:power"]
+    \\# Hiding capture (-right:capture) removes the recording/sharing indicator; not recommended.
     \\focus_follows_mouse   = false
     \\canvas_columns        = 3      # screens wide (1-10)
     \\canvas_rows           = 3      # screens tall (1-10)
@@ -153,7 +157,7 @@ pub const source =
     \\files_single_click_open = true # Files: one click on an icon opens the file or folder
     \\switcher_opacity      = 1.0   # 0.0-1.0, background only; previews stay opaque
     \\inactive_opacity      = 1.0   # 0.0-1.0, 1.0 = no change
-    \\# terminal_opacity   = 0.9   # 0.0-1.0 Foot background; new windows only. Unset keeps Foot's own alpha
+    \\# terminal_opacity   = 0.9   # 0.0-1.0 terminal background (Foot, kitty, Alacritty, Ghostty, WezTerm); new windows only. Unset keeps their own
     \\inactive_dim          = true  # windows that are not the focus lose a little brightness and colour
     \\inactive_dim_amount   = 0.08  # 0.0-0.5, how much they lose (fullscreen windows never dim)
     \\border_radius         = 10    # window corner radius
@@ -191,6 +195,9 @@ pub const source =
     \\#
     \\# [animations.wheel_scroll]    # mouse-wheel glide in shell panels; off = true to step
     \\# spring = { damping_ratio = 1.0, stiffness = 800 }
+    \\#
+    \\# [animations.dock_hover]      # dock icon zoom; damping_ratio 1.0 = no bounce
+    \\# spring = { damping_ratio = 0.5, stiffness = 600 }
     \\#
     \\# [animations.taskbar_press]
     \\# duration_ms = 90

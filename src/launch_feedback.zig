@@ -6,6 +6,9 @@
 //! existing window with its token, when its process fails, or after
 //! `timeout_ms`. Launchers that exit successfully (single-instance handoff,
 //! wrappers) keep waiting for the window.
+//!
+//! A launch can carry where it was started from (a dock icon, `origin`): the
+//! window that ends it grows out of that box as it opens.
 const std = @import("std");
 const wl = @import("wayland").server.wl;
 const Server = @import("Server.zig");
@@ -16,6 +19,14 @@ const Self = @This();
 
 pub const timeout_ms = 15_000;
 const max_launches = 16;
+
+/// A layout-space box the launched window grows out of.
+pub const Origin = struct {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+};
 
 pub const Spec = struct {
     pid: i32 = 0,
@@ -33,6 +44,7 @@ const Launch = struct {
     /// Windows with this id or lower existed before the launch.
     after_id: u64,
     deadline_ms: i64,
+    origin: ?Origin,
 };
 
 fn Str(comptime n: usize) type {
@@ -57,6 +69,9 @@ server: *Server = undefined,
 launches: [max_launches]Launch = undefined,
 len: usize = 0,
 timer: ?*wl.EventSource = null,
+/// Set by a launcher just before it launches (`setOrigin`); the next `begin`
+/// takes it.
+pending_origin: ?Origin = null,
 
 pub fn init(self: *Self, server: *Server) void {
     self.* = .{ .server = server };
@@ -72,6 +87,16 @@ pub fn busy(self: *const Self) bool {
     return self.len > 0;
 }
 
+/// The next launch started from `origin`. Call `clearOrigin` once the launch
+/// call returns, in case it failed before `begin`.
+pub fn setOrigin(self: *Self, origin: Origin) void {
+    self.pending_origin = origin;
+}
+
+pub fn clearOrigin(self: *Self) void {
+    self.pending_origin = null;
+}
+
 pub fn begin(self: *Self, spec: Spec) void {
     // Full: the oldest launch is the least likely to still be starting.
     if (self.len == max_launches) self.removeAt(0);
@@ -83,29 +108,36 @@ pub fn begin(self: *Self, spec: Spec) void {
         .has_wm_class = spec.startup_wm_class != null,
         .after_id = self.server.next_toplevel_id -| 1,
         .deadline_ms = Toplevel.nowMs() + timeout_ms,
+        .origin = self.pending_origin,
     };
+    self.pending_origin = null;
     self.len += 1;
     self.armTimer();
     if (self.len == 1) self.server.input.refreshBusyCursor();
 }
 
-pub fn windowMapped(self: *Self, toplevel: *Toplevel) void {
-    if (self.len == 0) return;
+/// Ends the launches `toplevel` belongs to and returns where the first of them
+/// that has one was started from.
+pub fn windowMapped(self: *Self, toplevel: *Toplevel) ?Origin {
+    if (self.len == 0) return null;
     const pid = toplevel.clientPid() orelse 0;
     const app_id = toplevel.appId();
     var i: usize = 0;
     var changed = false;
+    var origin: ?Origin = null;
     while (i < self.len) {
         const launch = &self.launches[i];
         const ours = toplevel.id > launch.after_id and
             ((launch.pid > 0 and pid > 0 and placeholder_match.matchesPidChain(pid, launch.pid)) or
                 placeholder_match.matchesAppId(app_id, if (launch.has_wm_class) launch.wm_class.get() else null, launch.desktop_id.get()));
         if (ours) {
+            if (origin == null) origin = launch.origin;
             self.removeAt(i);
             changed = true;
         } else i += 1;
     }
     if (changed) self.finish();
+    return origin;
 }
 
 /// End the launch holding this activation token: the app used it (it is up,

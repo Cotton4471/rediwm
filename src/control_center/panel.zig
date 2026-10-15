@@ -81,6 +81,11 @@ fn label(value: []const u8, size: f32, dim: bool) Widget {
     return .{ .kind = .{ .text = .{ .content = value, .font_size = size, .weight = if (dim) 400 else 600, .color = if (dim) t.dim else t.fg } } };
 }
 
+/// A card or group title: larger and bolder than the semibold row labels.
+pub fn sectionTitle(value: []const u8) Widget {
+    return .{ .kind = .{ .text = .{ .content = value, .font_size = 17, .weight = 700, .color = palette().fg } } };
+}
+
 /// Stands in for a section whose widget tree could not be allocated; it
 /// allocates nothing itself.
 pub fn outOfMemory() Widget {
@@ -177,7 +182,7 @@ pub const ControlCenter = struct {
     content_children: [
         2 + @max(
             @typeInfo(@FieldType(input_section.Section, "row_storage")).array.len,
-            @typeInfo(@FieldType(appearance_section.Section, "row_storage")).array.len,
+            @typeInfo(@FieldType(appearance_section.Section, "group_cards")).array.len,
         )
     ]Widget = undefined,
     content_count: usize = 0,
@@ -548,13 +553,13 @@ pub const ControlCenter = struct {
                 cc.append(audio_card);
                 cc.buildDevices();
                 if (cc.device_count > 0) {
-                    cc.device_title = .{ label("Audio output", 16, false), .{ .kind = .container, .direction = .column, .gap = 4, .children = cc.device_rows[0..cc.device_count] } };
+                    cc.device_title = .{ sectionTitle("Audio output"), .{ .kind = .container, .direction = .column, .gap = 4, .children = cc.device_rows[0..cc.device_count] } };
                     var dev_card = card(&cc.device_title);
                     dev_card.name = "sound";
                     cc.append(dev_card);
                 }
             },
-            .appearance => for (&cc.appearance.row_storage) |*row| {
+            .appearance => for (&cc.appearance.group_cards) |*row| {
                 var framed = card(row.children);
                 framed.name = "appearance";
                 framed.direction = row.direction;
@@ -606,11 +611,11 @@ pub const ControlCenter = struct {
     fn buildGeneral(cc: *ControlCenter) void {
         portal_section.build(&cc.portals, cc);
         cc.append(cc.portals.root);
-        cc.general_volume = .{ label("Master volume", 16, false), if (cc.server.audio != null) cc.sound.body_children[1] else label("Audio unavailable", 13, true) };
+        cc.general_volume = .{ sectionTitle("Master volume"), if (cc.server.audio != null) cc.sound.body_children[1] else label("Audio unavailable", 13, true) };
         var vol_card = card(&cc.general_volume);
         vol_card.name = "sound";
         cc.append(vol_card);
-        cc.brightness_children = .{ label("Brightness", 16, false), label(if (cc.server.brightness.failed) "No supported backlight" else "Checking backlight…", 13, true) };
+        cc.brightness_children = .{ sectionTitle("Brightness"), label(if (cc.server.brightness.failed) "No supported backlight" else "Checking backlight…", 13, true) };
         if (cc.server.brightness.level) |level| {
             cc.brightness_row = .{
                 .{ .kind = .{ .icon = .{ .id = .brightness, .color = palette().fg } }, .width = .{ .fixed = 24 }, .height = .{ .fixed = 24 } },
@@ -622,7 +627,7 @@ pub const ControlCenter = struct {
         }
         cc.append(card(&cc.brightness_children));
         cc.general_output_text = .{
-            label("Audio output", 16, false),
+            sectionTitle("Audio output"),
             label(if (cc.sound.output_desc_len > 0) cc.sound.output_desc_buf[0..cc.sound.output_desc_len] else "No audio device available", 13, true),
         };
         cc.general_output = .{
@@ -633,7 +638,7 @@ pub const ControlCenter = struct {
         output_card.direction = .row;
         output_card.@"align" = .center;
         cc.append(output_card);
-        cc.general_display_text = .{ label("Display", 16, false), label(std.mem.span(cc.wlr_output.name), 13, true) };
+        cc.general_display_text = .{ sectionTitle("Display"), label(std.mem.span(cc.wlr_output.name), 13, true) };
         cc.general_display = .{
             .{ .kind = .container, .direction = .column, .@"align" = .stretch, .width = .{ .flex = 1 }, .gap = 5, .children = &cc.general_display_text },
             .{ .kind = .{ .button = .{ .label = "Display settings", .owner = cc, .id = @intFromEnum(Page.displays), .on_click = pageClicked } }, .height = .{ .fixed = 32 } },
@@ -976,7 +981,7 @@ pub const ControlCenter = struct {
         cc.scheduleFrame();
     }
 
-    fn layoutContent(cc: *ControlCenter) void {
+    pub fn layoutContent(cc: *ControlCenter) void {
         cc.background.invalidate();
         const width: f32 = @floatFromInt(cc.panel_box.width);
         const height: f32 = @floatFromInt(cc.panel_box.height);
@@ -1092,12 +1097,30 @@ pub const ControlCenter = struct {
         const q = anim.rasterPixelQuantum(cc.toplevel.render_scale) / pitch;
         const pos = cc.nav_selection.value(now_ms);
         const selected = if (cc.nav_selection.settled(now_ms)) pos else @round(pos / q) * q;
+        const before = cc.nav_hover.frame;
         const hover_changed = cc.nav_hover.step(now_ms, 1, q);
-        if (selected == cc.nav_selected_row and !hover_changed) return false;
+        const selection_changed = selected != cc.nav_selected_row;
+        if (!selection_changed and !hover_changed) return false;
+        // Repaint the rows the highlights left and reached, not the whole
+        // list: the hover's opacity also depends on the selection.
+        if (selection_changed) {
+            markNavRows(list, cc.nav_selected_row);
+            markNavRows(list, selected);
+        }
+        if (hover_changed or (selection_changed and before.alpha > 0)) {
+            markNavRows(list, before.row);
+            markNavRows(list, cc.nav_hover.frame.row);
+        }
         cc.nav_selected_row = selected;
-        list.markPaintDirty();
         anim.observeNoteChanged();
         return true;
+    }
+
+    /// The one or two rows a highlight at fractional row `pos` covers.
+    fn markNavRows(list: *Widget, pos: f32) void {
+        const clamped = std.math.clamp(pos, 0, @as(f32, @floatFromInt(list.children.len - 1)));
+        list.children[@intFromFloat(@floor(clamped))].markPaintDirty();
+        list.children[@intFromFloat(@ceil(clamped))].markPaintDirty();
     }
 
     /// Paint once beneath the rows so the fills can move through their gaps.
@@ -1144,7 +1167,7 @@ pub const ControlCenter = struct {
         return .{ color[0], color[1], color[2], color[3] * alpha };
     }
 
-    fn requestWidgetRepaint(cc: *ControlCenter) void {
+    pub fn requestWidgetRepaint(cc: *ControlCenter) void {
         cc.dirty = true;
         cc.scheduleFrame();
     }
@@ -1160,7 +1183,7 @@ pub const ControlCenter = struct {
         // The window's chrome raster scale: the highest output scale it touches.
         const scale = cc.toplevel.render_scale;
         if (cc.painted_scale != scale) cc.background.invalidate();
-        const buf = PanelBuffer.createUninitialized(cc.panel_box.width, cc.panel_box.height, scale) catch |err| {
+        const buf = PanelBuffer.createRetained(cc.panel_box.width, cc.panel_box.height, scale, &cc.background) catch |err| {
             log.err("ControlCenter.paintContent: could not create panel buffer: {}", .{err});
             return;
         };
@@ -1168,7 +1191,7 @@ pub const ControlCenter = struct {
         const t0 = panel_present.nowNs();
         var renderer = ui.paint.Renderer.init(buf.pixels, buf.width, buf.height, scale);
         renderer.palette = palette();
-        cc.background.paintIncremental(gpa, &cc.root, &renderer);
+        cc.background.paintIncremental(gpa, &cc.root, &renderer, &buf.stamp);
         const elapsed_ns = panel_present.nowNs() -| t0;
 
         // A world node reaches its projected view only with the damage we
@@ -1215,6 +1238,11 @@ pub fn pointerLeave(cc: *ControlCenter) void {
         cc.scheduleFrame();
     }
     if (revision != ui.layout.paint_revision) cc.requestWidgetRepaint();
+}
+
+/// Over a taskbar item row, which drags from anywhere but its toggle.
+pub fn overDraggable(cc: *ControlCenter, sx: f64, sy: f64) bool {
+    return cc.page == .appearance and appearance_section.itemHandle(&cc.appearance, @floatCast(sx), @floatCast(sy)) != null;
 }
 
 pub fn pointerButtonDown(cc: *ControlCenter, sx: f64, sy: f64) void {

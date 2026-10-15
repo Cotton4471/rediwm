@@ -35,7 +35,7 @@ pub fn build(s: *Section, cc: *panel.ControlCenter) void {
 fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
     const content = config.load(a, cc.server.io, cc.server.environ) catch config.defaults;
     return .{ .kind = .container, .direction = .column, .gap = 12, .width = .{ .percent = 1 }, .children = try a.dupe(W, &.{
-        text("Desktop portals", false),
+        panel.sectionTitle("Desktop portals"),
         text("Choose the services apps use for desktop dialogs. The selected backend must be installed.", true),
         try row(cc, a, "Default backend", "portal_default", &.{ "GTK", "KDE", "RediWM + GTK" }, &default_values, config.get(content, "default") orelse "gtk", defaultChanged),
         try row(cc, a, "File dialogs", "portal_file_chooser", &.{ "RediWM", "GTK", "KDE", "Any available" }, &file_values, config.get(content, config.chooser_key) orelse config.get(content, "default") orelse "gtk", fileChanged),

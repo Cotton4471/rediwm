@@ -109,6 +109,11 @@ pub fn spawnProcess(server: *Server, cmd: []const u8) void {
     spawnTracked(server, cmd, false, &.{ "/bin/sh", "-c", cmd });
 }
 
+/// Runs `argv` directly, no shell, as `spawnProcess` would a command line.
+pub fn spawnArgv(server: *Server, argv: []const []const u8) void {
+    spawnTracked(server, argv[0], false, argv);
+}
+
 pub fn spawnHelper(server: *Server, cmd: []const u8) void {
     if (server.services) |manager| {
         if (manager.helperRunning(cmd)) return;

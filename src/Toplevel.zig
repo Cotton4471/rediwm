@@ -220,6 +220,10 @@ peek_mix: @import("ui").anim.Anim = .{ .property = .opacity },
 peek_level: @import("ui").anim.Anim = .{ .from = 1, .to = 1, .property = .opacity },
 map_motion: anim.Anim = .{ .from = 1, .to = 1 },
 map_opacity: anim.Anim = .{ .from = 1, .to = 1, .property = .opacity },
+/// Set while a window launched from the dock grows out of its icon (a
+/// layout-space box): `map_motion` then carries the frame from that box to
+/// its place. Presentation only, like `dodge_x`; input follows what is drawn.
+launch_origin: ?LaunchOrigin = null,
 move_x: anim.Anim = .{},
 move_y: anim.Anim = .{},
 /// Temporary displacement of the frame in world units (`input/drag_dodge.zig`).
@@ -1570,12 +1574,40 @@ pub fn applyVisualTransform(toplevel: *Toplevel, now_ms: i64) void {
         anim.windowMapScale(toplevel.map_motion.value(now_ms))
     else
         1.0;
-    _ = @import("projection.zig").setTreeZoom(&toplevel.frame_tree.node, zoom_scale * factor * toplevel.drag_lift_value);
     const lift = toplevel.dragLiftOffset();
-    toplevel.frame_tree.node.setPosition(
-        visualX(toplevel, now_ms) + animOffset(toplevel.dodge_x, now_ms) + animOffset(toplevel.switch_x, now_ms) - lift.x,
-        visualY(toplevel, now_ms) + animOffset(toplevel.dodge_y, now_ms) + animOffset(toplevel.switch_y, now_ms) - lift.y,
-    );
+    const x = visualX(toplevel, now_ms) + animOffset(toplevel.dodge_x, now_ms) + animOffset(toplevel.switch_x, now_ms) - lift.x;
+    const y = visualY(toplevel, now_ms) + animOffset(toplevel.dodge_y, now_ms) + animOffset(toplevel.switch_y, now_ms) - lift.y;
+    if (!toplevel.closing) if (toplevel.launch_origin) |origin| {
+        const grow = launchGrowth(toplevel, origin, x, y, zoom_scale * toplevel.drag_lift_value, toplevel.map_motion.value(now_ms));
+        _ = @import("projection.zig").setTreeZoom(&toplevel.frame_tree.node, grow.zoom);
+        toplevel.frame_tree.node.setPosition(grow.x, grow.y);
+        return;
+    };
+    _ = @import("projection.zig").setTreeZoom(&toplevel.frame_tree.node, zoom_scale * factor * toplevel.drag_lift_value);
+    toplevel.frame_tree.node.setPosition(x, y);
+}
+
+pub const LaunchOrigin = @import("launch_feedback.zig").Origin;
+
+/// The frame on its way from the dock icon it was launched from (`amount` 0)
+/// to its place at `x`, `y` and tree zoom `rest_zoom` (`amount` 1): the icon's
+/// square grows into the frame, centre to centre, keeping the frame's aspect.
+fn launchGrowth(toplevel: *const Toplevel, origin: LaunchOrigin, x: i32, y: i32, rest_zoom: f64, amount: f32) struct { x: i32, y: i32, zoom: f64 } {
+    const world = &toplevel.server.world;
+    const t: f64 = amount;
+    const w = @as(f64, @floatFromInt(@max(toplevel.chrome_width, 1))) * rest_zoom;
+    const h = @as(f64, @floatFromInt(@max(toplevel.chrome_height, 1))) * rest_zoom;
+    const icon = world.toWorld(origin.x + origin.width / 2, origin.y + origin.height / 2);
+    const icon_side = @max(origin.width, origin.height) / world.camera.zoom();
+    const start = std.math.clamp(icon_side / @max(w, h), 0.01, 1);
+    const f = start + (1 - start) * t;
+    const cx = icon.x + (@as(f64, @floatFromInt(x)) + w / 2 - icon.x) * t;
+    const cy = icon.y + (@as(f64, @floatFromInt(y)) + h / 2 - icon.y) * t;
+    return .{
+        .x = @intFromFloat(@round(cx - w * f / 2)),
+        .y = @intFromFloat(@round(cy - h * f / 2)),
+        .zoom = rest_zoom * f,
+    };
 }
 
 fn dragLiftOffset(toplevel: *const Toplevel) struct { x: i32, y: i32 } {
@@ -1764,6 +1796,7 @@ pub fn tickMap(toplevel: *Toplevel, now_ms: i64) bool {
         if (toplevel.closing) return false;
         toplevel.map_motion.cancel(1);
         toplevel.map_opacity.cancel(1);
+        toplevel.launch_origin = null;
         return false;
     }
     return true;
@@ -1837,8 +1870,25 @@ fn applySizeClip(toplevel: *Toplevel) void {
     toplevel.setSizeClip(.{ .x = 0, .y = 0, .width = xscale.surfaceLength(cw, n), .height = xscale.surfaceLength(ch, n) });
 }
 
-fn beginOpenAnimation(toplevel: *Toplevel) void {
+fn beginOpenAnimation(toplevel: *Toplevel, launch_origin: ?LaunchOrigin) void {
     const now_ms = nowMs();
+    toplevel.launch_origin = null;
+    if (launch_origin) |origin| if (!toplevel.isFullscreen() and anim.enabled() and !anim.reducedMotion()) {
+        toplevel.launch_origin = origin;
+        toplevel.map_motion.cancel(0);
+        toplevel.map_opacity.cancel(0);
+        toplevel.map_motion.retargetTo(now_ms, 1, anim.curveFor(.window_launch));
+        // Opaque early: the growing window, not a fade, is the effect.
+        toplevel.map_opacity.retargetTo(now_ms, 1, anim.Curve{ .duration = .{ .ms = 120, .ease = .out_cubic } });
+        if (toplevel.map_motion.settled(now_ms)) {
+            toplevel.map_motion.cancel(1);
+            toplevel.launch_origin = null;
+        }
+        toplevel.applyVisualTransform(now_ms);
+        toplevel.applyOpacity(now_ms);
+        toplevel.server.scheduleFrames();
+        return;
+    };
     if (toplevel.isMaximized() or toplevel.isFullscreen()) {
         toplevel.map_motion.cancel(1);
         toplevel.map_opacity.cancel(1);
@@ -1858,6 +1908,7 @@ fn beginOpenAnimation(toplevel: *Toplevel) void {
 }
 
 fn beginCloseAnimation(toplevel: *Toplevel) bool {
+    toplevel.launch_origin = null;
     if (!anim.enabled() or anim.speed() <= 0) return false;
     if (!snapshotClient(toplevel)) return false;
     const now_ms = nowMs();
@@ -2263,7 +2314,7 @@ pub fn handleMapped(toplevel: *Toplevel) void {
 
     toplevel.resolveInitialRules();
     if (toplevel.open_rules.focus orelse true) toplevel.server.window_tabs.focusMember(toplevel);
-    if (toplevel.backend != .placeholder and toplevel.backend != .shell) toplevel.server.launch_feedback.windowMapped(toplevel);
+    const launch_origin = if (toplevel.backend != .placeholder and toplevel.backend != .shell) toplevel.server.launch_feedback.windowMapped(toplevel) else null;
 
     if (toplevel.open_rules.depth) |d| {
         toplevel.setZoomOrigin(d);
@@ -2406,7 +2457,7 @@ pub fn handleMapped(toplevel: *Toplevel) void {
         toplevel.applyOpacity(now_ms);
         toplevel.server.scheduleFrames();
     } else {
-        toplevel.beginOpenAnimation();
+        toplevel.beginOpenAnimation(launch_origin);
     }
     toplevel.server.window_tabs.mapped(toplevel);
     toplevel.server.window_tabs.mappedToken(toplevel);
@@ -2620,7 +2671,8 @@ pub fn isGeometrySettled(toplevel: *Toplevel, now_ms: i64) bool {
     return toplevel.move_x.settled(now_ms) and toplevel.move_y.settled(now_ms) and
         toplevel.size_w.settled(now_ms) and toplevel.size_h.settled(now_ms) and
         toplevel.drag_lift.settled(now_ms) and
-        toplevel.switch_x.settled(now_ms) and toplevel.switch_y.settled(now_ms);
+        toplevel.switch_x.settled(now_ms) and toplevel.switch_y.settled(now_ms) and
+        (toplevel.launch_origin == null or toplevel.map_motion.settled(now_ms));
 }
 
 pub fn chromeAcceptsInput(buffer: *wlr.SceneBuffer, sx: *f64, sy: *f64) callconv(.c) bool {

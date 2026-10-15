@@ -135,6 +135,12 @@ pub const CompositorConfig = struct {
     dock_height: u32 = dock_height_default,
     dock_hover_zoom: f32 = 1.05,
     dock_auto_hide: bool = false,
+    /// Alpha of the dock's background. Unset keeps the theme's own (`dock_bg`).
+    dock_opacity: ?f32 = null,
+    /// A rectangle behind the focused application's icon; the running pill shows regardless.
+    dock_active_highlight: bool = false,
+    /// A Trash icon at the dock's far end (right, or bottom on a side dock).
+    dock_show_trash: bool = true,
     dock_hidden_shortcuts: []const []const u8 = &.{},
     dock_pinned_apps: []const []const u8 = &.{},
     taskbar_items: TaskbarItems = .{},
@@ -173,7 +179,7 @@ pub const CompositorConfig = struct {
     /// Files opens an item with one click on its icon; names still select.
     files_single_click_open: bool = true,
     inactive_opacity: f32 = 1.0,
-    /// Background alpha handed to Foot at launch (`config/terminal_theme.zig`).
+    /// Background alpha handed to Foot, kitty, Alacritty, Ghostty and WezTerm at launch (`config/terminal_theme.zig`).
     /// Unset keeps the `alpha` of the user's own Foot configuration.
     terminal_opacity: ?f32 = null,
     /// A window that is not the focus loses `inactive_dim_amount` of its
@@ -1071,6 +1077,9 @@ const compositor_rules: std.enums.EnumFieldStruct(std.meta.FieldEnum(CompositorC
     .dock_height = .{ .uint = .{ .min = dock_height_min, .max = dock_height_max } },
     .dock_hover_zoom = .{ .float = .{ .min = 1, .max = dock_hover_zoom_max } },
     .dock_auto_hide = .boolean,
+    .dock_opacity = .{ .float = .{ .min = 0, .max = 1 } },
+    .dock_active_highlight = .boolean,
+    .dock_show_trash = .boolean,
     .dock_hidden_shortcuts = .json_string_list,
     .dock_pinned_apps = .json_string_list,
     .taskbar_items = .taskbar_items,
@@ -1855,6 +1864,15 @@ test "config field parsing preserves ranges and derived zoom state" {
     inline for (.{ "nan", "-0.1", "1.01" }) |v| {
         try std.testing.expectError(error.InvalidValue, applyCompositorKey(&c, a, "terminal_opacity", v));
     }
+    try std.testing.expectEqual(@as(?f32, null), c.dock_opacity);
+    try std.testing.expect(!c.dock_active_highlight);
+    try applyCompositorKey(&c, a, "dock_opacity", "0.6");
+    try std.testing.expectEqual(@as(?f32, 0.6), c.dock_opacity);
+    inline for (.{ "nan", "-0.1", "1.01" }) |v| {
+        try std.testing.expectError(error.InvalidValue, applyCompositorKey(&c, a, "dock_opacity", v));
+    }
+    try applyCompositorKey(&c, a, "dock_active_highlight", "true");
+    try std.testing.expect(c.dock_active_highlight);
     try std.testing.expect(c.inactive_dim);
     try std.testing.expectEqual(@as(f32, 0.08), c.inactive_dim_amount);
     try applyCompositorKey(&c, a, "inactive_dim", "false");

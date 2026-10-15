@@ -20,6 +20,9 @@ last_level: f32 = 0,
 fade_start: ?i64 = null,
 scale: f32 = 0,
 const Osd = @This();
+/// Gap between the OSD and the bottom of the work area, or the top of a dock.
+const edge_gap = 20;
+const dock_gap = 12;
 
 pub fn show(server: *Server, state: State) void {
     const output = server.getDefaultOutput() orelse return;
@@ -119,13 +122,21 @@ fn present(self: *Osd, output: *Output, state: State, restart: bool) !void {
     }
 }
 
+/// Bottom centre of the work area, or just above a dock on the bottom edge,
+/// auto-hiding or not, so the two never overlap.
 fn position(self: *Osd, output: *Output) void {
     const state = self.state orelse return;
     const box = output.usableBox();
     const width = @min(painter.width(state.kind), box.width);
     const height = @min(painter.height, box.height);
+    var bottom = box.y + box.height - edge_gap;
+    if (output.server.config.compositor.dock_position == .bottom) {
+        const area = output.dockAreaBox();
+        const dock = @import("Dock.zig").footprint(output.server, area);
+        if (dock > 0) bottom = area.y + area.height - dock - dock_gap;
+    }
     self.node.?.setDestSize(width, height);
-    self.node.?.node.setPosition(box.x + @divTrunc(box.width - width, 2), box.y + @max(0, box.height - height - 20));
+    self.node.?.node.setPosition(box.x + @divTrunc(box.width - width, 2), @max(box.y, bottom - height));
 }
 
 pub fn tick(self: *Osd, output: *Output, now: i64) bool {

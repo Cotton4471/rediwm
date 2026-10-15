@@ -129,11 +129,21 @@ def run():
                 assert gold["tokens"]["app_fg"] != gold["tokens"]["window_fg"]
                 assert gold["tokens"]["app_sidebar"][3] == .5
                 assert gold["tokens"]["app_sidebar_blur"] is True
-                for key in ("app_item_hover", "app_sidebar_hover", "app_surface_hover",
+                for key in ("app_item_hover", "app_surface_hover",
                             "surface_hover", "start_menu_selected_bg"):
                     assert abs(gold["tokens"][key][3] - 0.96) < .001, key
+                assert abs(gold["tokens"]["app_sidebar_hover"][3] - 0.07) < .001
                 wait_for(lambda: UIDriver(ipc).widgets("dock"), "Gold dock did not appear")
                 assert ipc.get_shell_state()["taskbars"][0]["box"]["y"] == 0
+                assert gold["tokens"]["clock_bold"] is True
+                assert gold["tokens"]["clock_italic"] is False
+                assert gold["tokens"]["taskbar_radius"] == 12
+                bar_widgets = UIDriver(ipc).widgets("taskbar")
+                assert not any(w["role"] == "chip" for w in bar_widgets), 'Gold window list must default hidden'
+                clock_box = next(w['global_box'] for w in bar_widgets if w['name'] == 'clock')
+                bar_box = bar_widgets[0]['global_box']
+                assert abs(clock_box['x'] + clock_box['width'] / 2 - (bar_box['x'] + bar_box['width'] / 2)) <= 1
+                assert any(w['name'] == 'power' for w in bar_widgets), 'Gold Power item missing'
                 assert UIDriver(ipc).widgets("dock")[0]["global_box"]["height"] == 76
                 wait_for(lambda: (ipc.query("get_wallpaper")["displayed_path"] or "").endswith("/wallpaper-gold.png"), "Gold wallpaper was not presented")
                 cfg = tomllib.loads((tmp / "rediwm-config.toml").read_text())

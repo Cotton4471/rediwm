@@ -3,6 +3,23 @@
 const std = @import("std");
 const ui = @import("ui");
 
+/// What a pooled buffer holds: the panel that painted it last, and which of
+/// its paints. A buffer anything else painted carries none.
+pub const Stamp = struct {
+    owner: ?*const Background = null,
+    generation: u64 = 0,
+};
+
+/// Paint numbers are unique across panels, so a buffer painted by a panel
+/// since freed never matches one that took over its address.
+var next_generation: u64 = 0;
+
+/// Paints remembered per panel. Panels alternate between two pooled buffers,
+/// so a recycled one has usually missed a single paint.
+const history_len = 4;
+
+const Repair = union(enum) { all, none, box: ui.paint.ClipRect };
+
 pub const Background = struct {
     pixels: []u32 = &.{},
     pixel_storage: []u32 = &.{},
@@ -15,6 +32,10 @@ pub const Background = struct {
     content_palette: ?ui.theme.Theme = null,
     /// Logical-pixel damage; null means the entire buffer was painted.
     damage: ?ui.paint.ClipRect = null,
+    /// The last paints' generations and damage (null: everything), so a
+    /// recycled buffer is repaired only where it missed a change.
+    history: [history_len]struct { generation: u64 = 0, damage: ?ui.paint.ClipRect = null } = @splat(.{}),
+    painted: u64 = 0,
 
     const Key = struct {
         width: i32,
@@ -41,7 +62,12 @@ pub const Background = struct {
     /// Own the last complete image independently of the buffers locked by
     /// wlroots. Repair a fresh/recycled buffer from it, and only rasterize the
     /// changed widget bounds. Repair pixels are not new scene damage.
-    pub fn paintIncremental(bg: *Background, allocator: std.mem.Allocator, root: *ui.layout.Widget, renderer: *ui.paint.Renderer) void {
+    /// `stamp` is the buffer's (`PanelBuffer.createRetained`): with it, only
+    /// what the buffer missed since this panel last painted it is repaired.
+    /// Leave it null when something is drawn over the retained image.
+    pub fn paintIncremental(bg: *Background, allocator: std.mem.Allocator, root: *ui.layout.Widget, renderer: *ui.paint.Renderer, stamp: ?*Stamp) void {
+        const held: Stamp = if (stamp) |s| s.* else .{};
+        if (stamp) |s| s.* = .{};
         const full = bg.invalid or bg.content.len != renderer.pixels.len or bg.key == null or
             bg.content_scale != renderer.scale or !std.meta.eql(bg.content_palette, renderer.palette) or
             bg.key.?.width != renderer.width or bg.key.?.height != renderer.height or
@@ -65,13 +91,12 @@ pub const Background = struct {
             }
         }
         if (bg.damage) |damage| {
-            @memcpy(renderer.pixels, bg.content);
-            const stride: usize = @intCast(renderer.width);
-            const x0: usize = @intFromFloat(@floor(damage.x * renderer.scale));
-            const y0: usize = @intFromFloat(@floor(damage.y * renderer.scale));
-            const x1: usize = @min(stride, @as(usize, @intFromFloat(@ceil((damage.x + damage.w) * renderer.scale))));
-            const y1: usize = @min(@as(usize, @intCast(renderer.height)), @as(usize, @intFromFloat(@ceil((damage.y + damage.h) * renderer.scale))));
-            for (y0..y1) |y| @memcpy(renderer.pixels[y * stride + x0 .. y * stride + x1], bg.pixels[y * stride + x0 .. y * stride + x1]);
+            switch (bg.missed(held)) {
+                .all => @memcpy(renderer.pixels, bg.content),
+                .none => {},
+                .box => |box| copyBox(renderer, renderer.pixels, bg.content, box),
+            }
+            copyBox(renderer, renderer.pixels, bg.pixels, damage);
             const previous = renderer.damage_clip;
             renderer.damage_clip = damage;
             renderer.clean = false;
@@ -89,11 +114,40 @@ pub const Background = struct {
                 return;
             };
         }
-        @memcpy(bg.content, renderer.pixels);
+        if (bg.damage) |damage| copyBox(renderer, bg.content, renderer.pixels, damage) else @memcpy(bg.content, renderer.pixels);
         bg.invalid = false;
         bg.content_scale = renderer.scale;
         bg.content_palette = renderer.palette;
         root.clearPaintDirty();
+        next_generation += 1;
+        bg.history[bg.painted % history_len] = .{ .generation = next_generation, .damage = bg.damage };
+        bg.painted += 1;
+        if (stamp) |s| s.* = .{ .owner = bg, .generation = next_generation };
+    }
+
+    /// Where a buffer stamped `held` differs from the retained image: the
+    /// union of the paints since its own, or all of it when unknown.
+    fn missed(bg: *const Background, held: Stamp) Repair {
+        if (held.owner != bg) return .all;
+        var result: ?ui.paint.ClipRect = null;
+        for (0..@min(bg.painted, history_len)) |back| {
+            const entry = bg.history[(bg.painted - 1 - back) % history_len];
+            if (entry.generation == held.generation) return if (result) |box| .{ .box = box } else .none;
+            const box = entry.damage orelse return .all;
+            addDamage(.{ .x = box.x, .y = box.y, .w = box.w, .h = box.h }, &result);
+        }
+        return .all;
+    }
+
+    /// Copies the device pixels under logical `box`, on the grid partial paints use.
+    fn copyBox(renderer: *const ui.paint.Renderer, dst: []u32, src: []const u32, box: ui.paint.ClipRect) void {
+        const stride: usize = @intCast(renderer.width);
+        const x0: usize = @intFromFloat(@floor(box.x * renderer.scale));
+        const y0: usize = @intFromFloat(@floor(box.y * renderer.scale));
+        const x1: usize = @min(stride, @as(usize, @intFromFloat(@ceil((box.x + box.w) * renderer.scale))));
+        const y1: usize = @min(@as(usize, @intCast(renderer.height)), @as(usize, @intFromFloat(@ceil((box.y + box.h) * renderer.scale))));
+        if (x0 >= x1) return;
+        for (y0..y1) |y| @memcpy(dst[y * stride + x0 .. y * stride + x1], src[y * stride + x0 .. y * stride + x1]);
     }
 
     fn addDamage(box: ui.layout.Widget.PaintBounds, result: *?ui.paint.ClipRect) void {
@@ -296,7 +350,7 @@ test "partial panel paint repairs recycled buffers with exact fractional-scale p
             children[0].markDirty();
             @memset(pixels, 0xdeadbeef);
             var renderer = ui.paint.Renderer.init(pixels, width, height, scale);
-            bg.paintIncremental(allocator, &root, &renderer);
+            bg.paintIncremental(allocator, &root, &renderer, null);
             @memset(expected, 0);
             var reference = ui.paint.Renderer.init(expected, width, height, scale);
             reference.clean = true;
@@ -312,12 +366,41 @@ test "partial panel paint repairs recycled buffers with exact fractional-scale p
         children[1].markPaintDirty();
         @memset(pixels, 0xdeadbeef);
         var partial = ui.paint.Renderer.init(pixels, width, height, scale);
-        bg.paintIncremental(allocator, &root, &partial);
+        bg.paintIncremental(allocator, &root, &partial, null);
         @memset(expected, 0);
         var reference = ui.paint.Renderer.init(expected, width, height, scale);
         reference.clean = true;
         ui.paint.paint(&root, &reference);
         try std.testing.expectEqualSlices(u32, expected, pixels);
+
+        // Two stamped buffers taking turns are repaired only where each
+        // missed a change: the button and the rect change on alternate paints,
+        // apart, so a missed one lies outside the current damage. Buffer 1
+        // misses two paints, then carries a stamp of another panel.
+        const other = try allocator.alloc(u32, pixels.len);
+        defer allocator.free(other);
+        const stranger: Background = .{};
+        var stamps: [2]Stamp = .{ .{}, .{} };
+        const buffers = [2][]u32{ pixels, other };
+        children[1].computed_x = 125;
+        children[1].markPaintDirty();
+        for ([_]usize{ 0, 1, 0, 0, 1, 1 }, 0..) |turn, i| {
+            if (i % 2 == 0) {
+                children[0].kind.button.state = if (children[0].kind.button.state == .hover) .idle else .hover;
+                children[0].markDirty();
+            } else {
+                children[1].kind.rect.color[1] += 0.1;
+                children[1].markPaintDirty();
+            }
+            if (i == 5) stamps[turn].owner = &stranger;
+            var stamped = ui.paint.Renderer.init(buffers[turn], width, height, scale);
+            bg.paintIncremental(allocator, &root, &stamped, &stamps[turn]);
+            @memset(expected, 0);
+            var whole = ui.paint.Renderer.init(expected, width, height, scale);
+            whole.clean = true;
+            ui.paint.paint(&root, &whole);
+            try std.testing.expectEqualSlices(u32, expected, buffers[turn]);
+        }
     }
 }
 
@@ -332,21 +415,21 @@ test "incremental panel allocation failure falls back to a complete paint" {
     var pixels: [40 * 32]u32 = undefined;
     var expected: [40 * 32]u32 = @splat(0);
     var renderer = ui.paint.Renderer.init(&pixels, 40, 32, 1);
-    bg.paintIncremental(allocator, &root, &renderer);
+    bg.paintIncremental(allocator, &root, &renderer, null);
     var reference = ui.paint.Renderer.init(&expected, 40, 32, 1);
     reference.clean = true;
     ui.paint.paint(&root, &reference);
     try std.testing.expectEqualSlices(u32, &expected, &pixels);
     try std.testing.expect(bg.invalid);
     failing.fail_index = std.math.maxInt(usize);
-    bg.paintIncremental(allocator, &root, &renderer);
+    bg.paintIncremental(allocator, &root, &renderer, null);
     try std.testing.expectEqualSlices(u32, &expected, &pixels);
     try std.testing.expect(!bg.invalid);
     failing.fail_index = failing.alloc_index;
     const allocations = failing.alloc_index;
     child[0].computed_x += 4;
     child[0].markPaintDirty();
-    bg.paintIncremental(allocator, &root, &renderer);
+    bg.paintIncremental(allocator, &root, &renderer, null);
     @memset(&expected, 0);
     reference.clean = true;
     ui.paint.paint(&root, &reference);

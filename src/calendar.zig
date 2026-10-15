@@ -91,6 +91,19 @@ pub const Calendar = struct {
         self.factor = @min(1, @min(@as(f32, @floatFromInt(@max(1, box.width - 24))) / 368, @as(f32, @floatFromInt(available_h)) / full_height));
         const width: i32 = @intFromFloat(@round(368 * self.factor));
         const height: i32 = @intFromFloat(@round(full_height * self.factor));
+        // Centred over the clock wherever the taskbar puts it, kept on the
+        // output; the pointer aims at the clock. Without one (hidden clock, no
+        // taskbar) it keeps to the right edge.
+        const right = box.x + box.width - width - 12;
+        const clock = if (self.output.taskbar) |bar| bar.itemBox(.clock) else null;
+        const left = if (clock) |anchor|
+            std.math.clamp(anchor.x + @divTrunc(anchor.width - width, 2), box.x + 12, @max(box.x + 12, right))
+        else
+            right;
+        const tip: f32 = if (clock) |anchor|
+            std.math.clamp(@as(f32, @floatFromInt(anchor.x + @divTrunc(anchor.width, 2) - left)) / self.factor, 24, 344)
+        else
+            316;
         const scale = self.output.wlr_output.scale;
         const buf = PanelBuffer.create(@max(1, width), @max(1, height), scale) catch return;
         defer buf.base.drop();
@@ -99,7 +112,7 @@ pub const Calendar = struct {
         const popup_surface = t.popup_bg != null or t.popup_blur;
         r.palette = t;
         if (popup_surface) {
-            popup_style.background(&r, buf, 368, full_height, 16, 316, self.output.server.config.compositor.taskbar_position == .top);
+            popup_style.background(&r, buf, 368, full_height, 16, tip, self.output.server.config.compositor.taskbar_position == .top);
             t.text_secondary = t.window_fg;
             t.faint = t.window_dim;
         } else {
@@ -111,7 +124,7 @@ pub const Calendar = struct {
                 if (y < body_height - 1) continue;
                 for (0..@intCast(buf.width)) |ix| {
                     const x = (@as(f32, @floatFromInt(ix)) + 0.5) / r.scale;
-                    const distance = (@abs(x - 316) + y - body_height - 16) / @sqrt(@as(f32, 2));
+                    const distance = (@abs(x - tip) + y - body_height - 16) / @sqrt(@as(f32, 2));
                     const coverage = std.math.clamp(0.5 - distance * r.scale, 0, 1);
                     if (coverage == 0) continue;
                     const inner = std.math.clamp((-distance - 1) * r.scale + 0.5, 0, 1);
@@ -155,7 +168,7 @@ pub const Calendar = struct {
         }
         self.buffer_node.setBuffer(&buf.base);
         self.buffer_node.setDestSize(@max(1, width), @max(1, height));
-        self.panel_box = .{ .x = box.x + box.width - width - 12, .y = self.output.taskbarPopupY(height, 12), .width = @max(1, width), .height = @max(1, height) };
+        self.panel_box = .{ .x = left, .y = self.output.taskbarPopupY(height, 12), .width = @max(1, width), .height = @max(1, height) };
         panel_present.applySlide(self.buffer_node, self.panel_box, self.slide.value(anim.nowMs()), if (self.output.server.config.compositor.taskbar_position == .top) -slide_distance else slide_distance);
         popup_style.configureGlass(&self.glass_effect, self.output.server.glass_engine, self.buffer_node, self.factor);
         self.output.wlr_output.scheduleFrame();

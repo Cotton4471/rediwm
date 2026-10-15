@@ -215,7 +215,7 @@ fn captureWindow(
     try anim.captureIfLive(allocator, list, &toplevel.peek_mix, .window_peek, now_ms);
     try anim.captureIfLive(allocator, list, &toplevel.peek_level, .window_peek, now_ms);
     try anim.captureIfLive(allocator, list, &toplevel.dim_anim, .window_dim, now_ms);
-    try anim.captureIfLive(allocator, list, &toplevel.map_motion, .window_open, now_ms);
+    try anim.captureIfLive(allocator, list, &toplevel.map_motion, if (toplevel.launch_origin != null) .window_launch else .window_open, now_ms);
     try anim.captureIfLive(allocator, list, &toplevel.map_opacity, if (toplevel.closing) .window_close else .window_open, now_ms);
     try anim.captureIfLive(allocator, list, &toplevel.move_x, .window_move, now_ms);
     try anim.captureIfLive(allocator, list, &toplevel.move_y, .window_move, now_ms);

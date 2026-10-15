@@ -247,13 +247,13 @@ pub fn build(s: *Section, cc: *panel.ControlCenter) void {
 fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
     const prefs = cc.server.config.region;
     const language = try card(a, &.{
-        text("Language", 17, false),
+        panel.sectionTitle("Language"),
         text("Application language", 13, false),
         try choice(s, cc, a, "language", 1, s.locales.items, localeName(cc, "LC_MESSAGES"), c._NL_IDENTIFICATION_LANGUAGE),
         text("RediWM currently uses English. Only installed locales are listed.", 12, true),
     });
     const region = try card(a, &.{
-        text("Region", 17, false),
+        panel.sectionTitle("Region"),
         text("Regional formats", 13, false),
         try choice(s, cc, a, "formats", 2, s.locales.items, localeName(cc, "LC_TIME"), c._NL_ADDRESS_COUNTRY_NAME),
         text("Date format for the taskbar; date, number and currency formats for new apps.", 12, true),
@@ -277,7 +277,7 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
     day_toggle.justify = .space_between;
     day_toggle.@"align" = .center;
     const timing = try card(a, &.{
-        text("Time & Date", 17, false),
+        panel.sectionTitle("Time & Date"),
         text("Time zone", 13, false),
         try choice(s, cc, a, "timezone", 0, s.zones.items, try timezone(a, cc), null),
         toggle,
@@ -289,7 +289,7 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
         .{ .name = "first_day_of_week", .kind = .{ .select = .{ .labels = &days, .selected = @intFromEnum(prefs.first_day_of_week), .owner = cc, .on_change = firstDayChanged } }, .width = .{ .percent = 1 } },
         text("Changes the taskbar calendar.", 12, true),
     });
-    const preview = try card(a, &.{ text("Formats Preview", 17, false), try previews(a, prefs) });
+    const preview = try card(a, &.{ panel.sectionTitle("Formats Preview"), try previews(a, prefs) });
     var body = try container(a, if (cc.panel_box.width < 900) .column else .row, &.{
         try container(a, .column, &.{ language, timing }),
         try container(a, .column, &.{ region, preview }),

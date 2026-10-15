@@ -69,7 +69,10 @@ pub const Theme = struct {
     app_sidebar_fg: ?[4]f32 = null,
     app_sidebar_selected: ?[4]f32 = null,
     app_sidebar_hover: ?[4]f32 = null,
-    app_sidebar_hover_marker: ?[4]f32 = null,
+    /// Lights the selected sidebar row: a bright leading bar and an accent glow.
+    app_sidebar_selected_marker: ?[4]f32 = null,
+    /// Corners of sidebar row highlights (hover and selection).
+    app_sidebar_item_radius: f32 = 5,
     app_surface_hover: ?[4]f32 = null,
     app_menu_bg: ?[4]f32 = null,
     app_field_bg: ?[4]f32 = null,
@@ -107,7 +110,11 @@ pub const Theme = struct {
     scrollbar_thumb: [4]f32 = .{ 89.0 / 255.0, 98.0 / 255.0, 110.0 / 255.0, 1 }, // #59626e
     /// Unset follows the surface accent during hover/drag.
     scrollbar_thumb_active: ?[4]f32 = null,
+    /// Strength of the light on a hovered/dragged/scrolling thumb (1 = subtle).
+    scrollbar_glow: f32 = 1.0,
     taskbar_title_size: f32 = 12.5,
+    clock_bold: bool = false,
+    clock_italic: bool = false,
     taskbar_size: f32 = 44.0,
     // A floating bar: distance from the output edge it sits on (logical px),
     // its length as a percentage of that edge (centred), and its corner
@@ -421,12 +428,14 @@ pub fn shellPalette() Theme {
     return t;
 }
 
-/// The colour tokens the taskbar draws with. A taskbar theme (Appearance's
+/// The colour and clock-style tokens the taskbar draws with. A taskbar theme (Appearance's
 /// "Task Bar theme", `[taskbar_theme]` in the config) replaces just these, and
 /// only on the taskbar: every other surface keeps the main theme. Geometry
 /// (`taskbar_size`, chip and start-button sizes and gaps, radii) stays with the
 /// main theme, which has sliders for it.
 pub const TaskbarToken = enum {
+    clock_bold,
+    clock_italic,
     taskbar_bg,
     taskbar_surface,
     taskbar_hover,
@@ -452,7 +461,7 @@ pub const TaskbarToken = enum {
 /// fields mean anything (see `taskbarTokens`).
 pub var taskbar_override: ?Theme = null;
 
-/// A taskbar colour: the taskbar theme's when one is chosen, else the main
+/// A taskbar token: the taskbar theme's when one is chosen, else the main
 /// theme's. The taskbar reads these instead of `global` so the two can differ.
 pub fn taskbar(comptime token: TaskbarToken) @FieldType(Theme, @tagName(token)) {
     if (taskbar_override) |chosen| return @field(chosen, @tagName(token));
@@ -478,6 +487,7 @@ pub fn taskbarTokensEql(a: Theme, b: Theme) bool {
 }
 
 fn sameWritten(a: anytype, b: @TypeOf(a)) bool {
+    if (comptime @TypeOf(a) == bool) return a == b;
     if (comptime @TypeOf(a) == ?[4]f32) {
         const left = a orelse return b == null;
         const right = b orelse return false;
@@ -672,8 +682,10 @@ pub fn stripComment(line: []const u8) []const u8 {
     return line;
 }
 
-pub fn applyKey(allocator: Allocator, t: *Theme, key: []const u8, value: []const u8) !void {
+pub fn applyKey(allocator: Allocator, t: *Theme, name_in: []const u8, value: []const u8) !void {
     @setEvalBranchQuota(10000);
+    // The marker once lit hovers; saved looks may still use that name.
+    const key = if (std.mem.eql(u8, name_in, "app_sidebar_hover_marker")) "app_sidebar_selected_marker" else name_in;
     inline for (boolean_keys) |name| {
         if (std.mem.eql(u8, key, name)) {
             @field(t, name) = if (std.mem.eql(u8, value, "true")) true else if (std.mem.eql(u8, value, "false")) false else return error.InvalidBoolean;
@@ -854,7 +866,9 @@ pub fn writeTaskbarInto(allocator: Allocator, buf: *std.ArrayList(u8), t: Theme)
     try buf.appendSlice(allocator, "[taskbar_theme]\n");
     inline for (std.meta.fields(TaskbarToken)) |field| {
         const value = @field(t, field.name);
-        if (comptime @TypeOf(value) == ?[4]f32) {
+        if (comptime @TypeOf(value) == bool) {
+            if (value != @field(defaults, field.name)) try appendLine(allocator, buf, "{s} = {}\n", .{ field.name, value });
+        } else if (comptime @TypeOf(value) == ?[4]f32) {
             if (value) |color| try appendColor(allocator, buf, field.name, color);
         } else if (!std.meta.eql(quantize(value), quantize(@field(defaults, field.name)))) {
             try appendColor(allocator, buf, field.name, value);
@@ -947,6 +961,8 @@ test "parse reads the spec's example theme file" {
 
 test "writeInto then parse round-trips every field" {
     var t: Theme = .{};
+    t.clock_bold = true;
+    t.clock_italic = true;
     // Exercise every registered field with a non-default value, so omission
     // from either parser or serializer cannot pass as a default round-trip.
     // Keys defaulting to 0 (automatic sizes) would stay at the default under *= 0.9.
@@ -972,6 +988,18 @@ test "writeInto then parse round-trips every field" {
     // writeInto omits unchanged fonts; parse keeps their borrowed defaults.
     defer std.testing.allocator.free(parsed.start_button_icon);
     try std.testing.expectEqualStrings(t.start_button_icon, parsed.start_button_icon);
+    try std.testing.expect(parsed.clock_bold and parsed.clock_italic);
+
+    var taskbar_buf: std.ArrayList(u8) = .empty;
+    defer taskbar_buf.deinit(std.testing.allocator);
+    try writeTaskbarInto(std.testing.allocator, &taskbar_buf, t);
+    var taskbar_theme: Theme = .{};
+    var lines = std.mem.tokenizeScalar(u8, taskbar_buf.items, '\n');
+    while (lines.next()) |line| {
+        const eq = std.mem.indexOfScalar(u8, line, '=') orelse continue;
+        try std.testing.expect(try applyTaskbarKey(std.testing.allocator, &taskbar_theme, std.mem.trim(u8, line[0..eq], " "), std.mem.trim(u8, line[eq + 1 ..], " ")));
+    }
+    try std.testing.expect(taskbarTokensEql(t, taskbar_theme));
 
     inline for (number_keys) |name| try std.testing.expectEqual(@field(t, name), @field(parsed, name));
     inline for (color_keys) |name| {

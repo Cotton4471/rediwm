@@ -33,6 +33,9 @@ pub const springs = struct {
     pub const taskbar_hover = Spring{ .damping_ratio = 1.0, .stiffness = 1400, .epsilon = 1e-3 };
     pub const start_button = taskbar_hover;
     pub const titlebar_hover = taskbar_hover;
+    // A hovered dock icon pops past its zoom and settles back (~16% overshoot,
+    // peak at ~150 ms); leaving dips it just under rest the same way.
+    pub const dock_hover = Spring{ .damping_ratio = 0.5, .stiffness = 600, .epsilon = 1e-3 };
     // The window-button chip trails the pointer: critically damped so it
     // glides without overshoot, ~180 ms to cover most of a button pitch.
     pub const titlebar_chip = Spring{ .damping_ratio = 1.0, .stiffness = 450, .epsilon = 1e-3 };
@@ -50,6 +53,9 @@ pub const springs = struct {
     pub const osd_level = Spring{ .damping_ratio = 1.0, .stiffness = 1200, .epsilon = 1e-3 };
     pub const toast_slide = Spring{ .damping_ratio = 0.8, .stiffness = 600, .epsilon = 1e-3 };
     pub const window_open = Spring{ .damping_ratio = 0.85, .stiffness = 700, .epsilon = 1e-4 };
+    // A window launched from the dock grows out of its icon: slower than an
+    // ordinary open so the travel reads, with a touch of settle at the end.
+    pub const window_launch = Spring{ .damping_ratio = 0.88, .stiffness = 260, .epsilon = 1e-4 };
     pub const window_move = Spring{ .damping_ratio = 1.0, .stiffness = 800, .epsilon = 1e-4 };
     pub const window_peek = Spring{ .damping_ratio = 1.0, .stiffness = 1000, .epsilon = 1e-3 };
     pub const camera_pan = Spring{ .damping_ratio = 1.0, .stiffness = 500, .epsilon = 0.5 };
@@ -72,6 +78,7 @@ pub const Target = enum {
     panel_slide,
     panel_scrim,
     taskbar_hover,
+    dock_hover,
     taskbar_press,
     taskbar_flip,
     start_button,
@@ -86,6 +93,7 @@ pub const Target = enum {
     start_glide,
     start_glide_fade,
     window_open,
+    window_launch,
     window_close,
     window_move,
     window_resize,
@@ -137,6 +145,7 @@ pub fn defaultSpec(target: Target) TargetSpec {
     return switch (target) {
         .panel_slide, .panel_scrim => .{ .curve = .{ .spring = springs.panel_slide } },
         .taskbar_hover, .start_button, .titlebar_hover => .{ .curve = .{ .spring = springs.taskbar_hover } },
+        .dock_hover => .{ .curve = .{ .spring = springs.dock_hover } },
         .titlebar_chip => .{ .curve = .{ .spring = springs.titlebar_chip } },
         .titlebar_chip_fade => .{ .curve = .{ .spring = springs.titlebar_chip_fade } },
         .start_glide => .{ .curve = .{ .spring = springs.start_glide } },
@@ -148,6 +157,7 @@ pub fn defaultSpec(target: Target) TargetSpec {
         .osd_level => .{ .curve = .{ .spring = springs.osd_level } },
         .toast_slide => .{ .curve = .{ .spring = springs.toast_slide } },
         .window_open, .window_close => .{ .curve = .{ .spring = springs.window_open } },
+        .window_launch => .{ .curve = .{ .spring = springs.window_launch } },
         .window_move, .window_resize => .{ .curve = .{ .spring = springs.window_move } },
         // Still duration in the adopted UI; config can overlay a spring.
         .window_zoom => .{ .curve = .{ .duration = .{ .ms = 160, .ease = .out_cubic } } },

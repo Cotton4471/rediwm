@@ -145,6 +145,7 @@ pub const Look = struct {
     axis: Axis = .vertical,
     highlight: [4]f32 = .{ 1, 1, 1, 1 },
     shine: f32 = 0,
+    glow: f32 = 1,
 };
 
 /// The thumb for `state`: centred in the gutter across its thickness, as wide
@@ -166,7 +167,7 @@ pub fn look(g: Geometry, state: Appearance, configured: f32, palette: theme.Them
     var highlight = palette.border_glow;
     // A pale reflection of the frame's glow reads as light on every palette.
     for (highlight[0..3]) |*channel| channel.* += (1 - channel.*) * 0.55;
-    return .{ .rect = rect, .radius = cornerRadius(thickness), .color = color, .axis = g.axis, .highlight = highlight, .shine = state.shine };
+    return .{ .rect = rect, .radius = cornerRadius(thickness), .color = color, .axis = g.axis, .highlight = highlight, .shine = state.shine, .glow = @max(palette.scrollbar_glow, 0) };
 }
 
 /// The light stays inside the thumb, so ordinary scrollbar damage erases it.
@@ -212,7 +213,7 @@ pub fn paint(r: *@import("../paint.zig").Renderer, l: Look) void {
             const light = falloff * falloff;
             const edge = 1 - std.math.clamp(-distance / 1.1, 0, 1);
             const face = @max(0, 1 - @abs(v - 0.30) / 0.65);
-            const strength = l.shine * l.highlight[3] * light * (0.24 * face + 0.68 * edge);
+            const strength = @min(1, l.shine * l.glow * l.highlight[3] * light * (0.24 * face + 0.68 * edge));
             var color = l.color;
             for (color[0..3], l.highlight[0..3]) |*channel, target| channel.* += (target - channel.*) * strength;
             text.blendPixel(&r.pixels[@intCast(py * r.width + px)], .{ .r = color[0], .g = color[1], .b = color[2], .a = color[3] }, coverage);

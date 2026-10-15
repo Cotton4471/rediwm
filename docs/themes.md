@@ -51,7 +51,8 @@ icon_theme = "Adwaita"    # optional installed theme, behind icons/
 cursor_theme = "pack"    # cursors/, or an installed cursor-theme name
 ```
 
-`[taskbar_theme]` optionally supplies the taskbar's own colours. A pack can
+`[taskbar_theme]` optionally supplies the taskbar's own colours and clock style
+(`clock_bold` and `clock_italic`). A pack can
 also float the bar with `[theme]` tokens `taskbar_edge_gap`, `taskbar_length`,
 `taskbar_radius` and `taskbar_outline_width`, and colour its outline with
 `taskbar_outline` (see `docs/wiki/Theme.md`). Unknown
@@ -85,7 +86,10 @@ with mauve accents and the bundled `wallpaper-mocha.png` Auckland skyline.
 
 Gold uses warm charcoal decorations, ivory app content, champagne accents,
 the bundled gold wallpaper and colour icons. It puts the taskbar at the top
-and enables the bottom dock. Notifications use tinted backdrop glass.
+and enables the bottom dock. Its 38-pixel bar has 12-pixel corners, a centered
+bold clock with italics off, Start on the left, the window list hidden, and
+capture, tray, battery, network, volume and Power on the right. Notifications
+use tinted backdrop glass.
 Choosing Gold also applies its folder, Home and Trash artwork to the desktop,
 Files and its sidebar; no separate icon-theme selection is needed. Pack icons
 take priority, with the usual icons filling any gaps.
@@ -133,16 +137,20 @@ decorations. The shared app loader resolves them for Files, Images, Editor
 and PDF, including their controls. Unset values keep existing theme behaviour.
 GTK colour export also uses the app and sidebar foregrounds.
 
-`app_sidebar_hover_marker` adds a bright leading bar and an accent-coloured
-glow to Files sidebar hovers. Gold enables it; unset leaves the plain fill.
-Gold uses 96% opaque hover fills and 50% opaque sidebars in Settings and Files.
+`app_sidebar_selected_marker` lights the selected Files sidebar row with a
+bright leading bar and an accent-coloured glow (the older name
+`app_sidebar_hover_marker` still loads); unset leaves the plain fill and accent
+bar. `app_sidebar_item_radius` rounds the hover and selection rows (default 5).
+Gold uses a 96% opaque selection, a faint hover, rounder rows and 50% opaque
+sidebars in Settings and Files.
 `app_sidebar_blur = true` lightly blurs the backdrop through their translucent areas;
 the content, text and icons keep their own opacity. Its sidebar
 and shell menu hovers stay brown so their ivory text remains readable; app
 content and toolbar hovers use champagne.
 
 `dock_bg` and `dock_border` override the taskbar-derived dock colours;
-`dock_radius` is in logical pixels (zero follows the window frame radius).
+`dock_radius` is in logical pixels (zero follows the window frame radius);
+Appearance's **Dock corner radius** slider sets it.
 An explicit dock background uses its own alpha without the inherited dock's
 86% minimum. `notification_bg`, `notification_fg`, `notification_dim`,
 `notification_border`, `notification_icon_bg` and `notification_radius`
@@ -179,6 +187,9 @@ terminal_opacity` (0.0 to 1.0; Settings, Appearance, "Terminal opacity"). It is
 a setting of the user, not of the pack, so switching packs keeps it. Foot
 applies it to the background only; text stays opaque. Unset keeps the `alpha`
 of Foot's own configuration, and a value, even `1.0`, takes precedence over it.
+kitty, Alacritty, Ghostty and WezTerm get the same opacity as a launch flag
+(no helper, no palette); Konsole, GNOME Terminal and other VTE terminals read
+opacity only from their own profiles and are left alone.
 
 The helper is also available from a terminal:
 

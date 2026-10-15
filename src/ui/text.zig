@@ -26,10 +26,12 @@ pub const Font = enum {
     manrope_bold,
     mono,
     mono_bold,
+    /// Bold (700), for headings above semibold labels and controls.
+    manrope_heavy,
 
     fn bytes(font: Font) []const u8 {
         return switch (font) {
-            .manrope, .manrope_bold => @embedFile("manrope"),
+            .manrope, .manrope_bold, .manrope_heavy => @embedFile("manrope"),
             .mono => @embedFile("jetbrains_mono_regular"),
             .mono_bold => @embedFile("jetbrains_mono_bold"),
         };
@@ -76,7 +78,8 @@ const color_load_flags: c_int = c.FT_LOAD_DEFAULT | c.FT_LOAD_COLOR;
 
 var ft_library: c.FT_Library = null;
 var faces: std.ArrayListUnmanaged(Face) = .empty;
-var chains: [4]std.ArrayListUnmanaged(u32) = .{ .empty, .empty, .empty, .empty };
+var chains: [font_count]std.ArrayListUnmanaged(u32) = @splat(.empty);
+const font_count = std.meta.fields(Font).len;
 var coverage: std.AutoHashMapUnmanaged(u64, u32) = .empty;
 const no_face = std.math.maxInt(u32);
 
@@ -95,13 +98,14 @@ fn preferredMono() []const u8 {
 fn bundledWeight(font: Font) u32 {
     return switch (font) {
         .manrope_bold, .mono_bold => 600,
+        .manrope_heavy => 700,
         else => 400,
     };
 }
 
 fn genericFamilyZ(font: Font) [*:0]const u8 {
     return switch (font) {
-        .manrope, .manrope_bold => "sans-serif",
+        .manrope, .manrope_bold, .manrope_heavy => "sans-serif",
         .mono, .mono_bold => "monospace",
     };
 }
@@ -171,8 +175,8 @@ fn ensureLibrary() !void {
 }
 
 fn ensureFaceTable() void {
-    if (faces.items.len >= 4) return;
-    const fonts = [_]Font{ .manrope, .manrope_bold, .mono, .mono_bold };
+    if (faces.items.len >= font_count) return;
+    const fonts = [_]Font{ .manrope, .manrope_bold, .mono, .mono_bold, .manrope_heavy };
     for (fonts) |font| {
         faces.append(gpa, .{
             .source = .{ .bundled = font },
@@ -193,7 +197,7 @@ fn ensureChain(font: Font) void {
     if (chains[idx].items.len != 0) return;
 
     const preferred = switch (font) {
-        .manrope, .manrope_bold => preferredSans(),
+        .manrope, .manrope_bold, .manrope_heavy => preferredSans(),
         .mono, .mono_bold => preferredMono(),
     };
     const weight = bundledWeight(font);
@@ -632,7 +636,7 @@ var run_cache: std.HashMapUnmanaged(RunKey, Run, RunKeyContext, std.hash_map.def
 /// `fitWithEllipsis` is done with its run before it shapes candidates).
 const max_cached_runs = 4096;
 
-const GlyphKey = struct { face: u32, size: c.FT_F26Dot6, index: u32 };
+const GlyphKey = struct { face: u32, size: c.FT_F26Dot6, index: u32, italic: bool };
 
 /// A rendered glyph, copied out of FreeType's own slot (which the next
 /// FT_Load_Glyph would overwrite). `pixels` is 8-bit coverage, `cols` wide,
@@ -800,10 +804,16 @@ fn scaleBgra(src: []const u8, src_w: i32, src_h: i32, dst_w: i32, dst_h: i32) ?[
     return dst;
 }
 
-fn glyphBitmap(face: *Face, face_id: u32, index: u32) ?CachedGlyph {
-    const key = GlyphKey{ .face = face_id, .size = face.set_size, .index = index };
+fn glyphBitmap(face: *Face, face_id: u32, index: u32, italic: bool) ?CachedGlyph {
+    const slant = italic and !face.color;
+    const key = GlyphKey{ .face = face_id, .size = face.set_size, .index = index, .italic = slant };
     if (glyph_cache.get(key)) |cached| return cached;
 
+    // Manrope has no italic face. Slant the outline after hinting, keeping
+    // advances and baselines intact, and restore the shared face immediately.
+    var matrix: c.FT_Matrix = .{ .xx = 65536, .xy = 13930, .yx = 0, .yy = 65536 };
+    if (slant) c.FT_Set_Transform(face.ft_face, &matrix, null);
+    defer if (slant) c.FT_Set_Transform(face.ft_face, null, null);
     const flags: c_int = if (face.color) color_load_flags else load_flags;
     if (c.FT_Load_Glyph(face.ft_face, index, flags) != 0) return null;
     if (c.FT_Render_Glyph(face.ft_face.*.glyph, c.FT_RENDER_MODE_NORMAL) != 0) return null;
@@ -868,7 +878,7 @@ pub fn warmGlyphs(font: Font, size_px: f32, scale: f32, chars: []const u8) !void
     for (run.glyphs) |glyph| {
         const face = ensureLoaded(glyph.face) catch continue;
         applySize(face, size) catch continue;
-        _ = glyphBitmap(face, glyph.face, glyph.index);
+        _ = glyphBitmap(face, glyph.face, glyph.index, false);
     }
 }
 
@@ -1012,6 +1022,8 @@ pub const DrawOptions = struct {
     /// Center the visible glyph bounds rather than the font line metrics.
     /// For standalone labels; editable fields retain their stable baseline.
     center_ink: bool = false,
+    /// Synthetic italic; callers allow for horizontal ink overhang in `clip`.
+    italic: bool = false,
     /// Buffer-pixel row of the baseline, instead of centring the line in
     /// `rect`: for callers that place text by baseline (the Cairo clients,
     /// through ui/cairo.zig).
@@ -1091,7 +1103,7 @@ pub fn drawOpts(
             pen_y += glyph.y_advance;
             continue;
         };
-        if (glyphBitmap(face, glyph.face, glyph.index)) |bitmap| {
+        if (glyphBitmap(face, glyph.face, glyph.index, options.italic)) |bitmap| {
             // Keep the accumulated pen fractional to avoid spacing drift;
             // snap only the final bitmap placement to the nearest pixel.
             const origin_x = snap26_6(pen_x + glyph.x_offset) + bitmap.left;
@@ -1119,7 +1131,7 @@ fn inkCenteredBaseline(run: Run, size: c.FT_F26Dot6, y0: i32, y1: i32) ?i32 {
         defer offset_y += glyph.y_advance;
         const face = ensureLoaded(glyph.face) catch continue;
         applySize(face, size) catch continue;
-        if (glyphBitmap(face, glyph.face, glyph.index)) |bitmap| {
+        if (glyphBitmap(face, glyph.face, glyph.index, false)) |bitmap| {
             if (bitmap.cols == 0 or bitmap.rows == 0) continue;
             const origin_y = snap26_6(offset_y - glyph.y_offset) - bitmap.top;
             top = @min(top, origin_y);
@@ -1309,6 +1321,33 @@ test "text retains grayscale coverage and premultiplied opacity at output scales
             var intermediate: usize = 0;
             for (levels[1..128]) |present| intermediate += @intFromBool(present);
             try std.testing.expect(intermediate > 32);
+        }
+    }
+}
+
+test "italic glyphs have separate cached rasters and leave upright faces unchanged" {
+    setPreferredFamilies("", "");
+    const color: Color = .{ .r = 1, .g = 1, .b = 1, .a = 1 };
+    for ([_]Font{ .manrope, .manrope_heavy }) |font| {
+        for ([_]f32{ 1, 1.5 }) |scale| {
+            const width = devicePixels(180, scale);
+            const height = devicePixels(40, scale);
+            const count: usize = @intCast(width * height);
+            const upright = try std.testing.allocator.alloc(u32, count);
+            defer std.testing.allocator.free(upright);
+            const italic = try std.testing.allocator.alloc(u32, count);
+            defer std.testing.allocator.free(italic);
+            const again = try std.testing.allocator.alloc(u32, count);
+            defer std.testing.allocator.free(again);
+            @memset(upright, 0);
+            @memset(italic, 0);
+            @memset(again, 0);
+            const rect: Rect = .{ .x = 6, .y = 0, .w = 165, .h = 40 };
+            try drawOpts(upright, width, height, "12:59 AM", color, scale, font, 18, .{ .rect = rect });
+            try drawOpts(italic, width, height, "12:59 AM", color, scale, font, 18, .{ .rect = rect, .italic = true });
+            try drawOpts(again, width, height, "12:59 AM", color, scale, font, 18, .{ .rect = rect });
+            try std.testing.expect(!std.mem.eql(u32, upright, italic));
+            try std.testing.expectEqualSlices(u32, upright, again);
         }
     }
 }

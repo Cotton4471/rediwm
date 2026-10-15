@@ -11,6 +11,7 @@ import tempfile
 
 from desktop_zoom import ROOT, wait_for
 from ipc_client import IPCClient, spawn_compositor, stop_process
+from ui_driver import UIDriver
 
 from capture import build_client, get_capture_state, wait_for_capture_sessions
 
@@ -126,7 +127,9 @@ def test_capture_indicator_stops_sharing(client_binary):
         compositor, log = spawn_compositor(
             tmp, scale="1", outputs="1",
             config_content="[compositor]\nxwayland = false\n",
-            env_extra={"XDG_CACHE_HOME": str(tmp / "cache")})
+            env_extra={"XDG_CACHE_HOME": str(tmp / "cache"),
+                       "XDG_CONFIG_HOME": str(tmp / "config"),
+                       "XDG_DATA_HOME": str(tmp / "data")})
         client = None
         client_log = tmp / "client.log"
         try:
@@ -159,13 +162,61 @@ def test_capture_indicator_stops_sharing(client_binary):
                 assert hit["target_type"] == "taskbar", hit
                 assert hit["widget"] == "capture_indicator", hit
 
+                taskbar = ipc.get_shell_state()["taskbars"][0]
+                root = taskbar["box"]
+                assert box["x"] >= root["x"] + root["width"] // 2, box
+                for item in taskbar["right_items"]:
+                    if item["name"] != "capture" and item["box"]:
+                        assert box["x"] + box["width"] <= item["box"]["x"], (box, item)
+
+                ipc.action("open_appearance")
+                ipc.wait_for_panel_settled("control_center")
+                ui = UIDriver(ipc)
+
+                def toggle_item(name):
+                    widget = ui.scroll_into_view(f"taskbar_{name}_visible")
+                    b = widget["global_box"]
+                    ipc.click_at(b["x"] + b["width"] // 2, b["y"] + b["height"] // 2)
+                    ipc.wait_for_panel_settled("control_center")
+
+                # The capture item remains available with the app tray hidden.
+                toggle_item("tray")
+                assert get_capture_state(ipc).get("indicator"), "hiding tray hid capture"
+                toggle_item("capture")
+                wait_for(lambda: not get_capture_state(ipc).get("indicator"), "capture did not hide")
+                assert wait_for_capture_sessions(ipc, 1, "hiding indicator stopped capture")
+                assert client.poll() is None, "hiding indicator disconnected recorder"
+                notice = ui.find("taskbar_capture_notice")
+                assert "not recommended" in notice["label"], notice
+                assert "without a visible indicator" in notice["label"], notice
+                ipc.reload_config()
+                ipc.wait_for_frame()
+                assert get_capture_state(ipc).get("indicator") is None, "hidden setting was not saved"
+                toggle_item("capture")
+                wait_for(lambda: get_capture_state(ipc).get("indicator"), "capture did not return")
+                ipc.action("close_panel", {"panel": "control_center"})
+                ipc.wait_for_frame()
+
+                # Placement changes move both the rendered button and its hit target.
+                cfg = tmp / "rediwm-config.toml"
+                saved = cfg.read_text()
+                cfg.write_text(saved.replace('"right:capture"', '"center:capture"'))
+                ipc.reload_config()
+                ipc.wait_for_frame()
+                box = get_capture_state(ipc)["indicator"]["box"]
+                assert abs(box["x"] + box["width"] / 2 - (root["x"] + root["width"] / 2)) <= 1, box
+                assert ipc.hit_test(box["x"] + box["width"] // 2, box["y"] + box["height"] // 2)["widget"] == "capture_indicator"
+                cfg.write_text(saved)
+                ipc.reload_config()
+                ipc.wait_for_frame()
+                box = get_capture_state(ipc)["indicator"]["box"]
                 ipc.click_at(box["x"] + box["width"] // 2, box["y"] + box["height"] // 2)
                 wait_for_capture_sessions(ipc, 0, "Stop sharing did not clear capture sessions")
                 wait_for(lambda: client.poll() is not None, "capturing client was not disconnected")
                 state = get_capture_state(ipc)
                 assert state["last_failure"] == "stop_all", state
                 assert state.get("indicator") is None, state
-                print("screencast: taskbar Stop sharing indicator revokes a live session")
+                print("screencast: independent capture item hides without stopping capture, moves live and revokes a session")
 
                 for keycode in (125, 42):
                     ipc.action("key", {"keycode": keycode, "pressed": True})

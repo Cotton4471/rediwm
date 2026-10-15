@@ -38,6 +38,11 @@ const app_theme = @import("config").app_theme;
 const AppColorsJob = @import("../../config_runtime/app_theme.zig").Job;
 
 const segmented_width: f32 = 180;
+/// The dock's corner radius slider. A theme's `dock_radius` of zero means "the
+/// window radius", so the slider starts at 1 px (square to the eye) and a
+/// chosen value is never mistaken for it. Half the tallest dock caps it.
+const dock_radius_min: f32 = 1;
+const dock_radius_max: f32 = 48;
 
 const font_values = [3]f32{ 12, 13, 14 };
 const font_labels = [_][]const u8{ "Small", "Medium", "Large" };
@@ -94,6 +99,8 @@ const px_dock_hover_zoom = 16;
 const px_taskbar_edge_gap = 17;
 const px_taskbar_length = 18;
 const px_taskbar_radius = 19;
+const px_dock_opacity = 20;
+const px_dock_radius = 21;
 
 pub const Section = struct {
     cc: *panel.ControlCenter = undefined,
@@ -107,11 +114,16 @@ pub const Section = struct {
     cursor_themes: ?[]cursor_theme.Theme = null,
     cursor_row_children: [2]Widget = undefined,
     family_row_children: [2]Widget = undefined,
-    row_storage: [31]Widget = undefined,
+    row_storage: [row_count]Widget = undefined,
+    /// The page: `groups`, each one card with a title over its rows.
+    group_storage: [row_count + groups.len]Widget = undefined,
+    group_cards: [groups.len]Widget = undefined,
     dock_children: [2]Widget = undefined,
     dock_position_children: [2]Widget = undefined,
     dock_auto_hide_children: [2]Widget = undefined,
-    dock_group_children: [5]Widget = undefined,
+    dock_active_children: [2]Widget = undefined,
+    dock_trash_children: [2]Widget = undefined,
+    dock_group_children: [10]Widget = undefined,
     focus_zoom_children: [3]Widget = undefined,
     drag_feedback_children: [2]Widget = undefined,
     drag_scale_header_children: [2]Widget = undefined,
@@ -179,13 +191,22 @@ pub const Section = struct {
     terminal_opacity_header_children: [2]Widget = undefined,
     terminal_opacity_group_children: [2]Widget = undefined,
     terminal_opacity_value_buf: [16]u8 = undefined,
-    px: [20]PxControl = undefined,
-    taskbar_section_children: [11]Widget = undefined,
+    px: [22]PxControl = undefined,
+    taskbar_section_children: [13]Widget = undefined,
     taskbar_position_children: [2]Widget = undefined,
-    items_children: [5]Widget = undefined,
+    clock_bold_children: [2]Widget = undefined,
+    clock_italic_children: [2]Widget = undefined,
+    items_children: [6]Widget = undefined,
+    /// Per section: its title and the well that holds its rows.
     items_section_children: [3][2]Widget = undefined,
+    /// What an empty well shows instead of rows.
+    items_placeholder: [3][1]Widget = undefined,
+    /// Spacer, text, spacer: centred, since a lone text in a row is flexed.
+    items_placeholder_body: [3][3]Widget = undefined,
+    /// Rows follow `order`; `syncItems` hands each well its run of them.
     item_rows: [taskbar_items.count]Widget = undefined,
-    item_controls: [taskbar_items.count][4]Widget = undefined,
+    /// Grip, label, visibility toggle.
+    item_controls: [taskbar_items.count][3]Widget = undefined,
     item_drag: ?struct { index: usize, press_y: f32, moved: bool = false, items: taskbar_items.Config } = null,
     item_focus: ?taskbar_items.Item = null,
     start_menu_section_children: [9]Widget = undefined,
@@ -659,7 +680,7 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
     out.inactive_opacity_group_children = .{ inactive_opacity_header, inactive_opacity_slider };
     const inactive_opacity_row: Widget = .{ .kind = .container, .direction = .column, .gap = 8, .children = &out.inactive_opacity_group_children };
 
-    // Unset means Foot keeps its own alpha; the slider then shows opaque.
+    // Unset means a terminal keeps its own alpha; the slider then shows opaque.
     const terminal_val = std.math.clamp(out.cc.server.config.compositor.terminal_opacity orelse 1.0, 0.0, 1.0);
     const terminal_formatted = std.fmt.bufPrint(&out.terminal_opacity_value_buf, "{d}%", .{@as(i32, @intFromFloat(@round(terminal_val * 100.0)))}) catch "?";
     out.terminal_opacity_header_children = .{ labelWidget("Terminal opacity (new windows)"), pillWidget(terminal_formatted) };
@@ -703,36 +724,52 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
     const chip_gap_row = pxGroup(out, px_chip_gap, "Window item gap", std.math.clamp(t.chip_gap, 0.0, 24.0), 0, 24, 2, &PxHandler(px_chip_gap, "chip_gap", true).changed);
     const start_gap_row = pxGroup(out, px_start_button_gap, "Start button gap", std.math.clamp(t.start_button_gap, 0.0, 40.0), 0, 40, 2, &PxHandler(px_start_button_gap, "start_button_gap", true).changed);
     const start_icon_row = pxGroup(out, px_start_icon_size, "Start button icon size", std.math.clamp(t.start_button_icon_size, 16.0, 42.0), 16, 42, 2, &PxHandler(px_start_icon_size, "start_button_icon_size", true).changed);
-    const items = out.cc.server.config.compositor.taskbar_items;
+    out.clock_bold_children = .{
+        labelWidget("Bold clock text"),
+        .{ .name = "clock_bold", .kind = .{ .toggle = .{ .on = theme.taskbar(.clock_bold), .owner = out, .on_change = &ClockStyle("clock_bold").changed } } },
+    };
+    out.clock_italic_children = .{
+        labelWidget("Italic clock text"),
+        .{ .name = "clock_italic", .kind = .{ .toggle = .{ .on = theme.taskbar(.clock_italic), .owner = out, .on_change = &ClockStyle("clock_italic").changed } } },
+    };
+    const clock_bold_row: Widget = .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.clock_bold_children };
+    const clock_italic_row: Widget = .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.clock_italic_children };
+    // Each section is an inset well of raised rows; a whole row is its grip.
     inline for (0..taskbar_items.count) |i| {
-        const item = items.order[i];
         out.item_controls[i] = .{
-            .{ .kind = .{ .text = .{ .content = item.label(), .font_size = 13, .weight = 600, .color = pal.fg } }, .width = .{ .flex = 1 } },
-            .{ .name = std.fmt.allocPrint(arena, "taskbar_{s}_order", .{@tagName(item)}) catch null, .kind = .{ .button = .{ .label = "Drag to reorder", .icon = .drag_handle, .owner = out, .id = i } }, .width = .{ .fixed = 32 }, .height = .{ .fixed = 30 } },
-            .{ .name = std.fmt.allocPrint(arena, "taskbar_{s}_visible", .{@tagName(item)}) catch null, .kind = .{ .toggle = .{ .on = items.shown(item), .owner = out, .on_change = &ItemToggle(i).changed } } },
-            .{ .name = std.fmt.allocPrint(arena, "taskbar_{s}_section", .{@tagName(item)}) catch null, .kind = .{ .segmented = .{ .labels = &.{ "Left", "Center", "Right" }, .selected = @intFromEnum(items.section(item)), .owner = out, .id = i, .on_change = &onItemSectionChanged } }, .width = .{ .fixed = 180 } },
+            .{ .kind = .{ .button = .{ .label = "Drag to move", .icon = .drag_handle, .variant = .ghost, .owner = out, .id = i } }, .width = .{ .fixed = 28 }, .height = .{ .fixed = 28 } },
+            .{ .kind = .{ .text = .{ .content = "", .font_size = 13, .weight = 600, .color = pal.fg } }, .width = .{ .flex = 1 } },
+            .{ .kind = .{ .toggle = .{ .on = false, .owner = out, .on_change = &ItemToggle(i).changed } } },
         };
-        out.item_rows[i] = .{ .kind = .container, .direction = .row, .gap = 8, .@"align" = .center, .children = &out.item_controls[i] };
+        out.item_rows[i] = .{ .kind = .{ .rect = itemRowStyle(false) }, .direction = .row, .gap = 8, .@"align" = .center, .padding = .{ .top = 6, .right = 10, .bottom = 6, .left = 6 }, .children = &out.item_controls[i] };
     }
-    var item_start: usize = 0;
-    inline for (.{ "LEFT", "CENTER", "RIGHT" }, 0..) |label, zone| {
-        var item_end = item_start;
-        while (item_end < taskbar_items.count and @intFromEnum(items.section(items.order[item_end])) == zone) item_end += 1;
+    inline for (.{ "LEFT", "CENTER", "RIGHT" }, .{ "left", "center", "right" }, 0..) |label, name, zone| {
+        out.items_placeholder_body[zone] = .{
+            .{ .kind = .container, .width = .{ .flex = 1 } },
+            // Slack: a fractional raster scale hints wider than the logical measure.
+            .{ .kind = .{ .text = .{ .content = "Drag items here", .font_size = 12, .color = pal.dim } }, .min_width = @import("ui").measure.textNatural("Drag items here", .sans, 400, 12).w + 6 },
+            .{ .kind = .container, .width = .{ .flex = 1 } },
+        };
+        out.items_placeholder[zone] = .{.{ .kind = .container, .height = .{ .fixed = item_row_height }, .@"align" = .center, .children = &out.items_placeholder_body[zone] }};
         out.items_section_children[zone] = .{
             sectionLabel(label),
-            .{ .kind = .container, .direction = .column, .gap = 8, .children = out.item_rows[item_start..item_end] },
+            .{ .name = "taskbar_zone_" ++ name, .kind = .{ .rect = itemZoneStyle(false) }, .direction = .column, .gap = 6, .padding = layout.Edges.all(6), .@"align" = .stretch },
         };
-        item_start = item_end;
     }
+    _ = syncItems(out, out.cc.server.config.compositor.taskbar_items, null);
     out.items_children = .{
         labelWidget("Taskbar sections"),
-        .{ .kind = .{ .text = .{ .content = "Choose a section; drag to reorder within it. Toggle visibility. Battery appears when available.", .font_size = 12, .color = pal.dim } } },
-        .{ .kind = .container, .direction = .column, .gap = 8, .children = &out.items_section_children[0] },
-        .{ .kind = .container, .direction = .column, .gap = 8, .children = &out.items_section_children[1] },
-        .{ .kind = .container, .direction = .column, .gap = 8, .children = &out.items_section_children[2] },
+        .{ .kind = .{ .text = .{ .content = "Drag an item to reorder it or move it to another section. Switch it off to hide it. Battery appears when available.", .font_size = 12, .color = pal.dim } } },
+        .{ .kind = .container, .direction = .column, .gap = 6, .@"align" = .stretch, .children = &out.items_section_children[0] },
+        .{ .kind = .container, .direction = .column, .gap = 6, .@"align" = .stretch, .children = &out.items_section_children[1] },
+        .{ .kind = .container, .direction = .column, .gap = 6, .@"align" = .stretch, .children = &out.items_section_children[2] },
+        .{ .name = "taskbar_capture_notice", .kind = .{ .text = .{ .content = if (out.cc.server.config.compositor.taskbar_items.shown(.capture))
+            "Screen capture appears while recording or sharing your screen. Keeping it enabled is recommended."
+        else
+            "Warning: Screen capture is hidden. Recording and screen sharing can continue without a visible indicator or Stop sharing button. Hiding it is not recommended.", .font_size = 12, .color = pal.dim } } },
     };
-    const items_group: Widget = .{ .kind = .container, .direction = .column, .gap = 8, .children = &out.items_children };
-    out.taskbar_section_children = .{ sectionLabel("TASKBAR"), position_row, taskbar_row, edge_gap_row, length_row, radius_row, chip_width_row, chip_gap_row, start_gap_row, start_icon_row, items_group };
+    const items_group: Widget = .{ .kind = .container, .direction = .column, .gap = 8, .@"align" = .stretch, .children = &out.items_children };
+    out.taskbar_section_children = .{ panel.sectionTitle("Taskbar"), position_row, taskbar_row, edge_gap_row, length_row, radius_row, chip_width_row, chip_gap_row, start_gap_row, start_icon_row, clock_bold_row, clock_italic_row, items_group };
     const taskbar_section: Widget = .{ .kind = .container, .direction = .column, .gap = 12, .children = &out.taskbar_section_children };
 
     var output_box: wlr.Box = undefined;
@@ -793,7 +830,7 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
         .{ .name = "start_menu_size_auto", .kind = .{ .button = .{ .label = "Size to screen", .owner = out, .on_click = &onAutoMenuSize, .state = if (menu_pinned) .idle else .disabled } }, .width = .{ .fixed = 124 }, .height = .{ .fixed = 30 } },
     };
     const menu_size_row: Widget = .{ .kind = .container, .direction = .row, .gap = 8, .@"align" = .center, .children = &out.start_size_children };
-    out.start_menu_section_children = .{ sectionLabel("START MENU"), logo_row, menu_width_row, menu_height_row, menu_size_row, menu_left_row, menu_bottom_row, icon_left_row, icon_bottom_row };
+    out.start_menu_section_children = .{ panel.sectionTitle("Start menu"), logo_row, menu_width_row, menu_height_row, menu_size_row, menu_left_row, menu_bottom_row, icon_left_row, icon_bottom_row };
     const start_menu_section: Widget = .{ .kind = .container, .direction = .column, .gap = 12, .children = &out.start_menu_section_children };
 
     out.theme_actions = .{
@@ -853,12 +890,32 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
     const dock_zoom_row = pxGroup(out, px_dock_hover_zoom, "Dock hover zoom (1.00× disables)", server.config.compositor.dock_hover_zoom, 1, loader.dock_hover_zoom_max, 0.05, &onDockHoverZoomChanged);
     out.px[px_dock_hover_zoom].group_children[1].name = "dock_hover_zoom";
     updateDockZoomLabel(out);
+    // The slider shows the opacity the dock is drawn with, whether the theme or
+    // `dock_opacity` set it; the radius, whether it is the dock's own or the windows'.
+    const dock_pal = theme.shellPalette();
+    const dock_opacity_row = unitGroup(out, px_dock_opacity, "Dock opacity", @round(dock_mod.background(&server.config.compositor, dock_pal)[3] * 100), 0, 100, 1, &onDockOpacityChanged, "%");
+    out.px[px_dock_opacity].group_children[1].name = "dock_opacity";
+    const dock_radius_row = pxGroup(out, px_dock_radius, "Dock corner radius", std.math.clamp(dock_mod.cornerRadius(dock_pal), dock_radius_min, dock_radius_max), dock_radius_min, dock_radius_max, 1, &PxHandler(px_dock_radius, "dock_radius", false).changed);
+    out.px[px_dock_radius].group_children[1].name = "dock_radius";
+    out.dock_active_children = .{
+        labelWidget("Highlight active app"),
+        .{ .name = "dock_active_highlight", .kind = .{ .toggle = .{ .on = server.config.compositor.dock_active_highlight, .owner = out, .on_change = &onDockActiveHighlightChanged } } },
+    };
+    out.dock_trash_children = .{
+        labelWidget("Show Trash"),
+        .{ .name = "dock_show_trash", .kind = .{ .toggle = .{ .on = server.config.compositor.dock_show_trash, .owner = out, .on_change = &onDockShowTrashChanged } } },
+    };
     out.dock_group_children = .{
+        panel.sectionTitle("Dock"),
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.dock_children },
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.dock_position_children },
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.dock_auto_hide_children },
         dock_height_row,
         dock_zoom_row,
+        dock_opacity_row,
+        dock_radius_row,
+        .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.dock_active_children },
+        .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.dock_trash_children },
     };
     out.row_storage = .{
         .{ .kind = .container, .direction = .column, .gap = 8, .children = pack_controls },
@@ -893,14 +950,85 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
         taskbar_section,
         start_menu_section,
     };
+    var at: usize = 0;
+    for (groups, &out.group_cards) |group, *card| {
+        const start = at;
+        if (group.title) |title| {
+            out.group_storage[at] = panel.sectionTitle(title);
+            at += 1;
+        }
+        for (group.rows) |row| {
+            out.group_storage[at] = out.row_storage[@intFromEnum(row)];
+            at += 1;
+        }
+        // An untitled group is one row that brings its own title.
+        card.* = if (group.title == null) out.group_storage[start] else .{ .kind = .container, .direction = .column, .gap = 16, .children = out.group_storage[start..at] };
+    }
     out.top_children = .{
         .{ .kind = .{ .text = .{ .content = "APPEARANCE", .font_size = 12, .weight = 700, .color = pal.dim } } },
-        .{ .kind = .container, .direction = .column, .gap = 12, .children = &out.row_storage },
+        .{ .kind = .container, .direction = .column, .gap = 12, .children = &out.group_cards },
     };
     out.root = .{ .kind = .container, .direction = .column, .gap = 8, .children = &out.top_children };
 }
 
 const strip_index = 1;
+
+/// `row_storage`, in the order `build` fills it.
+const Row = enum {
+    theme_pack,
+    icon_theme,
+    theme,
+    taskbar_theme,
+    app_colors,
+    dark_mode,
+    wallpaper,
+    launch_splash,
+    dodge_file_drags,
+    animations,
+    animation_speed,
+    reduced_motion,
+    focus_zoom,
+    drag_feedback,
+    drag_scale,
+    cursor,
+    font_family,
+    font_size,
+    radius,
+    shadow,
+    edge_glow,
+    chrome_opacity,
+    window_tabs,
+    inactive_dim,
+    inactive_opacity,
+    terminal_opacity,
+    window_gap,
+    scrollbar_width,
+    dock,
+    taskbar,
+    start_menu,
+};
+const row_count = std.meta.fields(Row).len;
+
+const groups = [_]struct { title: ?[]const u8, rows: []const Row }{
+    .{ .title = "Themes & colours", .rows = &.{ .theme, .taskbar_theme, .theme_pack, .icon_theme, .dark_mode, .app_colors } },
+    .{ .title = "Wallpaper", .rows = &.{.wallpaper} },
+    .{ .title = "Fonts & cursor", .rows = &.{ .font_family, .font_size, .cursor } },
+    .{ .title = "Windows", .rows = &.{ .radius, .shadow, .edge_glow, .chrome_opacity, .window_tabs, .inactive_dim, .inactive_opacity, .terminal_opacity, .window_gap, .scrollbar_width } },
+    .{ .title = "Motion & feedback", .rows = &.{ .animations, .animation_speed, .reduced_motion, .focus_zoom, .drag_feedback, .drag_scale, .dodge_file_drags, .launch_splash } },
+    .{ .title = null, .rows = &.{.dock} },
+    .{ .title = null, .rows = &.{.taskbar} },
+    .{ .title = null, .rows = &.{.start_menu} },
+};
+
+comptime {
+    // Every row is shown exactly once.
+    var seen = [_]bool{false} ** row_count;
+    for (groups) |group| for (group.rows) |row| {
+        if (seen[@intFromEnum(row)]) @compileError("row in two groups: " ++ @tagName(row));
+        seen[@intFromEnum(row)] = true;
+    };
+    for (seen, 0..) |shown, i| if (!shown) @compileError("row in no group: " ++ @tagName(@as(Row, @enumFromInt(i))));
+}
 const tile_w: f32 = wallpaper_strip.thumb_width / 2;
 const tile_h: f32 = wallpaper_strip.thumb_height / 2;
 const tile_pad: f32 = 3;
@@ -1031,13 +1159,22 @@ fn appColorsReady(_: c_int, _: wl.EventMask, s: *Section) c_int {
     return 0;
 }
 
-/// Thumbnails arrive one by one; the panel repaints for each.
+/// Thumbnails arrive one by one; each goes into its tile in the shown strip
+/// and repaints that tile alone. A later build reads them from the strip.
 fn stripWake(_: c_int, _: wl.EventMask, out: *Section) c_int {
-    if (out.strip) |strip| strip.drain();
-    {
-        const server = out.cc.server;
-        if (server.input.open_control_center) |cc| cc.refresh();
+    const strip = out.strip orelse return 0;
+    strip.drain();
+    const cc = out.cc.server.input.open_control_center orelse return 0;
+    if (cc != out.cc or cc.page != .appearance or !out.strip_built) return 0;
+    const container = &out.wallpaper_children[strip_index];
+    if (container.kind != .scroll_container) return 0;
+    for (container.children, 0..) |*tile, i| {
+        const image = &tile.children[0];
+        if (image.kind != .image or image.kind.image.pixels != null) continue;
+        image.kind.image.pixels = strip.thumb(i) orelse continue;
+        image.markPaintDirty();
     }
+    cc.requestWidgetRepaint();
     return 0;
 }
 
@@ -1070,7 +1207,7 @@ fn buildWallpaper(out: *Section, arena: std.mem.Allocator) void {
         labels = l;
     } else |_| {}
     out.wallpaper_row_children = .{
-        labelWidget("Wallpaper"),
+        labelWidget("Image"),
         .{
             .name = "wallpaper",
             .kind = .{
@@ -1462,7 +1599,7 @@ fn onThemePicked(owner: ?*anyopaque, _: usize, index: usize) void {
     };
 }
 
-/// Gives the taskbar the colours of the picked preset (index 0 hands it back
+/// Gives the taskbar the colours and clock style of the picked preset (index 0 hands it back
 /// to the main theme). Only the bar changes: `theme.global` keeps whatever the
 /// theme row above chose, and so does the saved `[theme]` section.
 fn onTaskbarThemePicked(owner: ?*anyopaque, _: usize, index: usize) void {
@@ -1482,6 +1619,24 @@ fn onTaskbarThemePicked(owner: ?*anyopaque, _: usize, index: usize) void {
     if (server.config.path.len > 0) loader.replaceTaskbarThemeSection(main.gpa, server.io, server.config.path, theme.taskbar_override);
     server.refreshTaskbarsGeometry();
     if (server.input.open_control_center) |cc| cc.refresh();
+}
+
+fn ClockStyle(comptime key: []const u8) type {
+    return struct {
+        fn changed(owner: ?*anyopaque, _: usize, on: bool) void {
+            const s = section(owner);
+            const server = s.cc.server;
+            if (theme.taskbar_override) |*chosen| {
+                @field(chosen, key) = on;
+                if (server.config.path.len > 0) loader.replaceTaskbarThemeSection(main.gpa, server.io, server.config.path, chosen.*);
+                server.refreshTaskbarsGeometry();
+                if (server.input.open_control_center) |cc| cc.refresh();
+            } else {
+                @field(theme.global, key) = on;
+                applyThemeChangeImpl(s, true);
+            }
+        }
+    };
 }
 
 fn onFontFamilyChanged(owner: ?*anyopaque, _: usize, index: usize) void {
@@ -1570,7 +1725,7 @@ fn onInactiveOpacityChanged(owner: ?*anyopaque, _: usize, value: f32) void {
     };
 }
 
-/// Foot reads its alpha at launch, so this only reaches terminals opened
+/// Terminals read their alpha at launch, so this only reaches terminals opened
 /// afterwards (`config/terminal_theme.zig`); nothing to apply live.
 fn onTerminalOpacityChanged(owner: ?*anyopaque, _: usize, value: f32) void {
     const s = section(owner);
@@ -1770,11 +1925,68 @@ fn saveItems(s: *Section, items: taskbar_items.Config) void {
     if (server.input.open_control_center) |cc| cc.refresh();
 }
 
+const item_row_height: f32 = 40;
+
+fn itemRowStyle(lifted: bool) layout.RectStyle {
+    const pal = panel.palette();
+    return .{ .color = if (lifted) pal.app_item_selected else pal.app_item, .radius = 8, .border_width = 1, .border_color = if (lifted) pal.accent else pal.app_item_border };
+}
+
+fn itemZoneStyle(target: bool) layout.RectStyle {
+    const pal = panel.palette();
+    return .{ .color = pal.app_bg, .radius = 10, .border_width = 1, .border_color = if (target) pal.accent else pal.app_item_border };
+}
+
+fn itemName(item: taskbar_items.Item, comptime suffix: []const u8) []const u8 {
+    return switch (item) {
+        inline else => |tag| "taskbar_" ++ @tagName(tag) ++ suffix,
+    };
+}
+
+/// Points the rows at `items` (row `i` shows `order[i]`) and gives each
+/// section's well its run of rows, or its placeholder. True when a well's
+/// row count changed, which needs a layout.
+fn syncItems(out: *Section, items: taskbar_items.Config, dragged: ?usize) bool {
+    const pal = panel.palette();
+    for (&out.item_rows, &out.item_controls, items.order, 0..) |*row, *controls, item, i| {
+        const lifted = dragged == i;
+        row.name = itemName(item, "_row");
+        row.kind = .{ .rect = itemRowStyle(lifted) };
+        controls[0].name = itemName(item, "_order");
+        controls[0].kind.button.state = if (lifted) .press else .idle;
+        controls[1].kind.text.content = item.label();
+        // `panel.restyle` colours text by weight: a hidden item's label is dim.
+        controls[1].kind.text.weight = if (items.shown(item)) 600 else 400;
+        controls[1].kind.text.color = if (items.shown(item)) pal.fg else pal.dim;
+        controls[2].name = itemName(item, "_visible");
+        controls[2].kind.toggle.on = items.shown(item);
+        for (controls) |*control| control.markDirty();
+        row.markDirty();
+    }
+    var changed = false;
+    var start: usize = 0;
+    for (&out.items_section_children, &out.items_placeholder, 0..) |*zone, *placeholder, z| {
+        var end = start;
+        while (end < taskbar_items.count and @intFromEnum(items.section(items.order[end])) == z) end += 1;
+        const well = &zone[1];
+        const rows: []Widget = if (end == start) placeholder else out.item_rows[start..end];
+        changed = changed or rows.ptr != well.children.ptr or rows.len != well.children.len;
+        well.children = rows;
+        well.kind = .{ .rect = itemZoneStyle(dragged != null and start <= dragged.? and dragged.? < end) };
+        well.linkParents();
+        well.markDirty();
+        start = end;
+    }
+    return changed;
+}
+
+/// The row whose grip, label or background is at (x, y): a whole row drags,
+/// only its toggle does not.
 pub fn itemHandle(s: *Section, x: f32, y: f32) ?usize {
     const ui = @import("ui");
     const hit = ui.input.hitTest(&s.cc.root, x, y) orelse return null;
-    for (&s.item_controls, 0..) |*controls, i| {
-        if (hit == &controls[1]) return i;
+    for (&s.item_rows, &s.item_controls, 0..) |*row, *controls, i| {
+        if (hit == row or hit == &controls[0] or hit == &controls[1]) return i;
     }
     return null;
 }
@@ -1793,31 +2005,31 @@ pub fn beginItemDrag(s: *Section, x: f32, y: f32) bool {
 fn previewItems(s: *Section) void {
     const drag = s.item_drag;
     const items = if (drag) |d| d.items else s.cc.server.config.compositor.taskbar_items;
-    for (&s.item_controls, items.order, 0..) |*controls, item, i| {
-        controls[0].kind.text.content = item.label();
-        controls[1].kind.button.state = if (drag != null and drag.?.index == i) .press else .idle;
-        controls[1].kind.button.variant = if (drag != null and drag.?.index == i) .primary else .secondary;
-        controls[2].kind.toggle.on = items.shown(item);
-        controls[3].kind.segmented.selected = @intFromEnum(items.section(item));
-        for (controls) |*control| control.markDirty();
-    }
+    if (syncItems(s, items, if (drag) |d| d.index else null)) s.cc.layoutContent();
     s.cc.requestRepaint();
 }
 
+/// Rows move live: the pointer's section is the one whose title it is at or
+/// below, its slot the count of that section's other rows whose middle it has passed.
 pub fn moveItemDrag(s: *Section, y: f32) void {
     const drag = if (s.item_drag) |*d| d else return;
     if (!drag.moved and @abs(y - drag.press_y) < 4) return;
     drag.moved = true;
-    var target = drag.index;
-    // Cross the neighbouring row's centre before shifting it out of the way.
-    while (target + 1 < taskbar_items.count and drag.items.section(drag.items.order[target + 1]) == drag.items.section(drag.items.order[drag.index]) and y > s.item_rows[target + 1].computed_y + s.item_rows[target + 1].computed_height / 2) target += 1;
-    while (target > 0 and drag.items.section(drag.items.order[target - 1]) == drag.items.section(drag.items.order[drag.index]) and y < s.item_rows[target - 1].computed_y + s.item_rows[target - 1].computed_height / 2) target -= 1;
-    if (target == drag.index) return;
-    while (drag.index != target) {
-        const down = target > drag.index;
-        drag.items.move(drag.index, down);
-        if (down) drag.index += 1 else drag.index -= 1;
+    var zone: usize = 0;
+    for (1..3) |z| {
+        if (y >= s.items_children[2 + z].computed_y) zone = z;
     }
+    const current = @intFromEnum(drag.items.section(drag.items.order[drag.index]));
+    var slot: usize = 0;
+    var current_slot: usize = 0;
+    for (drag.items.order, 0..) |item, i| {
+        const z = @intFromEnum(drag.items.section(item));
+        if (i == drag.index) continue;
+        if (z == current and i < drag.index) current_slot += 1;
+        if (z == zone and y > s.item_rows[i].computed_y + s.item_rows[i].computed_height / 2) slot += 1;
+    }
+    if (zone == current and slot == current_slot) return;
+    drag.index = drag.items.place(drag.index, @enumFromInt(zone), slot);
     previewItems(s);
 }
 
@@ -1825,10 +2037,12 @@ pub fn endItemDrag(s: *Section, commit: bool) void {
     const drag = s.item_drag orelse return;
     s.item_drag = null;
     s.item_focus = drag.items.order[drag.index];
-    if (commit and !std.meta.eql(drag.items.order, s.cc.server.config.compositor.taskbar_items.order)) {
+    const saved = s.cc.server.config.compositor.taskbar_items;
+    if (commit and !(std.meta.eql(drag.items.order, saved.order) and std.meta.eql(drag.items.sections, saved.sections))) {
         // A config reload during the grab can change visibility independently.
-        var items = s.cc.server.config.compositor.taskbar_items;
+        var items = saved;
         items.order = drag.items.order;
+        items.sections = drag.items.sections;
         items.normalize();
         saveItems(s, items);
     }
@@ -1839,7 +2053,7 @@ pub fn endItemDrag(s: *Section, commit: bool) void {
 pub fn restoreItemFocus(s: *Section) void {
     const item = s.item_focus orelse return;
     for (s.cc.server.config.compositor.taskbar_items.order, 0..) |candidate, i| {
-        if (item == candidate) @import("ui").input.current.focus(&s.cc.root, &s.item_controls[i][1]);
+        if (item == candidate) @import("ui").input.current.focus(&s.cc.root, &s.item_controls[i][0]);
     }
     s.item_focus = null;
 }
@@ -1848,14 +2062,15 @@ pub fn captureItemFocus(s: *Section) void {
     if (s.item_focus != null) return;
     const focused = @import("ui").input.current.focused orelse return;
     for (&s.item_controls) |*controls| {
-        if (focused != &controls[1]) continue;
+        if (focused != &controls[0]) continue;
         for (std.enums.values(taskbar_items.Item)) |item| {
-            if (std.mem.eql(u8, controls[0].kind.text.content, item.label())) s.item_focus = item;
+            if (std.mem.eql(u8, controls[1].kind.text.content, item.label())) s.item_focus = item;
         }
         return;
     }
 }
 
+/// Up/Down on a focused grip moves its item one step, across sections too.
 pub fn itemKey(s: *Section, key: @import("ui").input.Key) bool {
     if (s.item_drag != null) {
         if (key == .escape) endItemDrag(s, false);
@@ -1864,22 +2079,15 @@ pub fn itemKey(s: *Section, key: @import("ui").input.Key) bool {
     if (key != .up and key != .down) return false;
     const focused = @import("ui").input.current.focused orelse return false;
     for (&s.item_controls, 0..) |*controls, i| {
-        if (focused != &controls[1]) continue;
-        var items = s.cc.server.config.compositor.taskbar_items;
+        if (focused != &controls[0]) continue;
+        const before = s.cc.server.config.compositor.taskbar_items;
+        var items = before;
         s.item_focus = items.order[i];
         items.move(i, key == .down);
-        saveItems(s, items);
+        if (!std.meta.eql(items, before)) saveItems(s, items);
         return true;
     }
     return false;
-}
-
-fn onItemSectionChanged(owner: ?*anyopaque, index: usize, zone: usize) void {
-    if (index >= taskbar_items.count or zone >= 3) return;
-    const s = section(owner);
-    var items = s.cc.server.config.compositor.taskbar_items;
-    items.setSection(items.order[index], @enumFromInt(zone));
-    saveItems(s, items);
 }
 
 fn ItemToggle(comptime index: usize) type {
@@ -1993,6 +2201,54 @@ fn onDockAutoHideChanged(owner: ?*anyopaque, _: usize, on: bool) void {
     var it = server.outputs.iterator(.forward);
     while (it.next()) |output| output.dock.invalidate();
     // A parked dock schedules no frame of its own.
+    server.scheduleFrames();
+}
+
+/// The slider is 0-100 %. At 0 the dock is only its icons over the glass.
+fn onDockOpacityChanged(owner: ?*anyopaque, _: usize, value: f32) void {
+    const s = section(owner);
+    const server = s.cc.server;
+    const opacity = std.math.clamp(@round(value), 0, 100) / 100;
+    if (server.config.compositor.dock_opacity) |current| if (current == opacity) return;
+    server.config.compositor.dock_opacity = opacity;
+    s.px[px_dock_opacity].header_children[1].kind.text.content = std.fmt.bufPrint(&s.px[px_dock_opacity].value_buf, "{d}%", .{@as(i32, @intFromFloat(@round(opacity * 100)))}) catch "?";
+    s.px[px_dock_opacity].header_children[1].markDirty();
+    var it = server.outputs.iterator(.forward);
+    while (it.next()) |output| output.dock.invalidate();
+    server.scheduleFrames();
+    setting_save.saveCompositor(main.gpa, server.io, server.config.path, "dock_opacity", opacity) catch |err| {
+        std.log.warn("could not save dock_opacity: {}", .{err});
+    };
+}
+
+fn onDockActiveHighlightChanged(owner: ?*anyopaque, _: usize, on: bool) void {
+    const s = section(owner);
+    const server = s.cc.server;
+    setting_save.saveCompositor(main.gpa, server.io, server.config.path, "dock_active_highlight", on) catch |err| {
+        std.log.warn("could not save dock active highlight: {}", .{err});
+        s.dock_active_children[1].kind.toggle.on = server.config.compositor.dock_active_highlight;
+        s.dock_active_children[1].markDirty();
+        return;
+    };
+    server.config.compositor.dock_active_highlight = on;
+    var it = server.outputs.iterator(.forward);
+    while (it.next()) |output| output.dock.invalidate();
+    server.scheduleFrames();
+}
+
+fn onDockShowTrashChanged(owner: ?*anyopaque, _: usize, on: bool) void {
+    const s = section(owner);
+    const server = s.cc.server;
+    setting_save.saveCompositor(main.gpa, server.io, server.config.path, "dock_show_trash", on) catch |err| {
+        std.log.warn("could not save dock_show_trash: {}", .{err});
+        s.dock_trash_children[1].kind.toggle.on = server.config.compositor.dock_show_trash;
+        s.dock_trash_children[1].markDirty();
+        return;
+    };
+    server.config.compositor.dock_show_trash = on;
+    if (server.input.window_menu.dock != null) server.input.window_menu.close();
+    var it = server.outputs.iterator(.forward);
+    while (it.next()) |output| output.dock.invalidate();
     server.scheduleFrames();
 }
 

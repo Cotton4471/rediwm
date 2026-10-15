@@ -185,9 +185,9 @@ fn naturalSize(widget: *const Widget) Natural {
     };
 }
 
-fn textNatural(content: []const u8, family: layout.TextFamily, weight: u32, font_size: f32) Natural {
+pub fn textNatural(content: []const u8, family: layout.TextFamily, weight: u32, font_size: f32) Natural {
     const font: text_mod.Font = switch (family) {
-        .sans => if (weight >= 600) .manrope_bold else .manrope,
+        .sans => if (weight >= 700) .manrope_heavy else if (weight >= 600) .manrope_bold else .manrope,
         .mono => if (weight >= 600) .mono_bold else .mono,
     };
     const w = text_mod.measureWidth(content, font, font_size, 1.0) catch 0;

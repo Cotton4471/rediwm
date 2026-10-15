@@ -94,7 +94,7 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
     const rows = try a.alloc(W, snapshot.users.len + 32);
     var count: usize = 0;
     const header = try a.alloc(W, 2);
-    header[0] = text("Accounts", 16, false);
+    header[0] = panel.sectionTitle("Accounts");
     header[0].width = .{ .flex = 1 };
     header[1] = .{ .kind = .{ .button = .{
         .label = if (s.unlocked) "Lock" else "Unlock",
@@ -146,7 +146,7 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
         },
         .none => {},
     }
-    rows[count] = text("Automatic login", 16, false);
+    rows[count] = panel.sectionTitle("Automatic login");
     count += 1;
     const user_labels = try a.alloc([]const u8, snapshot.users.len + 1);
     user_labels[0] = "Off";
@@ -269,7 +269,7 @@ fn buildAddForm(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W 
         return buildCard(a, &.{text("Could not allocate locked password storage.", 13, true)});
     }
     const items = try a.alloc(W, 7);
-    items[0] = text("Add user", 16, false);
+    items[0] = panel.sectionTitle("Add user");
     items[1] = try textInputRow(cc, a, "Full name", "", "Full name", addFullNameChanged, &s.new_full_name);
     items[2] = try textInputRow(cc, a, "Username", "", "lowercase username", addUsernameChanged, &s.new_username);
     items[3] = try secretInputRowFocus(a, "Password", &s.password, "Enter password", &s.password_field);
@@ -283,7 +283,7 @@ fn buildDetailsForm(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator,
     populateGroupChoices(s, user, groups);
     const visible_count = visibleGroupCount(s);
     const items = try a.alloc(W, 9);
-    items[0] = text(try std.fmt.allocPrint(a, "Account details · {s}", .{user.name}), 16, false);
+    items[0] = panel.sectionTitle(try std.fmt.allocPrint(a, "Account details · {s}", .{user.name}));
     const displayed_full_name = if (s.details_name_dirty) s.details_name_draft[0..s.details_name_len] else user.full_name;
     items[1] = try textInputRow(cc, a, "Full name", displayed_full_name, "Full name", detailsNameChanged, &s.details_full_name);
     const type_labels = [_][]const u8{ "Standard", "Administrator" };
@@ -294,7 +294,7 @@ fn buildDetailsForm(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator,
     actions[2] = actionButton(cc, "Delete user…", 0, beginDeleteClicked, s.auth != null);
     items[3] = .{ .kind = .container, .direction = .row, .justify = .space_between, .gap = 8, .children = actions };
     const group_header = try a.alloc(W, 2);
-    group_header[0] = text("Groups", 16, false);
+    group_header[0] = panel.sectionTitle("Groups");
     group_header[1] = actionButton(cc, if (s.show_all_groups) "Show curated" else "Show all groups", 0, groupVisibilityClicked, s.auth != null);
     items[4] = .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = group_header };
     const group_widgets = try a.alloc(W, visible_count);
@@ -323,7 +323,7 @@ fn buildDetailsForm(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator,
 fn buildPasswordForm(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
     if (s.password_memory == null or s.confirm_memory == null) return buildCard(a, &.{text("Could not allocate locked password storage.", 13, true)});
     const items = try a.alloc(W, 4);
-    items[0] = text(try std.fmt.allocPrint(a, "Change password · {s}", .{s.target[0..s.target_len]}), 16, false);
+    items[0] = panel.sectionTitle(try std.fmt.allocPrint(a, "Change password · {s}", .{s.target[0..s.target_len]}));
     items[1] = try secretInputRowFocus(a, "New password", &s.password, "Enter new password", &s.password_field);
     items[2] = try secretInputRow(a, "Confirm", &s.confirm_password, "Confirm new password");
     items[3] = try formButtons(a, cc, "Cancel", 0, cancelFormClicked, "Save password", 0, changePasswordSubmit);
@@ -332,7 +332,7 @@ fn buildPasswordForm(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator
 
 fn buildDeleteForm(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
     const items = try a.alloc(W, 3);
-    items[0] = text(try std.fmt.allocPrint(a, "Delete {s}?", .{s.target[0..s.target_len]}), 16, false);
+    items[0] = panel.sectionTitle(try std.fmt.allocPrint(a, "Delete {s}?", .{s.target[0..s.target_len]}));
     items[1] = text("Choose whether to keep the home folder or remove its files.", 12, true);
     items[2] = try formButtons(a, cc, "Keep home", 0, deleteKeepHomeClicked, "Delete files", 0, deleteFilesClicked);
     return buildCard(a, items);

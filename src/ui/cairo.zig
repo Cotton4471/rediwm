@@ -60,10 +60,22 @@ pub fn setSource(cr_any: *anyopaque, color: [4]f32) void {
     c.cairo_set_source_rgba(@ptrCast(cr_any), color[0], color[1], color[2], color[3]);
 }
 
-/// Sidebar hover fill and optional illuminated leading edge. Keep the glow
-/// inside the row so the existing hover damage and scrolling clips cover it.
+/// Sidebar hover: a plain rounded fill at `alpha`.
 pub fn drawSidebarHover(cr_any: *anyopaque, box: Rect, alpha: f32) void {
     if (box.w <= 0 or box.h <= 0 or alpha <= 0) return;
+    const cr: *c.cairo_t = @ptrCast(cr_any);
+    sidebarRowPath(cr, box);
+    var fill = theme.global.sidebarHover();
+    fill[3] *= alpha;
+    setSource(cr, fill);
+    c.cairo_fill(cr);
+}
+
+/// The selected sidebar row: its fill and an accent bar, or with
+/// `app_sidebar_selected_marker` an illuminated leading edge. Everything stays
+/// inside the row, so the row's own damage covers it.
+pub fn drawSidebarSelected(cr_any: *anyopaque, box: Rect) void {
+    if (box.w <= 0 or box.h <= 0) return;
     const cr: *c.cairo_t = @ptrCast(cr_any);
     c.cairo_save(cr);
     defer c.cairo_restore(cr);
@@ -71,33 +83,46 @@ pub fn drawSidebarHover(cr_any: *anyopaque, box: Rect, alpha: f32) void {
     const y: f64 = box.y;
     const w: f64 = box.w;
     const h: f64 = box.h;
-    const radius = @min(5, @min(w, h) / 2);
+    sidebarRowPath(cr, box);
+    setSource(cr, theme.global.sidebarSelected());
+    c.cairo_fill_preserve(cr);
+    c.cairo_clip(cr);
+    const accent = theme.shellPalette().accent;
+    const marker = theme.global.app_sidebar_selected_marker orelse {
+        c.cairo_new_path(cr);
+        const bar_h = @min(24, h);
+        roundedPath(cr, x, y + (h - bar_h) / 2, 3, bar_h, 1.5);
+        setSource(cr, accent);
+        c.cairo_fill(cr);
+        return;
+    };
+    const glow = c.cairo_pattern_create_linear(x, 0, x + @min(w, 28), 0) orelse return;
+    defer c.cairo_pattern_destroy(glow);
+    c.cairo_pattern_add_color_stop_rgba(glow, 0, accent[0], accent[1], accent[2], accent[3] * 0.85);
+    c.cairo_pattern_add_color_stop_rgba(glow, 0.25, accent[0], accent[1], accent[2], accent[3] * 0.40);
+    c.cairo_pattern_add_color_stop_rgba(glow, 1, accent[0], accent[1], accent[2], 0);
+    c.cairo_set_source(cr, glow);
+    c.cairo_paint(cr);
+    c.cairo_set_source_rgba(cr, marker[0], marker[1], marker[2], marker[3]);
+    c.cairo_set_line_width(cr, 3);
+    c.cairo_set_line_cap(cr, c.CAIRO_LINE_CAP_ROUND);
+    c.cairo_move_to(cr, x + 2.5, y + 5);
+    c.cairo_line_to(cr, x + 2.5, y + h - 5);
+    c.cairo_stroke(cr);
+}
+
+fn sidebarRowPath(cr: *c.cairo_t, box: Rect) void {
+    const radius = @min(theme.global.app_sidebar_item_radius, @min(box.w, box.h) / 2);
+    roundedPath(cr, box.x, box.y, box.w, box.h, radius);
+}
+
+fn roundedPath(cr: *c.cairo_t, x: f64, y: f64, w: f64, h: f64, radius: f64) void {
     c.cairo_new_sub_path(cr);
     c.cairo_arc(cr, x + w - radius, y + radius, radius, -std.math.pi / 2.0, 0);
     c.cairo_arc(cr, x + w - radius, y + h - radius, radius, 0, std.math.pi / 2.0);
     c.cairo_arc(cr, x + radius, y + h - radius, radius, std.math.pi / 2.0, std.math.pi);
     c.cairo_arc(cr, x + radius, y + radius, radius, std.math.pi, 3 * std.math.pi / 2.0);
     c.cairo_close_path(cr);
-    var fill = theme.global.sidebarHover();
-    fill[3] *= alpha;
-    setSource(cr, fill);
-    c.cairo_fill_preserve(cr);
-    c.cairo_clip(cr);
-    const marker = theme.global.app_sidebar_hover_marker orelse return;
-    const accent = theme.shellPalette().accent;
-    const glow = c.cairo_pattern_create_linear(x, 0, x + @min(w, 28), 0) orelse return;
-    defer c.cairo_pattern_destroy(glow);
-    c.cairo_pattern_add_color_stop_rgba(glow, 0, accent[0], accent[1], accent[2], accent[3] * alpha * 0.85);
-    c.cairo_pattern_add_color_stop_rgba(glow, 0.25, accent[0], accent[1], accent[2], accent[3] * alpha * 0.40);
-    c.cairo_pattern_add_color_stop_rgba(glow, 1, accent[0], accent[1], accent[2], 0);
-    c.cairo_set_source(cr, glow);
-    c.cairo_paint(cr);
-    c.cairo_set_source_rgba(cr, marker[0], marker[1], marker[2], marker[3] * alpha);
-    c.cairo_set_line_width(cr, 3);
-    c.cairo_set_line_cap(cr, c.CAIRO_LINE_CAP_ROUND);
-    c.cairo_move_to(cr, x + 2.5, y + 5);
-    c.cairo_line_to(cr, x + 2.5, y + h - 5);
-    c.cairo_stroke(cr);
 }
 
 pub fn drawSplitter(cr_any: *anyopaque, geometry: splitter.Geometry, engaged: bool) void {

@@ -29,8 +29,11 @@ def run(scale, gold=False, top=False, popup_only=False):
         try:
             with IPCClient(tmp, timeout=15) as ipc:
                 ipc.wait_for("wallpaper_presented", timeout_ms=10000)
-                bar = ipc.get_shell_state()["taskbars"][0]["box"]
-                clock = (bar["x"] + bar["width"] - 40, bar["y"] + bar["height"] // 2)
+                taskbar = ipc.get_shell_state()["taskbars"][0]
+                bar = taskbar["box"]
+                # Themes may move the clock (Gold centres it).
+                clock_box = next(i["box"] for i in taskbar["right_items"] if i["name"] == "clock")
+                clock = (clock_box["x"] + clock_box["width"] // 2, bar["y"] + bar["height"] // 2)
                 assert ipc.hit_test(*clock)["widget"] == "clock"
                 ipc.click_at(*clock)
                 ipc.wait_for_frame()
@@ -69,6 +72,43 @@ def run(scale, gold=False, top=False, popup_only=False):
                     ipc.wait_for_frame()
                     assert ipc.hit_test(*point)["target_type"] == "calendar"
                 ipc.key_down_up(1)
+                # The calendar opens over the clock wherever the taskbar puts it.
+                cfg_path = tmp / "rediwm-config.toml"
+                plain_cfg = cfg_path.read_text()
+
+                def clock_centre():
+                    box = next(i["box"] for i in ipc.get_shell_state()["taskbars"][0]["right_items"] if i["name"] == "clock")
+                    return box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+
+                def calendar_left(x):
+                    probe = (round(x), bar["y"] + bar["height"] + 50 if top else bar["y"] - 50)
+                    hit = ipc.hit_test(*probe)
+                    assert hit["target_type"] == "calendar", hit
+                    return probe[0] - hit["local_x"]
+
+                status = '"right:tray", "right:battery", "right:network", "right:volume"'
+                layouts = {
+                    "centre": f'["left:start", "left:windows", "center:clock", {status}]',
+                    "left": f'["left:start", "left:clock", "left:windows", {status}]',
+                    "right": f'["left:start", "left:windows", {status}, "right:clock"]',
+                }
+                for name, items in layouts.items():
+                    cfg_path.write_text(plain_cfg.replace("[compositor]\n", f"[compositor]\ntaskbar_items = {items}\n"))
+                    ipc.reload_config()
+                    ipc.wait_for_frame()
+                    x, y = clock_centre()
+                    ipc.click_at(round(x), round(y))
+                    ipc.wait_for_frame()
+                    left = calendar_left(x)
+                    # Centred over the clock unless the output edge stops it.
+                    assert left + 24 <= x <= left + 344, (name, left, x)
+                    if name == "centre":
+                        assert abs(left + 184 - x) <= 2, (name, left, x)
+                    ipc.key_down_up(1)
+                    ipc.wait_for_frame()
+                cfg_path.write_text(plain_cfg)
+                ipc.reload_config()
+                ipc.wait_for_frame()
                 if popup_only:
                     print(f"PASS: calendar navigation, dismissal and repainting, gold={gold}, top={top}, scale={scale}")
                     return
@@ -158,8 +198,8 @@ def run(scale, gold=False, top=False, popup_only=False):
                 assert tomllib.loads(cfg_path.read_text())["region"]["timezone"] == "UTC"
                 after_zone = capture()
                 clock_crop = tuple(round(v * float(scale)) for v in
-                                   (bar["x"] + bar["width"] - 100, bar["y"],
-                                    bar["x"] + bar["width"], bar["y"] + bar["height"]))
+                                   (clock_box["x"], bar["y"],
+                                    clock_box["x"] + clock_box["width"], bar["y"] + bar["height"]))
                 assert ImageChops.difference(before_zone.crop(clock_crop), after_zone.crop(clock_crop)).getbbox(), "clock did not follow timezone"
                 marker = tmp / "child-env.json"
                 script = "import json,os; from pathlib import Path; Path(" + repr(str(marker)) + ").write_text(json.dumps(dict(os.environ)))"

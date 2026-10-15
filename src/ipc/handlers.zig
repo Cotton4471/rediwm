@@ -2342,6 +2342,22 @@ pub fn buildTaskbarWidgetTree(
         });
     }
 
+    if (bar.itemBox(.power)) |pbox| {
+        try widgets.append(allocator, .{
+            .id = widgets.items.len + 1,
+            .parent_index = 0,
+            .role = "button",
+            .name = "power",
+            .path = "taskbar/power",
+            .semantic_id = "btn_Power",
+            .label = "Power",
+            .box = .{ .x = pbox.x - bar.box.x, .y = pbox.y - bar.box.y, .width = pbox.width, .height = pbox.height },
+            .global_box = .{ .x = pbox.x, .y = pbox.y, .width = pbox.width, .height = pbox.height },
+            .visible = true,
+            .is_disabled = false,
+        });
+    }
+
     // App tray items
     if (server.tray) |_| {
         for (0..bar.appTrayCount()) |i| {

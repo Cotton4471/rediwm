@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import tomllib
+from PIL import Image, ImageChops
 
 from desktop_zoom import build_client, wait_for
 from ipc_client import IPCClient, spawn_compositor, stop_process
@@ -57,24 +58,94 @@ def run():
                 assert 0 <= row[0]['x'] - (box('start')['x'] + box('start')['width']) <= 32, row
                 assert box('start')['x'] < row[0]['x'] < box('clock')['x']
                 check_bounds()
+                assert not any(w['name'] == 'power' for w in bar()), 'Power defaults off'
                 ipc.action('open_appearance')
                 ipc.wait_for_panel_settled('control_center')
-                for name, expected in (('start', 0), ('windows', 0), ('tray', 2), ('clock', 2)):
-                    assert ui.scroll_into_view(f'taskbar_{name}_section')['selected_index'] == expected
-                # Move fixed controls and both primary groups to every section.
-                for name in ('clock', 'network', 'volume', 'start', 'windows', 'tray'):
+                def clock_image(name):
+                    image_path = tmp / f'clock-{name}.png'
+                    ipc.screenshot(str(image_path))
+                    b = box('clock')
+                    right = b['x'] + b['width']
+                    with Image.open(image_path) as image:
+                        return image.convert('RGB').crop(tuple(round(v * scale) for v in
+                            (right - 180, b['y'], right + 2, b['y'] + b['height'])))
+                def style_toggle(name):
+                    toggle = ui.scroll_into_view(name)
+                    ipc.click_at(*center(toggle['global_box']))
+                    ipc.wait_for_panel_settled('control_center')
+                    ipc.wait_for_frame()
+                assert not ui.scroll_into_view('clock_bold')['on']
+                assert not ui.scroll_into_view('clock_italic')['on']
+                for name, label in (('clock_bold', 'bold'), ('clock_italic', 'bold-italic'),
+                                    ('clock_bold', 'italic'), ('clock_italic', 'regular-again')):
+                    before = clock_image('before-' + label)
+                    style_toggle(name)
+                    after = clock_image(label)
+                    assert ImageChops.difference(before, after).getbbox(), f'clock style did not repaint: {label}'
+                    check_bounds()
+                style_toggle('clock_bold')
+                style_toggle('clock_italic')
+                saved_theme = tomllib.loads(cfg.read_text())['theme']
+                assert saved_theme['clock_bold'] and saved_theme['clock_italic']
+                zones = ('left', 'center', 'right')
+                def zone_of(name):
+                    row = ui.scroll_into_view(f'taskbar_{name}_row')['global_box']
+                    for zone, label in enumerate(zones):
+                        well = ui.find(f'taskbar_zone_{label}')['global_box']
+                        if well['y'] <= row['y'] and row['y'] + row['height'] <= well['y'] + well['height']:
+                            return zone
+                for name, expected in (('start', 0), ('windows', 0), ('capture', 2), ('tray', 2), ('clock', 2), ('power', 2)):
+                    assert zone_of(name) == expected, name
+                toggle = ui.scroll_into_view('taskbar_capture_visible')
+                assert toggle['on'], 'Screen capture defaults on'
+                ipc.click_at(*center(toggle['global_box']))
+                ipc.wait_for_panel_settled('control_center')
+                assert '-right:capture' in tomllib.loads(cfg.read_text())['compositor']['taskbar_items']
+                assert 'not recommended' in ui.find('taskbar_capture_notice')['label']
+                # Power is opt-in, opens the existing modal, and can be hidden live.
+                toggle = ui.scroll_into_view('taskbar_power_visible')
+                ipc.click_at(*center(toggle['global_box']))
+                wait_for(lambda: any(w['name'] == 'power' for w in bar()), 'Power enabled')
+                assert box('power')['x'] > box('clock')['x']
+                check_bounds()
+                ipc.click_at(*center(box('power')))
+                ipc.wait_for('power_menu_opened')
+                assert len([w for w in ui.widgets('power_menu') if w['role'] == 'row']) == 5
+                ipc.key(1, True)
+                ipc.key(1, False)
+                ipc.wait_for('power_menu_closed')
+                toggle = ui.scroll_into_view('taskbar_power_visible')
+                ipc.click_at(*center(toggle['global_box']))
+                wait_for(lambda: not any(w['name'] == 'power' for w in bar()), 'Power hidden')
+                toggle = ui.scroll_into_view('taskbar_power_visible')
+                ipc.click_at(*center(toggle['global_box']))
+                wait_for(lambda: any(w['name'] == 'power' for w in bar()), 'Power restored')
+                # Drag fixed controls and both primary groups into every section.
+                for name in ('clock', 'network', 'volume', 'start', 'windows', 'tray', 'power', 'capture'):
                     for zone in (0, 1, 2):
-                        widget = ui.scroll_into_view(f'taskbar_{name}_section')
-                        area = widget['global_box']
-                        ipc.click_at(round(area['x'] + area['width'] * (zone + .5) / 3), round(area['y'] + area['height'] / 2))
-                        wait_for(lambda: ui.find(f'taskbar_{name}_section')['selected_index'] == zone, 'section selection')
-                        if widget['selected_index'] != zone:
-                            wait_for(lambda: any(entry.lstrip('-') == f'{("left", "center", "right")[zone]}:{name}'
-                                for entry in tomllib.loads(cfg.read_text())['compositor']['taskbar_items']), 'section saved')
+                        if zone_of(name) == zone:
+                            continue
+                        ui.scroll_into_view(f'taskbar_zone_{zones[zone]}')
+                        row = ui.scroll_into_view(f'taskbar_{name}_row')
+                        assert row['visible'] and not row['clipped'], row
+                        ipc.move_cursor(*center(row['global_box']))
+                        ipc.pointer_button(0x110, True)
+                        # Rows reflow live under the pointer: re-aim until the well holds still.
+                        aimed = None
+                        for _ in range(4):
+                            well = ui.find(f'taskbar_zone_{zones[zone]}')['global_box']
+                            if well == aimed:
+                                break
+                            ipc.move_cursor(round(well['x'] + well['width'] / 2), well['y'] + well['height'] - 3)
+                            aimed = well
+                        ipc.pointer_button(0x110, False)
+                        wait_for(lambda: any(entry.lstrip('-') == f'{zones[zone]}:{name}'
+                            for entry in tomllib.loads(cfg.read_text())['compositor']['taskbar_items']), 'section saved')
                         ipc.wait_for_frame()
                         ipc.wait_for_panel_settled('control_center')
+                        assert zone_of(name) == zone, name
                         check_bounds()
-                # Drag order and keyboard order stay inside the chosen section.
+                # Drag and keyboard order within a section.
                 before = tomllib.loads(cfg.read_text())['compositor']['taskbar_items']
                 handle = ui.scroll_into_view('taskbar_network_order')
                 volume = ui.scroll_into_view('taskbar_volume_order')
@@ -118,6 +189,7 @@ def run():
                 ipc.reload_config()
                 wait_for(lambda: not any(w['name'] == 'tray/1' for w in bar()), 'legacy hidden network')
                 assert box('clock')['x'] < box('tray/0')['x']
+                assert not any(w['name'] == 'power' for w in bar()), 'legacy lists keep Power off'
                 row = chips()
                 assert 0 <= row[0]['x'] - (box('start')['x'] + box('start')['width']) <= 32, row
                 cfg.write_text(saved)
@@ -131,9 +203,27 @@ def run():
                 ipc.action('open_appearance')
                 ipc.wait_for_panel_settled('control_center')
                 ui = UIDriver(ipc)
-                assert ui.scroll_into_view('taskbar_start_section')['selected_index'] == 2
-                assert ui.scroll_into_view('taskbar_windows_section')['selected_index'] == 2
-                assert ui.scroll_into_view('taskbar_clock_section')['selected_index'] == 2
+                assert ui.scroll_into_view('clock_bold')['on'], 'Bold clock survives restart'
+                assert ui.scroll_into_view('clock_italic')['on'], 'Italic clock survives restart'
+                assert any(w['name'] == 'power' for w in ui.widgets('taskbar')), 'Power survives restart'
+                toggle = ui.scroll_into_view('taskbar_capture_visible')
+                assert not toggle['on'], 'Hidden capture item survives restart'
+                assert 'not recommended' in ui.find('taskbar_capture_notice')['label']
+                for name in ('start', 'windows', 'clock', 'power', 'capture'):
+                    row = ui.scroll_into_view(f'taskbar_{name}_row')['global_box']
+                    well = ui.find('taskbar_zone_right')['global_box']
+                    assert well['y'] <= row['y'] and row['y'] + row['height'] <= well['y'] + well['height'], name
+                # Clock controls edit the selected taskbar theme independently.
+                main_theme = tomllib.loads(cfg.read_text())['theme']
+                cfg.write_text(cfg.read_text() + '\n[taskbar_theme]\nclock_bold = false\nclock_italic = false\n')
+                ipc.reload_config()
+                ipc.wait_for_panel_settled('control_center')
+                assert not ui.scroll_into_view('clock_bold')['on']
+                assert not ui.scroll_into_view('clock_italic')['on']
+                style_toggle('clock_italic')
+                config = tomllib.loads(cfg.read_text())
+                assert config['taskbar_theme']['clock_italic']
+                assert config['theme'] == main_theme, 'taskbar style changed main theme'
             print(f'PASS: taskbar sections, left default, section moves, bounds/input, visibility, Start menu, legacy config and restart ({scale}x)')
         finally:
             for client in clients:

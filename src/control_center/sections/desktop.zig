@@ -108,9 +108,9 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
     // instead of floating in a padded box.
     const grid_height = cell_size * @as(f32, @floatFromInt(rows)) + gap * @as(f32, @floatFromInt(rows -| 1));
     const grid: W = .{ .kind = .container, .direction = .column, .justify = .center, .gap = gap, .width = .{ .percent = 1 }, .height = .{ .fixed = grid_height }, .children = grid_rows };
-    const preview = try card(a, &.{ text("Canvas Preview", 16, false), text("Your desktop panning area.", 12, true), grid, text("Highlighted: bottom-left screen", 12, true) });
+    const preview = try card(a, &.{ panel.sectionTitle("Canvas Preview"), text("Your desktop panning area.", 12, true), grid, text("Highlighted: bottom-left screen", 12, true) });
     const controls = try card(a, &.{
-        text("Canvas Size", 16, false),
+        panel.sectionTitle("Canvas Size"),
         try dimension(a, cc, false, columns),
         try dimension(a, cc, true, rows),
         text(try std.fmt.allocPrint(a, "{d} × {d}  ·  {d} screens total", .{ columns, rows, columns * rows }), 18, false),
@@ -119,7 +119,7 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
     var body = try container(a, if (cc.panel_box.width < 760) .column else .row, &.{ preview, controls });
     body.width = .{ .percent = 1 };
     const switching = try card(a, &.{
-        text("Desktop Switching", 16, false),
+        panel.sectionTitle("Desktop Switching"),
         text("How long Super + arrow keys take to slide to the next desktop.", 12, true),
         .{ .name = "desktop_switch_ms", .kind = .{ .segmented = .{ .labels = &switch_labels, .selected = nearestSwitch(cfg.desktop_switch_ms), .owner = cc, .on_change = &switchChanged } }, .width = .{ .percent = 1 } },
     });
@@ -139,7 +139,7 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
         if (@abs(@as(i64, delay) - cfg.mini_map_hide_ms) < @abs(@as(i64, map_delays[delay_index]) - cfg.mini_map_hide_ms)) delay_index = i;
     }
     const mini_map = try card(a, &.{
-        text("Mini Map", 16, false),
+        panel.sectionTitle("Mini Map"),
         text("See your position while navigating. Drag the highlighted view to pan.", 12, true),
         map_toggle,
         try mapSelect(cc, a, "Position", "mini_map_position", &map_position_labels, position_index, !map_on, &mapPositionChanged),
@@ -152,7 +152,7 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
     fixed_row.justify = .space_between;
     fixed_row.@"align" = .center;
     const mode_card = try card(a, &.{
-        text("Desktop mode", 14, false),
+        panel.sectionTitle("Desktop mode"),
         .{ .name = "desktop_mode", .kind = .{ .segmented = .{ .labels = &.{ "Canvas", "Workspaces" }, .selected = @intFromEnum(cfg.desktop_mode), .owner = cc, .on_change = modeChanged } }, .width = .{ .percent = 1 } },
         text(if (cfg.desktop_mode == .workspaces) "Automatic tiles with a fixed view and Hyprland-style shortcuts. Drag tiles to rearrange; Super+V toggles floating." else "Pan and zoom the canvas. Switching back restores your canvas positions and zoom.", 12, true),
     });
@@ -282,7 +282,7 @@ fn workspaceTree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator, mo
     for (labels, 0..) |*label, i| label.* = try std.fmt.allocPrint(a, "Workspace {d}", .{i + 1});
     const slot = manager.slots[id - 1];
     const workspace_card = try card(a, &.{
-        text("Workspace layout", 16, false),
+        panel.sectionTitle("Workspace layout"),
         try mapSelect(cc, a, "Workspace", "workspace_select", labels, id - 1, false, workspaceSelected),
         try mapSelect(cc, a, "Placement", "workspace_layout", &.{ "Automatic tiling", "Floating" }, if (slot.automatic) 0 else 1, false, layoutChanged),
         text(if (slot.output) |out| try std.fmt.allocPrint(a, "Output: {s}", .{std.mem.span(out.wlr_output.name)}) else "Assigned to the current output when first used.", 12, true),
@@ -294,7 +294,7 @@ fn workspaceTree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator, mo
         gap_index = i;
     };
     const spacing = try card(a, &.{
-        text("Window spacing", 16, false),
+        panel.sectionTitle("Window spacing"),
         try mapSelect(cc, a, try std.fmt.allocPrint(a, "Gap ({d} px)", .{value}), "workspace_gap", &gap_labels, gap_index, false, gapChanged),
         text("Applies to output edges and the space between automatic tiles.", 12, true),
     });
@@ -323,7 +323,7 @@ fn workspaceTree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator, mo
         item.* = .{ .id = i, .name = try std.fmt.allocPrint(a, "floating_app:{s}", .{app}), .label = app, .checked = checked };
     }
     const rules = try card(a, &.{
-        text("Floating apps", 16, false),
+        panel.sectionTitle("Floating apps"),
         text("Checked apps open floating. Super+V can override placement for a window. Dialogs and fixed-size windows float automatically.", 12, true),
         try list.build(a, items, cc, floatingChanged, .{}),
         text("Open an app to add it here. Advanced title, backend and glob matches use [[window_rules]] floating in your config.", 12, true),

@@ -440,6 +440,23 @@ pub fn processKey(keyboard: *Keyboard, time_msec: u32, event_keycode: u32, state
         }
     }
 
+    // Escape drops a pinned dock icon being dragged, whichever shell panel has the
+    // keyboard; its release is ours too.
+    if (state == .pressed and keyboard.server.input.dock_drag.reordering()) {
+        for (xkb_state.keyGetSyms(keycode)) |sym| {
+            if (@intFromEnum(sym) != xkb.Keysym.Escape) continue;
+            _ = keyboard.server.input.cancelDrag();
+            keyboard.consuming_escape = true;
+            return;
+        }
+    } else if (state == .released and keyboard.consuming_escape) {
+        for (xkb_state.keyGetSyms(keycode)) |sym| {
+            if (@intFromEnum(sym) != xkb.Keysym.Escape) continue;
+            keyboard.consuming_escape = false;
+            return;
+        }
+    }
+
     if (keyboard.server.input.window_menu.node != null and keyboard.server.screenshot_selector.output == null) {
         if (state == .pressed) {
             if (event_keycode < keyboard.tray_consumed.len) keyboard.tray_consumed[event_keycode] = true;

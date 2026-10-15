@@ -8,6 +8,8 @@ the one for the directory you work in: `src/files`, `src/editor`,
 
 ## Working rules
 
+* Keep this file to cross-cutting rules and pointers; put detailed subsystem
+  notes in the linked documents or the area’s `AGENTS.md`.
 * Tool use is costly: no tight polling (wait 15–30 s between checks of long
   operations), batch checks, don't re-read unchanged files.
 * Add tests only when really needed or asked; prefer extending existing ones.
@@ -18,153 +20,58 @@ the one for the directory you work in: `src/files`, `src/editor`,
 
 ## Rendering and damage
 
-* **Colours are premultiplied** in wlroots rects; theme colours are
-  `col.Straight`. Create/recolour rects only via `col.createRect`/`setRect`,
-  pack pixels with `Straight.argb()`/`Premul.argb()`. Symptom of a mix-up:
-  white border edges.
-* **Window frames are shapes** (`docs/plans/scene-graph-stage4.md`).
-  `Toplevel.applyShape` gives `frame_tree` one rounded clip carrying the ring
-  colour (× window opacity); the pass composites the ring over the body, so
-  something must be drawn under every ring pixel: the titlebar `ChromeBuffer`
-  (a plain band) on top and the three `frame_fills` rects beside and below the
-  client. The footer is `frame_border`. `shadow_tree`, the resize-grab tree and
-  every xdg popup carry `setTreeUnclipped` (a new node that hangs outside the
-  window needs it too). The shadow is analytic (`setTreeShadow` on
-  `shadow_tree`, the CPU formula's smoothstep); its leaf `shadow_node` has no
-  buffer and carries footprint, opacity and input only, so the projection
-  damages that footprint itself. CSD windows have no shape and keep the
-  `border_rects` outline. A changed clip damages its rim itself
-  (`projection.c`); a point the shape cuts away is declined by the pick
-  (`pick_world`), so the pick falls to what is below. Window capture draws the client alone and is
-  handed the shape explicitly. The ring is one `max(1, round(border * scale))`.
-  Without the shaped programs (`chrome.shapes` false) windows are square, with
-  no ring or shadow.
-* **Buffer size ≠ scene size** at fractional scale (`round(len*s)` vs
-  `round((off+len)*s)-round(off*s)`). Chrome/panel buffers filter bilinearly:
-  never re-raster per device-grid phase (`ChromeBuffer.create` costs 2–8 ms).
-* **Nested sessions never set buffer scale:** judge sharpness at
-  `REDIWM_SCALE=1`, and debug visuals with IPC screenshots/buffer dumps, not
-  host `grim`. Brief vanishing after a startup scale mismatch is not a bug.
-* **GLES can NULL `wlr_scene_buffer.buffer`** after upload (the texture
-  stays): persist raster sizes.
-* **Glass is drawn by the output pass** (stage 5, `docs/plans/scene-graph-stage5.md`).
-  `glass.c` only registers effects: a bufferless node just below its target, to
-  which resolve gives the target's box. When an effect re-blurs, `scene_output.c`
-  redirects the pass (`rediwm_scene_pass_begin_backdrop`) and draws the items
-  below it into an image a quarter of the logical size of its padded extent
-  (target + 3 sigma), blurs that and composites it through the shape (shaped
-  program mode 3), keeping one blur per effect and output. A kept blur is
-  re-taken only when a damage event from a leaf painted *below* the effect, or
-  damage no event explains, meets that extent, or the region or sigma changed.
-  Only leaves that put pixels on screen have damage events (an input-only node
-  must not, or it reads as a change below glass), and the software cursor's
-  damage counts as explained. Damage a new kind of change through the
-  projection's events or it counts as below (safe, slower). Collect keeps items an
-  effect reads even where surfaces above hide them (`reads`). Holds (a dragged
-  titlebar at ≥ 0.98 opacity, camera motion) carry the blur and re-take it once
-  released. Per output, so mixed scales stay idle (`glass_hold.py`); attribution
-  is checked by `glass_reblur.py`.
-* **Owned GL beside wlroots:** wlroots draws with client-side vertex arrays, so
-  any GL work of ours must put `GL_ARRAY_BUFFER` (and the rest of the state it
-  touched) back before a wlroots pass runs, as `scene_pass.c`'s `leave()` does; a quad
-  VBO left bound makes wlroots draw half a rectangle. A border is drawn in the
-  same pass as its body, never over it (`docs/plans/scene-graph-stage1.md`).
-* **Commit only via `Output.commitFrameState`**, never
-  `wlr_output_commit_state`. `commitIsRedundant` skips commits with no damage,
-  colour change, attach-render lock or cursor change; register anything new
-  there. Skipped frames get callbacks from `vblank_timer`, never immediately.
-  Build output state through `Server.buildOutputState`, including capture: the
-  owned GLES2 pass is the only presenter (the session requires GLES2) and keeps
-  one swapchain damage history. It reads graph geometry and the buffers,
-  textures and wait points of the source nodes
-  (`docs/plans/scene-graph-stage3.md`, `scene-graph-stage6.md`).
-* **Shapes in the owned pass** (`scene_pass.h`): a window's rounded clip, ring
-  and shadow are `rediwm_scene_pass_add_*_shaped` calls, device pixels, snapped by
-  the caller. The programs cost the driver about 430 KiB (a GL program costs
-  130-150 KiB whatever its size), so `enable_shapes` builds them on request, never
-  with the renderer; before it a shaped draw fails the pass. Blend NONE is only
-  valid inside `rediwm_clip_opaque`, minus the ring (`scene_output.c` draws a
-  clipped item's ring-free core plain and the rest through the shape). The
-  distance ramp is not area coverage (up to 18 of 208 levels at one pixel of a
-  curved edge): that is expected.
-* **Idle makes no wakeups:** timers only for real deadlines, workers signal an
-  eventfd, `text.applySize` instead of re-sizing faces, title changes repaint
-  only their span and taskbar chip. Measure with per-thread context switches.
-* **Damage:** each reusable shm buffer tracks damage since its own last paint;
-  never write a busy one. `panel_paint.Background` keeps the last full image
-  (`paintIncremental` repairs); widget setters `markDirty`/`markPaintDirty`,
-  moves damage old and new bounds; convert publish damage at the real raster
-  scale. Compositor-owned world buffers send full damage unless reported
-  (`Projection.damageBuffer` after `setBuffer`, or `presentOwned`). Cache keys
-  include visual state, text, geometry and Cairo transform; round globally
-  before subtracting projection group origins.
-* **The dock repaints cells, not itself** (`Dock.zig`). It keeps its last
-  raster and, when only some items' looks changed (hover zoom, pills), clears
-  and repaints just their `itemCell`s (each item at the largest hover zoom, across
-  the dock's thickness) under a clip, publishing that damage alone. Dock-wide
-  state (theme, scale, count, drop slot, hover zoom setting) is `base_key` and
-  repaints all. Draw nothing outside an item's cell without keying it in
-  `base_key`, or it goes stale. `tests/dock.py` compares an animated dock with a
-  whole repaint. Icons use `drawImageSmooth` (area average): `drawImageCover`
-  samples the nearest pixel and shows stair-steps at the dock's fractional
-  downscale.
-* **Projection is resolve, then present** (`projection.c`, `scene_graph.h`).
-  `resolve` turns the source tree into typed items (kind, unrounded
-  layout-space edges, composed scale, content) listed in paint order per group
-  and shows nothing; `present` rounds once (`rediwm_edges_snap`, edges not
-  origin+size) and turns what changed into damage events and screen damage.
-  Geometry is derived only in `resolve`: a new rule (clip, opacity, fractional
-  placement) is a field on the item, not a computation in `present_leaf`. A leaf
-  or group leaves its `paint` list before the head is freed (`detach`,
-  `destroy_group`). Buffer identity and damage are read from the source node by
-  `present`, textures, single-pixel colours, wait points and opaque regions by
-  the pass. A tree's rounded clip (`rediwm_projection_set_tree_clip`) is a field
-  on each item (`item.clip`), resolved after the tree's own zoom and scale; an
-  xdg popup lives under its parent's tree and must carry
-  `rediwm_projection_set_tree_unclipped`.
-* **The world has no second tree** (`docs/plans/scene-graph-stage6.md`). The
-  source tree is disabled, so wlroots computes no outputs, frame callbacks,
-  damage or picks for it; the graph does, with wlroots' own rules on our data.
-  *Feedback* (`rediwm_projection_feedback_*`, called by the pass's `collect`):
-  per build, the pixels of each client surface that nothing above hides, over
-  every output; an output is active when it shows more than a tenth of that, the
-  primary one shows most (the later wins a tie); `outputs_update` and
-  `output_enter/leave` go out on the *source* buffer, again when an active
-  output's scale, transform or subpixel changed. Frame callbacks of the world
-  come from `Server.sendFrameDone`, never `wlr_scene_output_send_frame_done`
-  alone; the pass emits `output_sample` on the source buffer. A layer-shell
-  surface below the world (background, bottom) is no longer occluded by windows
-  in wlroots' eyes: it keeps frame callbacks while covered. *Damage*: every
-  change reaches `p->pending` through `damage_box` and goes to the outputs once,
-  at the end of each sync. A change of what a leaf itself shows is cut to what
-  was visible of it at the last build (`l->visible`); a move, restyle or removal
-  damages the old box (cut) and the new one; a restack damages what moved
-  (`damage_restacked`), shadow footprints included; a destroyed node applies at
-  once, because a capture can build before the next sync. A new kind of change
-  that moves no leaf has to damage itself there (clip rims and shadows do).
-  *Picks*: `rediwm_projection_node_at` (graph for the world, wlroots for the
-  layout trees), never `wlr_scene_node_at` on the root. GLES2 lets go of a
-  plain buffer once uploaded, so "has content" is a buffer, a texture or a
-  single-pixel colour (`present_leaf`, `collect`).
-* **Client buffers:** `wlr_client_buffer_apply_damage` works in place only
-  without extra locks, so mark long-held locks ignorable. v4
-  `attach(buffer, 0, 0)` still sets OFFSET; only nonzero dx/dy remaps. Don't
-  resend unchanged `set_buffer_scale`; prefer compositor v5.
+Read [rendering details](docs/agent-notes/rendering.md) before changing
+projection, the output pass, glass, window shapes, chrome, capture or retained
+panel painting. The key rules:
+
+* **Colours are premultiplied** in wlroots/Cairo buffers; theme colours are
+  `col.Straight`. Use `col.createRect`/`setRect` and
+  `Straight.argb()`/`Premul.argb()`. White border edges suggest a mix-up.
+* **Resolve geometry, then present:** derive geometry only in `resolve`;
+  `present` snaps edges once (`rediwm_edges_snap`), never origin plus size.
+  New clip/opacity/placement rules belong on resolved items. Detach paint-list
+  entries before freeing their heads.
+* **The world has no second tree:** its source tree stays disabled. Pick with
+  `rediwm_projection_node_at`, send callbacks through `Server.sendFrameDone`,
+  and emit feedback/`output_sample` on source buffers. GLES may release
+  `wlr_scene_buffer.buffer` after upload: persist raster sizes and treat a
+  buffer, texture or single-pixel colour as content.
+* **Commit through `Output.commitFrameState`** and build output state through
+  `Server.buildOutputState`, including capture. Register new commit reasons
+  in `commitIsRedundant`; skipped callbacks wait for `vblank_timer`.
+* **Window frames are shapes:** every ring pixel needs body content beneath
+  it. Shadows, resize grabs, popups and other nodes outside the window need
+  `setTreeUnclipped`. Capture the client alone with its shape supplied
+  explicitly. Shaped programs are opt-in; without them windows are square.
+* Restore owned GL state, especially `GL_ARRAY_BUFFER`, before wlroots draws.
+  Draw borders with their bodies; blend NONE only in the opaque, ring-free core.
+* **Glass belongs to the output pass.** Attribute changes through projection
+  damage events; only painted leaves emit them. Input-only nodes must not
+  invalidate glass. Retained blurs and holds are per effect and output.
+* **Damage follows each buffer's history:** never write a busy shm buffer.
+  Use `markDirty`/`markPaintDirty`, damage old and new move bounds, publish at
+  the real raster scale, and report owned-buffer damage via
+  `Projection.damageBuffer` or `presentOwned`. Cache keys include visual state,
+  text, geometry and Cairo transforms. Round globally before group offsets.
+* Fractional buffer size differs from snapped scene size; bilinear chrome and
+  panel buffers must not be rerasterized for device-grid phase changes.
+* **Idle makes no wakeups:** deadline-only timers, eventfd worker wakes,
+  `text.applySize`, and title-span/chip repainting. Measure per-thread context
+  switches. Nested sessions never set buffer scale: judge at `REDIWM_SCALE=1`
+  using IPC screenshots/buffer dumps, not host `grim`.
+* Client-buffer damage needs ignorable long-held locks for in-place updates.
+  Only nonzero v4 attach offsets remap; don't resend unchanged buffer scales;
+  prefer compositor v5.
 
 ## Windows and focus
 
 * **Unmapped ≠ destroyed.** `frame_tree` stays disabled until `handleMapped`;
   `focusSurface`/`minimize`/`restore` need `in_world`; `destroyNow` asserts
   `backend_gone` (or a compositor-owned backend).
-* **The dock reserves space only when it doesn't auto-hide.** `Output.usableBox`
-  is `dockAreaBox` (output less the taskbar) less `Dock.reservedStrip`, a pure
-  function of config and that box (`Dock.fits`), so it never flips with a lock
-  or fullscreen window. The dock and the taskbar's popups/menus are placed in
-  `dockAreaBox`, never `usableBox`. A setting that changes the strip calls
-  `applyTaskbarPosition` (`Dock.reserves` before/after). Auto-hide fades and
-  slides the node (`reveal`, opacity + position, no repaint) and parks it (no
-  rebuilds, no frames) once away; reveal/hide wait on one `wl` timer
-  (`Dock.pointerAt` from `Input.processCursorMotion`, `retime`).
+* **Dock geometry:** reserve space only without auto-hide; use
+  `dockAreaBox` for the dock and taskbar popups, `usableBox` for windows.
+  Read [dock details](docs/agent-notes/dock.md) before changing the dock,
+  its painting, layout/reservation, OSD clearance, hover or auto-hide.
 * **Tiles are compositor-owned geometry** like maximize (`snap.zig`,
   `forcedGeometry()`). `Toplevel.layout()` reads the `maximized` field, not
   `isMaximized()` (xdg acks later). Leaving a layout without moving goes
@@ -188,12 +95,10 @@ the one for the directory you work in: `src/files`, `src/editor`,
   `Input.cancelDrag` (wlroots doesn't); compositor drop targets
   (`desktop_drop.Target`) end the grab before negotiating;
   `wlr_data_source_send` closes its fd.
-* **Compositor-internal drags** (`dock_drag.zig`: start menu app -> dock pin)
-  are not wl_data_device ones: a press arms, motion past a threshold starts,
-  and starting rebuilds the menu so its release is no click. Closing the menu
-  or Escape (`cancelDrag`, before the menu's own Escape) abandons it. A dock
-  holds resolved pins as copies (`pin_arena`); `config_index` maps a slot back
-  into `dock_pinned_apps`, which also lists apps no longer installed.
+* **Internal dock drags** use `dock_drag.zig`, not wl_data_device. Pins act
+  on release; Escape cancels through `Input.cancelDrag` before shell panels
+  handle it. Read [dock details](docs/agent-notes/dock.md) for start-menu
+  pinning, reordering and pin storage.
 
 ## Xwayland
 

@@ -153,7 +153,7 @@ fn deviceList(s: *Section, cc: *panel.ControlCenter, a: A, enabled: bool) !W {
     const m = cc.server.bluetooth;
     if (s.search_data == null) s.search_data = .{ .placeholder = "Search devices…", .value = try gpa.dupe(u8, ""), .field = .{ .leading_icon = .search }, .owner = cc, .on_change = searchChanged };
     var items: std.ArrayList(W) = .empty;
-    try items.append(a, text(if (s.nearby) "Available Devices" else "Paired Devices", 18, false));
+    try items.append(a, panel.sectionTitle(if (s.nearby) "Available Devices" else "Paired Devices"));
     try items.append(a, .{ .name = "bluetooth_search", .kind = .{ .text_input = s.search_data.? }, .height = .{ .fixed = 36 }, .width = .{ .percent = 1 } });
     if (s.nearby) try items.append(a, button(cc, "bluetooth_paired", "Show Paired Devices", 1, false));
     var rows: std.ArrayList(W) = .empty;
@@ -197,7 +197,7 @@ fn setting(cc: *panel.ControlCenter, a: A, title: []const u8, description: []con
 fn deviceDetails(s: *Section, cc: *panel.ControlCenter, a: A) !W {
     const m = cc.server.bluetooth;
     const d = if (m) |manager| manager.find(s.selected) else null;
-    if (d == null) return card(a, &.{ icon(.bluetooth, 48), text("Select a device", 18, false), text("View its connection, battery and device settings.", 13, true) });
+    if (d == null) return card(a, &.{ icon(.bluetooth, 48), panel.sectionTitle("Select a device"), text("View its connection, battery and device settings.", 13, true) });
     const dev = d.?;
     const manager = m.?;
     const ad = manager.adapter(dev.adapter);
@@ -211,7 +211,7 @@ fn deviceDetails(s: *Section, cc: *panel.ControlCenter, a: A) !W {
     var items: std.ArrayList(W) = .empty;
     try items.append(a, header);
     if (dev.battery != null) try items.append(a, badge);
-    if (dev.rssi) |rssi| try items.append(a, try card(a, &.{ text("Connection", 15, false), text(try std.fmt.allocPrint(a, "Last reported signal: {d} dBm", .{rssi}), 13, true) }));
+    if (dev.rssi) |rssi| try items.append(a, try card(a, &.{ panel.sectionTitle("Connection"), text(try std.fmt.allocPrint(a, "Last reported signal: {d} dBm", .{rssi}), 13, true) }));
     if (manager.pairing != null and eq(u8, manager.pairing.?.slice(), dev.path.slice())) {
         try items.append(a, try pairing(s, cc, a));
     } else {
@@ -220,14 +220,14 @@ fn deviceDetails(s: *Section, cc: *panel.ControlCenter, a: A) !W {
         try items.append(a, connect);
     }
     var profiles: std.ArrayList(W) = .empty;
-    try profiles.append(a, text("Profiles", 15, false));
+    try profiles.append(a, panel.sectionTitle("Profiles"));
     if (dev.audio) try profiles.append(a, try group(a, .row, &.{ icon(.music, 20), text("Audio (A2DP) · High quality audio", 13, true) }));
     if (dev.microphone) try profiles.append(a, try group(a, .row, &.{ icon(.mic_outline, 20), text("Headset · Audio and microphone", 13, true) }));
     if (dev.input) try profiles.append(a, try group(a, .row, &.{ icon(.keyboard, 20), text("Input · Keyboard, mouse or controller", 13, true) }));
     if (profiles.items.len == 1) try profiles.append(a, text(if (dev.paired) "No supported profiles reported" else "Profiles appear after pairing", 12, true));
     if (dev.audio or dev.microphone) try profiles.append(a, button(cc, "bluetooth_audio", "Audio Settings", 3, false));
     try items.append(a, try card(a, profiles.items));
-    try items.append(a, try card(a, &.{ text("Device Settings", 15, false), try setting(cc, a, "Trusted Device", "Allow connections from this device without asking.", "bluetooth_trusted", 1, dev.trusted, manager.busy or !dev.paired), try setting(cc, a, "Blocked", "Prevent this device from connecting.", "bluetooth_blocked", 2, dev.blocked, manager.busy) }));
+    try items.append(a, try card(a, &.{ panel.sectionTitle("Device Settings"), try setting(cc, a, "Trusted Device", "Allow connections from this device without asking.", "bluetooth_trusted", 1, dev.trusted, manager.busy or !dev.paired), try setting(cc, a, "Blocked", "Prevent this device from connecting.", "bluetooth_blocked", 2, dev.blocked, manager.busy) }));
     if (s.forgetting) {
         try items.append(a, text("Forget this device? Pair it again to reconnect.", 13, true));
         try items.append(a, try group(a, .row, &.{ button(cc, "bluetooth_forget_confirm", "Forget Device", 5, manager.busy), button(cc, "bluetooth_forget_cancel", "Cancel", 6, false) }));
@@ -239,7 +239,7 @@ fn deviceDetails(s: *Section, cc: *panel.ControlCenter, a: A) !W {
 fn pairing(s: *Section, cc: *panel.ControlCenter, a: A) !W {
     const m = cc.server.bluetooth.?;
     var items: std.ArrayList(W) = .empty;
-    try items.append(a, text("Pairing", 15, false));
+    try items.append(a, panel.sectionTitle("Pairing"));
     switch (m.prompt) {
         .none => try items.append(a, text("Waiting for the device…", 13, true)),
         .confirm => {

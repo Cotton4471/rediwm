@@ -10,6 +10,7 @@ const wlr = @import("wlroots");
 const gpa = @import("main.zig").gpa;
 const geometry = @import("geometry.zig");
 const panel_present = @import("panel_present.zig");
+const panel_paint = @import("panel_paint.zig");
 
 extern "c" fn wlr_buffer_finish(buffer: *wlr.Buffer) void;
 
@@ -23,6 +24,8 @@ pub const PanelBuffer = struct {
     sensitive: bool = false,
     /// Off for buffers made by `createUnpooled`, which never enter the pool.
     pooled: bool = true,
+    /// What the pixels are, for `createRetained`; cleared for every other use.
+    stamp: panel_paint.Stamp = .{},
 
     const drm_format_argb8888: u32 = 0x34325241;
 
@@ -74,18 +77,35 @@ pub const PanelBuffer = struct {
     /// Cached panel backgrounds overwrite the whole buffer, so clearing it
     /// first would be a redundant full-buffer write.
     pub fn createUninitialized(logical_width: i32, logical_height: i32, scale: f32) !*PanelBuffer {
+        return take(logical_width, logical_height, scale, null);
+    }
+
+    /// Like `createUninitialized`, preferring the pooled buffer `owner` painted
+    /// last and keeping its `stamp` for `Background.paintIncremental`.
+    pub fn createRetained(logical_width: i32, logical_height: i32, scale: f32, owner: *const panel_paint.Background) !*PanelBuffer {
+        return take(logical_width, logical_height, scale, owner);
+    }
+
+    fn take(logical_width: i32, logical_height: i32, scale: f32, owner: ?*const panel_paint.Background) !*PanelBuffer {
         const width = geometry.devicePixels(logical_width, scale);
         const height = geometry.devicePixels(logical_height, scale);
         const bytes: u64 = @as(u64, @intCast(width)) * @as(u64, @intCast(height)) * @sizeOf(u32);
 
+        var pick: ?*?*PanelBuffer = null;
         for (&pool) |*slot| {
             const recycled = slot.* orelse continue;
+            if (pick == null or (owner != null and recycled.stamp.owner == owner)) pick = slot;
+        }
+        if (pick) |slot| {
+            const recycled = slot.*.?;
             const length: usize = @intCast(width * height);
+            if (owner == null or recycled.stamp.owner != owner) recycled.stamp = .{};
             if (recycled.storage.len < length) {
                 // Grow geometrically during a resize; never resize a buffer
                 // until wlroots has released it into this pool.
                 const capacity = @max(length, recycled.storage.len + recycled.storage.len / 2);
                 recycled.storage = try gpa.realloc(recycled.storage, capacity);
+                recycled.stamp = .{};
                 panel_present.addAlloc(@as(u64, @intCast(capacity)) * @sizeOf(u32));
             } else panel_present.addReuse(bytes);
             slot.* = null;

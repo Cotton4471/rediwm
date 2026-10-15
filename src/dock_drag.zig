@@ -1,12 +1,15 @@
-//! Dragging an application out of the start menu onto the dock pins it there.
+//! Dragging an application out of the start menu onto the dock pins it there,
+//! and dragging a pinned icon along the dock moves its pin.
 //!
 //! The menu and the dock are both drawn by the compositor, so this is not a
 //! wl_data_device drag (`desktop_drop.zig` is that): a press on an application
-//! row or card arms it, moving `threshold` pixels starts it, and the release
-//! over a dock drops. Starting the drag makes the menu forget the press, so
-//! its release is no click and nothing launches. The dock under the pointer
-//! shows the gap the application would take; Escape and closing the menu
-//! abandon the drag.
+//! row or card, or on a pinned dock icon, arms it, moving `threshold` pixels
+//! starts it, and the release over a dock drops. Starting a menu drag makes the
+//! menu forget the press, so its release is no click and nothing launches. A
+//! pinned icon acts on release instead (`Dock.clickPin`): pressed and released
+//! in place it is a click, dragged it moves. The dock under the pointer shows
+//! the gap the application would take; Escape and closing the menu abandon the
+//! drag.
 const std = @import("std");
 const wlr = @import("wlroots");
 const ui = @import("ui");
@@ -18,10 +21,13 @@ const Self = @This();
 
 /// Logical pixels the pointer travels before a press becomes a drag.
 const threshold = 8;
+const Source = enum { menu, dock };
 /// The dragged icon: a tile of `tile` px around an image of `image` px.
 const tile = 48;
 const image = 38;
 
+/// Where the drag began: an application in the start menu, or a pinned icon.
+source: Source = .menu,
 id_bytes: [512]u8 = undefined,
 id_len: usize = 0,
 icon_bytes: [256]u8 = undefined,
@@ -41,7 +47,16 @@ fn ignoreInput(_: *wlr.SceneBuffer, _: *f64, _: *f64) callconv(.c) bool {
 
 /// The press that just reached the menu went down on `app_id`'s row or card.
 pub fn arm(self: *Self, input: *const Input, app_id: []const u8, icon: ?[]const u8, scale: f32) void {
-    self.* = .{ .scale = scale, .origin_x = input.cursor.x, .origin_y = input.cursor.y };
+    self.armFrom(.menu, input, app_id, icon, scale);
+}
+
+/// The press that just reached the dock went down on a pinned icon.
+pub fn armReorder(self: *Self, input: *const Input, app_id: []const u8, icon: ?[]const u8, scale: f32) void {
+    self.armFrom(.dock, input, app_id, icon, scale);
+}
+
+fn armFrom(self: *Self, source: Source, input: *const Input, app_id: []const u8, icon: ?[]const u8, scale: f32) void {
+    self.* = .{ .source = source, .scale = scale, .origin_x = input.cursor.x, .origin_y = input.cursor.y };
     if (app_id.len == 0 or app_id.len > self.id_bytes.len) return;
     @memcpy(self.id_bytes[0..app_id.len], app_id);
     self.id_len = app_id.len;
@@ -55,6 +70,11 @@ pub fn arm(self: *Self, input: *const Input, app_id: []const u8, icon: ?[]const 
 
 pub fn active(self: *const Self) bool {
     return self.dragging;
+}
+
+/// A pinned icon is being dragged along the dock.
+pub fn reordering(self: *const Self) bool {
+    return self.dragging and self.source == .dock;
 }
 
 fn appId(self: *const Self) []const u8 {
@@ -73,12 +93,22 @@ pub fn motion(self: *Self, input: *Input) bool {
         const dx = input.cursor.x - self.origin_x;
         const dy = input.cursor.y - self.origin_y;
         if (dx * dx + dy * dy < threshold * threshold) return false;
-        const menu = input.open_start_menu orelse {
-            self.* = .{};
-            return false;
-        };
+        switch (self.source) {
+            .menu => {
+                const menu = input.open_start_menu orelse {
+                    self.* = .{};
+                    return false;
+                };
+                menu.cancelPress();
+            },
+            // The tile stands for the icon now: nothing on the dock stays hovered
+            // (its tooltip would come up under the tile).
+            .dock => {
+                var docks = input.server.outputs.iterator(.forward);
+                while (docks.next()) |output| output.dock.leave();
+            },
+        }
         self.dragging = true;
-        menu.cancelPress();
         self.createIcon(input);
     }
     if (self.node) |node| node.node.setPosition(
@@ -94,13 +124,20 @@ pub fn motion(self: *Self, input: *Input) bool {
 /// A button went up. True when it ended a drag, which the menu must not see.
 pub fn release(self: *Self, input: *Input, button: u32) bool {
     if (!self.armed or button != Input.btn_left) return false;
-    const dragging = self.dragging;
-    if (dragging) {
-        if (self.dropTarget(input)) |drop| drop.output.dock.pinApp(self.appId(), drop.slot);
-        self.markDocks(input, true);
-    }
+    const held = self.*;
+    self.markDocks(input, true);
     self.finish();
-    return dragging;
+    if (held.dragging) {
+        // `held` is the drag as it was; `self` is clear again before the dock acts.
+        if (held.dropTarget(input)) |drop| switch (held.source) {
+            .menu => drop.output.dock.pinApp(held.appId(), drop.slot),
+            .dock => drop.output.dock.movePin(held.appId(), drop.slot),
+        };
+    } else if (held.source == .dock) {
+        var docks = input.server.outputs.iterator(.forward);
+        while (docks.next()) |output| output.dock.clickPin(input.cursor.x, input.cursor.y, held.appId());
+    }
+    return held.dragging;
 }
 
 /// Abandons a drag in progress, or a press that might have become one.
@@ -118,11 +155,13 @@ const Drop = struct { output: *Output, slot: usize };
 
 /// The dock under the pointer, unless the menu itself is.
 fn dropTarget(self: *const Self, input: *const Input) ?Drop {
-    _ = self;
     if (input.open_start_menu) |menu| if (menu.containsPoint(input.cursor.x, input.cursor.y)) return null;
     var it = input.server.outputs.iterator(.forward);
     while (it.next()) |output| {
-        if (output.dock.dropSlotAt(input.cursor.x, input.cursor.y)) |slot| return .{ .output = output, .slot = slot };
+        const slot = output.dock.dropSlotAt(input.cursor.x, input.cursor.y) orelse continue;
+        // A pin dropped back where it is has nowhere new to go: no marker.
+        if (self.source == .dock and output.dock.staysPut(self.appId(), slot)) continue;
+        return .{ .output = output, .slot = slot };
     }
     return null;
 }
@@ -149,7 +188,17 @@ fn createIcon(self: *Self, input: *Input) void {
     r.fillRect(0, 0, tile, tile, .{ .color = bg, .radius = 12, .border_width = 1, .border_color = pal.accent });
     const inset: f32 = (tile - image) / 2;
     var drawn = false;
-    if (self.has_icon) {
+    if (self.source == .dock) {
+        // The dock already holds the icon it shows for this pin.
+        var docks = server.outputs.iterator(.forward);
+        while (docks.next()) |output| {
+            const icon = output.dock.pinIcon(self.appId()) orelse continue;
+            r.drawImageSmooth(inset, inset, image, image, 0, .{ .pixels = icon.pixels, .width = icon.size, .height = icon.size });
+            drawn = true;
+            break;
+        }
+    }
+    if (!drawn and self.has_icon) {
         // The menu showed it at one of these sizes, so it is usually cached.
         for ([_]i32{ 48, image }) |logical| {
             const lookup = server.iconLookup(self.icon_bytes[0..self.icon_len], geometry.devicePixels(logical, self.scale));

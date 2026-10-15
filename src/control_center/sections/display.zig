@@ -250,7 +250,6 @@ fn buildArrangement(out: *Section, selected_name: []const u8) void {
     }
     const canvas_height: f32 = if (3 * (max_y - min_y) > 2 * (max_x - min_x)) 280 else 220;
 
-    const pal = panel.palette();
     var hint = valueWidget("Drag displays to match your desk. Click one to edit it.");
     hint.kind.text.font_size = 12;
     hint.width = .{ .flex = 1 };
@@ -266,7 +265,7 @@ fn buildArrangement(out: *Section, selected_name: []const u8) void {
     // The selected display is already main: nothing to offer.
     out.main_row_count = if (selected_is_main or out.arrangement_selected == null) 1 else 2;
     out.arrangement_children = .{
-        .{ .kind = .{ .text = .{ .content = "Arrangement", .font_size = 16, .weight = 600, .color = pal.fg } } },
+        panel.sectionTitle("Arrangement"),
         hint,
         .{ .name = "arrangement", .kind = .{ .arrangement = .{ .items = out.arrangement_items, .selected = out.arrangement_selected } }, .width = .{ .percent = 1 }, .height = .{ .fixed = canvas_height } },
         .{ .kind = .container, .direction = .row, .@"align" = .center, .gap = 12, .children = out.main_row_children[0..out.main_row_count] },

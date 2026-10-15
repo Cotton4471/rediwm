@@ -10,6 +10,8 @@ pub const Item = enum {
     start,
     windows,
     tray,
+    power,
+    capture,
 
     pub fn label(item: Item) []const u8 {
         return switch (item) {
@@ -20,21 +22,50 @@ pub const Item = enum {
             .start => "Start button",
             .windows => "Window list",
             .tray => "Application tray",
+            .power => "Power",
+            .capture => "Screen capture",
         };
     }
 };
 pub const count = std.meta.fields(Item).len;
 
 pub const Config = struct {
-    order: [count]Item = .{ .start, .windows, .tray, .battery, .network, .volume, .clock },
-    visible: [count]bool = @splat(true),
-    sections: [count]Section = .{ .right, .right, .right, .right, .left, .left, .right },
+    order: [count]Item = .{ .start, .windows, .capture, .tray, .battery, .network, .volume, .clock, .power },
+    visible: [count]bool = .{ true, true, true, true, true, true, true, false, true },
+    sections: [count]Section = .{ .right, .right, .right, .right, .left, .left, .right, .right, .right },
 
+    /// One keyboard step: swap with the neighbour in the same section, or at
+    /// a section's end step into the next section over (an empty one too).
     pub fn move(config: *Config, index: usize, right: bool) void {
-        if (index >= count or (!right and index == 0) or (right and index == count - 1)) return;
-        const other = if (right) index + 1 else index - 1;
-        if (config.section(config.order[index]) != config.section(config.order[other])) return;
-        std.mem.swap(Item, &config.order[index], &config.order[other]);
+        if (index >= count) return;
+        const item = config.order[index];
+        const other = if (right) index + 1 else index -% 1;
+        if (other < count and config.section(config.order[other]) == config.section(item)) {
+            std.mem.swap(Item, &config.order[index], &config.order[other]);
+            return;
+        }
+        // The item is at its section's edge, so the order stays grouped.
+        const zone = @intFromEnum(config.section(item));
+        if (right and zone < 2) config.sections[@intFromEnum(item)] = @enumFromInt(zone + 1);
+        if (!right and zone > 0) config.sections[@intFromEnum(item)] = @enumFromInt(zone - 1);
+    }
+
+    /// Puts the item at `from` into `zone` as its `slot`th item, counted
+    /// without it (clamped to the end), and returns its new index.
+    pub fn place(config: *Config, from: usize, zone: Section, slot: usize) usize {
+        const item = config.order[from];
+        var rest: [count - 1]Item = undefined;
+        @memcpy(rest[0..from], config.order[0..from]);
+        @memcpy(rest[from..], config.order[from + 1 ..]);
+        var at: usize = 0;
+        while (at < rest.len and @intFromEnum(config.section(rest[at])) < @intFromEnum(zone)) at += 1;
+        var taken: usize = 0;
+        while (at < rest.len and config.section(rest[at]) == zone and taken < slot) : (taken += 1) at += 1;
+        config.sections[@intFromEnum(item)] = zone;
+        @memcpy(config.order[0..at], rest[0..at]);
+        config.order[at] = item;
+        @memcpy(config.order[at + 1 ..], rest[at..]);
+        return at;
     }
 
     pub fn section(config: Config, item: Item) Section {
@@ -94,11 +125,31 @@ pub const Config = struct {
             index += 1;
         }
         if (legacy and index == 4) {
-            @memcpy(result.order[3..], order[0..4]);
-        } else if (index == count) {
-            result.order = order;
-        } else return error.InvalidValue;
+            result.order = .{ .start, .windows, .tray, order[0], order[1], order[2], order[3], .power, .capture };
+        } else {
+            // Older lists can omit Power and Screen capture. Every other
+            // item remains required, so incomplete lists still fail closed.
+            for (std.enums.values(Item)) |item| {
+                if (item != .power and item != .capture and !seen[@intFromEnum(item)]) return error.InvalidValue;
+            }
+            @memcpy(result.order[0..index], order[0..index]);
+            for ([_]Item{ .power, .capture }) |item| {
+                if (seen[@intFromEnum(item)]) continue;
+                result.order[index] = item;
+                index += 1;
+            }
+        }
         result.normalize();
+        if (!seen[@intFromEnum(Item.capture)]) {
+            // Introduce the indicator at the start of the right section,
+            // retaining the order, section and visibility of existing items.
+            for (result.order, 0..) |item, i| {
+                if (item == .capture) {
+                    _ = result.place(i, .right, 0);
+                    break;
+                }
+            }
+        }
         return result;
     }
 
@@ -167,6 +218,18 @@ pub fn arrange(config: Config, left: f32, right: f32, center: f32, widths: [coun
 
 test "taskbar sections and hidden state round trip, migrate old lists and reject malformed lists" {
     var config: Config = .{};
+    try std.testing.expect(!config.shown(.power));
+    try std.testing.expect(config.shown(.capture));
+    try std.testing.expectEqual(Section.right, config.section(.capture));
+    try std.testing.expectEqual(Item.capture, config.order[2]);
+    try std.testing.expectEqual(Section.right, config.section(.power));
+    const previous = try Config.parse("[\"left:start\", \"left:windows\", \"right:tray\", \"right:battery\", \"right:network\", \"right:volume\", \"right:clock\"]");
+    try std.testing.expectEqualDeep(config, previous);
+    const previous_eight = try Config.parse("[\"left:start\", \"left:windows\", \"right:tray\", \"right:battery\", \"right:network\", \"right:volume\", \"right:clock\", \"-right:power\"]");
+    try std.testing.expectEqualDeep(config, previous_eight);
+    config.visible[@intFromEnum(Item.power)] = true;
+    config.visible[@intFromEnum(Item.capture)] = false;
+    config.setSection(.capture, .center);
     config.setSection(.volume, .left);
     config.move(1, false);
     config.visible[@intFromEnum(Item.volume)] = false;
@@ -176,8 +239,20 @@ test "taskbar sections and hidden state round trip, migrate old lists and reject
     const legacy = try Config.parse("[\"clock\", \"-network\", \"battery\", \"volume\"]");
     try std.testing.expectEqual(Section.left, legacy.section(.start));
     try std.testing.expectEqual(Section.left, legacy.section(.windows));
-    try std.testing.expectEqual(Item.clock, legacy.order[3]);
+    try std.testing.expectEqual(Item.clock, legacy.order[4]);
+    try std.testing.expect(legacy.shown(.capture));
+    try std.testing.expectEqual(Item.capture, legacy.order[2]);
     try std.testing.expect(!legacy.shown(.network));
+    try std.testing.expect(!legacy.shown(.power));
+    // Drops land anywhere; keyboard steps cross into the next section at an edge.
+    var moved: Config = .{};
+    try std.testing.expectEqual(@as(usize, 1), moved.place(7, .left, 1));
+    try std.testing.expectEqualSlices(Item, &.{ .start, .clock, .windows, .capture, .tray, .battery, .network, .volume, .power }, &moved.order);
+    try std.testing.expectEqual(Section.left, moved.section(.clock));
+    moved.move(2, true);
+    try std.testing.expectEqual(Section.center, moved.section(.windows));
+    try std.testing.expectEqual(@as(usize, 8), moved.place(2, .right, 9));
+    try std.testing.expectEqual(Item.windows, moved.order[8]);
     for ([_][]const u8{ "[]", "[\"battery\", \"network\", \"volume\", \"volume\"]", "[\"battery\", \"network\", \"volume\", \"chevron\"]", "[\"left:battery\", \"network\", \"volume\", \"clock\"]" }) |bad| {
         try std.testing.expectError(error.InvalidValue, Config.parse(bad));
     }
@@ -185,9 +260,10 @@ test "taskbar sections and hidden state round trip, migrate old lists and reject
 
 test "taskbar defaults windows left, supports centering and shrinks windows before fixed items" {
     var config: Config = .{};
-    const widths = [count]f32{ 0, 34, 34, 96, 42, 200, 0 };
+    const widths = [count]f32{ 0, 34, 34, 96, 42, 200, 0, 34, 120 };
     const defaults = arrange(config, 4, 980, 500, widths, 6, 16);
     try std.testing.expectEqual(@as(?f32, 52), defaults.x[@intFromEnum(Item.windows)]);
+    try std.testing.expect(defaults.x[@intFromEnum(Item.capture)].? + 120 <= defaults.x[@intFromEnum(Item.network)].?);
     config.setSection(.windows, .center);
     const full = arrange(config, 4, 980, 500, widths, 6, 16);
     try std.testing.expectEqual(@as(?f32, 400), full.x[@intFromEnum(Item.windows)]);
@@ -196,7 +272,7 @@ test "taskbar defaults windows left, supports centering and shrinks windows befo
     config.setSection(.network, .left);
     const moved = arrange(config, 4, 980, 500, widths, 6, 16);
     try std.testing.expectEqual(@as(?f32, 52), moved.x[@intFromEnum(Item.network)]);
-    const crowded = arrange(config, 4, 400, 200, .{ 0, 34, 34, 96, 42, 1000, 0 }, 6, 16);
+    const crowded = arrange(config, 4, 400, 200, .{ 0, 34, 34, 96, 42, 1000, 0, 34, 120 }, 6, 16);
     try std.testing.expect(crowded.widths[@intFromEnum(Item.windows)] < 1000);
     try std.testing.expect(crowded.x[@intFromEnum(Item.clock)].? + 96 <= crowded.x[@intFromEnum(Item.volume)].? - 16);
     config.visible = @splat(false);

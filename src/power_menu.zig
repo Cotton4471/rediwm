@@ -492,7 +492,7 @@ pub const PowerMenu = struct {
 
         const t0 = panel_present.nowNs();
         var renderer = ui.paint.Renderer.init(buf.pixels, buf.width, buf.height, scale);
-        menu.background.paintIncremental(gpa, &menu.root, &renderer);
+        menu.background.paintIncremental(gpa, &menu.root, &renderer, null);
         // Keep the moving outline out of the retained pixels. Each glide
         // frame repairs the entire card strip before painting it again.
         menu.paintHighlight(&renderer);

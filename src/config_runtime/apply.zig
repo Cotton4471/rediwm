@@ -234,6 +234,9 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
         old.compositor.dock_height != new.compositor.dock_height or
         old.compositor.dock_hover_zoom != new.compositor.dock_hover_zoom or
         old.compositor.dock_auto_hide != new.compositor.dock_auto_hide or
+        !std.meta.eql(old.compositor.dock_opacity, new.compositor.dock_opacity) or
+        old.compositor.dock_active_highlight != new.compositor.dock_active_highlight or
+        old.compositor.dock_show_trash != new.compositor.dock_show_trash or
         !stringListsEql(old.compositor.dock_hidden_shortcuts, new.compositor.dock_hidden_shortcuts) or
         !stringListsEql(old.compositor.dock_pinned_apps, new.compositor.dock_pinned_apps))
     {

@@ -135,7 +135,7 @@ Network settings, password/hidden forms, saved and open joins, radio, wired
 details, connect/disconnect and permission errors, service restart and scrolling;
 `--settings-only` runs just the settings checks), `battery_popup.py` (fake sysfs and private power-profile
 service; charge states, missing details, selection and dismissal),
-`keyboard_shortcuts.py`, `dock.py` (opt-in Appearance toggle, four-edge position selector, bounded size and hover-zoom sliders, live placement/resizing and persistence, vertical icon/indicator layout, inward tooltips and menus, launcher/input, shared shortcut icons and running pills, hover zoom and pill animation/reversals, reduced motion and idle scheduling, preferred apps and terminal fallback, running windows, fullscreen, scale, live radius, context menu and remembered removal; `--positions-only` isolates placement),
+`keyboard_shortcuts.py`, `dock.py` (opt-in Appearance toggle, four-edge position selector, bounded size and hover-zoom sliders, opacity and corner-radius sliders, the off-by-default active-app rectangle, live placement/resizing and persistence, vertical icon/indicator layout, inward tooltips (after their 1.5 s delay) and menus, launcher/input, dragging pinned icons into a new order (marker, Escape, drop in place), shared shortcut icons and running pills, hover zoom anchored toward the desktop (painted edges and overflow input on all four edges), pill animation/reversals, reduced motion and idle scheduling, preferred apps and terminal fallback, running windows, fullscreen, scale, live radius, context menu and remembered removal; `--positions-only` isolates placement),
 `panel_damage.py`, `glass_hold.py` (holds and
 mixed-scale idle), `glass_reblur.py` (glass re-blurs for changes below it,
 never for its own client), `animations.py`, `hotspots.py`, `launch_feedback.py`,
@@ -148,7 +148,9 @@ and off-canvas reachability).
 
 `taskbar_sections.py` checks left/center/right defaults, live section controls,
 ordering and visibility, window groups defaulting left, nonoverlapping input bounds,
-the moved Start menu, legacy item lists and restart persistence. It supports
+the moved Start menu, the opt-in Power widget and its menu, capture visibility
+and its warning, legacy item lists
+and restart persistence. It supports
 `REDIWM_TEST_SCALE=1.5` and `REDIWM_TEST_OUTPUTS=2`.
 
 `wifi_popup.py --popup-only --gold --top 1.5` and
@@ -209,7 +211,8 @@ shm and, with a render node, dmabuf; occlusion, camera, resize, destroy,
 minimize, idle blank, unplug, `get_capture_state`; under `owned` a captured
 server-decorated window has transparent bottom corners), `screencast.py` (portal
 config packaging, `rediwm-share-picker --xdpw-dmenu` contract, Stop sharing
-indicator), `screenshot_tool.py`, `screenshot_regressions.py` (save hook
+indicator, independent taskbar placement and saved visibility without stopping
+capture), `screenshot_tool.py`, `screenshot_regressions.py` (save hook
 injects write failures).
 
 **Lock, login, authentication**: `lock_screen.py`, `greeter.py`, `dm.py`

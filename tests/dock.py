@@ -6,6 +6,7 @@ import shutil
 from pathlib import Path
 import subprocess
 import tempfile
+import time
 import tomllib
 
 from PIL import Image, ImageChops
@@ -73,7 +74,7 @@ enabled = false
                     return shot(screenshot).crop(tuple(round(v * scale) for v in
                         (x - 12, y, x + 12, root['y'] + root['height'] - 2)))
                 def shortcuts_only():
-                    return {w['name'] for w in dock() if w['name']} == {'applications', 'files', 'terminal', 'settings'}
+                    return {w['name'] for w in dock() if w['name']} == {'applications', 'files', 'terminal', 'settings', 'trash'}
                 assert not dock(), 'dock must default off'
                 ipc.action('open_control_center')
                 ipc.wait_for_panel_settled('control_center')
@@ -162,6 +163,41 @@ enabled = false
                 ipc.action('open_appearance')
                 ipc.wait_for_panel_settled('control_center')
                 assert abs(ui.scroll_into_view('dock_hover_zoom')['value'] - 1.05) < .001
+                # Opacity, corner radius and the active app's rectangle are settings too.
+                settings_cfg = tmp / 'rediwm-config.toml'
+                settings_before = settings_cfg.read_text()
+                def click_slider(name, fraction):
+                    for _ in range(3):
+                        area = ui.scroll_into_view(name)['global_box']
+                        point = (round(area['x'] + min(area['width'] - 1, area['width'] * fraction)),
+                                 round(area['y'] + area['height'] / 2))
+                        if ipc.hit_test(*point)['target_type'] != 'dock':
+                            break
+                        viewport = next(w['global_box'] for w in ui.widgets() if w['role'] == 'scroll_container')
+                        ipc.move_cursor(viewport['x'] + viewport['width'] - 8, viewport['y'] + 40)
+                        ipc.scroll(0, -130)
+                    ipc.click_at(*point)
+                opacity = ui.scroll_into_view('dock_opacity')
+                assert (opacity['min'], opacity['max']) == (0, 100)
+                radius = ui.scroll_into_view('dock_radius')
+                assert (radius['min'], radius['max']) == (1, 48)
+                assert radius['value'] == 10, 'dock radius slider must show the window radius it follows'
+                assert ui.scroll_into_view('dock_active_highlight')['on'] is False, 'active app rectangle must default off'
+                click_slider('dock_opacity', .3)
+                wait_for(lambda: abs(tomllib.loads(settings_cfg.read_text())['compositor'].get('dock_opacity', 9) - .3) < .03, 'dock opacity saved')
+                click_slider('dock_radius', .3)
+                wait_for(lambda: abs(tomllib.loads(settings_cfg.read_text()).get('theme', {}).get('dock_radius', 0) - 15) <= 1, 'dock radius saved')
+                click(ui.scroll_into_view('dock_active_highlight'))
+                wait_for(lambda: tomllib.loads(settings_cfg.read_text())['compositor'].get('dock_active_highlight') is True, 'active app rectangle saved')
+                # The Trash shows by default, last on the dock; the switch removes it.
+                assert ui.scroll_into_view('dock_show_trash')['on'] is True, 'dock trash must default on'
+                assert dock()[-1]['name'] == 'trash', 'trash must be the last dock item'
+                click(ui.scroll_into_view('dock_show_trash'))
+                wait_for(lambda: tomllib.loads(settings_cfg.read_text())['compositor'].get('dock_show_trash') is False, 'dock trash setting saved')
+                wait_for(lambda: all(w['name'] != 'trash' for w in dock()), 'trash leaves the dock')
+                settings_cfg.write_text(settings_before)
+                ipc.reload_config()
+                wait_for(lambda: dock()[-1]['name'] == 'trash', 'reload brings the trash back')
                 ipc.action('close_panel', {'panel': 'control_center'})
                 ipc.wait_for_frame()
                 assert ipc.get_shell_state()['taskbars'], 'dock must coexist with taskbar'
@@ -297,6 +333,35 @@ enabled = false
                 click(button(name))
                 wait_for(lambda: not next(w for w in ipc.get_windows() if w['id'] == wid)['is_minimized'], 'dock restore')
                 assert ipc.get_focused_window()['id'] == wid
+                # The focused app's rectangle is off by default; the setting draws it.
+                # A strip beside the icon, inside the button, shows it.
+                ipc.move_cursor(5, 5)
+                ipc.wait_for_frame()
+                focused_box = button(name)['global_box']
+                beside = tuple(round(v * scale) for v in (focused_box['x'], focused_box['y'] + focused_box['height'] / 2 - 6,
+                                                          focused_box['x'] + 3, focused_box['y'] + focused_box['height'] / 2 + 6))
+                dock_root = dock()[0]['global_box']
+                backdrop = tuple(round(v * scale) for v in (dock_root['x'] + 3, dock_root['y'] + dock_root['height'] / 2 - 6,
+                                                            dock_root['x'] + 8, dock_root['y'] + dock_root['height'] / 2 + 6))
+                base_config = cfg.read_text()
+                def with_dock(lines, name):
+                    cfg.write_text(base_config.replace('[compositor]', '[compositor]\n' + lines, 1))
+                    ipc.reload_config()
+                    ipc.wait_for_frame()
+                    ipc.move_cursor(5, 5)
+                    ipc.wait_for_frame()
+                    return shot(name)
+                plain_dock = shot('dock-plain')
+                highlighted = with_dock('dock_active_highlight = true', 'dock-highlighted')
+                assert ImageChops.difference(plain_dock.crop(beside), highlighted.crop(beside)).getbbox(), 'active app rectangle missing when enabled'
+                assert not ImageChops.difference(plain_dock.crop(backdrop), highlighted.crop(backdrop)).getbbox()
+                # Opacity changes the background and nothing else of the icon strip.
+                solid = with_dock('dock_opacity = 1.0', 'dock-solid')
+                clear = with_dock('dock_opacity = 0.0', 'dock-clear')
+                assert ImageChops.difference(solid.crop(backdrop), clear.crop(backdrop)).getbbox(), 'dock opacity ignored'
+                cfg.write_text(base_config)
+                ipc.reload_config()
+                ipc.wait_for_frame()
                 fullscreen_point = center(button(name))
                 ipc.action('fullscreen_window', {'id': wid})
                 wait_for(lambda: not dock(), 'fullscreen hides dock')
@@ -469,11 +534,13 @@ def context_menu():
                 cfg.write_text(cfg.read_text().replace('dock_enabled = false', 'dock_enabled = true'))
                 ipc.reload_config()
                 wait_for(names, 'dock restored')
-                for shortcut in ('files', 'applications', 'settings'):
+                for shortcut in ('files', 'applications', 'settings', 'trash'):
                     menu(shortcut)
                     key(103)
                     key(28)
                     wait_for(lambda: shortcut not in names(), 'shortcut removed')
+                # Removing the Trash turns its Appearance switch off.
+                assert tomllib.loads(cfg.read_text())['compositor']['dock_show_trash'] is False
                 assert any(n.startswith('window_') for n in names()), 'running apps left the dock with its shortcuts'
                 stop_process(first)
                 stop_process(second)
@@ -604,6 +671,9 @@ def pill_animation():
                 advance(1000)
                 expanded = terminal_box()
                 assert zoom_state()['value'] == 1.5 and expanded['width'] > base['width']
+                assert expanded['y'] < base['y'], 'bottom dock must grow upward'
+                assert expanded['y'] + expanded['height'] == base['y'] + base['height'], 'hover moved the resting bottom edge'
+                assert abs(expanded['x'] + expanded['width'] / 2 - (base['x'] + base['width'] / 2)) <= 1
                 edge = (round(expanded['x'] + 1), y)
                 assert edge[0] < base['x']
                 ipc.move_cursor(*edge)
@@ -907,6 +977,51 @@ def pinning():
                 # The pin survives a reload, launches its app, and a running app shares its button.
                 ipc.reload_config()
                 assert [n for n in names() if n.startswith('pin_')] == ['pin_pin-two.desktop', 'pin_pin-one.desktop']
+
+                # A pinned icon dragged along the dock moves its pin. Dropped where it
+                # was, or abandoned with Escape, nothing changes and nothing launches.
+                def drag_pin(name, x, y, release=True):
+                    start = centre(box(name))
+                    ipc.move_cursor(*start)
+                    ipc.pointer_button(left, True)
+                    for step in range(1, 11):
+                        ipc.move_cursor(start[0] + (x - start[0]) * step // 10, start[1] + (y - start[1]) * step // 10)
+                    ipc.wait_for_frame()
+                    if release:
+                        ipc.pointer_button(left, False)
+                        ipc.wait_for_frame()
+
+                def order():
+                    return [n for n in names() if n.startswith('pin_')]
+
+                one_name, two_name = 'pin_pin-one.desktop', 'pin_pin-two.desktop'
+                before_drags = order()
+                ipc.move_cursor(5, 5)
+                ipc.wait_for_frame()
+                resting = shot('pins-resting')
+                x0, y0 = centre(box(one_name))
+                drag_pin(one_name, x0 + 12, y0)
+                assert pins() == ['pin-two.desktop', 'pin-one.desktop'] and not ipc.get_windows(), 'a drop in place moved or launched'
+                two_box = box(two_name)
+                drag_pin(one_name, two_box['x'] + 4, centre(two_box)[1], release=False)
+                assert ImageChops.difference(resting, shot('pins-moving')).getbbox(), 'no marker while moving a pin'
+                ipc.key(1, True)
+                ipc.key(1, False)
+                ipc.wait_for_frame()
+                cancelled = ImageChops.difference(resting, shot('pins-cancelled')).getbbox()
+                assert cancelled is None, f'Escape left the marker: {cancelled}, dock {ui.widgets("dock")[0]["global_box"]}'
+                ipc.pointer_button(left, False)
+                ipc.wait_for_frame()
+                assert order() == before_drags and pins() == ['pin-two.desktop', 'pin-one.desktop'] and not ipc.get_windows(), 'a cancelled move changed the pins or launched'
+                drag_pin(one_name, two_box['x'] + 4, centre(two_box)[1])
+                wait_for(lambda: pins() == ['pin-one.desktop', 'pin-two.desktop'], 'pin moved before the other')
+                wait_for(lambda: order() == [one_name, two_name], 'dock follows the moved pin')
+                assert not ipc.get_windows() and '# keep this comment' in cfg.read_text(), 'moving a pin launched or disturbed the config'
+                end = ui.widgets('dock')[0]['global_box']
+                drag_pin(one_name, end['x'] + end['width'] - 4, centre(end)[1])
+                wait_for(lambda: pins() == ['pin-two.desktop', 'pin-one.desktop'], 'pin moved to the end')
+                wait_for(lambda: order() == before_drags, 'dock follows the pin moved to the end')
+                assert not ipc.get_windows()
                 ipc.click_at(*centre(box('pin_pin-one.desktop')))
                 wait_for(lambda: len(ipc.get_windows()) == 1, 'pinned app launched')
                 assert not any(n.startswith('window_') for n in names()), 'a pinned app also got a window button'
@@ -950,9 +1065,17 @@ def positions():
     with tempfile.TemporaryDirectory(prefix='rediwm-dock-position-') as directory:
         tmp = Path(directory)
         build_client(tmp)
+        # An opaque fixture exposes the exact painted edges, including the
+        # few pixels that extend beyond the dock at maximum hover zoom.
+        theme = tmp / 'data/icons/DockAnchorTest'
+        icons = theme / '64x64/apps'
+        icons.mkdir(parents=True)
+        (theme / 'index.theme').write_text('[Icon Theme]\nName=DockAnchorTest\nDirectories=64x64/apps\n'
+                                         '[64x64/apps]\nSize=64\nType=Fixed\nContext=Applications\n')
+        Image.new('RGBA', (64, 64), (248, 16, 128, 255)).save(icons / 'rediwm-settings.png')
         env_extra = {'DBUS_SESSION_BUS_ADDRESS': '', 'DBUS_SYSTEM_BUS_ADDRESS': 'unix:path=/nonexistent',
                      'XDG_CONFIG_HOME': str(tmp / 'config'), 'XDG_DATA_HOME': str(tmp / 'data'),
-                     'XDG_CACHE_HOME': str(tmp / 'cache')}
+                     'XDG_CACHE_HOME': str(tmp / 'cache'), 'REDIWM_ICON_THEME': 'DockAnchorTest'}
         def config(position, taskbar, size):
             return (f'[compositor]\nxwayland = false\ndock_enabled = true\ndock_position = "{position}"\n'
                     f'taskbar_position = "{taskbar}"\ndock_height = {size}\ndock_hover_zoom = 1.5\n'
@@ -987,6 +1110,13 @@ def positions():
                         return image.convert('RGB')
                 def crop(image, box):
                     return image.crop(tuple(round(v * scale) for v in box))
+                def icon_bounds(image, region):
+                    icon = crop(image, region)
+                    red, green, blue = icon.split()
+                    mask = ImageChops.multiply(red.point(lambda v: 255 if v > 220 else 0),
+                                              green.point(lambda v: 255 if v < 40 else 0))
+                    mask = ImageChops.multiply(mask, blue.point(lambda v: 255 if 100 < v < 180 else 0))
+                    return mask.getbbox()
                 for taskbar in ('bottom', 'top'):
                     for position in ('top', 'left', 'right', 'bottom'):
                         vertical = position in ('left', 'right')
@@ -1003,10 +1133,10 @@ def positions():
                             width, height = output['logical_width'], output['logical_height'] - bar['height']
                             if vertical:
                                 assert box['y'] == y0 + (height - box['height']) // 2, box
-                                assert box['x'] == (x0 + 10 if position == 'left' else x0 + width - size - 10), box
+                                assert box['x'] == (x0 + 5 if position == 'left' else x0 + width - size - 5), box
                             else:
                                 assert box['x'] == x0 + (width - box['width']) // 2, box
-                                assert box['y'] == (y0 + 10 if position == 'top' else y0 + height - size - 10), box
+                                assert box['y'] == (y0 + 5 if position == 'top' else y0 + height - size - 5), box
                             buttons = [w['global_box'] for w in ui.widgets('dock') if w['name']]
                             along, cross = ('y', 'x') if vertical else ('x', 'y')
                             assert all(a[along] < b[along] and a[cross] == b[cross] for a, b in zip(buttons, buttons[1:])), buttons
@@ -1018,10 +1148,16 @@ def positions():
                                     assert ipc.hit_test(bx + other['x'] - output['x'], by + other['y'] - output['y'])['target_type'] == 'dock'
                             # Compare only the interior-side tooltip area; the
                             # hovered icon and cursor are outside this crop.
+                            resting = item('settings')
+                            region = (resting['x'] - resting['width'] / 2, resting['y'] - resting['height'] / 2,
+                                      resting['x'] + resting['width'] * 1.5, resting['y'] + resting['height'] * 1.5)
+                            wait_for(lambda: icon_bounds(shot('icon-ready'), region), 'fixture icon loaded')
                             idle = shot('idle')
+                            small = icon_bounds(idle, region)
+                            rested = time.monotonic()
                             ipc.move_cursor(*center(item('settings')))
                             ipc.wait_for_frame()
-                            hovered = shot('hovered')
+                            early = shot('early')
                             if position == 'top':
                                 tip = (box['x'], box['y'] + box['height'] + 8, box['x'] + box['width'], box['y'] + box['height'] + 38)
                             elif position == 'bottom':
@@ -1030,9 +1166,29 @@ def positions():
                                 tip = (box['x'] + box['width'] + 8, box['y'], x0 + width, box['y'] + box['height'])
                             else:
                                 tip = (x0, box['y'], box['x'] - 8, box['y'] + box['height'])
-                            assert ImageChops.difference(crop(idle, tip), crop(hovered, tip)).getbbox(), f'{position} tooltip missing'
+                            # The title shows only after the pointer has rested on the icon.
+                            assert not ImageChops.difference(crop(idle, tip), crop(early, tip)).getbbox(), f'{position} tooltip shown without a delay'
+                            wait_for(lambda: ImageChops.difference(crop(idle, tip), crop(shot('hovered'), tip)).getbbox(), f'{position} tooltip missing', timeout=4)
+                            print(f'{taskbar}/{position}/{size}: tooltip after {time.monotonic() - rested:.2f}s')
+                            assert time.monotonic() - rested >= 1.4, f'{position} tooltip shown before its delay'
                             # A hovered icon is enlarged in either orientation.
                             assert item('settings')['width'] > buttons[-1]['width'], 'hover zoom missing'
+                            large = icon_bounds(shot('anchored'), region)
+                            assert large and large[2] - large[0] > small[2] - small[0], (small, large)
+                            fixed = {'left': 0, 'top': 1, 'right': 2, 'bottom': 3}[position]
+                            assert abs(large[fixed] - small[fixed]) <= 1, (position, small, large)
+                            expected = round(36 * size / 68) * 1.5 * scale
+                            assert abs(large[2] - large[0] - expected) <= 2, (position, large, expected)
+                            assert abs(large[3] - large[1] - expected) <= 2, (position, large, expected)
+                            # The part beyond the background remains a hover target.
+                            expanded = item('settings')
+                            ex, ey = center(expanded)
+                            if position == 'bottom': ey = box['y'] - 1
+                            elif position == 'top': ey = box['y'] + box['height']
+                            elif position == 'right': ex = box['x'] - 1
+                            else: ex = box['x'] + box['width']
+                            ipc.move_cursor(ex, ey)
+                            assert ipc.hit_test(ex, ey)['target_type'] == 'dock', (position, ex, ey)
                             ipc.move_cursor(5, 5)
                             ipc.wait_for_frame()
                             # Running-window buttons still minimize and restore.
@@ -1083,7 +1239,7 @@ def positions():
                 cfg.write_text(config('right', 'top', 96))
                 ipc.reload_config()
                 wait_for(lambda: root()['width'] == 96, 'overflow dock')
-                capacity = (height - round(12 * 96 / 68) * 2 - 16) // round(56 * 96 / 68) - 4
+                capacity = (height - round(12 * 96 / 68) * 2 - 16) // round(56 * 96 / 68) - 5  # fixed items, the Trash included
                 for index in range(capacity + 1):
                     overflow_clients.append(subprocess.Popen([str(tmp / 'client'), '--app-id', f'dock.side.overflow{index}'],
                         env=dict(os.environ, XDG_RUNTIME_DIR=str(tmp), WAYLAND_DISPLAY=display),

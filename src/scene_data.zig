@@ -188,7 +188,7 @@ pub fn hitTest(server: *@import("Server.zig"), lx: f64, ly: f64) Hit {
                 break :blk .{ .calendar = .{ .calendar = calendar, .sx = local.x, .sy = local.y } };
             },
             .dock => |dock| blk: {
-                const local = toNodeLocal(&dock.node.?.node, lx, ly);
+                const local = toNodeLocal(&dock.tree.?.node, lx, ly);
                 break :blk .{ .dock = .{ .dock = dock, .sx = local.x, .sy = local.y } };
             },
             .taskbar => |bar| blk: {

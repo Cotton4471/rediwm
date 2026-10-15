@@ -1,4 +1,4 @@
-//! Per-launch Foot colours and background opacity. No user terminal
+//! Per-launch Foot colours and terminal background opacity. No user terminal
 //! configuration is overwritten.
 const std = @import("std");
 const Theme = @import("ui").theme.Theme;
@@ -15,14 +15,40 @@ pub fn enabled(t: Theme, opacity: ?f32) bool {
 
 /// Uses the caller's short-lived launch arena; original arguments are borrowed.
 /// The helper probes Foot's config dialect outside the compositor, then execs
-/// Foot in the same process/scope. Other terminal emulators keep their argv.
+/// Foot in the same process/scope. Terminals with a launch flag for background
+/// opacity get only that (`opacityArgv`); the rest keep their argv.
 pub fn wrap(a: A, io: std.Io, args: []const []const u8, t: Theme, opacity: ?f32) ![]const []const u8 {
-    if (args.len == 0 or !enabled(t, opacity) or !std.mem.eql(u8, std.fs.path.basename(args[0]), "foot")) return args;
+    if (args.len == 0 or !enabled(t, opacity)) return args;
+    if (!std.mem.eql(u8, std.fs.path.basename(args[0]), "foot")) return opacityArgv(a, args, opacity);
     const directory = try std.process.executableDirPathAlloc(io, a);
     const result = try a.alloc([]const u8, args.len + 2);
     result[0] = try std.fs.path.join(a, &.{ directory, "rediwm-theme" });
     result[1] = "terminal";
     @memcpy(result[2..], args);
+    return result;
+}
+
+/// Background-only opacity for terminals that take it on the command line,
+/// inserted before any program arguments. Konsole, GNOME Terminal and the VTE
+/// family only read it from a profile, so they keep their argv.
+pub fn opacityArgv(a: A, args: []const []const u8, opacity: ?f32) ![]const []const u8 {
+    const alpha = std.math.clamp(opacity orelse return args, 0, 1);
+    const exe = std.fs.path.basename(args[0]);
+    const flags: []const []const u8 = if (std.mem.eql(u8, exe, "kitty"))
+        &.{ "-o", try std.fmt.allocPrint(a, "background_opacity={d:.2}", .{alpha}) }
+    else if (std.mem.eql(u8, exe, "alacritty"))
+        &.{ "-o", try std.fmt.allocPrint(a, "window.opacity={d:.2}", .{alpha}) }
+    else if (std.mem.eql(u8, exe, "ghostty"))
+        &.{try std.fmt.allocPrint(a, "--background-opacity={d:.2}", .{alpha})}
+    else if (std.mem.eql(u8, exe, "wezterm"))
+        // A global option: it must precede the `start` subcommand.
+        &.{ "--config", try std.fmt.allocPrint(a, "window_background_opacity={d:.2}", .{alpha}) }
+    else
+        return args;
+    const result = try a.alloc([]const u8, args.len + flags.len);
+    result[0] = args[0];
+    @memcpy(result[1 .. 1 + flags.len], flags);
+    @memcpy(result[1 + flags.len ..], args[1..]);
     return result;
 }
 
@@ -103,4 +129,26 @@ test "terminal opacity alone enables the wrapper and names each section's alpha"
     // Fully opaque is still an explicit choice, so a Foot config's own alpha loses.
     const opaque_args = try argv(a, args, .{}, 1.0, true);
     try std.testing.expectEqualStrings("--override=colors-dark.alpha=1.00", opaque_args[1]);
+}
+
+test "other terminals get only a background opacity flag ahead of their program" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const cases = .{
+        .{ "kitty", &[_][]const u8{ "/usr/bin/kitty", "-o", "background_opacity=0.80", "-e", "top" } },
+        .{ "alacritty", &[_][]const u8{ "/usr/bin/alacritty", "-o", "window.opacity=0.80", "-e", "top" } },
+        .{ "ghostty", &[_][]const u8{ "/usr/bin/ghostty", "--background-opacity=0.80", "-e", "top" } },
+        .{ "wezterm", &[_][]const u8{ "/usr/bin/wezterm", "--config", "window_background_opacity=0.80", "-e", "top" } },
+    };
+    inline for (cases) |case| {
+        const args: []const []const u8 = &.{ "/usr/bin/" ++ case[0], "-e", "top" };
+        const result = try wrap(a, std.testing.io, args, .{}, 0.8);
+        try std.testing.expectEqual(case[1].len, result.len);
+        for (case[1], result) |expected, actual| try std.testing.expectEqualStrings(expected, actual);
+        // A theme palette alone is Foot-only; without opacity nothing changes.
+        try std.testing.expectEqualSlices([]const u8, args, try wrap(a, std.testing.io, args, .{ .terminal_fg = .{ 1, 1, 1, 1 } }, null));
+    }
+    const konsole: []const []const u8 = &.{ "konsole", "-e", "top" };
+    try std.testing.expectEqualSlices([]const u8, konsole, try wrap(a, std.testing.io, konsole, .{}, 0.8));
 }

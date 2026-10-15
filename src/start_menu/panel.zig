@@ -1089,7 +1089,7 @@ pub const StartMenu = struct {
     fn paintContent(menu: *StartMenu) void {
         if (menu.panel_box.width <= 0 or menu.panel_box.height <= 0) return;
         const scale = menu.wlr_output.scale;
-        const buf = PanelBuffer.createUninitialized(menu.panel_box.width, menu.panel_box.height, scale) catch |err| {
+        const buf = PanelBuffer.createRetained(menu.panel_box.width, menu.panel_box.height, scale, &menu.background) catch |err| {
             log.err("StartMenu.paintContent: could not create buffer: {}", .{err});
             return;
         };
@@ -1099,7 +1099,7 @@ pub const StartMenu = struct {
         var renderer = ui.paint.Renderer.init(buf.pixels, buf.width, buf.height, scale);
         renderer.palette = menuPalette();
         ui.input.active_dispatcher = &menu.dispatcher;
-        menu.background.paintIncremental(gpa, &menu.root, &renderer);
+        menu.background.paintIncremental(gpa, &menu.root, &renderer, &buf.stamp);
         ui.input.active_dispatcher = null;
         const elapsed_ns = panel_present.nowNs() -| t0;
 

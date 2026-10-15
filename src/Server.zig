@@ -1507,7 +1507,8 @@ fn handleAudioWake(fd: c_int, mask: wl.EventMask, server: *Server) c_int {
     while (it.next()) |output| {
         if (output.taskbar) |bar| bar.markDirty(Taskbar.paint_audio);
     }
-    if (server.input.open_control_center) |cc| cc.refresh();
+    // Only General and Audio show audio state; elsewhere a rebuild is wasted.
+    if (server.input.open_control_center) |cc| if (cc.page == .general or cc.page == .audio) cc.refresh();
     if (server.locker) |lock| lock.controlsChanged();
     server.scheduleFrames();
     return 0;

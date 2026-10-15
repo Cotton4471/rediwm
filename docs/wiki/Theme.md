@@ -15,7 +15,7 @@ dark tint for contrast. Custom start-button icons retain their own colours.
 Appearance also has a **Taskbar theme** picker under Theme, with the same
 presets plus "Same as theme". It gives the taskbar the preset's colours and
 leaves every other surface on the theme above. It is saved as a
-`[taskbar_theme]` section holding only these keys: `taskbar_bg`,
+`[taskbar_theme]` section holding only these keys: `clock_bold`, `clock_italic`, `taskbar_bg`,
 `taskbar_surface`, `taskbar_hover`, `taskbar_border`, `taskbar_outline`, `border_soft`,
 `surface_hover`, `window_fg`, `window_dim`, `danger`, `window_close_hover`,
 `start_button_hover`, `start_button_indicator`, `start_button_logo_color` and
@@ -24,6 +24,10 @@ body can be pasted under that header; keys it leaves out take the built-in
 defaults, not the main theme's. The section's presence selects the taskbar
 theme (an empty one is the built-in colours); without it the taskbar follows
 `[theme]`. Sizes, gaps and radii always come from `[theme]`.
+Under **Appearance → Taskbar**, **Bold clock text** and **Italic clock text**
+independently style both time and date. They save into the selected taskbar
+theme, or the main theme when the taskbar follows it. Both default to false;
+Gold uses bold with italics off. Clock widths and digit spacing update live.
 
 ## GTK and Qt app colors
 
@@ -147,6 +151,7 @@ geometry retain their content or structural dimensions.
 | `app_icon` | `"rgba(214,214,214,1)"` |
 | `scrollbar_thumb` | `"rgba(89,98,110,1)"` |
 | `scrollbar_thumb_active` | `unset` |
+| `scrollbar_glow` | `1.0` (strength of the thumb's light) |
 | `bg` | `"rgba(9,11,24,1)"` |
 | `fg` | `"rgba(245,245,245,1)"` |
 | `dim` | `"rgba(214,214,214,1)"` |
@@ -278,7 +283,8 @@ Numeric tokens accept 0–4096 unless constrained below. Fractions ending in
 | `chrome_height` | `46.0` |
 | `chrome_control_gap` | `4.0` |
 | `taskbar_title_size` | `12.5` |
-| `taskbar_size` | `48.0` |
+| `clock_bold`, `clock_italic` | `false` |
+| `taskbar_size` | `44.0` |
 | `taskbar_edge_gap` | `0.0` |
 | `taskbar_length` | `100.0` |
 | `taskbar_radius` | `0.0` |

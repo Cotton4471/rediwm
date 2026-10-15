@@ -45,7 +45,7 @@ pub const Image = struct { pixels: []const u32, width: i32, height: i32 };
 
 fn fontFor(style: TextStyle) text_mod.Font {
     return switch (style.family) {
-        .sans => if (style.weight >= 600) .manrope_bold else .manrope,
+        .sans => if (style.weight >= 700) .manrope_heavy else if (style.weight >= 600) .manrope_bold else .manrope,
         .mono => if (style.weight >= 600) .mono_bold else .mono,
     };
 }

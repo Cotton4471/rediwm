@@ -674,7 +674,7 @@ pub const App = struct {
         const width: f64 = @floatFromInt(self.sidebarWidth());
         if (self.mouse_x < 0 or self.mouse_x >= width) return null;
         if (self.sidebarScrollbar()) |bar| if (self.mouse_x >= @as(f64, bar.track.x)) return null;
-        if (self.mouse_y < @as(f64, @floatFromInt(self.contentTop())) or self.mouse_y >= @as(f64, @floatFromInt(self.h - self.footerHeight()))) return null;
+        if (self.mouse_y < @as(f64, @floatFromInt(self.contentTop())) or self.mouse_y >= @as(f64, @floatFromInt(self.h - self.sidebarFooter()))) return null;
         for (0..self.rowCount()) |i| {
             if (!self.placeVisible(i)) continue;
             const row = self.placeRect(i);
@@ -753,7 +753,7 @@ pub const App = struct {
             self.nav_hover.setTarget(now, if (self.hoveredPlace()) |i| .{ .col = 0, .row = @intCast(i) } else null);
             // Rows are at least 32 px apart, so this is at most a pixel.
             if (self.nav_hover.step(now, pixel, pixel / 32)) {
-                const side: header.Rect = .{ .x = 0, .y = @floatFromInt(self.contentTop()), .w = @floatFromInt(self.sidebarWidth()), .h = @floatFromInt(self.h - self.contentTop() - self.footerHeight()) };
+                const side: header.Rect = .{ .x = 0, .y = @floatFromInt(self.contentTop()), .w = @floatFromInt(self.sidebarWidth()), .h = @floatFromInt(self.h - self.contentTop() - self.sidebarFooter()) };
                 self.damageHighlight(side, if (before.alpha > 0) self.navHighlight(before) else null, if (self.nav_hover.frame.alpha > 0) self.navHighlight(self.nav_hover.frame) else null);
             }
         } else self.nav_hover.reset();
@@ -2155,6 +2155,11 @@ pub const App = struct {
     pub fn footerHeight(self: *const App) i32 {
         return if (self.chooser) |opts| (if (self.w >= 800) @as(i32, 88) else 114) + @as(i32, @intCast(opts.choices.len)) * 36 else 26;
     }
+    /// What the sidebar gives up at the bottom: nothing, so it reaches the
+    /// window edge beside the status bar; the chooser's panel spans the width.
+    fn sidebarFooter(self: *const App) i32 {
+        return if (self.chooser != null) self.footerHeight() else 0;
+    }
     fn contentTop(self: *App) i32 {
         return header.height(self.w, self.inRepository());
     }
@@ -2205,7 +2210,7 @@ pub const App = struct {
 
     fn sidebarDivider(self: *App) ?splitter.Geometry {
         if (self.w < 500 or self.sidebarWidth() < 160) return null;
-        return .{ .x = @floatFromInt(self.sidebarWidth()), .y = @floatFromInt(self.contentTop()), .h = @floatFromInt(@max(0, self.h - self.contentTop() - self.footerHeight())) };
+        return .{ .x = @floatFromInt(self.sidebarWidth()), .y = @floatFromInt(self.contentTop()), .h = @floatFromInt(@max(0, self.h - self.contentTop() - self.sidebarFooter())) };
     }
 
     fn overSidebarDivider(self: *App, x: f64, y: f64) bool {
@@ -2254,7 +2259,7 @@ pub const App = struct {
     }
 
     fn clampSidebarScroll(self: *App) void {
-        self.sidebar_scroll = std.math.clamp(self.sidebar_scroll, 0, @max(0, self.sidebarExtent() - (self.h - self.footerHeight())));
+        self.sidebar_scroll = std.math.clamp(self.sidebar_scroll, 0, @max(0, self.sidebarExtent() - (self.h - self.sidebarFooter())));
     }
 
     fn scrollbarGutter(self: *const App) i32 {
@@ -2856,7 +2861,7 @@ pub const App = struct {
 
     fn placeAt(self: *App, x: f64, y: f64) ?usize {
         if (x < 0 or x >= @as(f64, @floatFromInt(self.sidebarWidth())) or
-            y < @as(f64, @floatFromInt(self.contentTop())) or y >= @as(f64, @floatFromInt(self.h - self.footerHeight()))) return null;
+            y < @as(f64, @floatFromInt(self.contentTop())) or y >= @as(f64, @floatFromInt(self.h - self.sidebarFooter()))) return null;
         if (self.sidebarScrollbar()) |bar| {
             if (bar.overTrack(@floatCast(x), @floatCast(y))) return null;
         }
@@ -2918,7 +2923,7 @@ pub const App = struct {
     fn pinSlotAt(self: *App, x: f64, y: f64) ?usize {
         if (self.dialog != null) return null;
         if (x < 0 or x >= @as(f64, @floatFromInt(self.sidebarWidth()))) return null;
-        if (y < @as(f64, @floatFromInt(self.contentTop())) or y >= @as(f64, @floatFromInt(self.h - self.footerHeight()))) return null;
+        if (y < @as(f64, @floatFromInt(self.contentTop())) or y >= @as(f64, @floatFromInt(self.h - self.sidebarFooter()))) return null;
         if (self.sidebarScrollbar()) |bar| {
             if (x >= @as(f64, bar.track.x)) return null;
         }
@@ -2932,7 +2937,7 @@ pub const App = struct {
 
     fn setPinDrop(self: *App, slot: ?usize) void {
         if (std.meta.eql(self.pin_drop, slot)) return;
-        const area: header.Rect = .{ .x = 0, .y = @floatFromInt(self.contentTop()), .w = @floatFromInt(self.sidebarWidth()), .h = @floatFromInt(self.h - self.contentTop() - self.footerHeight()) };
+        const area: header.Rect = .{ .x = 0, .y = @floatFromInt(self.contentTop()), .w = @floatFromInt(self.sidebarWidth()), .h = @floatFromInt(self.h - self.contentTop() - self.sidebarFooter()) };
         for ([_]?usize{ self.pin_drop, slot }) |gap| {
             const at = gap orelse continue;
             self.damageHighlight(area, .{ .x = 0, .y = self.pinBoundary(at) - 6, .w = area.w, .h = 12 }, null);
@@ -3182,7 +3187,6 @@ pub const App = struct {
         if (self.device_list.items.len == 0) return;
         setSource(cr, ui_theme.global.sidebarForeground());
         drawText(cr, "DEVICES", 24, @floatFromInt(self.placeY(self.deviceBase()) - 12), shell_ui.headingSize(), true);
-        const accent = ui_theme.shellPalette().accent;
         const hovered = self.hoverKey();
         for (self.device_list.items, 0..) |*volume, k| {
             const index = self.deviceBase() + k;
@@ -3191,12 +3195,7 @@ pub const App = struct {
             const alpha: f32 = if (mounted) 1 else 0.5;
             if (self.placeActive(index)) {
                 const row = self.placeRect(index);
-                roundedRect(cr, row.x, row.y, row.w, row.h, 5);
-                setSource(cr, ui_theme.global.sidebarSelected());
-                c.cairo_fill(cr);
-                roundedRect(cr, 10, y + 3, 3, 24, 1.5);
-                setSource(cr, accent);
-                c.cairo_fill(cr);
+                shell_ui.drawSidebarSelected(cr, .{ .x = @floatCast(row.x), .y = @floatCast(row.y), .w = @floatCast(row.w), .h = @floatCast(row.h) });
             }
             if (shell_ui.Layer.begin(cr, .{ .x = 21, .y = @floatCast(y + 3), .w = 24, .h = 24 })) |icon_layer| {
                 var layer = icon_layer;
@@ -3252,7 +3251,7 @@ pub const App = struct {
     fn sidebarScrollbar(self: *App) ?scrollbar.Geometry {
         const width = self.sidebarWidth();
         if (width == 0) return null;
-        const viewport: f32 = @floatFromInt(self.h - self.contentTop() - self.footerHeight());
+        const viewport: f32 = @floatFromInt(self.h - self.contentTop() - self.sidebarFooter());
         const gutter: f32 = @floatFromInt(self.scrollbarGutter());
         const track: scrollbar.Rect = .{ .x = @as(f32, @floatFromInt(width)) - gutter, .y = @floatFromInt(self.contentTop()), .w = gutter, .h = viewport };
         return scrollbar.Geometry.compute(.vertical, track, viewport, @floatFromInt(self.sidebarExtent() - self.contentTop()), @floatFromInt(self.sidebar_scroll));
@@ -3331,9 +3330,8 @@ pub const App = struct {
         const content_width = if (bar) |b| @as(f64, b.track.x) else @as(f64, @floatFromInt(self.sidebarTargetWidth()));
         c.cairo_save(cr);
         defer c.cairo_restore(cr);
-        c.cairo_rectangle(cr, 0, @floatFromInt(self.contentTop()), width, @floatFromInt(self.h - self.contentTop() - self.footerHeight()));
+        c.cairo_rectangle(cr, 0, @floatFromInt(self.contentTop()), width, @floatFromInt(self.h - self.contentTop() - self.sidebarFooter()));
         c.cairo_clip(cr);
-        const accent = ui_theme.shellPalette().accent;
         setSource(cr, ui_theme.global.app_sidebar);
         // The sidebar's alpha describes the window, not a tint over app_bg.
         c.cairo_set_operator(cr, c.CAIRO_OPERATOR_SOURCE);
@@ -3364,12 +3362,7 @@ pub const App = struct {
             const active = std.mem.eql(u8, path, self.history.current);
             if (active) {
                 const row = self.placeRect(i);
-                roundedRect(cr, row.x, row.y, row.w, row.h, 5);
-                setSource(cr, ui_theme.global.sidebarSelected());
-                c.cairo_fill(cr);
-                roundedRect(cr, 10, y + 3, 3, 24, 1.5);
-                setSource(cr, accent);
-                c.cairo_fill(cr);
+                shell_ui.drawSidebarSelected(cr, .{ .x = @floatCast(row.x), .y = @floatCast(row.y), .w = @floatCast(row.w), .h = @floatCast(row.h) });
             }
             setSource(cr, withAlpha(ui_theme.global.app_icon, alpha));
             if (self.drawPackPlaceIcon(cr, i, y, alpha)) {
@@ -3951,7 +3944,7 @@ pub const App = struct {
                 if (i < 4 and self.listColumn(i).contains(x, y)) return 400 + i;
             }
         }
-        if (x >= 0 and x < @as(f64, @floatFromInt(self.sidebarWidth())) and y >= @as(f64, @floatFromInt(self.contentTop())) and y < @as(f64, @floatFromInt(self.h - self.footerHeight()))) {
+        if (x >= 0 and x < @as(f64, @floatFromInt(self.sidebarWidth())) and y >= @as(f64, @floatFromInt(self.contentTop())) and y < @as(f64, @floatFromInt(self.h - self.sidebarFooter()))) {
             if (self.ejectAt(x, y)) |k| return 700 + k;
             for (0..self.rowCount()) |i| {
                 if (!self.placeVisible(i)) continue;
@@ -4141,7 +4134,7 @@ pub const App = struct {
     }
 
     fn wheelMax(self: *App) i32 {
-        return if (self.wheel_sidebar) @max(0, self.sidebarExtent() - (self.h - self.footerHeight())) else self.maxScroll();
+        return if (self.wheel_sidebar) @max(0, self.sidebarExtent() - (self.h - self.sidebarFooter())) else self.maxScroll();
     }
 
     pub fn handleWheel(self: *App, delta_px: f64, now: i64) void {
@@ -4203,7 +4196,7 @@ pub const App = struct {
         self.menu = null;
         const step: i32 = @intFromFloat(delta_px);
         if (self.mouse_x < @as(f64, @floatFromInt(self.sidebarWidth())) and self.mouse_y >= @as(f64, @floatFromInt(self.contentTop()))) {
-            const max_sidebar = @max(0, self.sidebarExtent() - (self.h - self.footerHeight()));
+            const max_sidebar = @max(0, self.sidebarExtent() - (self.h - self.sidebarFooter()));
             const next = std.math.clamp(self.sidebar_scroll + step, 0, max_sidebar);
             if (next != self.sidebar_scroll) self.invalidate();
             self.sidebar_scroll = next;
@@ -5156,7 +5149,7 @@ pub const App = struct {
                 .empty_trash => self.openEmptyTrashDialog(),
                 .unpin => {
                     self.unpinned_places |= @as(u8, 1) << @as(u3, @intCast(self.menu_place - places_start));
-                    self.sidebar_scroll = std.math.clamp(self.sidebar_scroll, 0, @max(0, self.sidebarExtent() - (self.h - self.footerHeight())));
+                    self.sidebar_scroll = std.math.clamp(self.sidebar_scroll, 0, @max(0, self.sidebarExtent() - (self.h - self.sidebarFooter())));
                     self.nav_hover = .{};
                     self.savePreferences();
                 },
@@ -6057,15 +6050,17 @@ pub const App = struct {
     fn renderStatusBar(self: *App, cr: *c.cairo_t, h_f: f64) void {
         const w_f = @as(f64, @floatFromInt(self.w));
         const y = h_f - 26;
+        // The sidebar runs to the bottom edge; the bar sits beside it.
+        const x0: f64 = @floatFromInt(self.sidebarWidth());
 
         const accent = ui_theme.shellPalette().accent;
         setSource(cr, ui_theme.global.app_bar);
-        c.cairo_rectangle(cr, 0, y, w_f, 26);
+        c.cairo_rectangle(cr, x0, y, w_f - x0, 26);
         c.cairo_fill(cr);
 
         setSource(cr, ui_theme.global.app_divider);
         c.cairo_set_line_width(cr, 1);
-        c.cairo_move_to(cr, 0, y + 0.5);
+        c.cairo_move_to(cr, x0, y + 0.5);
         c.cairo_line_to(cr, w_f, y + 0.5);
         c.cairo_stroke(cr);
 
@@ -6126,7 +6121,7 @@ pub const App = struct {
             }
         }
 
-        drawText(cr, status_text, 14, y + 17, shell_ui.statusSize(), false);
+        drawText(cr, status_text, x0 + 14, y + 17, shell_ui.statusSize(), false);
     }
 
     fn renderDialog(self: *App, cr: *c.cairo_t) void {
@@ -6600,8 +6595,9 @@ test "history restores names and scroll while tolerating removed items" {
 test "retained hover repairs match complete Cairo rasters at scale 1 and 1.5" {
     const saved_theme = ui_theme.global;
     defer ui_theme.global = saved_theme;
-    // Exercise the illuminated sidebar edge as it moves and fades, too.
-    ui_theme.global.app_sidebar_hover_marker = .{ 1, 0.95, 0.84, 1 };
+    // Exercise the illuminated selected row and rounder highlights, too.
+    ui_theme.global.app_sidebar_selected_marker = .{ 1, 0.95, 0.84, 1 };
+    ui_theme.global.app_sidebar_item_radius = 10;
     ui_theme.global.app_sidebar[3] = 0.5;
     const before = anim.currentSettings();
     defer anim.applySettings(before);
@@ -7186,7 +7182,7 @@ test "sidebar divider resizes within limits without selecting or sorting" {
     try std.testing.expect(!app.overSidebarDivider(340, y));
     app.menu = null;
     try std.testing.expect(!app.overSidebarDivider(340, 20));
-    try std.testing.expect(!app.overSidebarDivider(340, @floatFromInt(app.h - 1)));
+    try std.testing.expect(app.overSidebarDivider(340, @floatFromInt(app.h - 1)));
     app.resize(360, 540);
     app.stepLayout(2000);
     app.stepLayout(3000);

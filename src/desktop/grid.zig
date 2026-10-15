@@ -2,6 +2,7 @@ const std = @import("std");
 pub const width = 96;
 pub const height = 112; // 8 + 56 + 8 + 2*16 + 8: two readable label lines.
 pub const margin = 24;
+pub const left_margin = 8; // cells carry their own padding, so the leftmost column may sit close to the edge.
 pub const Cell = struct { col: i32 = 0, row: i32 = 0 };
 pub const Rect = struct {
     x: i32,
@@ -24,7 +25,7 @@ pub const Grid = struct {
         return @max(1, @divFloor(g.h - margin - g.top - g.bottom, height));
     }
     pub fn cols(g: Grid) i32 {
-        return @max(1, @divFloor(g.w - 2 * margin, width));
+        return @max(1, @divFloor(g.w - margin - left_margin, width));
     }
     pub fn rect(g: Grid, position: Cell) Rect {
         return .{ .x = g.w - margin - (position.col + 1) * width, .y = g.top + margin + position.row * height };
@@ -37,6 +38,11 @@ pub const Grid = struct {
         return .{ .col = @divFloor(n, g.rows()), .row = @mod(n, g.rows()) };
     }
 };
+test "leftmost column sits near the left edge" {
+    const g = Grid{ .w = 1280, .h = 720 };
+    const r = g.rect(.{ .col = g.cols() - 1 });
+    try std.testing.expect(r.x >= 0 and r.x < width - margin);
+}
 test "grid flows down then left and avoids the panel" {
     const g = Grid{ .w = 1280, .h = 720 };
     try std.testing.expectEqual(Cell{ .col = 1, .row = 0 }, g.cell(@intCast(g.rows())));

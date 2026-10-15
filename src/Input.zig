@@ -1649,7 +1649,7 @@ fn passthroughMotion(input: *Input, time_msec: u32) void {
             input.clearTaskbarHover();
             input.setHover(null, null);
             control_center.pointerMotion(res.cc, res.sx, res.sy);
-            input.setShellCursor(ui_input.current.overText());
+            if (control_center.overDraggable(res.cc, res.sx, res.sy)) input.setNamedCursor("grab") else input.setShellCursor(ui_input.current.overText());
             input.seat.pointerClearFocus();
         },
         .start_menu => |res| {
