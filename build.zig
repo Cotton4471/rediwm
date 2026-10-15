@@ -693,6 +693,19 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_gpu_timing_tests.step);
     b.step("test-gpu-timing", "Test GPU timing query lifetime with a fake driver").dependOn(&run_gpu_timing_tests.step);
 
+    const node_tests = b.addExecutable(.{
+        .name = "node-tests",
+        .root_module = b.createModule(.{ .target = target, .optimize = .Debug, .link_libc = true }),
+    });
+    node_tests.root_module.addCSourceFile(.{ .file = b.path("src/node_test.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    node_tests.root_module.addCSourceFile(.{ .file = b.path("src/node.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    inline for (.{ "wlroots-0.20", "wayland-server", "pixman-1" }) |lib| {
+        node_tests.root_module.linkSystemLibrary(lib, .{});
+    }
+    const run_node_tests = b.addRunArtifact(node_tests);
+    test_step.dependOn(&run_node_tests.step);
+    b.step("test-node", "Test the compositor's own scene nodes").dependOn(&run_node_tests.step);
+
     const projection_tests = b.addExecutable(.{
         .name = "projection-tests",
         .root_module = b.createModule(.{ .target = target, .optimize = .Debug, .link_libc = true }),

@@ -1,6 +1,7 @@
 # Scene graph, stage 7: retire the wlr_scene data model
 
-Status: draft 2026-10-15. Decisions D1-D5 below are recommendations, not taken.
+Status: D1-D4 taken as recommended and D5 (idle-CPU items first, done: 6179c18) on
+2026-10-15; 7a started on branch `stage7` (see "Findings from starting 7a").
 
 ## Why, and what it is not for
 
@@ -61,6 +62,51 @@ samples on its own).
    state `scene_output.c` reads from the scene (direct scanout flag, gamma and
    colour manager presence), `output_sample`/frame-done helpers.
 5. **Hit test and iteration** for the layout trees (`node_at`, `for_each_buffer`).
+
+## Findings from starting 7a (2026-10-15)
+
+Reading `projection.c`, `scene_output.c` and `scene_damage.c` before writing code
+showed that the sub-stages below understate 7a:
+
+* **Layout trees are not resolved by the projection.** Only the world's source
+  tree becomes leaves; the six layout trees (background, desktop, taskbar,
+  overlay, IME, lock) are still wlroots nodes that `visit_items` walks and whose
+  damage `wlr_scene_output` computes itself. The projection reports its own
+  damage into wlroots' ring through `scene_damage.c`
+  (`rediwm_scene_damage_layout`), and `scene_output.c` reads
+  `out->private.pending_commit_damage` and `damage_ring`. So own nodes have to
+  become projection sources too, as extra groups with an identity transform (the
+  `sync_fixed` path already does this for one subtree), or layout damage is lost.
+* **A mutation must ask for a frame.** The world's leaves hear their changes from
+  surface commits and listeners; a plain `setPosition` on a layout node was heard by
+  wlroots. The own mutators call the scene's `changed` hook for this
+  (`node.c`), and the projection finds what moved by comparing items at the next
+  sync, as it does for the world.
+* **`scene_output.c` depends on `wlr_scene_buffer` internals** (`private.texture`,
+  `renderer_destroy`, `own_buffer`, `wait_timeline`/`wait_point`,
+  `is_single_pixel_buffer`, `buffer_is_opaque`, `buffer_width/height`), so the own
+  buffer node has to carry the texture cache and wait points that
+  `wlr_scene_buffer_set_buffer_with_options` keeps, not just the public fields.
+* **More wlroots scene helpers in use** than the inventory listed:
+  `wlr.SceneLayerSurfaceV1` (`LayerSurface.zig`), `createSceneSubsurfaceTree` (4
+  sites: Toplevel, xwayland_unmanaged, text_input, client_lock).
+* **Mixed trees** are needed while windows still use wlr_scene_xdg_surface: the
+  `REDIWM_NODE_FOREIGN` kind holds a wlr subtree inside an own tree, hosted under
+  one hidden disabled wlr_scene root. The projection resolves it with its existing
+  wlr walk at the foreign node's accumulated position.
+
+Revised 7a order, each step gated by identical goldens and the suites that pass on HEAD:
+
+1. `node.h`/`node.c` and `node_test.c` (`zig build test-node`): the data model, the
+   change hook, stacking, picking, teardown. **Done.**
+2. The projection reads `rediwm_node` sources (leaf/group/addons on the own node),
+   resolves foreign subtrees, and takes the layout trees as extra groups with an
+   identity transform; damage and picking for them move out of wlr_scene.
+3. `scene_output.c` draws own buffers: texture cache, wait points, single-pixel
+   colour, `output_sample`; `glass.c` effect nodes become own buffer nodes.
+4. The Zig wrapper (`node.zig`, wlr_scene's method names) and the mechanical swap
+   of call sites, layout trees first, then the compositor-drawn UI; windows keep
+   `wlr.SceneTree` under a foreign node until 7b.
 
 ## Design
 
