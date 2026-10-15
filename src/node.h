@@ -1,4 +1,4 @@
-// The compositor's own scene nodes (stage 7 of docs/plans/scene-graph-stage7.md).
+// The compositor's own scene nodes (stage 7 of the scene-graph work).
 //
 // What wlr_scene gave the compositor as a data model (and the compositor no longer links
 // it): a tree of nodes with a

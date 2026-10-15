@@ -1,5 +1,5 @@
 // What the compositor keeps per output besides the output itself (stage 7c of
-// docs/plans/scene-graph-stage7.md): where it sits in the layout, the damage the
+// scene-graph work): where it sits in the layout, the damage the
 // backend has not yet taken, the damage ring for its buffer swapchain, and the
 // explicit-sync timelines. It replaces wlr_scene_output, wlr_scene_output_layout and
 // the parts of wlr_scene that registered outputs (wlroots 0.20, MIT licensed; the

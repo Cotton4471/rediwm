@@ -1,4 +1,4 @@
-// Client surfaces in the own scene (stage 7b of docs/plans/scene-graph-stage7.md).
+// Client surfaces in the own scene (stage 7b of the scene-graph work).
 //
 // A port of wlroots' wlr_scene_surface, wlr_scene_subsurface_tree, wlr_scene_xdg_surface,
 // and wlr_scene_drag_icon onto own nodes (MIT licensed, as
