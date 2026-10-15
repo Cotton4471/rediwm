@@ -10,8 +10,10 @@
 #include <wlr/types/wlr_scene.h>
 
 static int changes;
-static void on_change(void *data) {
+static void on_change(void *data, struct rediwm_node *node, bool structural) {
   (void)data;
+  (void)node;
+  (void)structural;
   changes++;
 }
 

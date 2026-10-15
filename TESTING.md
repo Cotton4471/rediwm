@@ -66,7 +66,9 @@ compiler, `wayland-scanner` and wayland-protocols; D-Bus suites need PyGObject,
   (`grep -h "damage audit" /dir/*.log`). A hit means a change reached the graph
   without damaging itself (`docs/plans/scene-graph-stage6.md`, 6b); the
   `capture` suite is known to show a few corner pixels (unsubmitted isolated
-  renders upset buffer age, which predates the graph damage).
+  renders upset buffer age, which predates the graph damage). The same build self-checks the projection's per-group resolve: after every gated sync it
+  resolves everything again and logs `gate audit: leaf N was stale` for any item the
+  gate left behind (a change path that never marked its group).
 - `REDIWM_*_PREVIEW=/tmp/...` (lock, greeter, OSD, settings, switcher, tray,
   notification): keep the compositor's own screenshots.
 - GLES2 at a fractional scale can differ by one level depending on render

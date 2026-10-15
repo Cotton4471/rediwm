@@ -6,9 +6,18 @@
 #include <wlr/types/wlr_buffer.h>
 #include <wlr/types/wlr_scene.h>
 
-static void changed(struct rediwm_node *node) {
+// A change to `node`'s own state; `structural` when the tree's shape changed (nodes made,
+// moved, stacked or destroyed), which the owner treats as a change of everything.
+static void report(struct rediwm_node *node, bool structural) {
   struct rediwm_scene *scene = node->scene;
-  if (scene && scene->changed) scene->changed(scene->changed_data);
+  if (scene && scene->changed) scene->changed(scene->changed_data, node, structural);
+}
+static void changed(struct rediwm_node *node) { report(node, false); }
+static void structure(struct rediwm_node *node) { report(node, true); }
+// The root and the layers under it are what groups hang from: a change to one of them
+// touches every group below.
+static bool is_layer(const struct rediwm_node *node) {
+  return !node->parent || !node->parent->node.parent;
 }
 
 static void buffer_damaged(struct rediwm_buffer *b, const pixman_region32_t *damage) {
@@ -34,7 +43,8 @@ static void node_init(struct rediwm_node *node, enum rediwm_node_type type, stru
   }
 }
 
-struct rediwm_scene *rediwm_scene_create(struct wlr_scene_tree *host, void (*notify)(void *),
+struct rediwm_scene *rediwm_scene_create(struct wlr_scene_tree *host,
+                                         void (*notify)(void *, struct rediwm_node *, bool),
                                          void *data) {
   struct rediwm_scene *scene = calloc(1, sizeof(*scene));
   if (!scene) return NULL;
@@ -59,7 +69,7 @@ struct rediwm_tree *rediwm_tree_create(struct rediwm_tree *parent) {
   if (!tree) return NULL;
   node_init(&tree->node, REDIWM_NODE_TREE, parent);
   wl_list_init(&tree->children);
-  changed(&tree->node);
+  structure(&tree->node);
   return tree;
 }
 
@@ -76,7 +86,7 @@ struct rediwm_rect *rediwm_rect_create(struct rediwm_tree *parent, int width, in
   rect->width = width;
   rect->height = height;
   memcpy(rect->color, color, sizeof(rect->color));
-  changed(&rect->node);
+  structure(&rect->node);
   return rect;
 }
 
@@ -94,7 +104,7 @@ struct rediwm_buffer *rediwm_buffer_create(struct rediwm_tree *parent, struct wl
   b->transform = WL_OUTPUT_TRANSFORM_NORMAL;
   pixman_region32_init(&b->opaque_region);
   if (buffer) rediwm_buffer_set_buffer(b, buffer);
-  changed(&b->node);
+  structure(&b->node);
   return b;
 }
 
@@ -113,7 +123,7 @@ struct rediwm_foreign *rediwm_foreign_create(struct rediwm_tree *parent, struct 
   f->wlr = wlr;
   f->wlr_destroy.notify = foreign_wlr_destroyed;
   wl_signal_add(&wlr->events.destroy, &f->wlr_destroy);
-  changed(&f->node);
+  structure(&f->node);
   return f;
 }
 
@@ -149,27 +159,29 @@ void rediwm_node_destroy(struct rediwm_node *node) {
   wlr_addon_set_finish(&node->addons);
   wl_list_remove(&node->link);
   free(node);
-  if (shown && scene && scene->changed) scene->changed(scene->changed_data);
+  if (shown && scene && scene->changed) scene->changed(scene->changed_data, NULL, true);
 }
+
+void rediwm_node_touch(struct rediwm_node *node) { report(node, is_layer(node)); }
 
 void rediwm_node_set_enabled(struct rediwm_node *node, bool enabled) {
   if (node->enabled == enabled) return;
   node->enabled = enabled;
-  changed(node);
+  report(node, is_layer(node));
 }
 
 void rediwm_node_set_position(struct rediwm_node *node, int x, int y) {
   if (node->x == x && node->y == y) return;
   node->x = x;
   node->y = y;
-  changed(node);
+  report(node, is_layer(node));
 }
 
 // Moves the node to follow `after` (a link of its parent's list, or the list head).
 static void move_after(struct rediwm_node *node, struct wl_list *after) {
   wl_list_remove(&node->link);
   wl_list_insert(after, &node->link);
-  changed(node);
+  structure(node);
 }
 
 void rediwm_node_raise_to_top(struct rediwm_node *node) {
@@ -211,8 +223,8 @@ void rediwm_node_reparent(struct rediwm_node *node, struct rediwm_tree *parent) 
   // A different scene keeps its own owner informed from now on.
   struct rediwm_scene *from = node->scene;
   node->scene = parent->node.scene;
-  if (from && from != node->scene && from->changed) from->changed(from->changed_data);
-  changed(node);
+  if (from && from != node->scene && from->changed) from->changed(from->changed_data, NULL, true);
+  structure(node);
 }
 
 bool rediwm_node_coords(struct rediwm_node *node, int *lx, int *ly) {

@@ -37,6 +37,13 @@ struct rediwm_projection {
   struct rediwm_scene *own;
   struct rediwm_tree *world;
   struct wlr_scene *scene;
+  // What changed since the last sync. A change to one top-level subtree (a group) marks
+  // that group; a change to the shape of the tree, a layer or anything not tied to
+  // one group marks them all (`all_dirty`). A sync resolves and presents only the
+  // marked groups, or none when nothing changed and the camera did not move.
+  bool any_dirty, all_dirty, have_camera;
+  double camera[5];
+  struct rediwm_tree *fixed;
   // Every adapter, in creation order; `paint` holds the groups resolve() last
   // reached, bottom to top.
   struct wl_list leaves, groups, paint;
@@ -62,6 +69,10 @@ struct rediwm_projection {
   struct rediwm_damage_event events[DAMAGE_EVENTS];
   uint64_t next_event; // sequence number of the next event; 0 is never used
 };
+// The compositor has one projection; setters on nodes inside a client's subtree, which
+// cannot reach it through a scene, tell it directly.
+static struct rediwm_projection *current;
+static void mark_all(struct rediwm_projection *p);
 // Source top-level subtrees are contiguous in paint order: each is a group, and
 // a window going away damages everything its leaves showed at once.
 struct group {
@@ -71,6 +82,11 @@ struct group {
   // The leaves resolve() last reached under this group, bottom to top.
   struct wl_list items;
   bool enabled;
+  // Changed since resolve() last walked it; walked at least once; walked by this sync.
+  bool dirty, resolved, touched;
+  // Holds a glass effect, whose box is its target's, which may be a node of another group:
+  // such a group is walked whenever anything is.
+  bool has_effect;
   struct rediwm_projection *projection;
   struct rediwm_node *source;
   struct wl_listener destroy;
@@ -94,6 +110,8 @@ struct leaf {
   // `foreign` is the own node hosting that subtree.
   struct rediwm_node *own;
   struct rediwm_foreign *foreign;
+  // The group the last resolve() put it in.
+  struct group *group;
   // A glass effect: decided when the leaf is made, as an effect is its own node.
   bool effect;
   struct wl_listener destroy, commit;
@@ -200,9 +218,13 @@ static struct tree_props *tree_props_get(struct wlr_addon_set *set, void **slot)
   wlr_addon_init(&props->addon, set, NULL, &tree_props_impl);
   return props;
 }
+// Set by a setter that changed something, so the wrappers below ask for a frame only
+// then: a window's zoom and clip are applied every frame and mostly unchanged.
+static bool props_changed;
 static bool set_tree_zoom(struct wlr_addon_set *set, void **slot, double scale) {
   struct tree_props *props = tree_props_get(set, slot);
   if (!props) return false;
+  if (!props->has_zoom || props->zoom != scale) props_changed = true;
   props->zoom = scale;
   props->has_zoom = true;
   return true;
@@ -211,6 +233,7 @@ static bool set_tree_scale(struct wlr_addon_set *set, void **slot, double factor
   if (factor <= 0) return false;
   struct tree_props *props = tree_props_get(set, slot);
   if (!props) return false;
+  if (!props->has_scale || props->scale != factor) props_changed = true;
   props->scale = factor;
   props->has_scale = true;
   return true;
@@ -220,6 +243,7 @@ static bool set_tree_clip(struct wlr_addon_set *set, void **slot,
                                      const struct rediwm_clip_spec *spec) {
   if (!spec) {
     struct tree_props *props = tree_props_find(set, slot);
+    if (props && props->has_clip) props_changed = true;
     if (props) props->has_clip = false;
     return true;
   }
@@ -233,6 +257,7 @@ static bool set_tree_clip(struct wlr_addon_set *set, void **slot,
     return false;
   struct tree_props *props = tree_props_get(set, slot);
   if (!props) return false;
+  if (!props->has_clip || memcmp(&props->clip, spec, sizeof(*spec))) props_changed = true;
   props->clip = *spec;
   props->has_clip = true;
   return true;
@@ -241,6 +266,7 @@ static bool set_tree_shadow(struct wlr_addon_set *set, void **slot,
                                        const struct rediwm_shadow_spec *spec) {
   if (!spec) {
     struct tree_props *props = tree_props_find(set, slot);
+    if (props && props->has_shadow) props_changed = true;
     if (props) props->has_shadow = false;
     return true;
   }
@@ -251,6 +277,7 @@ static bool set_tree_shadow(struct wlr_addon_set *set, void **slot,
     if (!finite_at_least_zero(spec->radii[i]) || !isfinite(spec->color[i])) return false;
   struct tree_props *props = tree_props_get(set, slot);
   if (!props) return false;
+  if (!props->has_shadow || memcmp(&props->shadow, spec, sizeof(*spec))) props_changed = true;
   props->shadow = *spec;
   props->has_shadow = true;
   return true;
@@ -262,11 +289,13 @@ static bool set_tree_dim(struct wlr_addon_set *set, void **slot, float brightnes
   if (brightness == 0 && saturation == 0) {
     // Nothing taken away is no dim; a tree that has none gets no addon for it.
     struct tree_props *props = tree_props_find(set, slot);
+    if (props && props->has_dim) props_changed = true;
     if (props) props->has_dim = false;
     return true;
   }
   struct tree_props *props = tree_props_get(set, slot);
   if (!props) return false;
+  if (!props->has_dim || props->dim.brightness != brightness || props->dim.saturation != saturation) props_changed = true;
   props->dim = (struct dim){brightness, saturation};
   props->has_dim = true;
   return true;
@@ -274,36 +303,48 @@ static bool set_tree_dim(struct wlr_addon_set *set, void **slot, float brightnes
 static bool set_tree_unclipped(struct wlr_addon_set *set, void **slot, bool unclipped) {
   struct tree_props *props = unclipped ? tree_props_get(set, slot) : tree_props_find(set, slot);
   if (unclipped && !props) return false;
+  if (props && props->unclipped != unclipped) props_changed = true;
   if (props) props->unclipped = unclipped;
   return true;
 }
 static bool set_tree_inert(struct wlr_addon_set *set, void **slot, bool inert) {
   struct tree_props *props = inert ? tree_props_get(set, slot) : tree_props_find(set, slot);
   if (inert && !props) return false;
+  if (props && props->inert != inert) props_changed = true;
   if (props) props->inert = inert;
   return true;
 }
 
-bool rediwm_projection_set_tree_zoom(struct rediwm_node *node, double scale) { return set_tree_zoom(&node->addons, &node->props, scale); }
-bool rediwm_projection_set_wlr_tree_zoom(struct wlr_scene_node *node, double scale) { return set_tree_zoom(&node->addons, NULL, scale); }
-bool rediwm_projection_set_tree_scale(struct rediwm_node *node, double factor) { return set_tree_scale(&node->addons, &node->props, factor); }
-bool rediwm_projection_set_wlr_tree_scale(struct wlr_scene_node *node, double factor) { return set_tree_scale(&node->addons, NULL, factor); }
-bool rediwm_projection_set_tree_clip(struct rediwm_node *node, const struct rediwm_clip_spec *spec) { return set_tree_clip(&node->addons, &node->props, spec); }
-bool rediwm_projection_set_wlr_tree_clip(struct wlr_scene_node *node, const struct rediwm_clip_spec *spec) { return set_tree_clip(&node->addons, NULL, spec); }
-bool rediwm_projection_set_tree_shadow(struct rediwm_node *node, const struct rediwm_shadow_spec *spec) { return set_tree_shadow(&node->addons, &node->props, spec); }
-bool rediwm_projection_set_wlr_tree_shadow(struct wlr_scene_node *node, const struct rediwm_shadow_spec *spec) { return set_tree_shadow(&node->addons, NULL, spec); }
-bool rediwm_projection_set_tree_dim(struct rediwm_node *node, float brightness, float saturation) { return set_tree_dim(&node->addons, &node->props, brightness, saturation); }
-bool rediwm_projection_set_wlr_tree_dim(struct wlr_scene_node *node, float brightness, float saturation) { return set_tree_dim(&node->addons, NULL, brightness, saturation); }
-bool rediwm_projection_set_tree_unclipped(struct rediwm_node *node, bool unclipped) { return set_tree_unclipped(&node->addons, &node->props, unclipped); }
-bool rediwm_projection_set_wlr_tree_unclipped(struct wlr_scene_node *node, bool unclipped) { return set_tree_unclipped(&node->addons, NULL, unclipped); }
-bool rediwm_projection_set_tree_inert(struct rediwm_node *node, bool inert) { return set_tree_inert(&node->addons, &node->props, inert); }
-bool rediwm_projection_set_wlr_tree_inert(struct wlr_scene_node *node, bool inert) { return set_tree_inert(&node->addons, NULL, inert); }
+bool rediwm_projection_set_tree_zoom(struct rediwm_node *node, double scale) { props_changed = false; bool ok = set_tree_zoom(&node->addons, &node->props, scale); if (props_changed) rediwm_node_touch(node); return ok; }
+bool rediwm_projection_set_wlr_tree_zoom(struct wlr_scene_node *node, double scale) { props_changed = false; bool ok = set_tree_zoom(&node->addons, NULL, scale); if (props_changed && current) mark_all(current); return ok; }
+bool rediwm_projection_set_tree_scale(struct rediwm_node *node, double factor) { props_changed = false; bool ok = set_tree_scale(&node->addons, &node->props, factor); if (props_changed) rediwm_node_touch(node); return ok; }
+bool rediwm_projection_set_wlr_tree_scale(struct wlr_scene_node *node, double factor) { props_changed = false; bool ok = set_tree_scale(&node->addons, NULL, factor); if (props_changed && current) mark_all(current); return ok; }
+bool rediwm_projection_set_tree_clip(struct rediwm_node *node, const struct rediwm_clip_spec *spec) { props_changed = false; bool ok = set_tree_clip(&node->addons, &node->props, spec); if (props_changed) rediwm_node_touch(node); return ok; }
+bool rediwm_projection_set_wlr_tree_clip(struct wlr_scene_node *node, const struct rediwm_clip_spec *spec) { props_changed = false; bool ok = set_tree_clip(&node->addons, NULL, spec); if (props_changed && current) mark_all(current); return ok; }
+bool rediwm_projection_set_tree_shadow(struct rediwm_node *node, const struct rediwm_shadow_spec *spec) { props_changed = false; bool ok = set_tree_shadow(&node->addons, &node->props, spec); if (props_changed) rediwm_node_touch(node); return ok; }
+bool rediwm_projection_set_wlr_tree_shadow(struct wlr_scene_node *node, const struct rediwm_shadow_spec *spec) { props_changed = false; bool ok = set_tree_shadow(&node->addons, NULL, spec); if (props_changed && current) mark_all(current); return ok; }
+bool rediwm_projection_set_tree_dim(struct rediwm_node *node, float brightness, float saturation) { props_changed = false; bool ok = set_tree_dim(&node->addons, &node->props, brightness, saturation); if (props_changed) rediwm_node_touch(node); return ok; }
+bool rediwm_projection_set_wlr_tree_dim(struct wlr_scene_node *node, float brightness, float saturation) { props_changed = false; bool ok = set_tree_dim(&node->addons, NULL, brightness, saturation); if (props_changed && current) mark_all(current); return ok; }
+bool rediwm_projection_set_tree_unclipped(struct rediwm_node *node, bool unclipped) { props_changed = false; bool ok = set_tree_unclipped(&node->addons, &node->props, unclipped); if (props_changed) rediwm_node_touch(node); return ok; }
+bool rediwm_projection_set_wlr_tree_unclipped(struct wlr_scene_node *node, bool unclipped) { props_changed = false; bool ok = set_tree_unclipped(&node->addons, NULL, unclipped); if (props_changed && current) mark_all(current); return ok; }
+bool rediwm_projection_set_tree_inert(struct rediwm_node *node, bool inert) { props_changed = false; bool ok = set_tree_inert(&node->addons, &node->props, inert); if (props_changed) rediwm_node_touch(node); return ok; }
+bool rediwm_projection_set_wlr_tree_inert(struct wlr_scene_node *node, bool inert) { props_changed = false; bool ok = set_tree_inert(&node->addons, NULL, inert); if (props_changed && current) mark_all(current); return ok; }
 static const struct wlr_addon_interface source_lookup_impl, group_source_impl;
 struct watched_surface {
   struct rediwm_projection *projection;
+  struct wlr_surface *surface;
   struct wl_list link;
   struct wl_listener commit, destroy;
 };
+static void mark_all(struct rediwm_projection *p) { p->any_dirty = p->all_dirty = true; }
+static void mark_group(struct rediwm_projection *p, struct group *g) {
+  if (!g) {
+    mark_all(p);
+    return;
+  }
+  g->dirty = true;
+  p->any_dirty = true;
+}
 static void schedule(struct rediwm_projection *p) {
   struct wlr_scene_output *out;
   wl_list_for_each(out, &p->scene->outputs, link)
@@ -493,6 +534,7 @@ static void committed(struct wl_listener *listener, void *data) {
       !pixman_region32_union(&l->damage, &l->damage, &surface->buffer_damage))
     l->full_damage = true;
   l->dirty = true;
+  mark_group(l->projection, l->group);
   schedule(l->projection);
 }
 static struct leaf *get_leaf(struct rediwm_projection *p, struct wlr_scene_node *source,
@@ -679,6 +721,7 @@ static void resolve_leaf(struct rediwm_projection *p, struct group *g, struct wl
   if (l->inert != w->inert) l->inert = w->inert;
   if (l->own != own) l->own = own;
   if (l->foreign != w->foreign) l->foreign = w->foreign;
+  l->group = g;
   // Flattened leaves within each group retain the source's paint order.
   wl_list_insert(g->items.prev, &l->paint);
   struct rediwm_item *item = &l->item;
@@ -701,6 +744,7 @@ static void resolve_leaf(struct rediwm_projection *p, struct group *g, struct wl
     memcpy(item->content.color, r->color, sizeof(item->content.color));
   } else {
     struct wlr_scene_buffer *b = wlr_scene_buffer_from_node(node);
+    if (l->effect) g->has_effect = true;
     item->kind = l->effect ? REDIWM_ITEM_EFFECT
                  : l->surface                      ? REDIWM_ITEM_SURFACE
                                                    : REDIWM_ITEM_BUFFER;
@@ -1015,6 +1059,7 @@ void rediwm_projection_damage_buffer(struct rediwm_projection *p,
     l->full_damage = true;
   l->owned_damage = true;
   l->dirty = true;
+  mark_group(p, l->group);
   schedule(p);
 }
 static uint32_t region_area(const pixman_region32_t *region) {
@@ -1146,7 +1191,21 @@ void rediwm_projection_send_frame_done(struct rediwm_projection *p, struct wlr_s
     wl_signal_emit_mutable(&wlr_scene_buffer_from_node(f->leaf->source)->events.frame_done, &event);
   }
 }
-static void schedule_changed(void *data) { schedule(data); }
+// The group a node belongs to: the child of a layer it hangs under (root 0, layer 1,
+// group 2), or NULL for the root and the layers, and for a node not yet grouped.
+static struct group *group_of(struct rediwm_node *node) {
+  int depth = 0;
+  for (struct rediwm_node *n = node; n->parent; n = &n->parent->node) depth++;
+  if (depth < 2) return NULL;
+  for (; depth > 2; depth--) node = &node->parent->node;
+  return node->group;
+}
+static void scene_changed(void *data, struct rediwm_node *node, bool structural) {
+  struct rediwm_projection *p = data;
+  if (structural || !node) mark_all(p);
+  else mark_group(p, group_of(node));
+  schedule(p);
+}
 static void buffer_given(void *data, struct rediwm_buffer *b, const pixman_region32_t *damage) {
   rediwm_projection_damage_buffer(data, &b->carrier->node, damage);
 }
@@ -1166,7 +1225,8 @@ struct rediwm_projection *rediwm_projection_create(struct rediwm_scene *own, str
   wl_list_init(&p->new_surface.link);
   pixman_region32_init(&p->pending);
   // Every change to the tree asks for a frame; the next sync finds what moved.
-  own->changed = schedule_changed;
+  current = p;
+  own->changed = scene_changed;
   own->buffer_damaged = buffer_given;
   own->changed_data = p;
   return p;
@@ -1174,15 +1234,20 @@ struct rediwm_projection *rediwm_projection_create(struct rediwm_scene *own, str
 // Source tree -> graph. Every adapter is detached from the paint lists first, so
 // the lists hold exactly what this pass reaches, in source paint order.
 static void resolve(struct rediwm_projection *p, double z, double cx, double cy,
-                    double ox, double oy, struct rediwm_tree *fixed) {
+                    double ox, double oy, struct rediwm_tree *fixed, bool full) {
   struct leaf *l;
-  wl_list_for_each(l, &p->leaves, link) {
-    l->seen = false;
-    detach(&l->paint);
-  }
   struct group *g;
+  // A full pass walks every group; otherwise only the marked ones are, and the rest
+  // keep the leaves and items they had.
+  if (full) {
+    wl_list_for_each(l, &p->leaves, link) {
+      l->seen = false;
+      detach(&l->paint);
+    }
+  }
   wl_list_for_each(g, &p->groups, link) {
     g->seen = false;
+    g->touched = false;
     detach(&g->paint);
   }
   const struct rediwm_xform camera = rediwm_xform_camera(z, cx, cy, ox, oy);
@@ -1202,21 +1267,34 @@ static void resolve(struct rediwm_projection *p, double z, double cx, double cy,
         wlr_log(WLR_ERROR, "zoom: cannot allocate presentation group");
         continue;
       }
-      struct walk w = base;
-      // The fixed subtree is laid out as is; everything else follows the camera.
-      if (world && fixed && node == &fixed->node) w.t = identity;
       g->seen = true;
       g->enabled = base.enabled && node->enabled;
       wl_list_insert(p->paint.prev, &g->paint);
+      if (!full && g->resolved && !g->dirty && !g->has_effect) continue;
+      if (!full) {
+        struct leaf *next;
+        wl_list_for_each_safe(l, next, &g->items, paint) {
+          l->seen = false;
+          detach(&l->paint);
+        }
+      }
+      struct walk w = base;
+      // The fixed subtree is laid out as is; everything else follows the camera.
+      if (world && fixed && node == &fixed->node) w.t = identity;
+      g->resolved = true;
+      g->dirty = false;
+      g->touched = true;
+      g->has_effect = false;
       resolve_own(p, g, node, &w);
     }
   }
 }
 static void damage_restacked(struct rediwm_projection *p);
 // Graph -> damage, then forget what the graph no longer reaches.
-static void present(struct rediwm_projection *p) {
+static void present(struct rediwm_projection *p, bool full) {
   struct group *g;
   wl_list_for_each(g, &p->paint, paint) {
+    if (!full && !g->touched) continue;
     struct leaf *l, *next;
     wl_list_for_each_safe(l, next, &g->items, paint) present_leaf(l);
   }
@@ -1226,7 +1304,8 @@ static void present(struct rediwm_projection *p) {
     damage_shadow(l, false, (struct rediwm_snap){0});
     l->ranked = false;
   }
-  damage_restacked(p);
+  // Nothing was stacked differently unless the shape of the tree changed.
+  if (full) damage_restacked(p);
 }
 // A leaf that is above what it was below, or the reverse, changes every pixel of
 // the two where they overlap, and nothing else tells the screen: wlroots damaged a
@@ -1296,13 +1375,58 @@ static void apply_damage(struct rediwm_projection *p) {
   if (pixman_region32_not_empty(&p->pending)) rediwm_scene_damage_layout(p->scene, &p->pending);
   pixman_region32_clear(&p->pending);
 }
+#ifdef REDIWM_DAMAGE_AUDIT
+static void audit_gate(struct rediwm_projection *p, double z, double cx, double cy, double ox,
+                       double oy, struct rediwm_tree *fixed) {
+  size_t n = 0;
+  struct leaf *l;
+  wl_list_for_each(l, &p->leaves, link) n++;
+  struct rediwm_item *before = calloc(n ? n : 1, sizeof(*before));
+  struct leaf **who = calloc(n ? n : 1, sizeof(*who));
+  if (!before || !who) {
+    free(before);
+    free(who);
+    return;
+  }
+  size_t i = 0;
+  wl_list_for_each(l, &p->leaves, link) {
+    before[i] = l->item;
+    who[i++] = l;
+  }
+  resolve(p, z, cx, cy, ox, oy, fixed, true);
+  for (i = 0; i < n; i++) {
+    const struct rediwm_item *a = &before[i], *b = &who[i]->item;
+    if (a->enabled != b->enabled || a->kind != b->kind || memcmp(&a->edges, &b->edges, sizeof(a->edges)) ||
+        !rediwm_content_equal(&a->content, &b->content))
+      wlr_log(WLR_ERROR, "gate audit: leaf %llu (kind %d) was stale: enabled %d->%d edges %.1f,%.1f %.1f,%.1f -> %.1f,%.1f %.1f,%.1f",
+              (unsigned long long)who[i]->item.id, b->kind, a->enabled, b->enabled, a->edges.x1, a->edges.y1,
+              a->edges.x2, a->edges.y2, b->edges.x1, b->edges.y1, b->edges.x2, b->edges.y2);
+  }
+  free(before);
+  free(who);
+}
+#endif
 void rediwm_projection_sync_fixed(struct rediwm_projection *p, double z, double cx,
                             double cy, double ox, double oy,
                             struct rediwm_tree *fixed) {
   if (!p)
     return;
-  resolve(p, z, cx, cy, ox, oy, fixed);
-  present(p);
+  const double camera[5] = {z, cx, cy, ox, oy};
+  const bool moved = !p->have_camera || p->fixed != fixed || memcmp(p->camera, camera, sizeof(camera));
+  if (!moved && !p->any_dirty)
+    return;
+  const bool full = moved || p->all_dirty;
+  p->any_dirty = p->all_dirty = false;
+  p->have_camera = true;
+  p->fixed = fixed;
+  memcpy(p->camera, camera, sizeof(camera));
+  resolve(p, z, cx, cy, ox, oy, fixed, full);
+#ifdef REDIWM_DAMAGE_AUDIT
+  // Self-check of the gate: what a full walk would put in the graph must be what the
+  // gated one did. Reports every leaf that differs, then goes on with the full result.
+  if (!full) audit_gate(p, z, cx, cy, ox, oy, fixed);
+#endif
+  present(p, full);
   apply_damage(p);
 }
 void rediwm_projection_sync(struct rediwm_projection *p, double z, double cx,
@@ -1417,8 +1541,15 @@ static void watched_commit(struct wl_listener *listener, void *data) {
   (void)data;
   struct watched_surface *watch = wl_container_of(listener, watch, commit);
   // Covers the first commit of new/desynchronized subsurfaces and popups,
-  // before they have presentation leaves of their own.
-  schedule(watch->projection);
+  // before they have presentation leaves of their own: a surface with a leaf is
+  // told by its leaf; any other may be about to appear anywhere.
+  struct rediwm_projection *p = watch->projection;
+  struct feedback *f;
+  bool known = false;
+  wl_list_for_each(f, &p->feedback, link)
+      if (f->leaf->surface && f->leaf->surface->surface == watch->surface) known = true;
+  if (!known) mark_all(p);
+  schedule(p);
 }
 static void watched_destroy(struct wl_listener *listener, void *data) {
   (void)data;
@@ -1437,6 +1568,7 @@ static void new_surface(struct wl_listener *listener, void *data) {
     return;
   }
   watch->projection = p;
+  watch->surface = surface;
   watch->commit.notify = watched_commit;
   watch->destroy.notify = watched_destroy;
   wl_signal_add(&surface->events.commit, &watch->commit);
@@ -1456,6 +1588,7 @@ void rediwm_projection_destroy(struct rediwm_projection *p) {
   struct group *g, *next_group;
   wl_list_for_each_safe(g, next_group, &p->groups, link) destroy_group(g);
   wl_list_remove(&p->new_surface.link);
+  if (current == p) current = NULL;
   if (p->own->changed_data == p) {
     p->own->changed = NULL;
     p->own->buffer_damaged = NULL;

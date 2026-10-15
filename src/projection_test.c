@@ -164,6 +164,64 @@ static bool probe_item(const struct rediwm_item *item, struct wlr_scene_node *tr
   assert(item->kind == probe->expected.kind && rediwm_content_equal(&item->content, &probe->expected.content));
   return true;
 }
+// A sync with nothing changed resolves nothing; every kind of change brings it back.
+static void test_clean_sync(struct wlr_scene *scene) {
+  struct rig rig = rig_create(scene);
+  struct rediwm_projection *p = rediwm_projection_create(rig.own, rig.world, scene);
+  struct wlr_buffer *buffer = buffer_create();
+  struct rediwm_tree *frame = rediwm_tree_create(rig.world);
+  struct rediwm_buffer *node = rediwm_buffer_create(frame, buffer);
+  rediwm_buffer_set_dest_size(node, 40, 30);
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  struct leaf *l = leaf_of(p, &node->node);
+  assert(l && l->item.edges.x2 - l->item.edges.x1 == 40);
+  // Poke the graph: a clean sync leaves it alone.
+  l->item.edges.x2 = 12345;
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  assert(l->item.edges.x2 == 12345);
+  // The scene changed.
+  rediwm_node_set_position(&frame->node, 5, 5);
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  assert(l->item.edges.x2 == 45);
+  // The camera moved.
+  l->item.edges.x2 = 12345;
+  rediwm_projection_sync(p, 1, 0, 0, 0, 0);
+  assert(l->item.edges.x2 == 12345);
+  rediwm_projection_sync(p, 2, 0, 0, 0, 0);
+  assert(l->item.edges.x2 == 90);
+  // A tree property changed.
+  l->item.edges.x2 = 12345;
+  assert(rediwm_projection_set_tree_scale(&frame->node, .5));
+  rediwm_projection_sync(p, 2, 0, 0, 0, 0);
+  assert(l->item.edges.x2 == 50);
+  // A surface commit, or an owned buffer's damage.
+  l->item.edges.x2 = 12345;
+  rediwm_projection_damage_buffer(p, &node->carrier->node, NULL);
+  rediwm_projection_sync(p, 2, 0, 0, 0, 0);
+  assert(l->item.edges.x2 == 50);
+  // Only the group that changed is walked again; a change to the tree's shape walks all.
+  const float color[4] = {1, 0, 0, 1};
+  struct rediwm_tree *other = rediwm_tree_create(rig.world);
+  struct rediwm_rect *rect = rediwm_rect_create(other, 10, 10, color);
+  rediwm_projection_sync(p, 2, 0, 0, 0, 0);
+  struct leaf *rl = leaf_of(p, &rect->node);
+  assert(rl && rl->item.edges.x2 - rl->item.edges.x1 == 20);
+  rl->item.edges.x2 = 777;
+  l->item.edges.x2 = 12345;
+  rediwm_node_set_position(&frame->node, 7, 7);
+  rediwm_projection_sync(p, 2, 0, 0, 0, 0);
+  assert(l->item.edges.x2 != 12345 && rl->item.edges.x2 == 777);
+  rediwm_node_set_position(&rect->node, 1, 1);
+  rediwm_projection_sync(p, 2, 0, 0, 0, 0);
+  assert(rl->item.edges.x2 != 777);
+  rl->item.edges.x2 = 777;
+  rediwm_node_raise_to_top(&frame->node);
+  rediwm_projection_sync(p, 2, 0, 0, 0, 0);
+  assert(rl->item.edges.x2 != 777);
+  rediwm_projection_destroy(p);
+  rig_destroy(&rig);
+  wlr_buffer_drop(buffer);
+}
 static void test_graph(struct wlr_scene *scene) {
   struct rig rig = rig_create(scene);
   struct rediwm_tree *source = rig.world;
@@ -204,9 +262,11 @@ static void test_graph(struct wlr_scene *scene) {
   struct wlr_surface surface = {0};
   struct wlr_scene_surface scene_surface = {.surface = &surface};
   client_leaf->surface = &scene_surface;
+  mark_all(p); // the test changed a leaf behind the scene's back
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   assert(client_leaf->item.kind == REDIWM_ITEM_SURFACE);
   client_leaf->surface = NULL; // The synthetic surface has no lifecycle listeners.
+  mark_all(p);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   assert(client_leaf->item.kind == REDIWM_ITEM_BUFFER);
 
@@ -218,7 +278,7 @@ static void test_graph(struct wlr_scene *scene) {
   // Resolving alone shows nothing: what the last present showed is kept.
   const struct rediwm_snap shown_before = client_leaf->shown;
   const double z = .85, cx = 6.5, cy = -2.5, ox = -17, oy = 31;
-  resolve(p, z, cx, cy, ox, oy, NULL);
+  resolve(p, z, cx, cy, ox, oy, NULL, true);
   assert(client_leaf->has_shown && client_leaf->shown.x == shown_before.x &&
          client_leaf->shown.y == shown_before.y && client_leaf->shown.width == shown_before.width);
 
@@ -245,17 +305,17 @@ static void test_graph(struct wlr_scene *scene) {
   assert(s.width == lround(e.x2) - lround(e.x1) && s.x == lround(e.x1));
   // Scaled content is filtered bilinearly whatever the client asked for.
   rediwm_buffer_set_filter_mode(client, WLR_SCALE_FILTER_NEAREST);
-  resolve(p, z, cx, cy, ox, oy, NULL);
+  resolve(p, z, cx, cy, ox, oy, NULL, true);
   assert(client_leaf->item.content.filter_mode == WLR_SCALE_FILTER_BILINEAR);
-  resolve(p, 1, 0, 0, 0, 0, NULL);
+  resolve(p, 1, 0, 0, 0, 0, NULL, true);
   assert(rediwm_projection_set_tree_zoom(&frame->node, 1.0));
-  resolve(p, 1, 0, 0, 0, 0, NULL);
+  resolve(p, 1, 0, 0, 0, 0, NULL, true);
   assert(client_leaf->item.content.filter_mode == WLR_SCALE_FILTER_NEAREST);
   assert(rediwm_projection_set_tree_zoom(&frame->node, .85));
   rediwm_buffer_set_filter_mode(client, WLR_SCALE_FILTER_BILINEAR);
 
   // Presenting shows exactly that graph, and only that graph.
-  present(p);
+  present(p, true);
   assert_presented(p);
   {
     const struct rediwm_snap now = rediwm_edges_snap(client_leaf->item.edges);
@@ -487,13 +547,13 @@ static void test_clip_projection(struct wlr_scene *scene) {
   assert(near(want.edges.x1, 37) && near(want.edges.x2, 37 + .85 * 120)); // The origin stays put.
   assert(!overlay_leaf->item.clip); // A sibling window is not clipped.
   // It follows the camera with the window.
-  resolve(p, .5, 12, -8, 3, 4, NULL);
+  resolve(p, .5, 12, -8, 3, 4, NULL, true);
   const struct rediwm_xform moved = rediwm_xform_scale_about(rediwm_xform_camera(.5, 12, -8, 3, 4), .85, 37, 29);
   const struct rediwm_clip want_moved = rediwm_clip_resolve(moved, 37, 29, &spec);
   assert(near(client_leaf->item.clip->edges.x1, want_moved.edges.x1) &&
          near(client_leaf->item.clip->edges.y2, want_moved.edges.y2) &&
          near(client_leaf->item.clip->radii[0], 10 * .85 * .5));
-  resolve(p, 1, 0, 0, 0, 0, NULL);
+  resolve(p, 1, 0, 0, 0, 0, NULL, true);
 
   // A popup lives under its parent's tree but is no part of the window's shape;
   // its siblings, such as subsurfaces, still are. The barrier can be lifted.
@@ -506,28 +566,28 @@ static void test_clip_projection(struct wlr_scene *scene) {
   rediwm_node_set_position(&popup->node, 90, 70); // Hanging outside the 120x80 frame.
   assert(rediwm_projection_set_tree_unclipped(&popup->node, true));
   assert(rediwm_projection_set_tree_unclipped(&popup->node, true)); // Idempotent.
-  resolve(p, 1, 0, 0, 0, 0, NULL);
+  resolve(p, 1, 0, 0, 0, 0, NULL, true);
   struct leaf *popup_leaf = leaf_of(p, &popup_content->node), *sub_leaf = leaf_of(p, &sub_content->node);
   assert(!popup_leaf->item.clip && sub_leaf->item.clip && client_leaf->item.clip);
   assert(rediwm_projection_set_tree_unclipped(&popup->node, false));
   assert(rediwm_projection_set_tree_unclipped(&popup->node, false)); // Nothing to lift is fine.
-  resolve(p, 1, 0, 0, 0, 0, NULL);
+  resolve(p, 1, 0, 0, 0, 0, NULL, true);
   assert(popup_leaf->item.clip);
   assert(rediwm_projection_set_tree_unclipped(&popup->node, true));
   // A barrier does not hide a clip the subtree sets for itself.
   struct rediwm_clip_spec own = {.width = 50, .height = 40, .radii = {3, 3, 3, 3}};
   assert(rediwm_projection_set_tree_clip(&popup->node, &own));
-  resolve(p, 1, 0, 0, 0, 0, NULL);
+  resolve(p, 1, 0, 0, 0, 0, NULL, true);
   assert(popup_leaf->item.clip && near(popup_leaf->item.clip->edges.x2 - popup_leaf->item.clip->edges.x1, .85 * .5 * 50));
   assert(rediwm_projection_set_tree_clip(&popup->node, NULL));
-  resolve(p, 1, 0, 0, 0, 0, NULL);
+  resolve(p, 1, 0, 0, 0, 0, NULL, true);
   assert(!popup_leaf->item.clip);
   assert(rediwm_projection_set_tree_unclipped(&popup->node, false));
 
   // An inner clipped tree shapes its own leaves only.
   struct rediwm_clip_spec inner_spec = {.width = 30, .height = 20, .radii = {4, 4, 4, 4}};
   assert(rediwm_projection_set_tree_clip(&nested->node, &inner_spec));
-  resolve(p, 1, 0, 0, 0, 0, NULL);
+  resolve(p, 1, 0, 0, 0, 0, NULL, true);
   assert(near(client_leaf->item.clip->edges.x2 - client_leaf->item.clip->edges.x1, .85 * .5 * 30));
   assert(near(title_leaf->item.clip->edges.x2 - title_leaf->item.clip->edges.x1, .85 * 120));
   assert(rediwm_projection_set_tree_clip(&nested->node, NULL));
@@ -538,15 +598,15 @@ static void test_clip_projection(struct wlr_scene *scene) {
       {.width = 120, .height = 80, .radii = {1, -1, 1, 1}}, {.width = 120, .height = 80, .radii = {NAN, 1, 1, 1}},
       {.width = 120, .height = 80, .border = INFINITY}};
   for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); ++i) assert(!rediwm_projection_set_tree_clip(&frame->node, &bad[i]));
-  resolve(p, 1, 0, 0, 0, 0, NULL);
+  resolve(p, 1, 0, 0, 0, 0, NULL, true);
   assert(near(client_leaf->item.clip->edges.x2, want.edges.x2));
   spec.width = 200;
   assert(rediwm_projection_set_tree_clip(&frame->node, &spec));
-  resolve(p, 1, 0, 0, 0, 0, NULL);
+  resolve(p, 1, 0, 0, 0, 0, NULL, true);
   assert(near(client_leaf->item.clip->edges.x2, 37 + .85 * 200));
   assert(rediwm_projection_set_tree_clip(&frame->node, NULL));
   assert(rediwm_projection_set_tree_clip(&frame->node, NULL)); // Removing nothing is fine.
-  resolve(p, 1, 0, 0, 0, 0, NULL);
+  resolve(p, 1, 0, 0, 0, 0, NULL, true);
   assert(!client_leaf->item.clip && !border_leaf->item.clip);
 
   // Presenting a clipped graph changes nothing about the view tree yet: the
@@ -1456,6 +1516,7 @@ int main(void) {
   rediwm_projection_destroy(p);
   test_groups(scene, out);
   test_graph(scene);
+  test_clean_sync(scene);
   test_clip_geometry();
   test_clip_opaque();
   test_clip_projection(scene);

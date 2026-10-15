@@ -78,6 +78,7 @@ pub fn arrange(self: *Self) void {
     var usable = full;
     if (output) |out| usable = out.usableBox();
     self.scene.configure(&full, &usable);
+    self.foreign.node.touch();
 }
 fn committed(listener: *wl.Listener(*wlr.Surface), _: *wlr.Surface) void {
     const self: *Self = @fieldParentPtr("commit", listener);

@@ -104,7 +104,9 @@ struct rediwm_scene {
   // foreign subtrees, so wlroots computes nothing for them.
   struct wlr_scene_tree *host;
   // Something the tree shows may have changed: the owner schedules a frame.
-  void (*changed)(void *data);
+  // `node` is the one that changed (NULL when it is gone); `structural` when nodes
+  // were made, moved, stacked or destroyed, or a layer changed.
+  void (*changed)(void *data, struct rediwm_node *node, bool structural);
   // A buffer node was given a buffer (set_buffer, set_buffer_with_damage): the
   // buffer-local `damage` of what differs, or NULL for all of it. The projection turns
   // this into screen damage, as wlroots did for the nodes it tracked.
@@ -127,7 +129,8 @@ static inline struct rediwm_foreign *rediwm_foreign_from_node(struct rediwm_node
 
 // A scene is its root tree. `host` is where carriers and foreign subtrees live (the
 // caller disables it); `changed` may be NULL.
-struct rediwm_scene *rediwm_scene_create(struct wlr_scene_tree *host, void (*changed)(void *),
+struct rediwm_scene *rediwm_scene_create(struct wlr_scene_tree *host,
+                                         void (*changed)(void *, struct rediwm_node *, bool),
                                          void *data);
 void rediwm_scene_destroy(struct rediwm_scene *);
 
@@ -145,6 +148,9 @@ struct wlr_scene_tree *rediwm_tree_host(const struct rediwm_tree *);
 
 // Destroys the node and everything under it; each node emits events.destroy first.
 void rediwm_node_destroy(struct rediwm_node *);
+// Reports a change the node itself cannot see (something done to the wlr_scene subtree
+// it hosts): asks for a frame.
+void rediwm_node_touch(struct rediwm_node *);
 void rediwm_node_set_enabled(struct rediwm_node *, bool enabled);
 void rediwm_node_set_position(struct rediwm_node *, int x, int y);
 // Restacking: all of these are no-ops where the node already sits.

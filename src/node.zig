@@ -29,6 +29,10 @@ pub const Node = extern struct {
 
     extern fn rediwm_node_destroy(node: *Node) void;
     pub const destroy = rediwm_node_destroy;
+    extern fn rediwm_node_touch(node: *Node) void;
+    /// Reports a change the node cannot see itself (something done to the wlr_scene
+    /// subtree it hosts): asks for a frame and a fresh resolve.
+    pub const touch = rediwm_node_touch;
     extern fn rediwm_node_set_enabled(node: *Node, enabled: bool) void;
     pub const setEnabled = rediwm_node_set_enabled;
     extern fn rediwm_node_set_position(node: *Node, x: c_int, y: c_int) void;
@@ -244,6 +248,7 @@ pub const Foreign = extern struct {
     /// Clips the hosted surface tree, as wlr_scene_subsurface_tree_set_clip.
     pub fn subsurfaceTreeSetClip(foreign: *Foreign, clip: ?*const wlr.Box) void {
         wlr.SceneNode.subsurfaceTreeSetClip(foreign.wlr.?, clip);
+        foreign.node.touch();
     }
 
     pub fn fromNode(node: *Node) *Foreign {
@@ -255,10 +260,11 @@ pub const Foreign = extern struct {
 pub const Scene = extern struct {
     tree: Tree,
     host: *wlr.SceneTree,
-    changed: ?*const fn (data: ?*anyopaque) callconv(.c) void,
+    changed: ?*const fn (data: ?*anyopaque, node: ?*Node, structural: bool) callconv(.c) void,
+    buffer_damaged: ?*const fn (data: ?*anyopaque, buffer: *Buffer, damage: ?*const pixman.Region32) callconv(.c) void,
     changed_data: ?*anyopaque,
 
-    extern fn rediwm_scene_create(host: *wlr.SceneTree, changed: ?*const fn (?*anyopaque) callconv(.c) void, data: ?*anyopaque) ?*Scene;
+    extern fn rediwm_scene_create(host: *wlr.SceneTree, changed: ?*const fn (?*anyopaque, ?*Node, bool) callconv(.c) void, data: ?*anyopaque) ?*Scene;
     /// `host` is a hidden, disabled wlr_scene tree for the carriers and the
     /// clients' subtrees.
     pub fn create(host: *wlr.SceneTree) !*Scene {

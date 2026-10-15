@@ -3132,6 +3132,8 @@ pub fn applyOpacity(toplevel: *Toplevel, now_ms: i64) void {
             buffer.setOpacity(value.*);
         }
     }.iter, &opacity);
+    // The surfaces' opacity is set on wlr_scene nodes, which tell nobody.
+    if (opacity != toplevel.shape_opacity) toplevel.frame_tree.node.touch();
     const color = toplevel.borderColor().scale(opacity);
     for (toplevel.border_rects) |rect| col.setRect(rect, color);
     for (toplevel.frame_fills) |rect| col.setRect(rect, chrome.fillColor().scale(opacity));

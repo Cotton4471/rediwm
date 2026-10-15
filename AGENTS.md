@@ -38,7 +38,12 @@ panel painting. The key rules:
   trees, hosted under the scene's disabled host and placed by an own `Foreign`
   node: their `data` points back at it (`Foreign.of`, `scene_data.fromWlrNode`),
   and positions inside them go through `node.wlrCoords`. Hits come from
-  `Projection.nodeAt` (own node, or `foreign` for a client surface).
+  `Projection.nodeAt` (own node, or `foreign` for a client surface). A sync
+  resolves only the top-level subtrees (groups) whose nodes changed, and nothing
+  when no group and not the camera did: a change the node setters cannot see (done
+  to a hosted wlr_scene subtree) must call `Node.touch`, and a node whose geometry
+  depends on another group's (a glass effect) is walked every sync. The
+  `-Ddamage-audit` build logs any item the gate left stale.
 * **The world has no second tree:** its source tree stays disabled. Pick with
   `rediwm_projection_node_at`, send callbacks through `Server.sendFrameDone`,
   and emit feedback/`output_sample` on source buffers. GLES may release
