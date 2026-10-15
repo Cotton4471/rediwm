@@ -1,4 +1,4 @@
-// Small, disposable warmup after the first successful scene submission.
+// Small, disposable warmup after the first frame and desktop service setup.
 // Icon decoding stays on its worker; font caches stay on the compositor thread.
 const std = @import("std");
 const wl = @import("wayland").server.wl;

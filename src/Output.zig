@@ -83,6 +83,10 @@ wifi_popup: ?*@import("network/popup.zig").Popup = null,
 power_menu: ?*PowerMenu = null,
 color: OutputColor = .{},
 frame_seq: u64 = 0,
+// Match a scene buffer, excluding the backend's initial empty modeset.
+startup_commit_seq: ?u32 = null,
+startup_committing: bool = false,
+startup_presented: bool = false,
 animation_budget: anim.FrameBudget = .{},
 idle_blanked: bool = false,
 /// Turned off by a wlr-output-power-management client (`output_power.zig`):
@@ -111,6 +115,7 @@ committed_cursor: CursorState = .{},
 link: wl.list.Link = undefined,
 
 frame: wl.Listener(*wlr.Output) = .init(handleFrame),
+present: wl.Listener(*wlr.Output.event.Present) = .init(handlePresent),
 request_state: wl.Listener(*wlr.Output.event.RequestState) = .init(handleRequestState),
 workspace_id: u8 = 0,
 destroy: wl.Listener(*wlr.Output) = .init(handleDestroy),
@@ -646,6 +651,7 @@ pub fn create(server: *Server, wlr_output: *wlr.Output) !void {
     // double-free us.
     wlr_output.data = output;
     wlr_output.events.frame.add(&output.frame);
+    wlr_output.events.present.add(&output.present);
     wlr_output.events.request_state.add(&output.request_state);
     wlr_output.events.destroy.add(&output.destroy);
     server.outputs.append(output);
@@ -654,6 +660,7 @@ pub fn create(server: *Server, wlr_output: *wlr.Output) !void {
     // Apply the saved enable policy before publishing the added event so
     // observers see the final logical state in one coherent notification.
     output.applyConfig();
+    server.reveal.outputCreated(output);
 
     if (server.locker != null) output.lock_view.cover(output);
     syncLayout(server);
@@ -1320,6 +1327,7 @@ fn runFrame(output: *Output) void {
         log.err("handleFrame: no scene output for {s}", .{output.wlr_output.name});
         return;
     };
+    const reveal_animating = output.server.reveal.tick(output, now_ms);
     const projection_started = stats.nowNs();
     output.server.world.refreshBounds();
     output.server.world.syncPresentation();
@@ -1358,7 +1366,14 @@ fn runFrame(output: *Output) void {
         if (should_commit) {
             if (output.server.capture_mgr) |cm| cm.guardScreencopy(output.wlr_output);
             if (output.server.buildOutputState(scene_output, &state)) {
+                if (@import("startup.zig").marks.first_visible_ns == 0) {
+                    output.startup_commit_seq = output.wlr_output.commit_seq +% 1;
+                    output.startup_presented = false;
+                }
+                output.startup_committing = true;
                 committed = output.commitFrameState(&state);
+                output.startup_committing = false;
+                if (!committed) output.startup_commit_seq = null;
             } else {
                 committed = false;
             }
@@ -1380,7 +1395,8 @@ fn runFrame(output: *Output) void {
             stats.recordPresentedFrame(commit_duration, output.wlr_output.refresh);
             @import("startup.zig").notePresented(@intCast(output.server.outputs.length()), output.server.maxOutputScale());
             output.server.session_startup.onPresented();
-            output.server.startup_warmup.schedule(output.server);
+            // Headless backends can acknowledge synchronously inside commit.
+            if (output.startup_presented) output.startupVisible();
         }
         if (!deferred) {
             var now = timestamp();
@@ -1403,7 +1419,7 @@ fn runFrame(output: *Output) void {
     // Keep repainting every refresh interval until the last hover/press/FLIP
     // animation settles; otherwise chrome and the bar only redraw when a
     // client does.
-    const keep_going = mini_map_animating or switcher_animating or osd_animating or dock_animating or bar_animating or chrome_animating or cc_animating or sm_animating or pm_animating or taskbar_popup_animating or notif_animating or desktop_animating or lock_animating or polkit_animating;
+    const keep_going = mini_map_animating or switcher_animating or osd_animating or dock_animating or bar_animating or chrome_animating or cc_animating or sm_animating or pm_animating or taskbar_popup_animating or notif_animating or desktop_animating or lock_animating or polkit_animating or reveal_animating;
     // A pinned clock is advanced explicitly by IPC, which schedules its own
     // frame. Global window/taskbar springs must not spin between those steps.
     if (keep_going and !anim.clockOverridden()) {
@@ -1462,6 +1478,21 @@ fn handleRequestState(
     output.color.key = null;
     output.server.night_light.retargetOutput(output);
     if (output.server.idle) |im| im.recheckInhibitors();
+}
+
+fn handlePresent(listener: *wl.Listener(*wlr.Output.event.Present), event: *wlr.Output.event.Present) void {
+    const output: *Output = @fieldParentPtr("present", listener);
+    if (@import("startup.zig").marks.first_visible_ns != 0 or !event.presented) return;
+    if (output.startup_commit_seq == null or event.commit_seq != output.startup_commit_seq.?) return;
+    output.startup_presented = true;
+    if (!output.startup_committing) output.startupVisible();
+}
+
+fn startupVisible(output: *Output) void {
+    if (@import("startup.zig").marks.first_visible_ns != 0) return;
+    @import("startup.zig").noteVisible();
+    output.server.startup_tasks.onVisible();
+    output.server.reveal.onVisible();
 }
 
 fn handleDestroy(listener: *wl.Listener(*wlr.Output), _: *wlr.Output) void {
@@ -1541,6 +1572,7 @@ fn handleDestroy(listener: *wl.Listener(*wlr.Output), _: *wlr.Output) void {
     if (output.vblank_timer) |timer| timer.remove();
     output.link.remove();
     output.frame.link.remove();
+    output.present.link.remove();
     output.request_state.link.remove();
     output.destroy.link.remove();
 

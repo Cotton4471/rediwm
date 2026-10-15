@@ -50,8 +50,9 @@ fn onReady(owner: *anyopaque, result: activation.Readiness.Failure!void) void {
     self.schedule();
 }
 
-fn schedule(self: *Startup) void {
+pub fn schedule(self: *Startup) void {
     const server = self.server orelse return;
+    if (!server.startup_tasks.complete) return;
     if (!self.acknowledged or self.launched or self.timer != null or server.greeter_mode or server.shutting_down) return;
     // A session with no outputs must still be able to launch its clients.
     if (!self.presented and server.outputs.length() != 0) return;

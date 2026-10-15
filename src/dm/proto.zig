@@ -110,6 +110,7 @@ pub const Start = struct {
     exec: []const u8,
     desktop: []const u8,
     desktops: []const u8,
+    login_started_ns: u64 = 0,
 };
 
 /// At most `max` bytes of `text`, cut on a UTF-8 boundary, with invalid
@@ -137,14 +138,15 @@ test "dm frames round-trip and refuse oversized payloads" {
     defer _ = linux.close(fds[0]);
     defer _ = linux.close(fds[1]);
     try writeFrameParts(fds[0], &.{ &.{answer_tag}, "p\"w\\\x08" });
-    var buf: [64]u8 = undefined;
+    var buf: [256]u8 = undefined;
     try std.testing.expectEqualStrings("Ap\"w\\\x08", try readFrame(fds[1], &buf));
     var json_buf: [256]u8 = undefined;
-    try writeJson(fds[0], &json_buf, Start{ .exec = "sh -c \"x\"", .desktop = "a", .desktops = "b" });
+    try writeJson(fds[0], &json_buf, Start{ .exec = "sh -c \"x\"", .desktop = "a", .desktops = "b", .login_started_ns = 123456789 });
     const frame = try readFrame(fds[1], &buf);
     const parsed = try std.json.parseFromSlice(Start, std.testing.allocator, frame, .{});
     defer parsed.deinit();
     try std.testing.expectEqualStrings("sh -c \"x\"", parsed.value.exec);
+    try std.testing.expectEqual(@as(u64, 123456789), parsed.value.login_started_ns);
     try writeFrame(fds[0], "0123456789");
     try std.testing.expectError(error.FrameTooLarge, readFrame(fds[1], buf[0..4]));
 }

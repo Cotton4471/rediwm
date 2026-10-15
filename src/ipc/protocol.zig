@@ -794,6 +794,14 @@ pub const StartupStats = struct {
     catalog_cache_read_duration_ns: u64 = 0,
     catalog_scan_duration_ns: u64 = 0,
     wallpaper_decode_duration_ns: u64 = 0,
+    backend_start_ns: u64 = 0,
+    backend_ready_ns: u64 = 0,
+    input_ready_ns: u64 = 0,
+    first_visible_ns: u64 = 0,
+    services_started_ns: u64 = 0,
+    login_to_compositor_ns: u64 = 0,
+    login_to_visible_ns: u64 = 0,
+    reveal_done_ns: u64 = 0,
 };
 
 pub const InhibitorData = struct {
@@ -3101,7 +3109,7 @@ fn stringifyStartup(st: StartupStats, writer: anytype) !void {
         st.catalog_loading,
         st.catalog_generation,
     });
-    try writer.print("\"renderer_ready_ns\":{d},\"config_ready_ns\":{d},\"catalog_cache_read_ns\":{d},\"catalog_scan_ns\":{d},\"wallpaper_decode_ns\":{d},\"socket_ready_ns\":{d},\"ipc_ready_ns\":{d},\"session_ready_ns\":{d},\"session_clients_started_ns\":{d},\"xwayland_ready_ns\":{d},\"first_presented_ns\":{d},\"first_ipc_ns\":{d},\"first_input_ns\":{d},\"catalog_published_ns\":{d},\"wallpaper_presented_ns\":{d},\"catalog_cache_read_duration_ns\":{d},\"catalog_scan_duration_ns\":{d},\"wallpaper_decode_duration_ns\":{d}}}", .{
+    try writer.print("\"renderer_ready_ns\":{d},\"config_ready_ns\":{d},\"catalog_cache_read_ns\":{d},\"catalog_scan_ns\":{d},\"wallpaper_decode_ns\":{d},\"socket_ready_ns\":{d},\"ipc_ready_ns\":{d},\"session_ready_ns\":{d},\"session_clients_started_ns\":{d},\"xwayland_ready_ns\":{d},\"first_presented_ns\":{d},\"first_ipc_ns\":{d},\"first_input_ns\":{d},\"catalog_published_ns\":{d},\"wallpaper_presented_ns\":{d},\"catalog_cache_read_duration_ns\":{d},\"catalog_scan_duration_ns\":{d},\"wallpaper_decode_duration_ns\":{d},\"backend_start_ns\":{d},\"backend_ready_ns\":{d},\"input_ready_ns\":{d},\"first_visible_ns\":{d},\"services_started_ns\":{d},\"login_to_compositor_ns\":{d},\"login_to_visible_ns\":{d},\"reveal_done_ns\":{d}}}", .{
         st.renderer_ready_ns,
         st.config_ready_ns,
         st.catalog_cache_read_ns,
@@ -3120,6 +3128,14 @@ fn stringifyStartup(st: StartupStats, writer: anytype) !void {
         st.catalog_cache_read_duration_ns,
         st.catalog_scan_duration_ns,
         st.wallpaper_decode_duration_ns,
+        st.backend_start_ns,
+        st.backend_ready_ns,
+        st.input_ready_ns,
+        st.first_visible_ns,
+        st.services_started_ns,
+        st.login_to_compositor_ns,
+        st.login_to_visible_ns,
+        st.reveal_done_ns,
     });
 }
 

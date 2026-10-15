@@ -28,7 +28,7 @@ s = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
 s.sendto(json.dumps({'pid':os.getpid(), 'wayland':os.getenv('WAYLAND_DISPLAY'),
     'ipc':os.getenv('REDIWM_SOCKET'), 'desktop':os.getenv('XDG_CURRENT_DESKTOP'),
     'display':os.getenv('DISPLAY'), 'path':os.getenv('PATH'),
-    'private':[os.getenv(key) for key in ('REDIWM_SESSION_FD','REDIWM_LOGIN_SESSION','REDIWM_SESSION_PRIMARY')]}).encode(), sys.argv[1])
+    'private':[os.getenv(key) for key in ('REDIWM_SESSION_FD','REDIWM_LOGIN_SESSION','REDIWM_SESSION_PRIMARY','REDIWM_LOGIN_STARTED_NS')]}).encode(), sys.argv[1])
 time.sleep(60)
 ''')
         command = f'{sys.executable} {helper} {tmp / "child.sock"}'
@@ -38,6 +38,7 @@ time.sleep(60)
         env = dict(os.environ, XDG_RUNTIME_DIR=directory, WLR_BACKENDS='headless',
                    WLR_RENDERER='gles2', WLR_HEADLESS_OUTPUTS='1', REDIWM_CONFIG=str(config),
                    REDIWM_SESSION_FD=str(child.fileno()), REDIWM_LOGIN_SESSION='must-not-escape',
+                   REDIWM_LOGIN_STARTED_NS=str(time.monotonic_ns()),
                    XDG_CACHE_HOME=str(tmp / 'cache'), DISPLAY=':host',
                    XDG_STATE_HOME=str(tmp / 'state'),
                    PULSE_SERVER='unix:' + str(tmp / 'missing-pulse'),
@@ -73,13 +74,14 @@ time.sleep(60)
                     assert launched['wayland'] == ready['WAYLAND_DISPLAY'], launched
                     assert launched['ipc'] == ready['REDIWM_SOCKET'], launched
                     assert launched['desktop'] == 'rediwm' and launched['display'] is None, launched
-                    assert launched['private'] == [None, None, None], launched
+                    assert launched['private'] == [None, None, None, None], launched
                     assert launched['path'].startswith(str(ROOT / 'zig-out/bin') + ':'), launched
                     handles.append(os.pidfd_open(launched['pid']))
                     assert not select.select([receiver], [], [], .1)[0], 'duplicate helper launch'
                     with IPCClient(ready['REDIWM_SOCKET']) as ipc:
                         after = ipc.get_perf()['startup']
                         assert after['session_clients_started_ns'] >= after['session_ready_ns'] > after['first_presented_ns'], after
+                        assert 0 < after['first_visible_ns'] <= after['services_started_ns'] <= after['session_clients_started_ns'], after
                         ipc.wait_for('wallpaper_presented', timeout_ms=10000)
                         if attempt == 0:
                             try:

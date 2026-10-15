@@ -85,6 +85,7 @@ pub const Daemon = struct {
 
     /// `start` accepted: waiting for the greeter to exit before the session.
     handoff: bool = false,
+    login_started_ns: u64 = 0,
     stopping: bool = false,
 
     pub fn init(config: config_mod.Config, io: std.Io, is_test: bool, confdir: ?[]const u8) Daemon {
@@ -394,6 +395,7 @@ pub const Daemon = struct {
     // ---- hand-off: greeter out, session in -------------------------------
 
     fn beginHandoff(self: *Daemon) void {
+        self.login_started_ns = @as(u64, @intCast(monotonicMs())) * std.time.ns_per_ms;
         // Blank while the greeter still covers the VT, so logind's switch
         // back to text mode shows nothing.
         self.blankVt();
@@ -421,9 +423,18 @@ pub const Daemon = struct {
         };
     }
 
-    fn sendStart(_: *Daemon, worker: Worker, exec: []const u8, desktop: []const u8, desktops: []const u8) !void {
+    fn sendStart(self: *Daemon, worker: Worker, exec: []const u8, desktop: []const u8, desktops: []const u8) !void {
         var buf: [proto.max_frame]u8 = undefined;
-        try proto.writeJson(worker.ctrl, &buf, proto.Start{ .exec = exec, .desktop = desktop, .desktops = desktops });
+        defer self.login_started_ns = 0;
+        try proto.writeJson(worker.ctrl, &buf, proto.Start{
+            .exec = exec,
+            .desktop = desktop,
+            .desktops = desktops,
+            .login_started_ns = if (desktop.len == 0) 0 else if (self.login_started_ns != 0)
+                self.login_started_ns
+            else
+                @as(u64, @intCast(monotonicMs())) * std.time.ns_per_ms,
+        });
     }
 
     // ---- worker reports ------------------------------------------------------

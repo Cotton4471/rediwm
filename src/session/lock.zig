@@ -259,7 +259,8 @@ pub const Lock = struct {
             .started => {
                 self.status = "Starting session…";
                 std.log.info("greeter: rediwm-dm accepted the session; exiting", .{});
-                self.server.terminate();
+                // Out to black, as the session comes in from it.
+                self.server.reveal.cover(self.server, Server.terminate);
             },
             .disconnected => {
                 self.status = "Lost contact with login service. Try again.";
@@ -1311,6 +1312,7 @@ test "greeter signs in through rediwm-dm and exits only once the session starts"
     server.io = std.testing.io;
     server.shutting_down = false;
     server.layout_autosave = null;
+    server.reveal = .{};
     var users = [_]greeter_mod.User{
         .{ .name = "rediwm-test-a", .real = "Test A", .home = "", .uid = 1000 },
         .{ .name = "rediwm-test-b", .real = "", .home = "", .uid = 1001 },
@@ -1441,6 +1443,7 @@ test "greeter reports a lost login service and exits to be replaced" {
     server.wl_server = display;
     server.shutting_down = false;
     server.layout_autosave = null;
+    server.reveal = .{};
     var users = [_]greeter_mod.User{.{ .name = "rediwm-test-a", .real = "", .home = "", .uid = 1000 }};
     var sessions = [_]greeter_mod.Session{.{ .id = "rediwm", .name = "RediWM", .exec = "rediwm-session", .desktops = "rediwm" }};
     const greeter = try std.heap.c_allocator.create(Greeter);

@@ -52,6 +52,10 @@ struct output_state {
     struct wlr_box cursors[4];
     int ncursors;
     struct wl_list caches;
+    // rediwm_scene_output_set_veil: black over the frame (0 to 1), and whether it
+    // changed since the last frame was built, so that change re-blurs no glass.
+    float veil;
+    bool veil_changed;
 };
 struct entry {
     struct rediwm_item item;
@@ -111,9 +115,14 @@ static void output_destroyed(struct wl_listener *listener, void *data) {
     struct output_state *os = wl_container_of(listener, os, destroy);
     output_state_destroy(os);
 }
-static struct output_state *output_state_get(struct rediwm_output_renderer *r, struct wlr_output *output) {
+static struct output_state *output_state_find(struct rediwm_output_renderer *r, struct wlr_output *output) {
     struct output_state *os;
     wl_list_for_each(os, &r->outputs, link) if (os->output == output) return os;
+    return NULL;
+}
+static struct output_state *output_state_get(struct rediwm_output_renderer *r, struct wlr_output *output) {
+    struct output_state *os = output_state_find(r, output);
+    if (os) return os;
     os = calloc(1, sizeof(*os));
     if (!os) return NULL;
     os->renderer = r;
@@ -141,6 +150,16 @@ void rediwm_scene_output_damage_whole(struct wlr_scene_output *out) {
     pixman_region32_union_rect(&out->private.pending_commit_damage,
         &out->private.pending_commit_damage, 0, 0, out->output->width, out->output->height);
     wlr_output_schedule_frame(out->output);
+}
+bool rediwm_scene_output_set_veil(struct rediwm_output_renderer *r, struct wlr_scene_output *out, float alpha) {
+    alpha = alpha < 0 ? 0 : alpha > 1 ? 1 : alpha;
+    struct output_state *os = alpha > 0 ? output_state_get(r, out->output) : output_state_find(r, out->output);
+    if (!os) return alpha == 0;
+    if (os->veil == alpha) return true;
+    os->veil = alpha;
+    os->veil_changed = true;
+    rediwm_scene_output_damage_whole(out);
+    return true;
 }
 // Stage 3 parity deliberately retains the legacy layout snap, then snaps
 // output-scaled edges. Removing that first snap is a geometry change, not a
@@ -521,6 +540,11 @@ static bool decide_effects(struct rediwm_output_renderer *r, struct output_state
         os->cursors[i] = cursors[i];
     }
     os->ncursors = ncursors;
+    // The veil is drawn over every effect, so repainting the output for it changes
+    // nothing a blur reads. While it changes, damage no event explains goes
+    // unnoticed too; a resize or failed frame still re-blurs on its own.
+    if (os->veil_changed)
+        pixman_region32_union_rect(&a.explained, &a.explained, 0, 0, v->width, v->height);
     pixman_region32_t unexplained;
     pixman_region32_init(&unexplained);
     pixman_region32_subtract(&unexplained, &out->private.pending_commit_damage, &a.explained);
@@ -814,7 +838,7 @@ static bool audit_read(struct wlr_renderer *renderer, struct wlr_buffer *buffer,
 }
 static void audit_damage(struct rediwm_output_renderer *r, struct wlr_scene_output *out,
         struct wlr_buffer *real, struct entry *entries, size_t len, const struct output_view *v,
-        const pixman_region32_t *damage) {
+        const pixman_region32_t *damage, float veil) {
     struct wlr_output *output = out->output;
     int slot = -1;
     for (int i = 0; i < 8; i++) {
@@ -842,6 +866,8 @@ static void audit_damage(struct rediwm_output_renderer *r, struct wlr_scene_outp
     // Blurs are kept as the real pass left them: this audits damage, not glass.
     for (size_t i = 0; i < len; i++) entries[i].reblur = false;
     for (size_t i = len; i > 0; i--) render_entry(r, &entries[i - 1], out, pass, v, &whole, false);
+    if (veil > 0) wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options){
+        .box = {0, 0, real->width, real->height}, .color = {0, 0, 0, veil}, .clip = &whole});
     wlr_output_add_software_cursors_to_render_pass(output, pass, &whole);
     bool submitted = wlr_render_pass_submit(pass);
     pixman_region32_fini(&whole);
@@ -940,6 +966,8 @@ bool rediwm_scene_output_build_state(struct rediwm_output_renderer *r,
     pixman_region32_t changed;
     pixman_region32_init(&changed);
     struct output_state *os = r->has_backdrops ? output_state_get(r, output) : NULL;
+    struct output_state *veiled = output_state_find(r, output);
+    const float veil = veiled ? veiled->veil : 0;
     if (os && !decide_effects(r, os, out, &v, &changed)) {
         pixman_region32_fini(&changed);
         pixman_region32_fini(&collector.covered);
@@ -954,7 +982,7 @@ bool rediwm_scene_output_build_state(struct rediwm_output_renderer *r,
     }
     pixman_region32_fini(&changed);
     wlr_output_state_set_damage(state, &out->private.pending_commit_damage);
-    bool scanout = len == 1 && try_scanout(&entries[0], out, state, &v);
+    bool scanout = len == 1 && veil == 0 && try_scanout(&entries[0], out, state, &v);
     if (out->private.prev_scanout != scanout) {
         out->private.prev_scanout = scanout;
         wlr_log(WLR_DEBUG, "Direct scan-out %s", scanout ? "enabled" : "disabled");
@@ -985,13 +1013,15 @@ bool rediwm_scene_output_build_state(struct rediwm_output_renderer *r,
     ok = true;
     for (size_t i = len; i > 0; i--)
         if (!render_entry(r, &entries[i - 1], out, pass, &v, &damage, false)) ok = false;
+    if (veil > 0) wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options){
+        .box = {0, 0, buffer->width, buffer->height}, .color = {0, 0, 0, veil}, .clip = &damage});
     wlr_output_add_software_cursors_to_render_pass(output, pass, &damage);
     bool submitted = wlr_render_pass_submit(pass);
     // Successful reads still need release points when another item failed to
     // import. No sample event is sent for a failed GPU submission.
     if (submitted) for (size_t i = 0; i < len; i++) if (entries[i].sampled) sample(&entries[i], out, false);
 #ifdef REDIWM_DAMAGE_AUDIT
-    if (submitted && ok) audit_damage(r, out, buffer, entries, len, &v, &damage);
+    if (submitted && ok) audit_damage(r, out, buffer, entries, len, &v, &damage, veil);
 #endif
     ok = ok && submitted;
     pixman_region32_fini(&background);
@@ -1007,6 +1037,7 @@ done:
     if (buffer) wlr_buffer_unlock(buffer);
     if (!ok) rediwm_scene_output_damage_whole(out);
     pixman_region32_fini(&collector.covered);
+    if (ok && veiled) veiled->veil_changed = false;
     if (os) {
         // Outside the pass: drop the blurs of effects this output no longer shows;
         // after a failed frame, trust none of them.

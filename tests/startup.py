@@ -8,6 +8,7 @@ import json
 import re
 import socket
 import struct
+import sys
 import tempfile
 import time
 
@@ -50,6 +51,7 @@ def test_responsive_before_publication():
             "REDIWM_CATALOG_SCAN_DELAY_MS": "800",
             "REDIWM_WALLPAPER_DECODE_DELAY_MS": "800",
             "REDIWM_DISABLE_CATALOG_CACHE": "1",
+            "REDIWM_LOGIN_STARTED_NS": str(time.monotonic_ns() - 250_000_000),
         })
         try:
             with IPCClient(socket_path=tmp, timeout=15) as client:
@@ -73,6 +75,12 @@ def test_responsive_before_publication():
                 client.wait_for("catalog_published", timeout_ms=5000)
                 client.wait_for("wallpaper_presented", timeout_ms=5000)
                 published = stats(client)
+                assert 0 < published["backend_start_ns"] <= published["backend_ready_ns"], published
+                assert published["backend_ready_ns"] <= published["input_ready_ns"], published
+                assert 0 < published["first_visible_ns"] <= published["services_started_ns"], published
+                assert published["services_started_ns"] <= published["session_clients_started_ns"], published
+                assert published["login_to_compositor_ns"] >= 250_000_000, published
+                assert published["login_to_visible_ns"] == published["login_to_compositor_ns"] + published["first_visible_ns"], published
                 assert published["catalog_state"] == "published", published
                 assert published["wallpaper_state"] == "presented", published
                 assert published["catalog_entries"] >= 4, published
@@ -285,6 +293,31 @@ def test_stalled_wayland_client_recovers():
             log.close()
 
 
+def test_services_without_outputs():
+    with tempfile.TemporaryDirectory(prefix="rediwm-startup-no-output-") as directory:
+        tmp = Path(directory)
+        helper = tmp / "launched.py"
+        helper.write_text("import socket\ns = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)\n"
+                          f"s.sendto(b'ready', {str(tmp / 'launched.sock')!r})\n")
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as receiver:
+            receiver.bind(str(tmp / 'launched.sock'))
+            receiver.settimeout(5)
+            command = f"{sys.executable} {helper}"
+            process, log = spawn_compositor(tmp, outputs="0", config_content=
+                '[compositor]\nxwayland = false\n[[autostart]]\ncmd = ' + json.dumps(command) + '\n')
+            try:
+                assert receiver.recv(32) == b'ready'
+                with IPCClient(socket_path=tmp) as client:
+                    result = stats(client)
+                    assert result["first_visible_ns"] == 0, result
+                    assert result["first_presented_ns"] == 0, result
+                    assert 0 < result["services_started_ns"] <= result["session_clients_started_ns"], result
+                print("startup: services and autostart complete without an output")
+            finally:
+                stop_process(process)
+                log.close()
+
+
 if __name__ == "__main__":
     test_responsive_before_publication()
     test_cache_then_revalidate()
@@ -292,3 +325,4 @@ if __name__ == "__main__":
     test_early_shutdown_joins_workers()
     test_stalled_audio_does_not_block()
     test_stalled_wayland_client_recovers()
+    test_services_without_outputs()

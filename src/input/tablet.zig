@@ -212,7 +212,7 @@ fn setCursor(listener: *wl.Listener(*wlr.TabletV2TabletTool.event.SetCursor), ev
     const focused = (tool.v2 orelse return).focused_surface orelse return;
     if (event.seat_client.client != focused.resource.getClient()) return;
     input.default_cursor_applied = false;
-    input.cursor.setSurface(event.surface, event.hotspot_x, event.hotspot_y);
+    if (!input.cursor_held) input.cursor.setSurface(event.surface, event.hotspot_x, event.hotspot_y);
     input.cursor_source = if (event.surface != null) .surface else .hidden;
     input.cursor_name = null;
 }

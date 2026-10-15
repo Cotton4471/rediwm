@@ -3,7 +3,8 @@
 // tests (`setNowMs`) and dropped frames are all the same `x(t)`.
 //
 // Models:
-// - `.duration` — today's ease over a fixed ms window (`out_cubic`, `flip_bezier`).
+// - `.duration` — today's ease over a fixed ms window (`out_cubic`, `flip_bezier`,
+//   `in_out_sine`).
 // - `.spring` — damped harmonic oscillator (libadwaita / RBBAnimation closed form).
 //   Parameterised by damping ratio, not raw damping. Velocity is the analytic
 //   derivative so a retarget continues from the current speed.
@@ -18,7 +19,7 @@
 // "should I keep waking up?".
 const std = @import("std");
 
-pub const Ease = enum { out_cubic, flip_bezier };
+pub const Ease = enum { out_cubic, flip_bezier, in_out_sine };
 
 pub const Spring = struct {
     damping_ratio: f32 = 1.0,
@@ -105,6 +106,7 @@ pub const Target = enum {
     camera_zoom,
     camera_reveal,
     camera_desktop,
+    session_reveal,
 
     pub const count = std.meta.tags(Target).len;
 
@@ -167,6 +169,8 @@ pub fn defaultSpec(target: Target) TargetSpec {
         .camera_zoom => .{ .curve = .{ .spring = springs.camera_zoom } },
         .camera_reveal => .{ .curve = .{ .duration = .{ .ms = 320, .ease = .out_cubic } } },
         .camera_desktop => .{ .curve = desktopSwitchCurve(default_desktop_switch_ms) },
+        // Out of black: an even ramp, not one that is almost bright at once.
+        .session_reveal => .{ .curve = .{ .duration = .{ .ms = 420, .ease = .in_out_sine } } },
     };
 }
 
@@ -1077,6 +1081,7 @@ fn sampleDuration(from: f32, to: f32, elapsed_ms: f64, duration_ms: i64, ease: E
     const eased: f32 = switch (ease) {
         .out_cubic => 1 - std.math.pow(f32, 1 - t32, 3),
         .flip_bezier => cubicBezierY(t32, 0.22, 0.9, 0.3, 1),
+        .in_out_sine => 0.5 - 0.5 * @cos(std.math.pi * t32),
     };
     const deriv = easeDeriv(ease, t);
     const vel = (to - from) * deriv * (1000.0 / dur);
@@ -1091,6 +1096,7 @@ fn easeDeriv(ease: Ease, t: f64) f64 {
     return switch (ease) {
         .out_cubic => 3.0 * (1.0 - tt) * (1.0 - tt),
         .flip_bezier => cubicBezierDeriv(tt, 0.22, 0.9, 0.3, 1.0),
+        .in_out_sine => 0.5 * std.math.pi * @sin(std.math.pi * tt),
     };
 }
 

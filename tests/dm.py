@@ -216,6 +216,7 @@ expect("ok")
 send({"type": "start", "session": "rediwm"})
 expect("ok")
 open(TMP + "/greeter-exit-time.txt", "w").write(str(__import__("time").time_ns()))
+open(TMP + "/greeter-exit-monotonic.txt", "w").write(str(__import__("time").monotonic_ns()))
 finish()
 """
     with Fixture("login", body) as f:
@@ -228,6 +229,7 @@ finish()
                           "XDG_SEAT": "seat0", "XDG_VTNR": "1", "XDG_CURRENT_DESKTOP": "RediWM:wlroots", "USER": "alice"}.items():
             assert env.get(key) == want, (key, env.get(key))
         assert "REDIWM_GREETER_FD" not in env, env
+        assert 0 < int(env["REDIWM_LOGIN_STARTED_NS"]) <= int(f.path("greeter-exit-monotonic.txt").read_text()), env
         # The daemon's blocked signals and systemd's ignored SIGPIPE never reach the session.
         signals = dict(line.split(":") for line in f.path("session-signals.txt").read_text().splitlines())
         assert int(signals["SigBlk"], 16) == 0, signals

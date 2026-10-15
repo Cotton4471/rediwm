@@ -169,6 +169,8 @@ scale_override: ?f32 = null,
 icon_theme_cfg: icon_theme.Config = .{ .theme_name = "", .base_dirs = &.{} },
 startup_warmup: @import("startup_warmup.zig") = .{},
 session_startup: @import("session/startup.zig") = .{},
+startup_tasks: @import("startup_tasks.zig") = .{},
+reveal: @import("reveal.zig") = .{},
 /// The compositor-drawn desktop, while `[desktop] enabled`.
 desktop: ?*@import("desktop/embedded.zig").Desktop = null,
 io: std.Io,
@@ -527,52 +529,26 @@ pub fn init(server: *Server, scale: ?f32, icon_theme_cfg: icon_theme.Config, io:
         break :blk null;
     };
 
-    if (!greeter) server.notifications = notifications_mod.Manager.create(server, @import("main.zig").gpa) catch |err| blk: {
-        log.warn("init: could not create notifications manager: {}", .{err});
-        break :blk null;
-    };
-
     server.power = power_mod.Manager.create(server, @import("main.zig").gpa) catch |err| blk: {
         log.warn("init: could not create power manager: {}", .{err});
         break :blk null;
     };
 
-    server.power_profiles = power_profiles_mod.Manager.create(server, @import("main.zig").gpa) catch |err| blk: {
-        log.warn("init: could not create power profiles manager: {}", .{err});
-        break :blk null;
-    };
-
-    if (!greeter) server.network = @import("network/manager.zig").Manager.create(server) catch null;
     if (!greeter and @import("session/app_scope.zig").enabled(environ))
         server.app_scopes = @import("session/app_scope.zig").Scopes.create(@import("main.zig").gpa, server.wl_server.getEventLoop(), environ) catch null;
-
-    server.configurePolkit(server.config.polkit);
 
     if (!greeter) server.services = services_mod.Manager.create(server, @import("main.zig").gpa) catch |err| blk: {
         log.warn("init: could not create services manager: {}", .{err});
         break :blk null;
     };
 
-    if (!greeter) server.layout_autosave = layout_autosave_mod.Autosave.create(server) catch |err| blk: {
-        log.warn("init: could not create layout autosave: {}", .{err});
-        break :blk null;
-    };
-
-    if (!greeter) server.audio = audio_mod.AudioManager.createAsync(@import("main.zig").gpa) catch |err| blk: {
-        log.warn("init: PipeWire/PulseAudio not available, audio control disabled: {}", .{err});
-        break :blk null;
-    };
-    if (server.audio) |mgr| {
-        if (createAudioWakeFd()) |fd| {
-            mgr.setWakeFd(fd);
-            server.audio_wake_source = server.wl_server.getEventLoop().addFd(*Server, fd, .{ .readable = true }, handleAudioWake, server) catch |err| blk: {
-                log.warn("init: could not register audio wake fd: {}", .{err});
-                break :blk null;
-            };
-        } else {
-            log.warn("init: could not create audio wake eventfd; taskbar/UI may lag behind external volume changes", .{});
-        }
-    }
+    // Layout autosave (periodic save and the startup restore) is off for now:
+    // the restore moves windows seconds after login. Every user checks for
+    // null, so re-enabling is uncommenting this.
+    // if (!greeter) server.layout_autosave = layout_autosave_mod.Autosave.create(server) catch |err| blk: {
+    //     log.warn("init: could not create layout autosave: {}", .{err});
+    //     break :blk null;
+    // };
 
     if (battery_mod.openUeventSocket()) |fd| {
         server.battery_uevent_fd = fd;
@@ -843,6 +819,7 @@ fn handleSessionActive(listener: *wl.Listener(void)) void {
     if (session.active) {
         log.info("session became active (VT switch back)", .{});
         server.reactivateSession();
+        server.startup_tasks.onSessionActive();
     } else {
         log.info("session became inactive (VT switch away)", .{});
         server.deactivateSession();
@@ -872,6 +849,51 @@ pub fn getSystemd(server: *Server) !*@import("systemd.zig").Client {
     return client;
 }
 
+/// One optional service per event-loop turn after the first desktop frame.
+/// Power/lock inhibitors and child ownership are initialized synchronously.
+pub fn startDesktopService(server: *Server, step: usize) bool {
+    if (server.greeter_mode) return false;
+    switch (step) {
+        0 => {
+            server.notifications = notifications_mod.Manager.create(server, @import("main.zig").gpa) catch |err| blk: {
+                log.warn("init: could not create notifications manager: {}", .{err});
+                break :blk null;
+            };
+        },
+        1 => {
+            server.configurePolkit(server.config.polkit);
+        },
+        2 => {
+            server.network = @import("network/manager.zig").Manager.create(server) catch null;
+        },
+        3 => {
+            server.power_profiles = power_profiles_mod.Manager.create(server, @import("main.zig").gpa) catch |err| blk: {
+                log.warn("init: could not create power profiles manager: {}", .{err});
+                break :blk null;
+            };
+        },
+        4 => {
+            server.audio = audio_mod.AudioManager.createAsync(@import("main.zig").gpa) catch |err| blk: {
+                log.warn("init: PipeWire/PulseAudio not available, audio control disabled: {}", .{err});
+                break :blk null;
+            };
+            if (server.audio) |mgr| {
+                if (createAudioWakeFd()) |fd| {
+                    mgr.setWakeFd(fd);
+                    server.audio_wake_source = server.wl_server.getEventLoop().addFd(*Server, fd, .{ .readable = true }, handleAudioWake, server) catch |err| blk: {
+                        log.warn("init: could not register audio wake fd: {}", .{err});
+                        break :blk null;
+                    };
+                } else {
+                    log.warn("init: could not create audio wake eventfd; taskbar/UI may lag behind external volume changes", .{});
+                }
+            }
+        },
+        else => return false,
+    }
+    return true;
+}
+
 pub fn deinit(server: *Server) void {
     if (server.theme_job) |job| job.deinit();
     server.theme_job = null;
@@ -882,6 +904,8 @@ pub fn deinit(server: *Server) void {
     // here. In both cases save before tearing down Xwayland or native clients.
     const already_terminating = server.shutting_down;
     server.shutting_down = true;
+    server.startup_tasks.deinit();
+    server.reveal.deinit();
     server.session_startup.deinit();
     if (!already_terminating) {
         if (server.layout_autosave) |as| as.saveNow();
@@ -1677,6 +1701,7 @@ fn handleWallpaperWake(fd: c_int, mask: wl.EventMask, server: *Server) c_int {
     } else return 0;
     // Removing the source from its own callback is safe; the worker is done.
     server.stopWallpaperLoad();
+    server.reveal.onWallpaper();
     if (server.input.open_control_center) |cc| cc.refresh();
     if (server.ipc) |ipc| ipc.wait_mgr.checkAll();
     return 0;

@@ -130,12 +130,14 @@ fn start(init: std.process.Init) !bool {
         };
         log.info("restarted after a crash while locked; the session stays locked", .{});
     }
-    server.backend.start() catch return error.BackendStartFailed;
+    server.reveal.arm(&server);
+    try server.startup_tasks.start(&server);
     try server.session_startup.start(&server);
     if (server.session_startup.failure) |err| return err;
 
     log.info("Running compositor on WAYLAND_DISPLAY={s}", .{socket});
     server.wl_server.run();
+    if (server.startup_tasks.failure) |err| return err;
     if (server.session_startup.failure) |err| return err;
     return server.restart_requested;
 }

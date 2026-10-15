@@ -375,6 +375,27 @@ scale, input rate and compiler backend identical across comparisons.
   native scaling; `--publication-delay-ms 1000` models slow login environment
   publication. `--cold-cache` disables reuse of the app catalogue between runs
   without flushing OS caches. Compare the same renderer, scale and build mode.
+  The `startup` IPC counters distinguish `first_presented_ns` (successful
+  scene submission) from `first_visible_ns` (the backend's presentation
+  acknowledgement for a scene buffer, excluding the initial empty modeset).
+  `backend_start_ns`/`backend_ready_ns` bracket display backend startup;
+  `input_ready_ns` marks completed input enumeration. `services_started_ns`
+  means optional service initialization has been issued, not that every
+  external service has replied. Native unlocked sessions enumerate input
+  after presentation; greeter/lock recovery initialize input immediately.
+  Optional services start one per event-loop turn before autostart. A one-shot
+  250 ms fallback handles missing presentation feedback, and an inactive seat
+  resumes pending input on its activation event. `reveal_done_ns` marks the
+  end of the fade in from black (`reveal.zig`); it stays zero headless, where
+  outputs carry no veil, so judge the fade nested or on a real login.
+  `rediwm-dm` carries the accepted handoff's monotonic timestamp through PAM
+  and the login shell: `login_to_compositor_ns` includes greeter shutdown,
+  PAM session opening, shell profiles and supervisor setup;
+  `login_to_visible_ns` includes those plus the compositor's first presented
+  scene acknowledgement. These are zero without a supplied login timestamp;
+  unlike the other offsets their origin is the accepted login, including
+  across a compositor restart in that login. Physical login/VT timings still
+  need a real greeter login; headless runs do not enumerate native devices.
   `startup.py` also checks startup and shutdown with stalled audio;
   `session_readiness.py` withholds the supervisor's acknowledgement while
   exercising frames, input, IPC and exec restart.

@@ -37,6 +37,15 @@ pub const Marks = struct {
     session_clients_started_ns: u64 = 0,
     xwayland_ready_ns: u64 = 0,
     first_presented_ns: u64 = 0,
+    // Backend presentation acknowledgement, distinct from scene submission.
+    first_visible_ns: u64 = 0,
+    backend_start_ns: u64 = 0,
+    backend_ready_ns: u64 = 0,
+    input_ready_ns: u64 = 0,
+    services_started_ns: u64 = 0,
+    // The fade in from black finished (zero without one, e.g. headless).
+    reveal_done_ns: u64 = 0,
+    login_started_ns: u64 = 0,
     first_ipc_ns: u64 = 0,
     first_input_ns: u64 = 0,
     catalog_published_ns: u64 = 0,
@@ -66,7 +75,12 @@ pub const Marks = struct {
 pub var marks: Marks = .{};
 
 pub fn initOrigin(environ: std.process.Environ) void {
+    marks = .{};
     marks.origin_ns = stats.nowNs();
+    if (environ.getPosix("REDIWM_LOGIN_STARTED_NS")) |value| {
+        const started = std.fmt.parseInt(u64, value, 10) catch 0;
+        if (started <= marks.origin_ns) marks.login_started_ns = started;
+    }
     marks.log_enabled = envEnabled(environ, "REDIWM_STARTUP_TIMING");
     if (marks.log_enabled) {
         log.info("process entry (build_mode={s})", .{marks.build_mode});
@@ -118,6 +132,39 @@ pub fn markIpcReady() void {
 
 pub fn markFirstIpc() void {
     stampFirst(&marks.first_ipc_ns, "first_ipc");
+}
+
+pub fn markBackendStart() void {
+    stampFirst(&marks.backend_start_ns, "backend_start");
+}
+
+pub fn markBackendReady() void {
+    stampFirst(&marks.backend_ready_ns, "backend_ready");
+}
+
+pub fn markInputReady() void {
+    stampFirst(&marks.input_ready_ns, "input_ready");
+}
+
+pub fn markServicesStarted() void {
+    stampFirst(&marks.services_started_ns, "services_started");
+}
+
+pub fn markRevealed() void {
+    stampFirst(&marks.reveal_done_ns, "reveal_done");
+}
+
+pub fn noteVisible() void {
+    if (marks.first_visible_ns != 0) return;
+    stampFirst(&marks.first_visible_ns, "first_visible");
+    if (marks.login_started_ns != 0 and marks.log_enabled) {
+        log.info("login_to_visible {d}ms", .{loginOffset(marks.first_visible_ns) / 1_000_000});
+    }
+}
+
+pub fn loginOffset(abs_ns: u64) u64 {
+    if (marks.login_started_ns == 0 or abs_ns < marks.login_started_ns) return 0;
+    return abs_ns - marks.login_started_ns;
 }
 
 pub fn markSessionReady() void {

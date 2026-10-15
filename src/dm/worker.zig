@@ -108,7 +108,7 @@ pub fn runWorker(ctrl_fd: c_int, greeter_fd: c_int, confdir: ?[]const u8, is_tes
         return 1;
     }
 
-    const env = try sessionEnv(a, pamh, init.user, start.desktops, greeter_fd >= 0);
+    const env = try sessionEnv(a, pamh, init.user, start.desktops, greeter_fd >= 0, start.login_started_ns);
     const fork_rc = linux.fork();
     if (linux.errno(fork_rc) != .SUCCESS) {
         report(ctrl_fd, .session_failed, "fork failed");
@@ -195,10 +195,10 @@ fn account(a: std.mem.Allocator, user_z: [:0]const u8) Account {
 
 /// The child's environment: PAM's (XDG_RUNTIME_DIR, XDG_SESSION_ID...) plus
 /// the account's identity. Keys we set ourselves are never taken from PAM.
-fn sessionEnv(a: std.mem.Allocator, pamh: *pam_handle_t, user: []const u8, desktops: []const u8, greeter: bool) ![:null]?[*:0]const u8 {
+fn sessionEnv(a: std.mem.Allocator, pamh: *pam_handle_t, user: []const u8, desktops: []const u8, greeter: bool, login_started_ns: u64) ![:null]?[*:0]const u8 {
     const user_z = try a.dupeZ(u8, user);
     const acct = account(a, user_z);
-    const owned = [_][]const u8{ "HOME", "USER", "LOGNAME", "SHELL", "XDG_CURRENT_DESKTOP", "REDIWM_GREETER_FD" };
+    const owned = [_][]const u8{ "HOME", "USER", "LOGNAME", "SHELL", "XDG_CURRENT_DESKTOP", "REDIWM_GREETER_FD", "REDIWM_LOGIN_STARTED_NS" };
     var list: std.ArrayList(?[*:0]const u8) = .empty;
     var has_path = false;
     if (rediwm_pam_getenvlist(pamh)) |pam_env| {
@@ -220,6 +220,7 @@ fn sessionEnv(a: std.mem.Allocator, pamh: *pam_handle_t, user: []const u8, deskt
     if (!has_path) try list.append(a, "PATH=" ++ default_path);
     if (desktops.len > 0) try list.append(a, try std.fmt.allocPrintSentinel(a, "XDG_CURRENT_DESKTOP={s}", .{desktops}, 0));
     if (greeter) try list.append(a, "REDIWM_GREETER_FD=3");
+    if (!greeter and login_started_ns != 0) try list.append(a, try std.fmt.allocPrintSentinel(a, "REDIWM_LOGIN_STARTED_NS={d}", .{login_started_ns}, 0));
     return list.toOwnedSliceSentinel(a, null);
 }
 

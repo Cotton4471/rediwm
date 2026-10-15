@@ -18,6 +18,8 @@ pub const Renderer = opaque {
     pub const buildState = rediwm_scene_output_build_state;
     extern fn rediwm_output_begin_pass(renderer: *Renderer, buffer: *wlr.Buffer, options: ?*const wlr.Renderer.BufferPassOptions) ?*wlr.RenderPass;
     pub const beginPass = rediwm_output_begin_pass;
+    extern fn rediwm_scene_output_set_veil(renderer: *Renderer, output: *wlr.SceneOutput, alpha: f32) bool;
+    pub const setVeil = rediwm_scene_output_set_veil;
 };
 extern fn rediwm_scene_output_damage_whole(output: *wlr.SceneOutput) void;
 pub const damageWhole = rediwm_scene_output_damage_whole;

@@ -38,7 +38,7 @@ pub fn apply(map: *Map, spec: Spec) !void {
         try map.put("QT_STYLE_OVERRIDE", "Fusion");
     }
     // Private supervisor authority must never escape to descendant launches.
-    inline for (.{ "REDIWM_SESSION_FD", "REDIWM_LOGIN_SESSION", "REDIWM_SESSION_PRIMARY" }) |key| _ = map.swapRemove(key);
+    inline for (.{ "REDIWM_SESSION_FD", "REDIWM_LOGIN_SESSION", "REDIWM_SESSION_PRIMARY", "REDIWM_LOGIN_STARTED_NS" }) |key| _ = map.swapRemove(key);
     switch (spec.input_method) {
         .none => {},
         inline .fcitx, .ibus => |im| {
@@ -220,9 +220,9 @@ test "input methods configure new children and preserve inherited settings for n
 test "private session authority and stale activation tokens never reach children" {
     var map = Map.init(std.testing.allocator);
     defer map.deinit();
-    inline for (.{ "REDIWM_SESSION_FD", "REDIWM_LOGIN_SESSION", "REDIWM_SESSION_PRIMARY", "XDG_ACTIVATION_TOKEN", "DESKTOP_STARTUP_ID" }) |key| try map.put(key, "inherited");
+    inline for (.{ "REDIWM_SESSION_FD", "REDIWM_LOGIN_SESSION", "REDIWM_SESSION_PRIMARY", "REDIWM_LOGIN_STARTED_NS", "XDG_ACTIVATION_TOKEN", "DESKTOP_STARTUP_ID" }) |key| try map.put(key, "inherited");
     try apply(&map, .{});
-    inline for (.{ "REDIWM_SESSION_FD", "REDIWM_LOGIN_SESSION", "REDIWM_SESSION_PRIMARY", "XDG_ACTIVATION_TOKEN", "DESKTOP_STARTUP_ID" }) |key| try std.testing.expect(map.get(key) == null);
+    inline for (.{ "REDIWM_SESSION_FD", "REDIWM_LOGIN_SESSION", "REDIWM_SESSION_PRIMARY", "REDIWM_LOGIN_STARTED_NS", "XDG_ACTIVATION_TOKEN", "DESKTOP_STARTUP_ID" }) |key| try std.testing.expect(map.get(key) == null);
 }
 
 test "Qt app colors override inherited theming only after explicit opt in" {

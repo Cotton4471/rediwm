@@ -2826,6 +2826,14 @@ fn startupStats() protocol.StartupStats {
         .catalog_cache_read_duration_ns = m.catalog_cache_read_duration_ns,
         .catalog_scan_duration_ns = m.catalog_scan_duration_ns,
         .wallpaper_decode_duration_ns = m.wallpaper_decode_duration_ns,
+        .backend_start_ns = startup.offset(m.backend_start_ns),
+        .backend_ready_ns = startup.offset(m.backend_ready_ns),
+        .input_ready_ns = startup.offset(m.input_ready_ns),
+        .first_visible_ns = startup.offset(m.first_visible_ns),
+        .services_started_ns = startup.offset(m.services_started_ns),
+        .login_to_compositor_ns = startup.loginOffset(m.origin_ns),
+        .login_to_visible_ns = startup.loginOffset(m.first_visible_ns),
+        .reveal_done_ns = startup.offset(m.reveal_done_ns),
     };
 }
 

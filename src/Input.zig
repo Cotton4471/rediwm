@@ -108,6 +108,9 @@ cursor_theme_len: usize = 0,
 cursor_theme_size: u32 = 0,
 cursor_source: enum { default, theme, surface, hidden } = .default,
 cursor_name: ?[*:0]const u8 = "default",
+/// No image until native input is enumerated (`holdCursor`): an arrow that
+/// cannot move yet is not shown. The image state above is still tracked.
+cursor_held: bool = false,
 cursor_serial: CursorSerial = .{},
 keyboards: wl.list.Head(Keyboard, .link) = undefined,
 pointers: wl.list.Head(Pointer, .link) = undefined,
@@ -536,7 +539,7 @@ fn applyCursorThemeImpl(input: *Input, theme: []const u8, size: u32, force: bool
     while (it.next()) |out| mgr.load(out.wlr_output.scale) catch {};
     if (input.server.xwayland) |xwayland| xwayland.applyCursor();
     switch (input.cursor_source) {
-        .theme => if (input.cursor_name) |name| input.cursor.setXcursor(mgr, name),
+        .theme => if (input.cursor_name) |name| input.showXcursor(name),
         .default => {
             input.default_cursor_applied = false;
             input.setDefaultCursor();
@@ -565,12 +568,38 @@ pub fn setDefaultCursor(input: *Input) void {
     input.cursor_source = .default;
     if (busy) {
         // Launch feedback: an app is starting. wlroots animates the spinner.
-        input.cursor.setXcursor(input.cursor_mgr, "progress");
+        input.showXcursor("progress");
         input.cursor_name = "progress";
         return;
     }
-    input.cursor.setXcursor(input.cursor_mgr, "default");
+    input.showXcursor("default");
     input.cursor_name = "default";
+}
+
+fn showXcursor(input: *Input, name: [*:0]const u8) void {
+    if (!input.cursor_held) input.cursor.setXcursor(input.cursor_mgr, name);
+}
+
+/// Startup with native input still pending: no cursor image until
+/// `releaseCursor`.
+pub fn holdCursor(input: *Input) void {
+    input.cursor_held = true;
+    input.cursor.unsetImage();
+}
+
+/// Shows whatever image the held cursor would have had.
+pub fn releaseCursor(input: *Input) void {
+    if (!input.cursor_held) return;
+    input.cursor_held = false;
+    switch (input.cursor_source) {
+        .theme => if (input.cursor_name) |name| input.showXcursor(name),
+        // A client surface image was never applied; the next enter sets it.
+        .default, .surface => {
+            input.default_cursor_applied = false;
+            input.setDefaultCursor();
+        },
+        .hidden => {},
+    }
 }
 
 /// Launch feedback started or ended: swap the arrow for the progress cursor
@@ -587,7 +616,7 @@ fn setShellCursor(input: *Input, over_text: bool) void {
 
 pub fn setNamedCursor(input: *Input, name: [*:0]const u8) void {
     input.default_cursor_applied = false;
-    input.cursor.setXcursor(input.cursor_mgr, name);
+    input.showXcursor(name);
     input.cursor_source = .theme;
     input.cursor_name = name;
 }
@@ -1220,7 +1249,7 @@ fn requestSetCursor(
     const input: *Input = @fieldParentPtr("request_set_cursor", listener);
     if (input.clientMaySetCursor(event.seat_client)) {
         input.default_cursor_applied = false;
-        input.cursor.setSurface(event.surface, event.hotspot_x, event.hotspot_y);
+        if (!input.cursor_held) input.cursor.setSurface(event.surface, event.hotspot_x, event.hotspot_y);
         input.cursor_source = if (event.surface != null) .surface else .hidden;
         input.cursor_name = null;
     }

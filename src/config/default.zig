@@ -207,6 +207,10 @@ pub const source =
     \\# duration_ms = 160
     \\# ease = "out_cubic"
     \\# decay_rate = 0.998
+    \\#
+    \\# [animations.session_reveal]  # the desktop's fade in from black at login
+    \\# duration_ms = 420             # off = true shows it at once
+    \\# ease = "in_out_sine"
     \\
     \\# ───────────────────────────────────────────────
     \\# Authentication

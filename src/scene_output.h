@@ -24,3 +24,9 @@ struct wlr_render_pass *rediwm_output_begin_pass(struct rediwm_output_renderer *
 bool rediwm_scene_output_build_state(struct rediwm_output_renderer *,
     struct rediwm_projection *, struct wlr_scene_output *, struct wlr_output_state *);
 void rediwm_scene_output_damage_whole(struct wlr_scene_output *);
+// Black over everything the output pass draws except the software cursor, at this
+// alpha (0 = none, 1 = black), for the session's fade in and the greeter's fade
+// out. A change repaints the whole output but re-blurs no glass: the veil lies
+// above every effect. Direct scan-out waits until it is 0. False only when the
+// state for a nonzero veil could not be allocated.
+bool rediwm_scene_output_set_veil(struct rediwm_output_renderer *, struct wlr_scene_output *, float alpha);
