@@ -240,7 +240,7 @@ fn paintTile(r: *Renderer, t: theme.Theme, box: Rect, item: Item, selected: bool
         .color = if (selected) t.app_item_selected else t.app_item_hover,
         .radius = radius,
         .border_width = if (selected) 2 else 1,
-        .border_color = if (selected) t.accent else if (lifted) t.window_border_hover else .{ 1, 1, 1, 0.16 },
+        .border_color = if (selected) t.accent else if (lifted) t.window_border_hover else t.display_tile_border,
     });
     if (item.primary and box.h > 24) {
         // A menu bar along the top marks the main display.
@@ -282,6 +282,18 @@ fn testItems() [2]Item {
         .{ .x = 0, .y = 0, .width = 1920, .height = 1080, .label = "A" },
         .{ .x = 1920, .y = 0, .width = 1280, .height = 800, .label = "B" },
     };
+}
+
+test "display tile borders follow the theme and keep the selection accent" {
+    var pixels: [40 * 40]u32 = @splat(0);
+    var renderer = Renderer.init(&pixels, 40, 40, 1);
+    const t = theme.Theme{ .display_tile_border = .{ 0, 1, 0, 1 }, .accent = .{ 1, 0, 0, 1 } };
+    const box = Rect{ .x = 4, .y = 4, .w = 32, .h = 32 };
+    const item = Item{ .x = 0, .y = 0, .width = 32, .height = 32, .label = "" };
+    paintTile(&renderer, t, box, item, false, false);
+    try std.testing.expectEqual(@as(u32, 0xff00ff00), pixels[20 * 40 + 4]);
+    paintTile(&renderer, t, box, item, true, false);
+    try std.testing.expectEqual(@as(u32, 0xffff0000), pixels[20 * 40 + 4]);
 }
 
 test "snap keeps a dragged screen against its neighbour without overlap" {

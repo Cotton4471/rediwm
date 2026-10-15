@@ -148,6 +148,20 @@ def run(scale):
                 choose('WH-1000XM5')
                 wait_label('Audio (A2DP) · High quality audio')
                 assert find('bluetooth_battery')['role']=='battery'
+                # The connected indicator follows TOML across a live reload.
+                config_path = tmp / 'rediwm-config.toml'
+                original_config = config_path.read_text()
+                for color in ('#12df47', '#df127a'):
+                    config_path.write_text(original_config + '\n[theme]\nstatus_connected = "' + color + '"\nsettings_card_radius = 24\n')
+                    ipc.reload_config();ui.wait_settled('control_center')
+                    path = tmp / ('status-color-' + color[1:] + '.png')
+                    ipc.screenshot(str(path))
+                    wanted = tuple(int(color[i:i+2], 16) for i in (1, 3, 5))
+                    with Image.open(path) as image:
+                        colors = image.convert('RGB').getcolors(image.width * image.height)
+                    assert sum(n for n, value in colors if value == wanted) >= 10, color
+                config_path.write_text(original_config)
+                ipc.reload_config();ui.wait_settled('control_center')
                 capture('bluetooth')
                 click('bluetooth_connect');wait_for(lambda:not state()['connected'],'disconnect')
                 click('bluetooth_connect');wait_for(lambda:state()['connected'],'connect')

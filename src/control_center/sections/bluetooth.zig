@@ -63,7 +63,7 @@ fn group(a: A, dir: ui.layout.Direction, items: []const W) !W {
 fn card(a: A, items: []const W) !W {
     var w = try group(a, .column, items);
     const t = panel.palette();
-    w.kind = .{ .rect = .{ .color = t.app_item, .radius = 9, .border_width = 1, .border_color = t.app_item_border } };
+    w.kind = .{ .rect = .{ .color = t.app_item, .radius = t.settings_card_radius, .border_width = 1, .border_color = t.app_item_border } };
     w.padding = ui.layout.Edges.all(14);
     w.gap = 14;
     return w;
@@ -83,8 +83,9 @@ fn glyph(d: *const bt.Device) ui.layout.IconId {
     return .bluetooth;
 }
 fn status(a: A, value: []const u8, connected: bool) !W {
+    const t = panel.palette();
     return group(a, .row, &.{
-        .{ .kind = .{ .rect = .{ .color = if (connected) .{ 0.2, 0.86, 0.45, 1 } else panel.palette().dim, .radius = 4 } }, .width = .{ .fixed = 7 }, .height = .{ .fixed = 7 } }, text(value, 13, true),
+        .{ .kind = .{ .rect = .{ .color = if (connected) t.status_connected else t.dim, .radius = 4 } }, .width = .{ .fixed = 7 }, .height = .{ .fixed = 7 } }, text(value, 13, true),
     });
 }
 fn currentAdapter(s: *Section, m: *bt.Manager) ?*const bt.Adapter {

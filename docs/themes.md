@@ -148,6 +148,16 @@ the content, text and icons keep their own opacity. Its sidebar
 and shell menu hovers stay brown so their ivory text remains readable; app
 content and toolbar hovers use champagne.
 
+Settings' Appearance labels and slider readouts use `app_text_size`, its
+uppercase headings use `app_heading_size`, and explanatory text uses
+`settings_description_size` (default 12). Card titles throughout Settings use
+`settings_title_size` (default 17). `settings_card_radius` also applies to the
+Bluetooth and Users cards. All these values reload with the theme.
+`status_connected` sets Bluetooth's connected indicator (default
+`rgba(51,219.3,114.75,1)`). `display_tile_border` sets the unselected screen
+outline in the display arrangement preview (default `rgba(255,255,255,0.16)`);
+selected screens keep the palette's accent outline.
+
 `dock_bg` and `dock_border` override the taskbar-derived dock colours;
 `dock_radius` is in logical pixels (zero follows the window frame radius);
 Appearance's **Dock corner radius** slider sets it.

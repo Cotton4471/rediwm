@@ -83,7 +83,8 @@ fn label(value: []const u8, size: f32, dim: bool) Widget {
 
 /// A card or group title: larger and bolder than the semibold row labels.
 pub fn sectionTitle(value: []const u8) Widget {
-    return .{ .kind = .{ .text = .{ .content = value, .font_size = 17, .weight = 700, .color = palette().fg } } };
+    const t = palette();
+    return .{ .kind = .{ .text = .{ .content = value, .font_size = t.settings_title_size, .weight = 700, .color = t.fg } } };
 }
 
 /// Stands in for a section whose widget tree could not be allocated; it

@@ -113,6 +113,22 @@ def run(external_theme):
                         return header, chrome
 
                 appearance()
+                # Appearance's labels, descriptions and card titles must use
+                # their theme sizes, including after a live reload.
+                size_labels = ("UI font", "Apps and web pages", "Themes & colours")
+                def text_heights():
+                    return tuple(next(w for w in widgets() if w.get("label") == label)["box"]["height"]
+                                 for label in size_labels)
+                original_theme = theme_path.read_text()
+                original_heights = text_heights()
+                theme_path.write_text(original_theme + '\napp_text_size = 19\nsettings_description_size = 18\nsettings_title_size = 24\n')
+                ipc.reload_config()
+                ipc.wait_for_panel_settled("control_center")
+                assert all(after > before for before, after in zip(original_heights, text_heights())), (original_heights, text_heights())
+                theme_path.write_text(original_theme)
+                ipc.reload_config()
+                ipc.wait_for_panel_settled("control_center")
+                assert text_heights() == original_heights
                 before, settings_chrome = capture_header("before")
                 assert not font_select()["is_disabled"]
                 click(font_select())

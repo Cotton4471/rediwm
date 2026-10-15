@@ -149,6 +149,8 @@ geometry retain their content or structural dimensions.
 | `app_nav_selected` | `"rgba(91,36,46,1)"` |
 | `app_divider` | `"rgba(55,63,72,1)"` |
 | `app_icon` | `"rgba(214,214,214,1)"` |
+| `status_connected` | `"rgba(51,219.3,114.75,1)"` |
+| `display_tile_border` | `"rgba(255,255,255,0.16)"` |
 | `scrollbar_thumb` | `"rgba(89,98,110,1)"` |
 | `scrollbar_thumb_active` | `unset` |
 | `scrollbar_glow` | `1.0` (strength of the thumb's light) |
@@ -313,6 +315,8 @@ Numeric tokens accept 0–4096 unless constrained below. Fractions ending in
 | `settings_radius` | `8` |
 | `settings_sidebar_radius` | `10` |
 | `settings_card_radius` | `9` |
+| `settings_title_size` | `17` |
+| `settings_description_size` | `12` |
 | `checkbox_radius` | `4` |
 | `toggle_radius` | `5` |
 | `toggle_thumb_radius` | `4` |

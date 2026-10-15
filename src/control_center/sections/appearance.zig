@@ -298,22 +298,22 @@ fn indexOfNearest(values: []const f32, v: f32) usize {
 
 fn labelWidget(content: []const u8) Widget {
     const t = panel.palette();
-    return .{ .kind = .{ .text = .{ .content = content, .font_size = 13, .weight = 600, .color = t.fg } } };
+    return .{ .kind = .{ .text = .{ .content = content, .font_size = theme.global.app_text_size, .weight = 600, .color = t.fg } } };
 }
 
 fn valueWidget(content: []const u8) Widget {
     const t = panel.palette();
-    return .{ .kind = .{ .text = .{ .content = content, .font_size = 13, .color = t.dim } } };
+    return .{ .kind = .{ .text = .{ .content = content, .font_size = theme.global.app_text_size, .color = t.dim } } };
 }
 
 /// The readout beside a slider, in a rounded label.
 fn pillWidget(content: []const u8) Widget {
-    return ui_slider.valuePill(content, 13, panel.palette().dim);
+    return ui_slider.valuePill(content, theme.global.app_text_size, panel.palette().dim);
 }
 
 fn sectionLabel(content: []const u8) Widget {
     const t = panel.palette();
-    return .{ .kind = .{ .text = .{ .content = content, .font_size = 12, .weight = 700, .color = t.dim } } };
+    return .{ .kind = .{ .text = .{ .content = content, .font_size = theme.global.app_heading_size, .weight = 700, .color = t.dim } } };
 }
 
 /// Builds one "label ... value / slider" pixel-value row and formats its
@@ -440,8 +440,8 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
     };
     const dark_mode = out.cc.server.config.compositor.dark_mode;
     out.dark_label_children = .{
-        .{ .kind = .{ .text = .{ .content = "Dark mode", .font_size = 13, .weight = 600, .color = pal.fg } } },
-        .{ .kind = .{ .text = .{ .content = "Apps and web pages", .font_size = 12, .color = pal.dim } } },
+        .{ .kind = .{ .text = .{ .content = "Dark mode", .font_size = theme.global.app_text_size, .weight = 600, .color = pal.fg } } },
+        .{ .kind = .{ .text = .{ .content = "Apps and web pages", .font_size = theme.global.settings_description_size, .color = pal.dim } } },
     };
     out.dark_row_children = .{
         // Flex like the other rows' text labels: an auto-width column is only
@@ -452,8 +452,8 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
 
     const splash_on = out.cc.server.config.compositor.placeholder_delay_ms > 0;
     out.splash_label_children = .{
-        .{ .kind = .{ .text = .{ .content = "Show launch splash", .font_size = 13, .weight = 600, .color = pal.fg } } },
-        .{ .kind = .{ .text = .{ .content = "Brief placeholder while apps start", .font_size = 12, .color = pal.dim } } },
+        .{ .kind = .{ .text = .{ .content = "Show launch splash", .font_size = theme.global.app_text_size, .weight = 600, .color = pal.fg } } },
+        .{ .kind = .{ .text = .{ .content = "Brief placeholder while apps start", .font_size = theme.global.settings_description_size, .color = pal.dim } } },
     };
     out.splash_row_children = .{
         .{ .kind = .container, .direction = .column, .gap = 2, .width = .{ .flex = 1 }, .children = &out.splash_label_children },
@@ -462,8 +462,8 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
 
     const dodge_on = out.cc.server.config.compositor.dodge_file_drags;
     out.dodge_label_children = .{
-        .{ .kind = .{ .text = .{ .content = "Move file manager aside", .font_size = 13, .weight = 600, .color = pal.fg } } },
-        .{ .kind = .{ .text = .{ .content = "While dragging a file out of it", .font_size = 12, .color = pal.dim } } },
+        .{ .kind = .{ .text = .{ .content = "Move file manager aside", .font_size = theme.global.app_text_size, .weight = 600, .color = pal.fg } } },
+        .{ .kind = .{ .text = .{ .content = "While dragging a file out of it", .font_size = theme.global.settings_description_size, .color = pal.dim } } },
     };
     out.dodge_row_children = .{
         .{ .kind = .container, .direction = .column, .gap = 2, .width = .{ .flex = 1 }, .children = &out.dodge_label_children },
@@ -471,8 +471,8 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
     };
 
     out.dim_label_children = .{
-        .{ .kind = .{ .text = .{ .content = "Dim inactive windows", .font_size = 13, .weight = 600, .color = pal.fg } } },
-        .{ .kind = .{ .text = .{ .content = "Slightly darken and mute windows that are not focused", .font_size = 12, .color = pal.dim } } },
+        .{ .kind = .{ .text = .{ .content = "Dim inactive windows", .font_size = theme.global.app_text_size, .weight = 600, .color = pal.fg } } },
+        .{ .kind = .{ .text = .{ .content = "Slightly darken and mute windows that are not focused", .font_size = theme.global.settings_description_size, .color = pal.dim } } },
     };
     out.dim_row_children = .{
         .{ .kind = .container, .direction = .column, .gap = 2, .width = .{ .flex = 1 }, .children = &out.dim_label_children },
@@ -481,8 +481,8 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
 
     const anim_enabled = out.cc.server.config.animations.enabled;
     out.anim_enabled_label_children = .{
-        .{ .kind = .{ .text = .{ .content = "Animations", .font_size = 13, .weight = 600, .color = pal.fg } } },
-        .{ .kind = .{ .text = .{ .content = "Window and panel transitions", .font_size = 12, .color = pal.dim } } },
+        .{ .kind = .{ .text = .{ .content = "Animations", .font_size = theme.global.app_text_size, .weight = 600, .color = pal.fg } } },
+        .{ .kind = .{ .text = .{ .content = "Window and panel transitions", .font_size = theme.global.settings_description_size, .color = pal.dim } } },
     };
     out.anim_enabled_row_children = .{
         .{ .kind = .container, .direction = .column, .gap = 2, .width = .{ .flex = 1 }, .children = &out.anim_enabled_label_children },
@@ -513,7 +513,7 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
     out.focus_zoom_children = .{
         labelWidget("Window switching zoom"),
         .{ .name = "focus_zoom", .kind = .{ .segmented = .{ .labels = &focus_zoom_labels, .selected = @intFromEnum(focus_zoom), .owner = out, .on_change = &onFocusZoomChanged } }, .width = .{ .percent = 1 } },
-        .{ .kind = .{ .text = .{ .content = focus_zoom_descriptions[@intFromEnum(focus_zoom)], .font_size = 12, .color = pal.dim } } },
+        .{ .kind = .{ .text = .{ .content = focus_zoom_descriptions[@intFromEnum(focus_zoom)], .font_size = theme.global.settings_description_size, .color = pal.dim } } },
     };
 
     out.drag_feedback_children = .{
@@ -612,8 +612,8 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
     };
 
     out.glow_label_children = .{
-        .{ .kind = .{ .text = .{ .content = "Edge glow", .font_size = 13, .weight = 600, .color = pal.fg } } },
-        .{ .kind = .{ .text = .{ .content = "Light the active window's edge near the pointer", .font_size = 12, .color = pal.dim } } },
+        .{ .kind = .{ .text = .{ .content = "Edge glow", .font_size = theme.global.app_text_size, .weight = 600, .color = pal.fg } } },
+        .{ .kind = .{ .text = .{ .content = "Light the active window's edge near the pointer", .font_size = theme.global.settings_description_size, .color = pal.dim } } },
     };
     out.glow_row_children = .{
         .{ .kind = .container, .direction = .column, .gap = 2, .width = .{ .flex = 1 }, .children = &out.glow_label_children },
@@ -738,7 +738,7 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
     inline for (0..taskbar_items.count) |i| {
         out.item_controls[i] = .{
             .{ .kind = .{ .button = .{ .label = "Drag to move", .icon = .drag_handle, .variant = .ghost, .owner = out, .id = i } }, .width = .{ .fixed = 28 }, .height = .{ .fixed = 28 } },
-            .{ .kind = .{ .text = .{ .content = "", .font_size = 13, .weight = 600, .color = pal.fg } }, .width = .{ .flex = 1 } },
+            .{ .kind = .{ .text = .{ .content = "", .font_size = theme.global.app_text_size, .weight = 600, .color = pal.fg } }, .width = .{ .flex = 1 } },
             .{ .kind = .{ .toggle = .{ .on = false, .owner = out, .on_change = &ItemToggle(i).changed } } },
         };
         out.item_rows[i] = .{ .kind = .{ .rect = itemRowStyle(false) }, .direction = .row, .gap = 8, .@"align" = .center, .padding = .{ .top = 6, .right = 10, .bottom = 6, .left = 6 }, .children = &out.item_controls[i] };
@@ -747,7 +747,7 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
         out.items_placeholder_body[zone] = .{
             .{ .kind = .container, .width = .{ .flex = 1 } },
             // Slack: a fractional raster scale hints wider than the logical measure.
-            .{ .kind = .{ .text = .{ .content = "Drag items here", .font_size = 12, .color = pal.dim } }, .min_width = @import("ui").measure.textNatural("Drag items here", .sans, 400, 12).w + 6 },
+            .{ .kind = .{ .text = .{ .content = "Drag items here", .font_size = theme.global.settings_description_size, .color = pal.dim } }, .min_width = @import("ui").measure.textNatural("Drag items here", .sans, 400, theme.global.settings_description_size).w + 6 },
             .{ .kind = .container, .width = .{ .flex = 1 } },
         };
         out.items_placeholder[zone] = .{.{ .kind = .container, .height = .{ .fixed = item_row_height }, .@"align" = .center, .children = &out.items_placeholder_body[zone] }};
@@ -759,14 +759,14 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
     _ = syncItems(out, out.cc.server.config.compositor.taskbar_items, null);
     out.items_children = .{
         labelWidget("Taskbar sections"),
-        .{ .kind = .{ .text = .{ .content = "Drag an item to reorder it or move it to another section. Switch it off to hide it. Battery appears when available.", .font_size = 12, .color = pal.dim } } },
+        .{ .kind = .{ .text = .{ .content = "Drag an item to reorder it or move it to another section. Switch it off to hide it. Battery appears when available.", .font_size = theme.global.settings_description_size, .color = pal.dim } } },
         .{ .kind = .container, .direction = .column, .gap = 6, .@"align" = .stretch, .children = &out.items_section_children[0] },
         .{ .kind = .container, .direction = .column, .gap = 6, .@"align" = .stretch, .children = &out.items_section_children[1] },
         .{ .kind = .container, .direction = .column, .gap = 6, .@"align" = .stretch, .children = &out.items_section_children[2] },
         .{ .name = "taskbar_capture_notice", .kind = .{ .text = .{ .content = if (out.cc.server.config.compositor.taskbar_items.shown(.capture))
             "Screen capture appears while recording or sharing your screen. Keeping it enabled is recommended."
         else
-            "Warning: Screen capture is hidden. Recording and screen sharing can continue without a visible indicator or Stop sharing button. Hiding it is not recommended.", .font_size = 12, .color = pal.dim } } },
+            "Warning: Screen capture is hidden. Recording and screen sharing can continue without a visible indicator or Stop sharing button. Hiding it is not recommended.", .font_size = theme.global.settings_description_size, .color = pal.dim } } },
     };
     const items_group: Widget = .{ .kind = .container, .direction = .column, .gap = 8, .@"align" = .stretch, .children = &out.items_children };
     out.taskbar_section_children = .{ panel.sectionTitle("Taskbar"), position_row, taskbar_row, edge_gap_row, length_row, radius_row, chip_width_row, chip_gap_row, start_gap_row, start_icon_row, clock_bold_row, clock_italic_row, items_group };
@@ -805,7 +805,7 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
         .height = .{ .fixed = @floatFromInt(logo.size) },
     }};
     out.start_logo_info = .{
-        .{ .name = "start_logo_file", .kind = .{ .text = .{ .content = logo_note, .font_size = 12, .color = pal.dim } } },
+        .{ .name = "start_logo_file", .kind = .{ .text = .{ .content = logo_note, .font_size = theme.global.settings_description_size, .color = pal.dim } } },
         .{ .kind = .container, .direction = .row, .gap = 8, .children = &out.start_logo_buttons },
     };
     out.start_logo_body = .{
@@ -826,7 +826,7 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
     };
     const logo_row: Widget = .{ .kind = .container, .direction = .column, .gap = 8, .children = &out.start_logo_children };
     out.start_size_children = .{
-        .{ .name = "start_menu_size_note", .kind = .{ .text = .{ .content = if (menu_pinned) "Custom size" else "Sized to fit your screen · move a slider to set your own", .font_size = 12, .color = pal.dim } }, .width = .{ .flex = 1 } },
+        .{ .name = "start_menu_size_note", .kind = .{ .text = .{ .content = if (menu_pinned) "Custom size" else "Sized to fit your screen · move a slider to set your own", .font_size = theme.global.settings_description_size, .color = pal.dim } }, .width = .{ .flex = 1 } },
         .{ .name = "start_menu_size_auto", .kind = .{ .button = .{ .label = "Size to screen", .owner = out, .on_click = &onAutoMenuSize, .state = if (menu_pinned) .idle else .disabled } }, .width = .{ .fixed = 124 }, .height = .{ .fixed = 30 } },
     };
     const menu_size_row: Widget = .{ .kind = .container, .direction = .row, .gap = 8, .@"align" = .center, .children = &out.start_size_children };
@@ -965,7 +965,7 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
         card.* = if (group.title == null) out.group_storage[start] else .{ .kind = .container, .direction = .column, .gap = 16, .children = out.group_storage[start..at] };
     }
     out.top_children = .{
-        .{ .kind = .{ .text = .{ .content = "APPEARANCE", .font_size = 12, .weight = 700, .color = pal.dim } } },
+        .{ .kind = .{ .text = .{ .content = "APPEARANCE", .font_size = theme.global.app_heading_size, .weight = 700, .color = pal.dim } } },
         .{ .kind = .container, .direction = .column, .gap = 12, .children = &out.group_cards },
     };
     out.root = .{ .kind = .container, .direction = .column, .gap = 8, .children = &out.top_children };
@@ -1083,14 +1083,14 @@ fn appColorsNote(s: *Section, a: std.mem.Allocator, color: [4]f32) Widget {
     var end: usize = 0;
     while (words.next()) |word| {
         const next = @intFromPtr(word.ptr) - @intFromPtr(s.app_colors_message.ptr) + word.len;
-        const measured = text.measureWidthF(s.app_colors_message[start..next], .manrope, 12, 1) catch 0;
+        const measured = text.measureWidthF(s.app_colors_message[start..next], .manrope, theme.global.settings_description_size, 1) catch 0;
         if (end > start and measured > width) {
-            lines.append(a, .{ .name = std.fmt.allocPrint(a, "app_colors_status_{d}", .{lines.items.len}) catch "app_colors_status_line", .kind = .{ .text = .{ .content = s.app_colors_message[start..end], .font_size = 12, .color = color } } }) catch break;
+            lines.append(a, .{ .name = std.fmt.allocPrint(a, "app_colors_status_{d}", .{lines.items.len}) catch "app_colors_status_line", .kind = .{ .text = .{ .content = s.app_colors_message[start..end], .font_size = theme.global.settings_description_size, .color = color } } }) catch break;
             start = next - word.len;
         }
         end = next;
     }
-    if (end > start) lines.append(a, .{ .name = std.fmt.allocPrint(a, "app_colors_status_{d}", .{lines.items.len}) catch "app_colors_status_line", .kind = .{ .text = .{ .content = s.app_colors_message[start..end], .font_size = 12, .color = color } } }) catch {};
+    if (end > start) lines.append(a, .{ .name = std.fmt.allocPrint(a, "app_colors_status_{d}", .{lines.items.len}) catch "app_colors_status_line", .kind = .{ .text = .{ .content = s.app_colors_message[start..end], .font_size = theme.global.settings_description_size, .color = color } } }) catch {};
     return .{ .name = "app_colors_status", .kind = .container, .direction = .column, .gap = 2, .children = lines.toOwnedSlice(a) catch &.{} };
 }
 
@@ -1258,7 +1258,7 @@ fn buildWallpaper(out: *Section, arena: std.mem.Allocator) void {
     else
         std.fmt.allocPrint(arena, "Add your own images to {s}", .{tildePath(arena, dir)}) catch "Add your own images";
     out.wallpaper_footer_children = .{
-        .{ .kind = .{ .text = .{ .content = hint, .font_size = 12, .color = pal.dim } }, .width = .{ .flex = 1 } },
+        .{ .kind = .{ .text = .{ .content = hint, .font_size = theme.global.settings_description_size, .color = pal.dim } }, .width = .{ .flex = 1 } },
         .{
             .name = "wallpaper_folder",
             .kind = .{ .button = .{ .label = "Choose folder", .owner = out, .on_click = &onChooseWallpaperFolder, .state = if (folder_picker.running()) .disabled else .idle } },
@@ -1276,7 +1276,7 @@ fn buildStrip(out: *Section, arena: std.mem.Allocator, pal: theme.Theme, current
     const n = out.strip_entries.len;
     if (n == 0) {
         const note = arena.alloc(Widget, 1) catch return .{ .kind = .container };
-        note[0] = .{ .kind = .{ .text = .{ .content = "No images in this folder", .font_size = 12, .color = pal.dim } } };
+        note[0] = .{ .kind = .{ .text = .{ .content = "No images in this folder", .font_size = theme.global.settings_description_size, .color = pal.dim } } };
         return .{ .name = "wallpaper_strip_empty", .kind = .container, .direction = .row, .children = note };
     }
     const tiles = arena.alloc(Widget, n) catch return .{ .kind = .container };

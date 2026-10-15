@@ -307,6 +307,13 @@ pub const Theme = struct {
     settings_radius: f32 = 8,
     settings_sidebar_radius: f32 = 10,
     settings_card_radius: f32 = 9,
+    /// Settings section titles and explanatory text; row labels use app_text_size.
+    settings_title_size: f32 = 17,
+    settings_description_size: f32 = 12,
+    /// Bluetooth's connected indicator, independent of the accent palette.
+    status_connected: [4]f32 = .{ 0.2, 0.86, 0.45, 1 },
+    /// Outline of an unselected screen in the display arrangement preview.
+    display_tile_border: [4]f32 = .{ 1, 1, 1, 0.16 },
     checkbox_radius: f32 = 4,
     toggle_radius: f32 = 5,
     toggle_thumb_radius: f32 = 4,
