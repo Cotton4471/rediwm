@@ -1558,13 +1558,20 @@ pub fn ensureGpuTimer(server: *Server) void {
     server.gpu_timer = @import("gpu_timing.zig").Timer.create(server.renderer);
 }
 
+/// Whether a stats request came in recently enough that per-stage frame timing
+/// is worth its clock reads (the same window the GPU timer uses).
+pub fn observingStats(server: *const Server, now_ns: u64) bool {
+    return server.gpu_timer_tried and now_ns -% server.gpu_timer_used_ns < gpu_timer_idle_ns;
+}
+
+const gpu_timer_idle_ns: u64 = 5 * 60 * std.time.ns_per_s;
+
 /// One `perf` query must not leave the timer's per-frame cost (measured
 /// ~0.17 ms at 60 Hz on Iris Xe) running for the rest of the session. After
 /// five minutes without a stats request it stops; the next request restarts it.
 pub fn expireGpuTimer(server: *Server) void {
     const timer = server.gpu_timer orelse return;
-    const idle_ns: u64 = 5 * 60 * std.time.ns_per_s;
-    if (@import("ipc/stats.zig").nowNs() -% server.gpu_timer_used_ns < idle_ns) return;
+    if (@import("ipc/stats.zig").nowNs() -% server.gpu_timer_used_ns < gpu_timer_idle_ns) return;
     timer.destroy();
     server.gpu_timer = null;
     server.gpu_timer_tried = false;

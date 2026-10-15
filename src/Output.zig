@@ -1250,9 +1250,13 @@ fn handleFrame(listener: *wl.Listener(*wlr.Output), _: *wlr.Output) void {
 
 fn runFrame(output: *Output) void {
     const frame_started = stats.nowNs();
-    anim.beginFrame(output.animation_budget.coarse, stats.nowNs);
+    // Stage timing costs a clock read per boundary (and two per animation
+    // sample); only pay it while someone is reading the stats.
+    const observing = output.server.observingStats(frame_started);
+    anim.beginFrame(output.animation_budget.coarse, if (observing) stats.nowNs else null, @intCast(frame_started / std.time.ns_per_ms));
     defer {
-        stats.global_stats.anim_cpu.record(anim.endFrame());
+        const sampling_ns = anim.endFrame();
+        if (observing) stats.global_stats.anim_cpu.record(sampling_ns);
         const elapsed = stats.nowNs() -% frame_started;
         stats.global_stats.cpu_frame.record(elapsed);
         output.animation_budget.record(elapsed, output.wlr_output.refresh);
@@ -1269,14 +1273,14 @@ fn runFrame(output: *Output) void {
     const switcher_animating = output.server.switcher.tick(output, now_ms);
     const osd_animating = output.osd.tick(output, now_ms);
     const dock_animating = output.dock.tick(output, now_ms);
-    const taskbar_started = stats.nowNs();
+    const taskbar_started = if (observing) stats.nowNs() else 0;
     var bar_animating = false;
     if (output.taskbar) |bar| bar_animating = bar.tick(now_ms);
-    stats.global_stats.taskbar_cpu.record(stats.nowNs() -% taskbar_started);
-    const chrome_started = stats.nowNs();
+    if (observing) stats.global_stats.taskbar_cpu.record(stats.nowNs() -% taskbar_started);
+    const chrome_started = if (observing) stats.nowNs() else 0;
     const chrome_animating = output.server.world.tickHover(now_ms);
-    stats.global_stats.chrome_cpu.record(stats.nowNs() -% chrome_started);
-    const panels_started = stats.nowNs();
+    if (observing) stats.global_stats.chrome_cpu.record(stats.nowNs() -% chrome_started);
+    const panels_started = if (observing) stats.nowNs() else 0;
 
     var cc_animating = false;
     if (output.server.input.open_control_center) |cc| {
@@ -1316,7 +1320,7 @@ fn runFrame(output: *Output) void {
 
     const desktop_animating = if (output.server.desktop) |desktop| desktop.frame(output) else false;
 
-    stats.global_stats.panels_cpu.record(stats.nowNs() -% panels_started);
+    if (observing) stats.global_stats.panels_cpu.record(stats.nowNs() -% panels_started);
     if (anim.observeLongestMs() > 0) {
         const longest: u64 = @intCast(anim.observeLongestMs());
         if (longest > stats.global_stats.anim_longest_ms) stats.global_stats.anim_longest_ms = longest;
@@ -1328,10 +1332,10 @@ fn runFrame(output: *Output) void {
         return;
     };
     const reveal_animating = output.server.reveal.tick(output, now_ms);
-    const projection_started = stats.nowNs();
+    const projection_started = if (observing) stats.nowNs() else 0;
     output.server.world.refreshBounds();
     output.server.world.syncPresentation();
-    stats.global_stats.projection_cpu.record(stats.nowNs() -% projection_started);
+    if (observing) stats.global_stats.projection_cpu.record(stats.nowNs() -% projection_started);
     output.server.world.flushCameraEvent();
     const mini_map_animating = output.server.world.mini_map.tick(output, now_ms);
     // GPU timestamps enclose the scene submission, glass included (the output

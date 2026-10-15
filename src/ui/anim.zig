@@ -230,17 +230,23 @@ pub const FrameBudget = struct {
 var raster_step: f32 = 1;
 var sampling_clock: ?*const fn () u64 = null;
 var sampling_ns: u64 = 0;
+var frame_ms: ?i64 = null;
 
 /// Scope these settings to an output frame; event/IPC sampling is unmeasured.
-pub fn beginFrame(coarse: bool, clock: *const fn () u64) void {
+/// `clock` is null unless somebody is reading the sampling cost (two clock
+/// reads per sample otherwise). `now_ms` is the frame's start: `nowMs` returns
+/// it until `endFrame`, so one frame reads the clock once, not once per tick.
+pub fn beginFrame(coarse: bool, clock: ?*const fn () u64, now_ms: i64) void {
     raster_step = if (coarse) 2 else 1;
     sampling_clock = clock;
     sampling_ns = 0;
+    frame_ms = now_ms;
 }
 
 pub fn endFrame() u64 {
     sampling_clock = null;
     raster_step = 1;
+    frame_ms = null;
     return sampling_ns;
 }
 
@@ -282,7 +288,7 @@ test "raster degradation preserves sampling and settlement, and publishes endpoi
     };
     var a = Anim.initDuration(0, 1, 0, 100, .out_cubic);
     const before = a.value(50);
-    beginFrame(true, Clock.read);
+    beginFrame(true, Clock.read, 0);
     defer _ = endFrame();
     try std.testing.expectEqual(@as(f32, 2), rasterPixelQuantum(1));
     try std.testing.expectApproxEqAbs(@as(f32, 2.0 / 1.5), rasterPixelQuantum(1.5), 0.0001);
@@ -306,7 +312,7 @@ test "sampling timer excludes work between samples and outside frames" {
     };
     Clock.ns = 0;
     const a = Anim.initDuration(0, 1, 0, 100, .out_cubic);
-    beginFrame(false, Clock.read);
+    beginFrame(false, Clock.read, 0);
     _ = a.value(20);
     Clock.ns += 1_000_000; // Raster work between samples.
     _ = a.velocity(20);
@@ -737,6 +743,7 @@ pub fn clockOverridden() bool {
 
 pub fn nowMs() i64 {
     if (override_ms) |ms| return ms;
+    if (frame_ms) |ms| return ms;
     var ts: std.posix.timespec = undefined;
     switch (std.posix.errno(std.posix.system.clock_gettime(std.posix.CLOCK.MONOTONIC, &ts))) {
         .SUCCESS => {},
@@ -838,6 +845,7 @@ pub fn captureIfLive(
 
 fn resetGlobals() void {
     override_ms = null;
+    frame_ms = null;
     speed_g = 1.0;
     enabled_g = true;
     reduced_motion_g = false;

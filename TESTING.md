@@ -407,8 +407,12 @@ scale, input rate and compiler backend identical across comparisons.
   `glass_reblurs` counts the blurs it re-took). CPU and GPU overlap; don't
   add them or invert them into FPS.
 - The GPU timer starts on the first stats request and stops after five idle
-  minutes; it costs CPU per frame. For CPU A/B runs, make no stats requests and
-  read process CPU time (per-thread schedstat) instead.
+  minutes; it costs CPU per frame (about 0.9 % of a core with a 60 Hz client).
+  The per-stage wall timers (`taskbar_cpu`, `chrome_cpu`, `panels_cpu`,
+  `projection_cpu`, `anim_cpu`) run in the same window: they stay empty until a
+  stats request or `reset_performance_stats`, so reset first, then measure. For
+  CPU A/B runs, make no stats requests and read process CPU time (per-thread
+  schedstat) or `perf stat -e instructions:u` instead.
 
 ## Still manual
 
