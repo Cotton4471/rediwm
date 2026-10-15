@@ -50,6 +50,9 @@ struct rediwm_node {
     struct wl_signal destroy;
   } events;
   struct wlr_addon_set addons;
+  // The projection's per-node state, found without a walk of `addons` on every sync:
+  // a tree's presentation properties and the group a top-level node is.
+  void *props, *group;
   struct rediwm_scene *scene;
 };
 

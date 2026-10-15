@@ -23,6 +23,8 @@ pub const Node = extern struct {
         destroy: wl.Signal(void),
     },
     addons: wlr.AddonSet,
+    props: ?*anyopaque,
+    group: ?*anyopaque,
     scene: *Scene,
 
     extern fn rediwm_node_destroy(node: *Node) void;

@@ -22,6 +22,7 @@ static void node_init(struct rediwm_node *node, enum rediwm_node_type type, stru
   node->enabled = true;
   node->x = node->y = 0;
   node->data = NULL;
+  node->props = node->group = NULL;
   wl_signal_init(&node->events.destroy);
   wlr_addon_set_init(&node->addons);
   wl_list_init(&node->link);

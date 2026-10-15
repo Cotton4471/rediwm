@@ -3,6 +3,7 @@
 #define WLR_USE_UNSTABLE
 #define WLR_PRIVATE private
 #include "projection.h"
+#include "glass.h"
 #include "node.h"
 #include "scene_graph.h"
 #include "scene_damage.h"
@@ -93,6 +94,8 @@ struct leaf {
   // `foreign` is the own node hosting that subtree.
   struct rediwm_node *own;
   struct rediwm_foreign *foreign;
+  // A glass effect: decided when the leaf is made, as an effect is its own node.
+  bool effect;
   struct wl_listener destroy, commit;
   struct wlr_addon source_lookup;
   struct wlr_scene_surface *surface;
@@ -161,6 +164,8 @@ struct dim {
 };
 struct tree_props {
   struct wlr_addon addon;
+  // Where an own node keeps its properties (`rediwm_node.props`), cleared with them.
+  void **slot;
   bool has_zoom, has_scale, has_clip, unclipped, has_shadow, inert, has_dim;
   double zoom, scale;
   struct dim dim;
@@ -173,44 +178,48 @@ struct tree_props {
 };
 static void destroy_tree_props(struct wlr_addon *addon) {
   struct tree_props *props = wl_container_of(addon, props, addon);
+  if (props->slot) *props->slot = NULL;
   wlr_addon_finish(addon);
   free(props);
 }
 static const struct wlr_addon_interface tree_props_impl = {
     .name = "rediwm tree presentation", .destroy = destroy_tree_props};
-static struct tree_props *tree_props_find(struct wlr_addon_set *set) {
+static struct tree_props *tree_props_find(struct wlr_addon_set *set, void **slot) {
+  if (slot) return *slot;
   struct wlr_addon *addon = wlr_addon_find(set, NULL, &tree_props_impl);
   struct tree_props *props;
   return addon ? (props = wl_container_of(addon, props, addon)) : NULL;
 }
-static struct tree_props *tree_props_get(struct wlr_addon_set *set) {
-  struct tree_props *props = tree_props_find(set);
+static struct tree_props *tree_props_get(struct wlr_addon_set *set, void **slot) {
+  struct tree_props *props = tree_props_find(set, slot);
   if (props) return props;
   props = calloc(1, sizeof(*props));
   if (!props) return NULL;
+  props->slot = slot;
+  if (slot) *slot = props;
   wlr_addon_init(&props->addon, set, NULL, &tree_props_impl);
   return props;
 }
-static bool set_tree_zoom(struct wlr_addon_set *set, double scale) {
-  struct tree_props *props = tree_props_get(set);
+static bool set_tree_zoom(struct wlr_addon_set *set, void **slot, double scale) {
+  struct tree_props *props = tree_props_get(set, slot);
   if (!props) return false;
   props->zoom = scale;
   props->has_zoom = true;
   return true;
 }
-static bool set_tree_scale(struct wlr_addon_set *set, double factor) {
+static bool set_tree_scale(struct wlr_addon_set *set, void **slot, double factor) {
   if (factor <= 0) return false;
-  struct tree_props *props = tree_props_get(set);
+  struct tree_props *props = tree_props_get(set, slot);
   if (!props) return false;
   props->scale = factor;
   props->has_scale = true;
   return true;
 }
 static bool finite_at_least_zero(double value) { return isfinite(value) && value >= 0; }
-static bool set_tree_clip(struct wlr_addon_set *set,
+static bool set_tree_clip(struct wlr_addon_set *set, void **slot,
                                      const struct rediwm_clip_spec *spec) {
   if (!spec) {
-    struct tree_props *props = tree_props_find(set);
+    struct tree_props *props = tree_props_find(set, slot);
     if (props) props->has_clip = false;
     return true;
   }
@@ -222,16 +231,16 @@ static bool set_tree_clip(struct wlr_addon_set *set,
   if (!isfinite(spec->glow_x) || !isfinite(spec->glow_y) || !finite_at_least_zero(spec->glow_radius) ||
       !finite_at_least_zero(spec->glow_depth))
     return false;
-  struct tree_props *props = tree_props_get(set);
+  struct tree_props *props = tree_props_get(set, slot);
   if (!props) return false;
   props->clip = *spec;
   props->has_clip = true;
   return true;
 }
-static bool set_tree_shadow(struct wlr_addon_set *set,
+static bool set_tree_shadow(struct wlr_addon_set *set, void **slot,
                                        const struct rediwm_shadow_spec *spec) {
   if (!spec) {
-    struct tree_props *props = tree_props_find(set);
+    struct tree_props *props = tree_props_find(set, slot);
     if (props) props->has_shadow = false;
     return true;
   }
@@ -240,55 +249,55 @@ static bool set_tree_shadow(struct wlr_addon_set *set,
     return false;
   for (int i = 0; i < 4; i++)
     if (!finite_at_least_zero(spec->radii[i]) || !isfinite(spec->color[i])) return false;
-  struct tree_props *props = tree_props_get(set);
+  struct tree_props *props = tree_props_get(set, slot);
   if (!props) return false;
   props->shadow = *spec;
   props->has_shadow = true;
   return true;
 }
-static bool set_tree_dim(struct wlr_addon_set *set, float brightness, float saturation) {
+static bool set_tree_dim(struct wlr_addon_set *set, void **slot, float brightness, float saturation) {
   if (!isfinite(brightness) || !isfinite(saturation) || brightness < 0 || brightness > 1 ||
       saturation < 0 || saturation > 1)
     return false;
   if (brightness == 0 && saturation == 0) {
     // Nothing taken away is no dim; a tree that has none gets no addon for it.
-    struct tree_props *props = tree_props_find(set);
+    struct tree_props *props = tree_props_find(set, slot);
     if (props) props->has_dim = false;
     return true;
   }
-  struct tree_props *props = tree_props_get(set);
+  struct tree_props *props = tree_props_get(set, slot);
   if (!props) return false;
   props->dim = (struct dim){brightness, saturation};
   props->has_dim = true;
   return true;
 }
-static bool set_tree_unclipped(struct wlr_addon_set *set, bool unclipped) {
-  struct tree_props *props = unclipped ? tree_props_get(set) : tree_props_find(set);
+static bool set_tree_unclipped(struct wlr_addon_set *set, void **slot, bool unclipped) {
+  struct tree_props *props = unclipped ? tree_props_get(set, slot) : tree_props_find(set, slot);
   if (unclipped && !props) return false;
   if (props) props->unclipped = unclipped;
   return true;
 }
-static bool set_tree_inert(struct wlr_addon_set *set, bool inert) {
-  struct tree_props *props = inert ? tree_props_get(set) : tree_props_find(set);
+static bool set_tree_inert(struct wlr_addon_set *set, void **slot, bool inert) {
+  struct tree_props *props = inert ? tree_props_get(set, slot) : tree_props_find(set, slot);
   if (inert && !props) return false;
   if (props) props->inert = inert;
   return true;
 }
 
-bool rediwm_projection_set_tree_zoom(struct rediwm_node *node, double scale) { return set_tree_zoom(&node->addons, scale); }
-bool rediwm_projection_set_wlr_tree_zoom(struct wlr_scene_node *node, double scale) { return set_tree_zoom(&node->addons, scale); }
-bool rediwm_projection_set_tree_scale(struct rediwm_node *node, double factor) { return set_tree_scale(&node->addons, factor); }
-bool rediwm_projection_set_wlr_tree_scale(struct wlr_scene_node *node, double factor) { return set_tree_scale(&node->addons, factor); }
-bool rediwm_projection_set_tree_clip(struct rediwm_node *node, const struct rediwm_clip_spec *spec) { return set_tree_clip(&node->addons, spec); }
-bool rediwm_projection_set_wlr_tree_clip(struct wlr_scene_node *node, const struct rediwm_clip_spec *spec) { return set_tree_clip(&node->addons, spec); }
-bool rediwm_projection_set_tree_shadow(struct rediwm_node *node, const struct rediwm_shadow_spec *spec) { return set_tree_shadow(&node->addons, spec); }
-bool rediwm_projection_set_wlr_tree_shadow(struct wlr_scene_node *node, const struct rediwm_shadow_spec *spec) { return set_tree_shadow(&node->addons, spec); }
-bool rediwm_projection_set_tree_dim(struct rediwm_node *node, float brightness, float saturation) { return set_tree_dim(&node->addons, brightness, saturation); }
-bool rediwm_projection_set_wlr_tree_dim(struct wlr_scene_node *node, float brightness, float saturation) { return set_tree_dim(&node->addons, brightness, saturation); }
-bool rediwm_projection_set_tree_unclipped(struct rediwm_node *node, bool unclipped) { return set_tree_unclipped(&node->addons, unclipped); }
-bool rediwm_projection_set_wlr_tree_unclipped(struct wlr_scene_node *node, bool unclipped) { return set_tree_unclipped(&node->addons, unclipped); }
-bool rediwm_projection_set_tree_inert(struct rediwm_node *node, bool inert) { return set_tree_inert(&node->addons, inert); }
-bool rediwm_projection_set_wlr_tree_inert(struct wlr_scene_node *node, bool inert) { return set_tree_inert(&node->addons, inert); }
+bool rediwm_projection_set_tree_zoom(struct rediwm_node *node, double scale) { return set_tree_zoom(&node->addons, &node->props, scale); }
+bool rediwm_projection_set_wlr_tree_zoom(struct wlr_scene_node *node, double scale) { return set_tree_zoom(&node->addons, NULL, scale); }
+bool rediwm_projection_set_tree_scale(struct rediwm_node *node, double factor) { return set_tree_scale(&node->addons, &node->props, factor); }
+bool rediwm_projection_set_wlr_tree_scale(struct wlr_scene_node *node, double factor) { return set_tree_scale(&node->addons, NULL, factor); }
+bool rediwm_projection_set_tree_clip(struct rediwm_node *node, const struct rediwm_clip_spec *spec) { return set_tree_clip(&node->addons, &node->props, spec); }
+bool rediwm_projection_set_wlr_tree_clip(struct wlr_scene_node *node, const struct rediwm_clip_spec *spec) { return set_tree_clip(&node->addons, NULL, spec); }
+bool rediwm_projection_set_tree_shadow(struct rediwm_node *node, const struct rediwm_shadow_spec *spec) { return set_tree_shadow(&node->addons, &node->props, spec); }
+bool rediwm_projection_set_wlr_tree_shadow(struct wlr_scene_node *node, const struct rediwm_shadow_spec *spec) { return set_tree_shadow(&node->addons, NULL, spec); }
+bool rediwm_projection_set_tree_dim(struct rediwm_node *node, float brightness, float saturation) { return set_tree_dim(&node->addons, &node->props, brightness, saturation); }
+bool rediwm_projection_set_wlr_tree_dim(struct wlr_scene_node *node, float brightness, float saturation) { return set_tree_dim(&node->addons, NULL, brightness, saturation); }
+bool rediwm_projection_set_tree_unclipped(struct rediwm_node *node, bool unclipped) { return set_tree_unclipped(&node->addons, &node->props, unclipped); }
+bool rediwm_projection_set_wlr_tree_unclipped(struct wlr_scene_node *node, bool unclipped) { return set_tree_unclipped(&node->addons, NULL, unclipped); }
+bool rediwm_projection_set_tree_inert(struct rediwm_node *node, bool inert) { return set_tree_inert(&node->addons, &node->props, inert); }
+bool rediwm_projection_set_wlr_tree_inert(struct wlr_scene_node *node, bool inert) { return set_tree_inert(&node->addons, NULL, inert); }
 static const struct wlr_addon_interface source_lookup_impl, group_source_impl;
 struct watched_surface {
   struct rediwm_projection *projection;
@@ -318,6 +327,7 @@ static void destroy_group(struct group *g) {
   wl_list_remove(&g->paint);
   wl_list_remove(&g->destroy.link);
   wl_list_remove(&g->link);
+  if (g->source->group == g) g->source->group = NULL;
   wlr_addon_finish(&g->source_lookup);
   free(g);
 }
@@ -335,10 +345,9 @@ static const struct wlr_addon_interface group_source_impl = {
     .name = "rediwm projection group source", .destroy = group_source_addon_destroy};
 static struct group *get_group(struct rediwm_projection *p,
                                struct rediwm_node *source) {
-  struct wlr_addon *addon = wlr_addon_find(&source->addons, p, &group_source_impl);
-  struct group *g;
-  if (addon)
-    return wl_container_of(addon, g, source_lookup);
+  struct group *g = source->group;
+  if (g)
+    return g;
   g = calloc(1, sizeof(*g));
   if (!g)
     return NULL;
@@ -348,6 +357,7 @@ static struct group *get_group(struct rediwm_projection *p,
   wl_list_init(&g->items);
   wl_list_insert(&p->groups, &g->link);
   wlr_addon_init(&g->source_lookup, &source->addons, p, &group_source_impl);
+  source->group = g;
   g->destroy.notify = group_source_destroy;
   wl_signal_add(&source->events.destroy, &g->destroy);
   return g;
@@ -438,6 +448,7 @@ static void destroy_leaf(struct leaf *l) {
   wl_list_remove(&l->destroy.link);
   wl_list_remove(&l->link);
   wl_list_remove(&l->paint);
+  if (l->own && l->source->data == l) l->source->data = NULL;
   wlr_addon_finish(&l->source_lookup);
   pixman_region32_fini(&l->damage);
   pixman_region32_fini(&l->visible);
@@ -486,9 +497,11 @@ static void committed(struct wl_listener *listener, void *data) {
 }
 static struct leaf *get_leaf(struct rediwm_projection *p, struct wlr_scene_node *source,
                              struct rediwm_node *own, struct rediwm_foreign *foreign) {
-  struct wlr_addon *addon =
-      wlr_addon_find(&source->addons, p, &source_lookup_impl);
   struct leaf *l;
+  // An own node's leaf is kept on its carrier; the rest are found by addon.
+  if (own && source->data)
+    return source->data;
+  struct wlr_addon *addon = own ? NULL : wlr_addon_find(&source->addons, p, &source_lookup_impl);
   if (addon)
     return wl_container_of(addon, l, source_lookup);
   l = calloc(1, sizeof(*l));
@@ -507,6 +520,8 @@ static struct leaf *get_leaf(struct rediwm_projection *p, struct wlr_scene_node 
   wl_list_init(&l->paint);
   wl_list_insert(&p->leaves, &l->link);
   wlr_addon_init(&l->source_lookup, &source->addons, p, &source_lookup_impl);
+  if (own) source->data = l;
+  l->effect = source->type == WLR_SCENE_NODE_BUFFER && rediwm_glass_is_effect_node(source);
   l->destroy.notify = source_destroy;
   wl_signal_add(&source->events.destroy, &l->destroy);
   if (source->type == WLR_SCENE_NODE_BUFFER) {
@@ -526,7 +541,6 @@ static struct leaf *get_leaf(struct rediwm_projection *p, struct wlr_scene_node 
   }
   return l;
 }
-#include "glass.h"
 // A glass effect covers its target exactly: the box is the target's (same
 // parent), and it is shown only with it. The pass draws the blur (stage 5c).
 static void effect_geometry(const struct rediwm_node *own, const struct rediwm_glass_info *info,
@@ -687,7 +701,7 @@ static void resolve_leaf(struct rediwm_projection *p, struct group *g, struct wl
     memcpy(item->content.color, r->color, sizeof(item->content.color));
   } else {
     struct wlr_scene_buffer *b = wlr_scene_buffer_from_node(node);
-    item->kind = rediwm_glass_is_effect_node(node) ? REDIWM_ITEM_EFFECT
+    item->kind = l->effect ? REDIWM_ITEM_EFFECT
                  : l->surface                      ? REDIWM_ITEM_SURFACE
                                                    : REDIWM_ITEM_BUFFER;
     item->width = b->dst_width;
@@ -747,7 +761,7 @@ static void resolve_wlr(struct rediwm_projection *p, struct group *g, struct wlr
   w.enabled = enabled;
   struct rediwm_clip here;
   struct rediwm_shadow cast;
-  apply_tree(p, tree_props_find(&node->addons), &w, &here, &cast);
+  apply_tree(p, tree_props_find(&node->addons, NULL), &w, &here, &cast);
   struct wlr_scene_node *child;
   wl_list_for_each(child, &wlr_scene_tree_from_node(node)->children, link)
       resolve_wlr(p, g, child, &w);
@@ -770,7 +784,7 @@ static void resolve_own(struct rediwm_projection *p, struct group *g, struct red
     w.enabled = enabled;
     struct rediwm_clip here;
     struct rediwm_shadow cast;
-    apply_tree(p, tree_props_find(&node->addons), &w, &here, &cast);
+    apply_tree(p, tree_props_find(&node->addons, &node->props), &w, &here, &cast);
     struct rediwm_node *child;
     wl_list_for_each(child, &((struct rediwm_tree *)node)->children, link)
         resolve_own(p, g, child, &w);
