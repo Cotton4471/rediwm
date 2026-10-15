@@ -252,9 +252,9 @@ pub const WindowCaptureSource = struct {
             .off_y = geom.y,
             .shape = self.frameShape(geom.x, geom.y),
         };
-        // The compositor's own buffers (a shell window's), then the clients' surfaces.
+        // Every buffer of the subtree, bottom to top: a shell window's own, then the
+        // clients' surfaces.
         self.content_node.forEachBuffer(*RenderCtx, renderOwnBuffer, &ctx);
-        self.content_node.forEachSurfaceBuffer(*RenderCtx, renderNodeBuffer, &ctx);
 
         const submitted = pass.submit();
         explicit_sync.ReadFence.end(server.read_fence, submitted);
@@ -281,16 +281,14 @@ pub const WindowCaptureSource = struct {
     /// already relies on `setEnabled(false)` to hide nodes from real output
     /// rendering elsewhere (e.g. `screenshot/capture.zig`'s isolation mode).
     fn renderOwnBuffer(buffer: *sn.Buffer, sx: c_int, sy: c_int, ctx: *RenderCtx) void {
-        renderNodeBuffer(buffer.carrier, sx, sy, ctx);
+        renderNodeBuffer(buffer.carrier, if (buffer.surface) |scene_surface| scene_surface.surface else null, sx, sy, ctx);
     }
 
-    fn renderNodeBuffer(scene_buffer: *wlr.SceneBuffer, sx: c_int, sy: c_int, ctx: *RenderCtx) void {
+    fn renderNodeBuffer(scene_buffer: *wlr.SceneBuffer, surface: ?*wlr.Surface, sx: c_int, sy: c_int, ctx: *RenderCtx) void {
         const buf = scene_buffer.buffer orelse return;
         const texture = wlr.Texture.fromBuffer(ctx.renderer, buf) orelse return;
         defer texture.destroy();
-        if (wlr.SceneSurface.tryFromBuffer(scene_buffer)) |scene_surface| {
-            explicit_sync.ReadFence.note(ctx.read_fence, scene_surface.surface);
-        }
+        if (surface) |client| explicit_sync.ReadFence.note(ctx.read_fence, client);
 
         var alpha = scene_buffer.opacity;
         var luminance_multiplier: f32 = 1.0;

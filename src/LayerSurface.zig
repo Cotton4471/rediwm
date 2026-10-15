@@ -1,4 +1,4 @@
-//! Layer-shell scene integration. SceneLayerSurfaceV1 owns mapping and subsurfaces.
+//! Layer-shell scene integration. The scene tree follows the surface and its subsurfaces.
 const std = @import("std");
 const wl = @import("wayland").server.wl;
 const wlr = @import("wlroots");
@@ -10,10 +10,8 @@ const gpa = @import("main.zig").gpa;
 const Self = @This();
 server: *Server,
 layer: *wlr.LayerSurfaceV1,
-scene: *wlr.SceneLayerSurfaceV1,
-/// Places the layer's wlr_scene subtree in our scene; the layer shell positions the
-/// subtree's own root.
-foreign: *sn.Foreign,
+/// The layer's root: placed by `place`, holding the surface and its subsurfaces.
+tree: *sn.Tree,
 identity: SceneData,
 link: wl.list.Link = undefined,
 commit: wl.Listener(*wlr.Surface) = .init(committed),
@@ -29,9 +27,11 @@ pub fn create(server: *Server, layer: *wlr.LayerSurfaceV1) !void {
     layer.output = output;
     const self = try gpa.create(Self);
     errdefer gpa.destroy(self);
-    const created = try server.desktop_tree.createSceneLayerSurfaceV1(layer);
-    self.* = .{ .server = server, .layer = layer, .scene = created.scene, .foreign = created.foreign, .identity = .{ .role = .{ .layer = self } } };
-    self.identity.attach(&self.foreign.node);
+    const tree = try server.desktop_tree.createSceneTree();
+    errdefer tree.node.destroy();
+    _ = try tree.createSceneSubsurfaceTree(layer.surface);
+    self.* = .{ .server = server, .layer = layer, .tree = tree, .identity = .{ .role = .{ .layer = self } } };
+    self.identity.attach(&self.tree.node);
     server.layer_surfaces.prepend(self);
     layer.data = self;
     layer.surface.events.commit.add(&self.commit);
@@ -57,7 +57,7 @@ fn defaultOutput(server: *Server) ?*wlr.Output {
 pub fn localPoint(self: *Self, x: f64, y: f64) @import("geometry.zig").Vec2 {
     var ox: i32 = 0;
     var oy: i32 = 0;
-    _ = sn.wlrCoords(&self.scene.tree.node, &ox, &oy);
+    _ = self.tree.node.coords(&ox, &oy);
     return @import("geometry.zig").toLocal(x, y, ox, oy);
 }
 
@@ -68,7 +68,7 @@ pub fn arrange(self: *Self) void {
         .overlay => self.server.overlay_tree,
         _ => self.server.desktop_tree,
     };
-    self.foreign.node.reparent(parent);
+    self.tree.node.reparent(parent);
     var full: wlr.Box = undefined;
     self.server.output_layout.getBox(self.layer.output, &full);
     const output = Output.fromWlr(self.layer.output.?);
@@ -77,9 +77,68 @@ pub fn arrange(self: *Self) void {
     };
     var usable = full;
     if (output) |out| usable = out.usableBox();
-    self.scene.configure(&full, &usable);
-    self.foreign.node.touch();
+    self.place(&full, &usable);
 }
+/// Places the surface by its anchors and margins in `full` or `usable`, sends the
+/// configure, and takes its exclusive zone out of `usable` (wlr_scene_layer_surface_v1_configure).
+/// The values are the client's: all arithmetic wraps rather than traps.
+fn place(self: *Self, full: *const wlr.Box, usable: *wlr.Box) void {
+    const state = &self.layer.current;
+    // An exclusive zone of -1 takes the whole output, otherwise what is left.
+    const bounds: wlr.Box = if (state.exclusive_zone == -1) full.* else usable.*;
+    const margin = state.margin;
+    const anchor = state.anchor;
+    var box: wlr.Box = .{ .x = 0, .y = 0, .width = @bitCast(state.desired_width), .height = @bitCast(state.desired_height) };
+
+    if (box.width == 0) {
+        box.x = bounds.x +% margin.left;
+        box.width = bounds.width -% (margin.left +% margin.right);
+    } else if (anchor.left and anchor.right) {
+        box.x = bounds.x +% @divTrunc(bounds.width, 2) -% @divTrunc(box.width, 2);
+    } else if (anchor.left) {
+        box.x = bounds.x +% margin.left;
+    } else if (anchor.right) {
+        box.x = bounds.x +% bounds.width -% box.width -% margin.right;
+    } else {
+        box.x = bounds.x +% @divTrunc(bounds.width, 2) -% @divTrunc(box.width, 2);
+    }
+
+    if (box.height == 0) {
+        box.y = bounds.y +% margin.top;
+        box.height = bounds.height -% (margin.top +% margin.bottom);
+    } else if (anchor.top and anchor.bottom) {
+        box.y = bounds.y +% @divTrunc(bounds.height, 2) -% @divTrunc(box.height, 2);
+    } else if (anchor.top) {
+        box.y = bounds.y +% margin.top;
+    } else if (anchor.bottom) {
+        box.y = bounds.y +% bounds.height -% box.height -% margin.bottom;
+    } else {
+        box.y = bounds.y +% @divTrunc(bounds.height, 2) -% @divTrunc(box.height, 2);
+    }
+
+    self.tree.node.setPosition(box.x, box.y);
+    _ = self.layer.configure(@bitCast(box.width), @bitCast(box.height));
+
+    if (self.layer.surface.mapped and state.exclusive_zone > 0) {
+        const zone = state.exclusive_zone;
+        const edge = wlr_layer_surface_v1_get_exclusive_edge(self.layer);
+        if (edge.top) {
+            usable.y +%= zone +% margin.top;
+            usable.height -%= zone +% margin.top;
+        } else if (edge.bottom) {
+            usable.height -%= zone +% margin.bottom;
+        } else if (edge.left) {
+            usable.x +%= zone +% margin.left;
+            usable.width -%= zone +% margin.left;
+        } else if (edge.right) {
+            usable.width -%= zone +% margin.right;
+        }
+        usable.width = @max(usable.width, 0);
+        usable.height = @max(usable.height, 0);
+    }
+}
+extern fn wlr_layer_surface_v1_get_exclusive_edge(surface: *wlr.LayerSurfaceV1) wlr.Edges;
+
 fn committed(listener: *wl.Listener(*wlr.Surface), _: *wlr.Surface) void {
     const self: *Self = @fieldParentPtr("commit", listener);
     if (self.layer.initial_commit or @as(u32, @bitCast(self.layer.current.committed)) != 0) self.arrange();
@@ -98,6 +157,7 @@ fn outputDestroyed(listener: *wl.Listener(*wlr.Output), _: *wlr.Output) void {
 fn destroyed(listener: *wl.Listener(*wlr.LayerSurfaceV1), _: *wlr.LayerSurfaceV1) void {
     const self: *Self = @fieldParentPtr("destroy", listener);
     const server = self.server;
+    self.tree.node.destroy();
     self.commit.link.remove();
     self.destroy.link.remove();
     self.output_destroy.link.remove();

@@ -161,7 +161,7 @@ frame_fills: [3]*sn.Rect,
 // The outline of a window that draws its own decorations.
 border_rects: [4]*sn.Rect,
 content_tree: *sn.Tree,
-/// What the client draws into: the hosted surface tree of an xdg or X11 surface, or a
+/// What the client draws into: the surface tree of an xdg or X11 surface, or a
 /// bare placeholder tree while there is none.
 scene_tree: *sn.Node,
 decoration: ?*Decoration = null,
@@ -447,7 +447,7 @@ pub fn create(server: *Server, xdg_toplevel: *wlr.XdgToplevel) !void {
     };
     server.next_toplevel_id += 1;
     finishCreate(toplevel, nodes, scene_tree);
-    scene_data.setXdgSceneTree(xdg_surface, hosted.tree());
+    scene_data.setXdgSceneTree(xdg_surface, hosted);
     server.shell.kde_decorations.attach(toplevel);
     switch (toplevel.backend) {
         .xdg => |*adapter| adapter.listen(),
@@ -1847,9 +1847,9 @@ fn setSizeClip(toplevel: *Toplevel, clip: ?wlr.Box) void {
     toplevel.last_clip_valid = true;
     if (clip) |box| {
         var copy = box;
-        if (toplevel.scene_tree.foreign()) |hosted| hosted.subsurfaceTreeSetClip(&copy);
+        toplevel.scene_tree.subsurfaceTreeSetClip(&copy);
     } else {
-        if (toplevel.scene_tree.foreign()) |hosted| hosted.subsurfaceTreeSetClip(null);
+        toplevel.scene_tree.subsurfaceTreeSetClip(null);
     }
 }
 
@@ -1860,8 +1860,7 @@ fn applySizeClip(toplevel: *Toplevel) void {
     // here through handleIdentityChanged -> syncChrome) before its X11
     // window is associated with a wl_surface and attachXwaylandScene has run.
     // scene_tree is then still the bare placeholder tree from createXwayland,
-    // with none of the subsurface-tree bookkeeping wlr_scene_subsurface_tree_set_clip
-    // requires — calling it anyway aborts the whole compositor.
+    // with no subsurface tree to clip.
     if (!toplevel.isInitialized()) return;
     if (toplevel.size_w.settle_ms == 0 and toplevel.size_h.settle_ms == 0) {
         toplevel.setSizeClip(null);
@@ -1944,8 +1943,8 @@ const CloseSnapshot = struct {
     ok: bool = true,
 };
 
-fn copyCloseBuffer(buffer: *wlr.SceneBuffer, sx: c_int, sy: c_int, ctx: *CloseSnapshot) void {
-    const src = buffer.buffer orelse return;
+fn copyCloseBuffer(buffer: *sn.Buffer, sx: c_int, sy: c_int, ctx: *CloseSnapshot) void {
+    const src = buffer.getBuffer() orelse return;
     const dest = ctx.tree.createSceneBuffer(src) catch {
         ctx.ok = false;
         return;
@@ -3127,13 +3126,6 @@ pub fn applyOpacity(toplevel: *Toplevel, now_ms: i64) void {
             buffer.setOpacity(value.*);
         }
     }.iter, &opacity);
-    toplevel.frame_tree.node.forEachSurfaceBuffer(*f32, struct {
-        fn iter(buffer: *wlr.SceneBuffer, _: c_int, _: c_int, value: *f32) void {
-            buffer.setOpacity(value.*);
-        }
-    }.iter, &opacity);
-    // The surfaces' opacity is set on wlr_scene nodes, which tell nobody.
-    if (opacity != toplevel.shape_opacity) toplevel.frame_tree.node.touch();
     const color = toplevel.borderColor().scale(opacity);
     for (toplevel.border_rects) |rect| col.setRect(rect, color);
     for (toplevel.frame_fills) |rect| col.setRect(rect, chrome.fillColor().scale(opacity));

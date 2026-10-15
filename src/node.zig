@@ -1,8 +1,8 @@
 //! The compositor's own scene nodes (node.h): what wlr.Scene* was as a data model.
 //! Method names are wlr_scene's, so a call site changes its type and little else.
 //!
-//! A client's surfaces are still wlr_scene trees (stage 7b replaces that): they live
-//! under the scene's hidden host and an own `Foreign` node places them.
+//! A client's surfaces are own nodes too (node_surface.h): an xdg surface is a tree, a
+//! surface an own buffer node that follows its wl_surface.
 const std = @import("std");
 const wayland = @import("wayland");
 const wl = wayland.server.wl;
@@ -10,7 +10,7 @@ const pixman = @import("pixman");
 const wlr = @import("wlroots");
 
 pub const Node = extern struct {
-    pub const Type = enum(c_int) { tree, rect, buffer, foreign };
+    pub const Type = enum(c_int) { tree, rect, buffer };
 
     type: Type,
     parent: ?*Tree,
@@ -30,8 +30,8 @@ pub const Node = extern struct {
     extern fn rediwm_node_destroy(node: *Node) void;
     pub const destroy = rediwm_node_destroy;
     extern fn rediwm_node_touch(node: *Node) void;
-    /// Reports a change the node cannot see itself (something done to the wlr_scene
-    /// subtree it hosts): asks for a frame and a fresh resolve.
+    /// Reports a change the node's setters cannot see: asks for a frame and a fresh
+    /// resolve.
     pub const touch = rediwm_node_touch;
     extern fn rediwm_node_set_enabled(node: *Node, enabled: bool) void;
     pub const setEnabled = rediwm_node_set_enabled;
@@ -76,36 +76,33 @@ pub const Node = extern struct {
         );
     }
 
-    extern fn rediwm_node_for_each_wlr_buffer(
-        node: *Node,
-        iterator: *const fn (buffer: *wlr.SceneBuffer, sx: c_int, sy: c_int, data: ?*anyopaque) callconv(.c) void,
-        user_data: ?*anyopaque,
-    ) void;
-    /// The wlr_scene buffers of the clients' surfaces under this node, positions
-    /// relative to it.
+    /// The buffers of the clients' surfaces under this node, positions relative to it.
     pub inline fn forEachSurfaceBuffer(
         node: *Node,
         comptime T: type,
-        comptime iterator: fn (buffer: *wlr.SceneBuffer, sx: c_int, sy: c_int, data: T) void,
+        comptime iterator: fn (buffer: *Buffer, sx: c_int, sy: c_int, data: T) void,
         data: T,
     ) void {
-        rediwm_node_for_each_wlr_buffer(
-            node,
-            struct {
-                fn wrapper(b: *wlr.SceneBuffer, sx: c_int, sy: c_int, d: ?*anyopaque) callconv(.c) void {
-                    iterator(b, sx, sy, @ptrCast(@alignCast(d)));
-                }
-            }.wrapper,
-            data,
-        );
+        const Filter = struct {
+            fn visit(b: *Buffer, sx: c_int, sy: c_int, d: T) void {
+                if (b.surface != null) iterator(b, sx, sy, d);
+            }
+        };
+        node.forEachBuffer(T, Filter.visit, data);
     }
 
-    /// The foreign node this is, if it is one.
-    pub fn foreign(node: *Node) ?*Foreign {
-        return if (node.type == .foreign) @fieldParentPtr("node", node) else null;
+    extern fn rediwm_subsurface_tree_set_clip(node: *Node, clip: ?*const wlr.Box) bool;
+    /// Clips every surface of the subsurface trees at or under this node to `clip`
+    /// (in the tree's coordinates), or lifts the clip when null.
+    pub fn subsurfaceTreeSetClip(node: *Node, clip: ?*const wlr.Box) void {
+        _ = rediwm_subsurface_tree_set_clip(node, clip);
     }
+
     pub fn tree(node: *Node) ?*Tree {
         return if (node.type == .tree) @fieldParentPtr("node", node) else null;
+    }
+    pub fn buffer(node: *Node) ?*Buffer {
+        return if (node.type == .buffer) @fieldParentPtr("node", node) else null;
     }
 };
 
@@ -128,39 +125,23 @@ pub const Tree = extern struct {
         return rediwm_buffer_create(parent, buffer) orelse error.OutOfMemory;
     }
 
-    extern fn rediwm_foreign_create(parent: *Tree, wlr_node: *wlr.SceneNode) ?*Foreign;
     extern fn rediwm_tree_host(tree: *const Tree) *wlr.SceneTree;
-    /// The hidden wlr_scene tree that holds the clients' surface trees.
+    /// The hidden wlr_scene tree that holds the buffers' carriers.
     pub const host = rediwm_tree_host;
 
-    /// A hosted subtree's root keeps its foreign node in its `data`, so a hit inside
-    /// it finds its way back to the own tree.
-    fn adopt(parent: *Tree, tree: *wlr.SceneTree) !*Foreign {
-        const foreign = rediwm_foreign_create(parent, &tree.node) orelse {
-            tree.node.destroy();
-            return error.OutOfMemory;
-        };
-        tree.node.data = foreign;
-        return foreign;
+    extern fn rediwm_xdg_surface_create(parent: *Tree, xdg_surface: *wlr.XdgSurface) ?*Tree;
+    pub fn createSceneXdgSurface(parent: *Tree, xdg_surface: *wlr.XdgSurface) !*Tree {
+        return rediwm_xdg_surface_create(parent, xdg_surface) orelse error.OutOfMemory;
     }
 
-    pub fn createSceneXdgSurface(parent: *Tree, xdg_surface: *wlr.XdgSurface) !*Foreign {
-        return adopt(parent, try rediwm_tree_host(parent).createSceneXdgSurface(xdg_surface));
+    extern fn rediwm_subsurface_tree_create(parent: *Tree, surface: *wlr.Surface) ?*Tree;
+    pub fn createSceneSubsurfaceTree(parent: *Tree, surface: *wlr.Surface) !*Tree {
+        return rediwm_subsurface_tree_create(parent, surface) orelse error.OutOfMemory;
     }
 
-    pub fn createSceneSubsurfaceTree(parent: *Tree, surface: *wlr.Surface) !*Foreign {
-        return adopt(parent, try rediwm_tree_host(parent).createSceneSubsurfaceTree(surface));
-    }
-
-    pub fn createSceneDragIcon(parent: *Tree, drag_icon: *wlr.Drag.Icon) !*Foreign {
-        return adopt(parent, try rediwm_tree_host(parent).createSceneDragIcon(drag_icon));
-    }
-
-    /// The layer surface's wlr_scene tree is hosted like any client's; the foreign
-    /// node places it, and the wlr tree's own position is the layer shell's.
-    pub fn createSceneLayerSurfaceV1(parent: *Tree, layer_surface: *wlr.LayerSurfaceV1) !struct { scene: *wlr.SceneLayerSurfaceV1, foreign: *Foreign } {
-        const scene = try rediwm_tree_host(parent).createSceneLayerSurfaceV1(layer_surface);
-        return .{ .scene = scene, .foreign = try adopt(parent, scene.tree) };
+    extern fn rediwm_drag_icon_create(parent: *Tree, drag_icon: *wlr.Drag.Icon) ?*Tree;
+    pub fn createSceneDragIcon(parent: *Tree, drag_icon: *wlr.Drag.Icon) !*Tree {
+        return rediwm_drag_icon_create(parent, drag_icon) orelse error.OutOfMemory;
     }
 
     pub fn fromNode(node: *Node) *Tree {
@@ -199,6 +180,8 @@ pub const Buffer = extern struct {
     opaque_region: pixman.Region32,
     buffer_width: c_int,
     buffer_height: c_int,
+    /// The client surface this node shows, if it is one.
+    surface: ?*Surface,
 
     extern fn rediwm_buffer_set_buffer(buffer: *Buffer, wlr_buffer: ?*wlr.Buffer) void;
     pub const setBuffer = rediwm_buffer_set_buffer;
@@ -225,35 +208,11 @@ pub const Buffer = extern struct {
     }
 };
 
-/// A wlr_scene subtree hosted under an own tree.
-pub const Foreign = extern struct {
-    node: Node,
-    /// Null once wlroots has destroyed the subtree (this node goes with it).
-    wlr: ?*wlr.SceneNode,
-    wlr_destroy: wl.Listener(void),
-
-    pub fn tree(foreign: *Foreign) *wlr.SceneTree {
-        return wlr.SceneTree.fromNode(foreign.wlr.?);
-    }
-
-    /// The foreign node whose subtree holds this wlr node (a root's `data`).
-    pub fn of(wlr_node: *wlr.SceneNode) ?*Foreign {
-        var current: *wlr.SceneNode = wlr_node;
-        while (true) {
-            if (current.data) |data| return @ptrCast(@alignCast(data));
-            current = if (current.parent) |parent| &parent.node else return null;
-        }
-    }
-
-    /// Clips the hosted surface tree, as wlr_scene_subsurface_tree_set_clip.
-    pub fn subsurfaceTreeSetClip(foreign: *Foreign, clip: ?*const wlr.Box) void {
-        wlr.SceneNode.subsurfaceTreeSetClip(foreign.wlr.?, clip);
-        foreign.node.touch();
-    }
-
-    pub fn fromNode(node: *Node) *Foreign {
-        return @fieldParentPtr("node", node);
-    }
+/// The surface an own buffer node follows (node_surface.h); the rest of the struct is
+/// the binding's own.
+pub const Surface = extern struct {
+    buffer: *Buffer,
+    surface: *wlr.Surface,
 };
 
 /// The own scene: its root tree's children are the layers, bottom to top.
@@ -265,40 +224,13 @@ pub const Scene = extern struct {
     changed_data: ?*anyopaque,
 
     extern fn rediwm_scene_create(host: *wlr.SceneTree, changed: ?*const fn (?*anyopaque, ?*Node, bool) callconv(.c) void, data: ?*anyopaque) ?*Scene;
-    /// `host` is a hidden, disabled wlr_scene tree for the carriers and the
-    /// clients' subtrees.
+    /// `host` is a hidden, disabled wlr_scene tree for the buffers' carriers.
     pub fn create(host: *wlr.SceneTree) !*Scene {
         return rediwm_scene_create(host, null, null) orelse error.OutOfMemory;
     }
     extern fn rediwm_scene_destroy(scene: ?*Scene) void;
     pub const destroy = rediwm_scene_destroy;
 };
-
-/// Where a node inside a client's subtree is in the scene's root, and whether the
-/// own nodes above it are enabled: the hosting node's place plus the wlr_scene offsets
-/// down to it.
-pub fn wlrCoords(wlr_node: *wlr.SceneNode, lx: *c_int, ly: *c_int) bool {
-    var x: c_int = 0;
-    var y: c_int = 0;
-    var current: *wlr.SceneNode = wlr_node;
-    while (true) {
-        x += current.x;
-        y += current.y;
-        if (current.data != null) break;
-        current = if (current.parent) |parent| &parent.node else {
-            lx.* = x;
-            ly.* = y;
-            return false;
-        };
-    }
-    const foreign: *Foreign = @ptrCast(@alignCast(current.data.?));
-    var ox: c_int = 0;
-    var oy: c_int = 0;
-    const enabled = foreign.node.coords(&ox, &oy);
-    lx.* = ox + x;
-    ly.* = oy + y;
-    return enabled;
-}
 
 /// A scene for unit tests: a wlroots scene with the own scene's hidden host in it.
 pub const TestScene = struct {

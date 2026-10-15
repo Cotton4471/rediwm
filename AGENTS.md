@@ -34,15 +34,16 @@ panel painting. The key rules:
 * **Scene nodes are ours** (`node.zig`/`node.c`, wlr_scene's method names). A
   buffer or rect node keeps its pixels in a hidden wlr_scene *carrier* that the
   output pass reads; every setter keeps the two in step, and every change asks
-  for a frame through the scene's hook. Client surfaces are still wlr_scene
-  trees, hosted under the scene's disabled host and placed by an own `Foreign`
-  node: their `data` points back at it (`Foreign.of`, `scene_data.fromWlrNode`),
-  and positions inside them go through `node.wlrCoords`. Hits come from
-  `Projection.nodeAt` (own node, or `foreign` for a client surface). A sync
-  resolves only the top-level subtrees (groups) whose nodes changed, and nothing
-  when no group and not the camera did: a change the node setters cannot see (done
-  to a hosted wlr_scene subtree) must call `Node.touch`, and a node whose geometry
-  depends on another group's (a glass effect) is walked every sync. The
+  for a frame through the scene's hook. Client surfaces are own nodes too
+  (`node_surface.c`, ported from wlr_scene_surface/subsurface_tree/xdg_shell/
+  drag_icon): a surface is a buffer node whose `surface` binding follows its
+  wl_surface, an xdg surface a tree. The carrier's signals (`outputs_update`,
+  `output_sample`, `frame_done`) are where the binding listens, so the projection
+  raises them on the carrier. Hits come from `Projection.nodeAt` (a leaf node; a
+  client surface has `buffer.surface`). A sync resolves only the top-level subtrees
+  (groups) whose nodes changed, and nothing when no group and not the camera did:
+  a change the node setters cannot see must call `Node.touch`, and a node whose
+  geometry depends on another group's (a glass effect) is walked every sync. The
   `-Ddamage-audit` build logs any item the gate left stale.
 * **The world has no second tree:** its source tree stays disabled. Pick with
   `rediwm_projection_node_at`, send callbacks through `Server.sendFrameDone`,

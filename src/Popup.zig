@@ -46,7 +46,7 @@ pub fn create(server: *Server, xdg_popup: *wlr.XdgPopup) !void {
     errdefer scene_tree.node.destroy(); // gpa.create below must not leak the node
     // The popup hangs under its parent's tree, which a window's rounded shape
     // clips; a menu is no part of that window's shape and may leave it.
-    _ = @import("projection.zig").setWlrTreeUnclipped(&scene_tree.node, true);
+    _ = @import("projection.zig").setTreeUnclipped(&scene_tree.node, true);
 
     const popup = gpa.create(Popup) catch |err| {
         log.err("Popup.create: could not allocate popup: {}", .{err});
@@ -88,7 +88,7 @@ fn unconstrainToOutput(server: *Server, xdg_popup: *wlr.XdgPopup) void {
     const root_tree = scene_data.xdgSceneTree(root) orelse return;
     var ox: i32 = 0;
     var oy: i32 = 0;
-    _ = sn.wlrCoords(&root_tree.node, &ox, &oy);
+    _ = root_tree.node.coords(&ox, &oy);
 
     const box = (if (Toplevel.fromSurface(server, root.surface)) |toplevel|
         windowConstraintBox(server, toplevel, ox, oy)

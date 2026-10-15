@@ -108,25 +108,6 @@ struct rediwm_buffer *rediwm_buffer_create(struct rediwm_tree *parent, struct wl
   return b;
 }
 
-static void foreign_wlr_destroyed(struct wl_listener *listener, void *data) {
-  (void)data;
-  struct rediwm_foreign *f = wl_container_of(listener, f, wlr_destroy);
-  wl_list_remove(&f->wlr_destroy.link);
-  f->wlr = NULL;
-  rediwm_node_destroy(&f->node);
-}
-
-struct rediwm_foreign *rediwm_foreign_create(struct rediwm_tree *parent, struct wlr_scene_node *wlr) {
-  struct rediwm_foreign *f = calloc(1, sizeof(*f));
-  if (!f) return NULL;
-  node_init(&f->node, REDIWM_NODE_FOREIGN, parent);
-  f->wlr = wlr;
-  f->wlr_destroy.notify = foreign_wlr_destroyed;
-  wl_signal_add(&wlr->events.destroy, &f->wlr_destroy);
-  structure(&f->node);
-  return f;
-}
-
 struct wlr_scene_tree *rediwm_tree_host(const struct rediwm_tree *tree) {
   return tree->node.scene->host;
 }
@@ -138,14 +119,6 @@ void rediwm_node_destroy(struct rediwm_node *node) {
     struct rediwm_tree *tree = (struct rediwm_tree *)node;
     struct rediwm_node *child, *tmp;
     wl_list_for_each_safe(child, tmp, &tree->children, link) rediwm_node_destroy(child);
-  } else if (node->type == REDIWM_NODE_FOREIGN) {
-    struct rediwm_foreign *f = (struct rediwm_foreign *)node;
-    if (f->wlr) {
-      wl_list_remove(&f->wlr_destroy.link);
-      struct wlr_scene_node *wlr = f->wlr;
-      f->wlr = NULL;
-      wlr_scene_node_destroy(wlr);
-    }
   } else if (node->type == REDIWM_NODE_RECT) {
     wlr_scene_node_destroy(&((struct rediwm_rect *)node)->carrier->node);
   } else if (node->type == REDIWM_NODE_BUFFER) {
@@ -271,6 +244,15 @@ void rediwm_buffer_set_buffer(struct rediwm_buffer *b, struct wlr_buffer *buffer
   changed(&b->node);
 }
 
+void rediwm_buffer_set_buffer_with_options(struct rediwm_buffer *b, struct wlr_buffer *buffer,
+                                           const struct wlr_scene_buffer_set_buffer_options *options) {
+  wlr_scene_buffer_set_buffer_with_options(b->carrier, buffer, options);
+  b->buffer_width = buffer ? buffer->width : 0;
+  b->buffer_height = buffer ? buffer->height : 0;
+  buffer_damaged(b, options ? options->damage : NULL);
+  changed(&b->node);
+}
+
 void rediwm_buffer_set_buffer_with_damage(struct rediwm_buffer *b, struct wlr_buffer *buffer,
                                          const pixman_region32_t *damage) {
   wlr_scene_buffer_set_buffer_with_damage(b->carrier, buffer, damage);
@@ -376,8 +358,6 @@ struct rediwm_node *rediwm_node_at(struct rediwm_node *node, double x, double y,
     if (b->point_accepts_input && !b->point_accepts_input(b, &x, &y)) return NULL;
     break;
   }
-  case REDIWM_NODE_FOREIGN:
-    return NULL;
   }
   if (nx) *nx = x;
   if (ny) *ny = y;
@@ -406,40 +386,5 @@ void rediwm_node_for_each_buffer(struct rediwm_node *node, rediwm_buffer_iterato
         for_each_buffer(child, 0, 0, fn, data);
   } else if (node->type == REDIWM_NODE_BUFFER) {
     fn((struct rediwm_buffer *)node, 0, 0, data);
-  }
-}
-
-struct wlr_iteration {
-  rediwm_wlr_buffer_iterator fn;
-  void *data;
-  int x, y;
-};
-static void wlr_buffer_shifted(struct wlr_scene_buffer *b, int sx, int sy, void *data) {
-  struct wlr_iteration *it = data;
-  it->fn(b, it->x + sx, it->y + sy, it->data);
-}
-static void for_each_wlr_buffer(struct rediwm_node *node, int x, int y, rediwm_wlr_buffer_iterator fn, void *data) {
-  if (!node->enabled) return;
-  x += node->x;
-  y += node->y;
-  if (node->type == REDIWM_NODE_TREE) {
-    struct rediwm_node *child;
-    wl_list_for_each(child, &((struct rediwm_tree *)node)->children, link)
-        for_each_wlr_buffer(child, x, y, fn, data);
-  } else if (node->type == REDIWM_NODE_FOREIGN) {
-    struct rediwm_foreign *f = (struct rediwm_foreign *)node;
-    struct wlr_iteration it = {.fn = fn, .data = data, .x = x, .y = y};
-    if (f->wlr) wlr_scene_node_for_each_buffer(f->wlr, wlr_buffer_shifted, &it);
-  }
-}
-
-void rediwm_node_for_each_wlr_buffer(struct rediwm_node *node, rediwm_wlr_buffer_iterator fn, void *data) {
-  if (!node->enabled) return;
-  if (node->type == REDIWM_NODE_TREE) {
-    struct rediwm_node *child;
-    wl_list_for_each(child, &((struct rediwm_tree *)node)->children, link)
-        for_each_wlr_buffer(child, 0, 0, fn, data);
-  } else if (node->type == REDIWM_NODE_FOREIGN) {
-    for_each_wlr_buffer(node, -node->x, -node->y, fn, data);
   }
 }

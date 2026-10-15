@@ -29,12 +29,8 @@ pub const Projection = opaque {
         return rediwm_projection_present_owned(projection, target.carrier, renderer, buffer, damage);
     }
     pub const Hit = extern struct {
-        /// The own node that was hit; null inside a client's surface tree.
-        own: ?*node.Node,
-        /// The node the pixels come from (an own node's carrier).
-        wlr: *wlr.SceneNode,
-        /// The own node that hosts the surface tree a client hit lies in.
-        foreign: ?*node.Foreign,
+        /// The leaf that was hit: a client surface's node, or a shell node.
+        own: *node.Node,
         x: f64,
         y: f64,
     };
@@ -120,7 +116,3 @@ pub const setTreeUnclipped = rediwm_projection_set_tree_unclipped;
 /// window sliding off the workspace it has left.
 extern fn rediwm_projection_set_tree_inert(target: *node.Node, inert: bool) bool;
 pub const setTreeInert = rediwm_projection_set_tree_inert;
-
-/// The same for a tree inside a client's wlr_scene subtree (a popup's).
-extern fn rediwm_projection_set_wlr_tree_unclipped(target: *wlr.SceneNode, unclipped: bool) bool;
-pub const setWlrTreeUnclipped = rediwm_projection_set_wlr_tree_unclipped;

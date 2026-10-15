@@ -70,7 +70,7 @@ fn newXdgDecoration(
     decoration: *wlr.XdgToplevelDecorationV1,
 ) void {
     const tree = scene_data.xdgSceneTree(decoration.toplevel.base) orelse return;
-    const data = scene_data.fromWlrNode(&tree.node) orelse return;
+    const data = scene_data.SceneData.fromNodeOrParents(&tree.node) orelse return;
     const toplevel = switch (data.role) {
         .toplevel => |t| t,
         .chrome => |t| t,

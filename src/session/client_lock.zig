@@ -263,7 +263,7 @@ const Surface = struct {
     lock_surface: *wlr.SessionLockSurfaceV1,
     /// Null once the output is gone; wlroots destroys the surface next.
     output: ?*Output,
-    tree: ?*sn.Foreign,
+    tree: ?*sn.Tree,
     width: i32 = 0,
     height: i32 = 0,
     link: wl.list.Link = undefined,

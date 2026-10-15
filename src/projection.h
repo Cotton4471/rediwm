@@ -6,7 +6,6 @@ struct wlr_scene_tree;
 struct wlr_scene;
 struct rediwm_node;
 struct rediwm_tree;
-struct rediwm_foreign;
 struct rediwm_scene;
 struct wlr_scene_buffer;
 struct wlr_surface_state;
@@ -52,14 +51,10 @@ uint64_t rediwm_projection_damage_cursor(struct rediwm_projection *);
 // camera.
 void rediwm_projection_sync_fixed(struct rediwm_projection *, double, double, double,
                                   double, double, struct rediwm_tree *);
-// What a point lands on. An own node has `own`; a node inside a client's subtree has
-// only `wlr`, and `foreign` is the own node that hosts that subtree. (`wlr` is
-// always the pixel source.) (x, y) is the point in the node's own coordinates
+// What a point lands on: the leaf node, and (x, y) the point in its own coordinates
 // (source units for a client surface).
 struct rediwm_hit {
   struct rediwm_node *own;
-  struct wlr_scene_node *wlr;
-  struct rediwm_foreign *foreign;
   double x, y;
 };
 bool rediwm_projection_node_at(struct rediwm_projection *, double lx, double ly,
@@ -93,14 +88,7 @@ bool rediwm_projection_set_tree_unclipped(struct rediwm_node *, bool);
 // Shows the subtree but lets the pick pass through it to what is below.
 bool rediwm_projection_set_tree_inert(struct rediwm_node *, bool);
 // The same for a node inside a wlroots subtree (a client's popup).
-bool rediwm_projection_set_wlr_tree_zoom(struct wlr_scene_node *, double);
-bool rediwm_projection_set_wlr_tree_scale(struct wlr_scene_node *, double);
-bool rediwm_projection_set_wlr_tree_clip(struct wlr_scene_node *, const struct rediwm_clip_spec *);
 struct rediwm_shadow_spec;
-bool rediwm_projection_set_wlr_tree_shadow(struct wlr_scene_node *, const struct rediwm_shadow_spec *);
-bool rediwm_projection_set_wlr_tree_dim(struct wlr_scene_node *, float brightness, float saturation);
-bool rediwm_projection_set_wlr_tree_unclipped(struct wlr_scene_node *, bool);
-bool rediwm_projection_set_wlr_tree_inert(struct wlr_scene_node *, bool);
 // Buffer-local damage for the next buffer set on a compositor-owned source
 // buffer node; NULL damages all of it. Surface leaves track their own.
 struct pixman_region32;

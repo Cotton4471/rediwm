@@ -119,6 +119,17 @@ the same last error line (`scene_baseline` is a benchmark, not run).
    of call sites, layout trees first, then the compositor-drawn UI; windows keep
    `wlr.SceneTree` under a foreign node until 7b.
 
+**7b landed 2026-10-16.** `node_surface.c` ports wlr_scene_surface, subsurface_tree,
+xdg_shell and drag_icon onto own nodes; a client surface is an own buffer node whose
+`surface` binding listens to its carrier's `outputs_update`/`output_sample`/`frame_done`
+(the projection still raises them there until 7c). `Foreign`, the wlr walk in the
+projection and the `_wlr_` setters are gone; layer-surface placement is Zig
+(`LayerSurface.place`, wrapping arithmetic) because the C side would need a generated
+layer-shell header. Hosted-subtree `touch` calls are no longer needed. Gates: unit and C
+suites pass; integration batch: the same failures as HEAD plus flakes that also fail on
+the previous commit (`input_persistence`, `xwayland`, `xwayland_fractional`: xrdb sees no
+`Xft.dpi` about half the runs).
+
 ## Design
 
 An own node module, C core with a thin Zig wrapper, living beside `scene_graph.h`:

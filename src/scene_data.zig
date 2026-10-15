@@ -1,7 +1,7 @@
-// Typed identity stored in `wlr.SceneNode.data` (and the matching xdg-surface
+// Typed identity stored in `Node.data` (and the matching xdg-surface
 // user pointer used to parent popups).
 //
-// Invariant: every non-null `SceneNode.data` in this compositor is a
+// Invariant: every non-null `Node.data` of a window, shell panel or layer is a
 // `*SceneData`. Hit-testing must go through `fromNode` / `hitTest` rather than
 // casting the opaque pointer to a window or widget type.
 const wlr = @import("wlroots");
@@ -62,13 +62,6 @@ pub const SceneData = struct {
         return null;
     }
 };
-
-/// The role of a node inside a client's surface tree: up to the root of the hosted
-/// subtree, then on through the own tree that places it.
-pub fn fromWlrNode(node: *wlr.SceneNode) ?*SceneData {
-    const hosted = sn.Foreign.of(node) orelse return null;
-    return SceneData.fromNodeOrParents(&hosted.node);
-}
 
 pub const Hit = union(enum) {
     none,
@@ -216,7 +209,7 @@ pub fn hitTest(server: *@import("Server.zig"), lx: f64, ly: f64) Hit {
     // leaves, so subsurfaces, popups, chrome and client input regions retain their
     // normal semantics.
     if (server.world.peekTarget()) |selected| {
-        if (SceneData.fromNodeOrParents(hitNode(hit))) |data| {
+        if (SceneData.fromNodeOrParents(hit.own)) |data| {
             const owner: ?*Toplevel = switch (data.role) {
                 .toplevel => |t| t,
                 .chrome => |t| t,
@@ -230,51 +223,33 @@ pub fn hitTest(server: *@import("Server.zig"), lx: f64, ly: f64) Hit {
     const nx = hit.x;
     const ny = hit.y;
 
-    // An own node of the shell: its role says what it is.
-    if (hit.own) |own| {
-        const data = SceneData.fromNode(own) orelse return .none;
-        return shellHit(data, lx, ly);
-    }
-
-    // A client's surface: found through the subtree that hosts it.
-    if (hit.wlr.type != .buffer) return .none;
-    const scene_surface = wlr.SceneSurface.tryFromBuffer(wlr.SceneBuffer.fromNode(hit.wlr)) orelse return .none;
-    if (wlr.InputPopupSurfaceV2.tryFromWlrSurface(scene_surface.surface.getRootSurface()) != null) {
-        return .{ .input_popup = .{ .surface = scene_surface.surface, .sx = nx, .sy = ny } };
-    }
-    const hosted = hit.foreign orelse return .none;
-    const data = SceneData.fromNodeOrParents(&hosted.node) orelse return .none;
-    return switch (data.role) {
-        .toplevel => |toplevel| .{ .surface = .{
-            .toplevel = toplevel,
-            .surface = scene_surface.surface,
-            .sx = nx,
-            .sy = ny,
-        } },
-        .layer => |owner| .{ .layer = .{ .owner = owner, .surface = scene_surface.surface, .sx = nx, .sy = ny } },
-        .xwayland_unmanaged => |owner| .{ .xwayland_unmanaged = .{
-            .owner = owner,
-            .surface = scene_surface.surface,
-            .sx = nx,
-            .sy = ny,
-        } },
-        else => .none,
+    // A client's surface: the role is the window, layer or X11 menu it is a part of.
+    if (hit.own.buffer()) |buffer| if (buffer.surface) |scene_surface| {
+        const surface = scene_surface.surface;
+        if (wlr.InputPopupSurfaceV2.tryFromWlrSurface(surface.getRootSurface()) != null) {
+            return .{ .input_popup = .{ .surface = surface, .sx = nx, .sy = ny } };
+        }
+        const data = SceneData.fromNodeOrParents(hit.own) orelse return .none;
+        return switch (data.role) {
+            .toplevel => |toplevel| .{ .surface = .{ .toplevel = toplevel, .surface = surface, .sx = nx, .sy = ny } },
+            .layer => |owner| .{ .layer = .{ .owner = owner, .surface = surface, .sx = nx, .sy = ny } },
+            .xwayland_unmanaged => |owner| .{ .xwayland_unmanaged = .{ .owner = owner, .surface = surface, .sx = nx, .sy = ny } },
+            else => .none,
+        };
     };
+
+    // An own node of the shell: its role says what it is.
+    const data = SceneData.fromNodeOrParents(hit.own) orelse return .none;
+    return shellHit(data, lx, ly);
 }
 
 /// xdg_surface.data holds the scene tree created for that surface so popups
 /// can parent themselves without walking the compositor's own objects.
-pub fn setXdgSceneTree(xdg_surface: *wlr.XdgSurface, tree: *wlr.SceneTree) void {
+pub fn setXdgSceneTree(xdg_surface: *wlr.XdgSurface, tree: *sn.Tree) void {
     xdg_surface.data = tree;
 }
 
-pub fn xdgSceneTree(xdg_surface: *wlr.XdgSurface) ?*wlr.SceneTree {
+pub fn xdgSceneTree(xdg_surface: *wlr.XdgSurface) ?*sn.Tree {
     const ptr = xdg_surface.data orelse return null;
     return @ptrCast(@alignCast(ptr));
-}
-
-/// The own node a hit belongs to: the node itself, or the one that hosts the client
-/// surface it lies in.
-fn hitNode(hit: @import("projection.zig").Projection.Hit) *sn.Node {
-    return hit.own orelse &hit.foreign.?.node;
 }

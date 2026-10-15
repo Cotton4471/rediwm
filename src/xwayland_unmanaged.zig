@@ -18,7 +18,7 @@ const log = std.log.scoped(.xwayland);
 server: *Server,
 xsurface: *wlr.XwaylandSurface,
 tree: *sn.Tree,
-scene_tree: ?*sn.Foreign = null,
+scene_tree: ?*sn.Tree = null,
 node_data: scene_data.SceneData = undefined,
 
 destroy: wl.Listener(void) = .init(handleDestroy),

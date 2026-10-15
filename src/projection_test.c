@@ -260,7 +260,7 @@ static void test_graph(struct wlr_scene *scene) {
   assert(client_leaf->item.kind == REDIWM_ITEM_BUFFER);
   assert(glass_leaf->item.kind == REDIWM_ITEM_EFFECT);
   struct wlr_surface surface = {0};
-  struct wlr_scene_surface scene_surface = {.surface = &surface};
+  struct rediwm_surface scene_surface = {.surface = &surface};
   client_leaf->surface = &scene_surface;
   mark_all(p); // the test changed a leaf behind the scene's back
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
@@ -1408,7 +1408,7 @@ int main(void) {
   struct leaf *l = leaf_of(p, &node->node);
   struct wlr_surface surface = {.current = {.buffer_width = 200, .buffer_height = 120}};
   pixman_region32_init(&surface.buffer_damage);
-  struct wlr_scene_surface scene_surface = {.surface = &surface};
+  struct rediwm_surface scene_surface = {.surface = &surface};
   l->surface = &scene_surface;
   l->damage_width = 200;
   l->damage_height = 120;

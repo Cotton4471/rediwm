@@ -34,9 +34,6 @@ enum rediwm_node_type {
   REDIWM_NODE_TREE,
   REDIWM_NODE_RECT,
   REDIWM_NODE_BUFFER,
-  // A wlr_scene subtree hosted inside an own tree: the client surface trees
-  // wlr_scene_xdg_surface and friends build. Stage 7b removes it.
-  REDIWM_NODE_FOREIGN,
 };
 
 struct rediwm_node {
@@ -70,6 +67,7 @@ struct rediwm_rect {
 };
 
 struct rediwm_buffer;
+struct rediwm_surface;
 typedef bool (*rediwm_buffer_point_accepts_input)(struct rediwm_buffer *, double *x, double *y);
 
 // Geometry and content state live here; the pixels themselves (the locked buffer,
@@ -88,20 +86,14 @@ struct rediwm_buffer {
   pixman_region32_t opaque_region;
   // The size of the buffer as last set, kept for when the renderer releases it.
   int buffer_width, buffer_height;
-};
-
-// A wlr_scene subtree held by an own tree. `wlr` is the subtree's root node; its
-// own position stays (0, 0) and the foreign node carries the position.
-struct rediwm_foreign {
-  struct rediwm_node node;
-  struct wlr_scene_node *wlr; // NULL once wlroots has destroyed it
-  struct wl_listener wlr_destroy;
+  // The client surface this node shows, or NULL (node_surface.h).
+  struct rediwm_surface *surface;
 };
 
 struct rediwm_scene {
   struct rediwm_tree tree;
-  // A hidden, disabled wlr_scene tree that hosts every buffer's carrier and the
-  // foreign subtrees, so wlroots computes nothing for them.
+  // A hidden, disabled wlr_scene tree that hosts every buffer's carrier, so wlroots
+  // computes nothing for them.
   struct wlr_scene_tree *host;
   // Something the tree shows may have changed: the owner schedules a frame.
   // `node` is the one that changed (NULL when it is gone); `structural` when nodes
@@ -123,12 +115,8 @@ static inline struct rediwm_rect *rediwm_rect_from_node(struct rediwm_node *node
 static inline struct rediwm_buffer *rediwm_buffer_from_node(struct rediwm_node *node) {
   return node->type == REDIWM_NODE_BUFFER ? (struct rediwm_buffer *)node : NULL;
 }
-static inline struct rediwm_foreign *rediwm_foreign_from_node(struct rediwm_node *node) {
-  return node->type == REDIWM_NODE_FOREIGN ? (struct rediwm_foreign *)node : NULL;
-}
 
-// A scene is its root tree. `host` is where carriers and foreign subtrees live (the
-// caller disables it); `changed` may be NULL.
+// A scene is its root tree. `host` is where carriers live (the caller disables it); `changed` may be NULL.
 struct rediwm_scene *rediwm_scene_create(struct wlr_scene_tree *host,
                                          void (*changed)(void *, struct rediwm_node *, bool),
                                          void *data);
@@ -140,16 +128,12 @@ struct rediwm_tree *rediwm_tree_create(struct rediwm_tree *parent);
 struct rediwm_rect *rediwm_rect_create(struct rediwm_tree *parent, int width, int height,
                                        const float color[4]);
 struct rediwm_buffer *rediwm_buffer_create(struct rediwm_tree *parent, struct wlr_buffer *);
-// Takes over `wlr`, a node of a wlr_scene tree under the scene's host. It goes when
-// the foreign node does, and the foreign node goes when wlroots destroys it first.
-struct rediwm_foreign *rediwm_foreign_create(struct rediwm_tree *parent, struct wlr_scene_node *wlr);
-// Where the scene's carriers and foreign subtrees are made.
+// Where the scene's carriers are made.
 struct wlr_scene_tree *rediwm_tree_host(const struct rediwm_tree *);
 
 // Destroys the node and everything under it; each node emits events.destroy first.
 void rediwm_node_destroy(struct rediwm_node *);
-// Reports a change the node itself cannot see (something done to the wlr_scene subtree
-// it hosts): asks for a frame.
+// Reports a change the node's setters cannot see: asks for a frame.
 void rediwm_node_touch(struct rediwm_node *);
 void rediwm_node_set_enabled(struct rediwm_node *, bool enabled);
 void rediwm_node_set_position(struct rediwm_node *, int x, int y);
@@ -176,6 +160,10 @@ void rediwm_buffer_set_buffer(struct rediwm_buffer *, struct wlr_buffer *);
 // As wlr_scene_buffer_set_buffer_with_damage: `damage` is buffer-local.
 void rediwm_buffer_set_buffer_with_damage(struct rediwm_buffer *, struct wlr_buffer *,
                                           const pixman_region32_t *damage);
+// As wlr_scene_buffer_set_buffer_with_options: damage plus an acquire point to wait for.
+struct wlr_scene_buffer_set_buffer_options;
+void rediwm_buffer_set_buffer_with_options(struct rediwm_buffer *, struct wlr_buffer *,
+                                           const struct wlr_scene_buffer_set_buffer_options *);
 // The buffer the carrier holds; NULL once the renderer released it after upload.
 struct wlr_buffer *rediwm_buffer_get_buffer(const struct rediwm_buffer *);
 void rediwm_buffer_set_dest_size(struct rediwm_buffer *, int width, int height);
@@ -191,14 +179,9 @@ void rediwm_buffer_size(const struct rediwm_buffer *, int *width, int *height);
 
 // The topmost enabled node of the subtree at (x, y) in the subtree's own
 // coordinates, with the point in the node's, as wlr_scene_node_at. Buffers answer
-// through `point_accepts_input`. Foreign nodes are not looked into here: the
-// caller's pick of them is the projection's.
+// through `point_accepts_input`.
 struct rediwm_node *rediwm_node_at(struct rediwm_node *, double x, double y, double *nx, double *ny);
 typedef void (*rediwm_buffer_iterator)(struct rediwm_buffer *, int sx, int sy, void *data);
-typedef void (*rediwm_wlr_buffer_iterator)(struct wlr_scene_buffer *, int sx, int sy, void *data);
-// The same for the wlr_scene buffers of the foreign subtrees under the node (the
-// surfaces of clients), with their positions relative to the node passed in.
-void rediwm_node_for_each_wlr_buffer(struct rediwm_node *, rediwm_wlr_buffer_iterator, void *data);
 // Every buffer of the subtree, bottom to top, with its position relative to the
 // node passed in (as wlr_scene_node_for_each_buffer; disabled nodes are skipped).
 void rediwm_node_for_each_buffer(struct rediwm_node *, rediwm_buffer_iterator, void *data);

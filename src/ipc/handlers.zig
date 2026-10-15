@@ -529,8 +529,8 @@ pub fn handleRequest(
                     .keyboard_interactive = ls.layer.current.keyboard_interactive != .none,
                     .mapped = ls.layer.surface.mapped,
                     .box = .{
-                        .x = ls.scene.tree.node.x,
-                        .y = ls.scene.tree.node.y,
+                        .x = ls.tree.node.x,
+                        .y = ls.tree.node.y,
                         .width = ls.layer.surface.current.width,
                         .height = ls.layer.surface.current.height,
                     },

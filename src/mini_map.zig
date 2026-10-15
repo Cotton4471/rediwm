@@ -242,7 +242,7 @@ pub fn tick(self: *Self, output: *Output, now: i64) bool {
     if (!self.dragging) {
         const picked = server.world.projection.nodeAt(server.input.cursor.x, server.input.cursor.y);
         self.hovered = server.input.cursor_mode == .passthrough and server.input.active_buttons == 0 and
-            picked != null and picked.?.own != null and SceneData.fromNode(picked.?.own.?) == &self.scene_data;
+            picked != null and SceneData.fromNode(picked.?.own) == &self.scene_data;
     }
     const changed = self.last_camera == null or !std.meta.eql(self.last_camera.?, world.camera);
     self.last_camera = world.camera;

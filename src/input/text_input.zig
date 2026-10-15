@@ -342,31 +342,16 @@ fn newPopup(listener: *wl.Listener(*wlr.InputPopupSurfaceV2), popup: *wlr.InputP
     self.updatePopups();
 }
 
-fn wlrSurfaceNode(tree: *wlr.SceneTree, surface: *wlr.Surface) ?*wlr.SceneNode {
-    var it = tree.children.iterator(.forward);
-    while (it.next()) |node| {
-        if (node.type == .tree) {
-            if (wlrSurfaceNode(wlr.SceneTree.fromNode(node), surface)) |found| return found;
-        } else if (node.type == .buffer) {
-            if (wlr.SceneSurface.tryFromBuffer(wlr.SceneBuffer.fromNode(node))) |scene_surface| {
-                if (scene_surface.surface == surface) return node;
-            }
-        }
-    }
-    return null;
-}
-
-/// The node showing `surface` under `tree`: a client's surfaces are wlr_scene nodes
-/// inside the foreign nodes that host them.
-fn surfaceNode(tree: *sn.Tree, surface: *wlr.Surface) ?*wlr.SceneNode {
+/// The node showing `surface` under `tree`.
+fn surfaceNode(tree: *sn.Tree, surface: *wlr.Surface) ?*sn.Node {
     var it = tree.children.iterator(.forward);
     while (it.next()) |node| {
         switch (node.type) {
             .tree => if (surfaceNode(@fieldParentPtr("node", node), surface)) |found| return found,
-            .foreign => if (node.foreign().?.wlr != null) {
-                if (wlrSurfaceNode(node.foreign().?.tree(), surface)) |found| return found;
+            .buffer => if (node.buffer().?.surface) |scene_surface| {
+                if (scene_surface.surface == surface) return node;
             },
-            else => {},
+            .rect => {},
         }
     }
     return null;
@@ -386,7 +371,7 @@ pub fn updatePopups(self: *Self) void {
             const node = surfaceNode(&self.server.nodes.tree, surface) orelse break :visible false;
             var sx: i32 = 0;
             var sy: i32 = 0;
-            _ = sn.wlrCoords(node, &sx, &sy);
+            _ = node.coords(&sx, &sy);
             var scale: f64 = 1;
             var x: f64 = @floatFromInt(sx);
             var y: f64 = @floatFromInt(sy);
@@ -447,7 +432,7 @@ pub fn popupPoint(self: *Self, surface: *wlr.Surface, x: f64, y: f64) ?@import("
     const node = surfaceNode(self.server.ime_tree, surface) orelse return null;
     var sx: i32 = 0;
     var sy: i32 = 0;
-    _ = sn.wlrCoords(node, &sx, &sy);
+    _ = node.coords(&sx, &sy);
     return .{ .x = x - @as(f64, @floatFromInt(sx)), .y = y - @as(f64, @floatFromInt(sy)) };
 }
 

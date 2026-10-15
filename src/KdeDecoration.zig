@@ -84,7 +84,7 @@ pub const Manager = struct {
                 // walk popup parents or subsurface roots here.
                 if (wlr.XdgSurface.tryFromWlrSurface(surface)) |xdg| {
                     if (scene_data.xdgSceneTree(xdg)) |tree| {
-                        if (scene_data.fromWlrNode(&tree.node)) |data| {
+                        if (scene_data.SceneData.fromNodeOrParents(&tree.node)) |data| {
                             if (data.role == .toplevel and data.role.toplevel.surface() == surface) {
                                 decoration.toplevel = data.role.toplevel;
                                 data.role.toplevel.kde_decoration = decoration;
