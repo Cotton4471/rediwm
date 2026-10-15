@@ -1227,7 +1227,7 @@ fn handleAction(
             else
                 server.getDefaultOutput() orelse return .{ .err = "NoOutput" };
 
-            const scene_output = server.scene.getSceneOutput(target_out.wlr_output) orelse return .{ .err = "NoSceneOutput" };
+            const scene_output = server.scene_outputs.get(target_out.wlr_output) orelse return .{ .err = "NoSceneOutput" };
             var state = wlr.Output.State.init();
             defer state.finish();
             if (!server.buildOutputState(scene_output, &state)) return .{ .err = "CaptureFailed: scene render failed" };

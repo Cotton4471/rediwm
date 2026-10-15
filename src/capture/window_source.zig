@@ -281,10 +281,10 @@ pub const WindowCaptureSource = struct {
     /// already relies on `setEnabled(false)` to hide nodes from real output
     /// rendering elsewhere (e.g. `screenshot/capture.zig`'s isolation mode).
     fn renderOwnBuffer(buffer: *sn.Buffer, sx: c_int, sy: c_int, ctx: *RenderCtx) void {
-        renderNodeBuffer(buffer.carrier, if (buffer.surface) |scene_surface| scene_surface.surface else null, sx, sy, ctx);
+        renderNodeBuffer(buffer, if (buffer.surface) |scene_surface| scene_surface.surface else null, sx, sy, ctx);
     }
 
-    fn renderNodeBuffer(scene_buffer: *wlr.SceneBuffer, surface: ?*wlr.Surface, sx: c_int, sy: c_int, ctx: *RenderCtx) void {
+    fn renderNodeBuffer(scene_buffer: *sn.Buffer, surface: ?*wlr.Surface, sx: c_int, sy: c_int, ctx: *RenderCtx) void {
         const buf = scene_buffer.buffer orelse return;
         const texture = wlr.Texture.fromBuffer(ctx.renderer, buf) orelse return;
         defer texture.destroy();
@@ -311,8 +311,8 @@ pub const WindowCaptureSource = struct {
             .color_encoding = .none,
             .color_range = .full,
             .luminance_multiplier = &luminance_multiplier,
-            .wait_timeline = scene_buffer.private.wait_timeline,
-            .wait_point = scene_buffer.private.wait_point,
+            .wait_timeline = scene_buffer.wait_timeline,
+            .wait_point = scene_buffer.wait_point,
         };
         if (ctx.shape) |*shape| {
             rediwm_scene_pass_add_texture_shaped(ctx.pass, &options, shape);

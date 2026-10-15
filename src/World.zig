@@ -58,7 +58,7 @@ pub fn init(world: *World, server: *Server, tree: *sn.Tree) !void {
     world.* = .{
         .server = server,
         .tree = tree,
-        .projection = Projection.create(server.nodes, tree, server.scene) orelse return error.SceneCreateFailed,
+        .projection = Projection.create(server.nodes, tree, server.scene_outputs) orelse return error.SceneCreateFailed,
     };
     world.toplevels.init();
     world.closing.init();

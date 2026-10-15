@@ -4,9 +4,9 @@
 // and wlr_scene_drag_icon onto own nodes (MIT licensed, as
 // wlroots; the logic follows types/scene/*.c of wlroots 0.20). A surface is an own buffer
 // node whose content follows the wl_surface; a surface with subsurfaces is a tree of
-// them, stacked as the protocol orders them. The pixels still ride on the buffer's
-// carrier (node.h), whose signals the projection raises where wlr_scene_output once did:
-// outputs_update, output_sample and frame_done.
+// them, stacked as the protocol orders them. The binding listens to the buffer node's
+// signals, which the projection and the output pass raise: outputs_update,
+// output_sample and frame_done.
 #pragma once
 #include "node.h"
 #include <wlr/util/box.h>

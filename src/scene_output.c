@@ -3,6 +3,7 @@
 #define WLR_USE_UNSTABLE
 #define WLR_PRIVATE private
 #include "scene_output.h"
+#include "scene_outputs.h"
 #include "scene_view.h"
 #include "scene_pass.h"
 #include "scene_graph.h"
@@ -24,7 +25,7 @@
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_damage_ring.h>
 #include <wlr/types/wlr_output.h>
-#include <wlr/types/wlr_scene.h>
+#include "node.h"
 #include <wlr/util/log.h>
 #include <wlr/util/region.h>
 #include <wlr/util/transform.h>
@@ -60,7 +61,7 @@ struct output_state {
 };
 struct entry {
     struct rediwm_item item;
-    struct wlr_scene_node *transport;
+    struct rediwm_node *transport;
     struct wlr_box box; // snap of item edges in layout space
     pixman_region32_t visible, opaque;
     bool sampled;
@@ -70,11 +71,11 @@ struct entry {
     struct rediwm_glass_info glass;
     struct wlr_box padded;
     float sigma; // layout pixels
-    struct wlr_scene_node *front;
+    struct rediwm_node *front;
     struct effect_cache *cache;
     bool reblur;
 };
-static bool render_entry(struct rediwm_output_renderer *r, struct entry *e, struct wlr_scene_output *out,
+static bool render_entry(struct rediwm_output_renderer *r, struct entry *e, struct rediwm_scene_output *out,
     struct wlr_render_pass *pass, const struct output_view *v, pixman_region32_t *damage, bool backdrop);
 struct rediwm_output_renderer {
     struct rediwm_scene_renderer *pass;
@@ -146,13 +147,7 @@ struct wlr_render_pass *rediwm_output_begin_pass(struct rediwm_output_renderer *
         struct wlr_buffer *buffer, const struct wlr_buffer_pass_options *options) {
     return rediwm_scene_pass_begin(r->pass, buffer, options);
 }
-void rediwm_scene_output_damage_whole(struct wlr_scene_output *out) {
-    wlr_damage_ring_add_whole(&out->damage_ring);
-    pixman_region32_union_rect(&out->private.pending_commit_damage,
-        &out->private.pending_commit_damage, 0, 0, out->output->width, out->output->height);
-    wlr_output_schedule_frame(out->output);
-}
-bool rediwm_scene_output_set_veil(struct rediwm_output_renderer *r, struct wlr_scene_output *out, float alpha) {
+bool rediwm_scene_output_set_veil(struct rediwm_output_renderer *r, struct rediwm_scene_output *out, float alpha) {
     alpha = alpha < 0 ? 0 : alpha > 1 ? 1 : alpha;
     struct output_state *os = alpha > 0 ? output_state_get(r, out->output) : output_state_find(r, out->output);
     if (!os) return alpha == 0;
@@ -260,7 +255,7 @@ static bool same_clip(const struct rediwm_clip *a, const struct rediwm_clip *b) 
     for (int i = 0; i < 4; i++) if (a->radii[i] != b->radii[i]) return false;
     return true;
 }
-static bool collect(const struct rediwm_item *item, struct wlr_scene_node *transport, void *data) {
+static bool collect(const struct rediwm_item *item, struct rediwm_node *transport, void *data) {
     struct collector *collector = data;
     struct rediwm_output_renderer *r = collector->renderer;
     if (!item->enabled) { return true; }
@@ -305,9 +300,9 @@ static bool collect(const struct rediwm_item *item, struct wlr_scene_node *trans
         // No buffer: the pixels are the shadow's, and never opaque.
         skip = item->content.opacity == 0 || item->shadow->color[3] == 0;
     } else {
-        struct wlr_scene_buffer *b = wlr_scene_buffer_from_node(transport);
+        struct rediwm_buffer *b = rediwm_buffer_from_node(transport);
         skip = item->content.opacity == 0 ||
-            (!b->buffer && !b->private.texture && !b->private.is_single_pixel_buffer);
+            (!b->buffer && !b->texture && !b->is_single_pixel_buffer);
     }
     if (skip) { pixman_region32_fini(&visible); return true; }
     if (here && !pixman_region32_not_empty(&visible) &&
@@ -331,16 +326,16 @@ static bool collect(const struct rediwm_item *item, struct wlr_scene_node *trans
         e->padded = (struct wlr_box){box.x - pad, box.y - pad, box.width + 2 * pad, box.height + 2 * pad};
         pixman_region32_union_rect(&collector->reads, &collector->reads,
             e->padded.x, e->padded.y, e->padded.width, e->padded.height);
-        e->front = &glass.target->carrier->node;
+        e->front = &glass.target->node;
         return true;
     }
     bool full = item->kind == REDIWM_ITEM_RECT && item->content.color[3] == 1;
     if (item->kind != REDIWM_ITEM_RECT && item->kind != REDIWM_ITEM_SHADOW) {
-        struct wlr_scene_buffer *b = wlr_scene_buffer_from_node(transport);
+        struct rediwm_buffer *b = rediwm_buffer_from_node(transport);
         // Match the surface adapter's opacity policy. A cached raster whose
         // buffer was released must not suddenly hide previously visible peers.
         if (b->buffer && item->content.opacity == 1) {
-            full = b->private.buffer_is_opaque;
+            full = b->buffer_is_opaque;
             if (!full) {
                 rediwm_mirror_opaque(&e->opaque, &b->opaque_region, item->width, item->height, s.width, s.height);
                 pixman_region32_translate(&e->opaque, s.x, s.y);
@@ -376,49 +371,37 @@ static void clear_entries(struct rediwm_output_renderer *r) {
     }
     r->entries.size = 0;
 }
-// The node's own texture cache, as wlr_scene keeps it. Buffer replacement and
-// scene destruction already clear it in wlroots. Do not keep an extra buffer
-// lock: shm clients must still update in place.
-static void texture_renderer_destroy(struct wl_listener *listener, void *data) {
-    (void)data;
-    struct wlr_scene_buffer *b = wl_container_of(listener, b, private.renderer_destroy);
-    wl_list_remove(&b->private.renderer_destroy.link);
-    wl_list_init(&b->private.renderer_destroy.link);
-    wlr_texture_destroy(b->private.texture);
-    b->private.texture = NULL;
-}
-static struct wlr_texture *buffer_texture(struct wlr_scene_buffer *b, struct wlr_renderer *renderer) {
-    if (!b->buffer || b->private.texture) return b->private.texture;
+// The node's own texture cache. Do not keep an extra buffer lock: shm clients must
+// still update in place.
+static struct wlr_texture *buffer_texture(struct rediwm_buffer *b, struct wlr_renderer *renderer) {
+    if (!b->buffer || b->texture) return b->texture;
     struct wlr_client_buffer *client = wlr_client_buffer_get(b->buffer);
     if (client) return client->texture;
     struct wlr_texture *texture = wlr_texture_from_buffer(renderer, b->buffer);
     if (!texture) return NULL;
-    if (b->private.own_buffer) {
-        b->private.own_buffer = false;
+    if (b->own_buffer) {
+        b->own_buffer = false;
         wlr_buffer_unlock(b->buffer);
     }
-    b->private.texture = texture;
-    wl_list_remove(&b->private.renderer_destroy.link);
-    b->private.renderer_destroy.notify = texture_renderer_destroy;
-    wl_signal_add(&renderer->events.destroy, &b->private.renderer_destroy);
+    rediwm_buffer_set_texture(b, texture);
     return texture;
 }
-static void sample(struct entry *e, struct wlr_scene_output *out, bool scanout) {
+static void sample(struct entry *e, struct rediwm_scene_output *out, bool scanout) {
     if (e->item.kind == REDIWM_ITEM_RECT) return;
-    struct wlr_scene_buffer *b = wlr_scene_buffer_from_node(e->transport);
-    struct wlr_scene_output_sample_event event = {
+    struct rediwm_buffer *b = rediwm_buffer_from_node(e->transport);
+    struct rediwm_output_sample_event event = {
         .output = out, .direct_scanout = scanout,
-        .release_timeline = scanout ? out->private.out_timeline : out->private.in_timeline,
-        .release_point = scanout ? out->private.out_point : out->private.in_point,
+        .release_timeline = scanout ? out->out_timeline : out->in_timeline,
+        .release_point = scanout ? out->out_point : out->in_point,
     };
     wl_signal_emit_mutable(&b->events.output_sample, &event);
 }
-static bool try_scanout(struct entry *e, struct wlr_scene_output *out,
+static bool try_scanout(struct entry *e, struct rediwm_scene_output *out,
         struct wlr_output_state *state, const struct output_view *v) {
-    if (e->item.clip || e->item.kind != REDIWM_ITEM_SURFACE || !out->scene->private.direct_scanout ||
+    if (e->item.clip || e->item.kind != REDIWM_ITEM_SURFACE || !out->outputs->direct_scanout ||
         (state->committed & (WLR_OUTPUT_STATE_MODE | WLR_OUTPUT_STATE_ENABLED | WLR_OUTPUT_STATE_RENDER_FORMAT)) ||
         !wlr_output_is_direct_scanout_allowed(out->output)) return false;
-    struct wlr_scene_buffer *b = wlr_scene_buffer_from_node(e->transport);
+    struct rediwm_buffer *b = rediwm_buffer_from_node(e->transport);
     const struct rediwm_content *c = &e->item.content;
     // Scanout shows the client's buffer as it is: a dimmed window needs the pass.
     if (!b->buffer || c->transform != v->transform || c->opacity != 1 ||
@@ -448,10 +431,10 @@ static bool try_scanout(struct entry *e, struct wlr_scene_output *out,
     wlr_output_state_set_buffer(&pending, buffer);
     pending.buffer_src_box = c->src_box;
     pending.buffer_dst_box = dst;
-    if (b->private.wait_timeline)
-        wlr_output_state_set_wait_timeline(&pending, b->private.wait_timeline, b->private.wait_point);
-    if (out->private.out_timeline)
-        wlr_output_state_set_signal_timeline(&pending, out->private.out_timeline, ++out->private.out_point);
+    if (b->wait_timeline)
+        wlr_output_state_set_wait_timeline(&pending, b->wait_timeline, b->wait_point);
+    if (out->out_timeline)
+        wlr_output_state_set_signal_timeline(&pending, out->out_timeline, ++out->out_point);
     bool ok = wlr_output_test_state(out->output, &pending) && wlr_output_state_copy(state, &pending);
     wlr_output_state_finish(&pending);
     if (ok) sample(e, out, true);
@@ -511,7 +494,7 @@ static struct effect_cache *cache_for(struct output_state *os, uint64_t serial) 
 // A re-blur changes the effect's own pixels (`changed`). Returns false on
 // allocation failure.
 static bool decide_effects(struct rediwm_output_renderer *r, struct output_state *os,
-        struct wlr_scene_output *out, const struct output_view *v, pixman_region32_t *changed) {
+        struct rediwm_scene_output *out, const struct output_view *v, pixman_region32_t *changed) {
     struct entry *entries = r->entries.data;
     const size_t len = r->entries.size / sizeof(*entries);
     struct attribution a = {.view = v, .entries = entries, .len = len};
@@ -548,7 +531,7 @@ static bool decide_effects(struct rediwm_output_renderer *r, struct output_state
         pixman_region32_union_rect(&a.explained, &a.explained, 0, 0, v->width, v->height);
     pixman_region32_t unexplained;
     pixman_region32_init(&unexplained);
-    pixman_region32_subtract(&unexplained, &out->private.pending_commit_damage, &a.explained);
+    pixman_region32_subtract(&unexplained, &out->pending_commit_damage, &a.explained);
     struct effect_cache *c;
     wl_list_for_each(c, &os->caches, link) c->seen = false;
     bool ok = true;
@@ -605,7 +588,7 @@ static bool decide_effects(struct rediwm_output_renderer *r, struct output_state
     return ok;
 }
 static void render_effect(struct entry *e, struct wlr_render_pass *pass, const struct output_view *v,
-        struct rediwm_output_renderer *r, struct wlr_scene_output *out, const pixman_region32_t *clip,
+        struct rediwm_output_renderer *r, struct rediwm_scene_output *out, const pixman_region32_t *clip,
         bool backdrop) {
     struct effect_cache *c = e->cache;
     if (!c) return;
@@ -676,8 +659,8 @@ static void render_effect(struct entry *e, struct wlr_render_pass *pass, const s
     for (size_t i = 0; i < len; i++) {
         struct entry *f = &entries[i];
         if (f->transport != e->front || f->item.kind == REDIWM_ITEM_RECT) continue;
-        struct wlr_scene_buffer *b = wlr_scene_buffer_from_node(f->transport);
-        if (b->private.is_single_pixel_buffer || b->transform != WL_OUTPUT_TRANSFORM_NORMAL) break;
+        struct rediwm_buffer *b = rediwm_buffer_from_node(f->transport);
+        if (b->is_single_pixel_buffer || b->transform != WL_OUTPUT_TRANSFORM_NORMAL) break;
         o.front = buffer_texture(b, renderer);
         o.front_box = device_box(f->box, v);
         o.front_opacity = f->item.content.opacity;
@@ -693,7 +676,7 @@ static void render_effect(struct entry *e, struct wlr_render_pass *pass, const s
 // `backdrop`: drawing into an effect's quarter-size image (stage 5f), where an
 // item counts with its whole box, not what is visible of it on screen, and
 // `damage` is the region the blur reads.
-static bool render_entry(struct rediwm_output_renderer *r, struct entry *e, struct wlr_scene_output *out,
+static bool render_entry(struct rediwm_output_renderer *r, struct entry *e, struct rediwm_scene_output *out,
         struct wlr_render_pass *pass, const struct output_view *v, pixman_region32_t *damage, bool backdrop) {
     struct wlr_box dst = device_box(e->box, v);
     if (misses_damage(&dst, damage)) return true;
@@ -771,9 +754,9 @@ static bool render_entry(struct rediwm_output_renderer *r, struct entry *e, stru
         if (!shaped) wlr_render_pass_add_rect(pass, &rect);
         else if (pixman_region32_not_empty(&clip)) rediwm_scene_pass_add_rect_shaped(pass, &rect, &shape);
     } else {
-        struct wlr_scene_buffer *b = wlr_scene_buffer_from_node(e->transport);
-        if (b->private.is_single_pixel_buffer) {
-            const uint32_t *color = b->private.single_pixel_buffer_color;
+        struct rediwm_buffer *b = rediwm_buffer_from_node(e->transport);
+        if (b->is_single_pixel_buffer) {
+            const uint32_t *color = b->single_pixel_buffer_color;
             // Match wlroots' single-pixel path during parity, including its
             // treatment of opacity (only alpha is multiplied there).
             struct wlr_render_rect_options rect = {.box = dst,
@@ -793,7 +776,7 @@ static bool render_entry(struct rediwm_output_renderer *r, struct entry *e, stru
                 .texture = texture, .dst_box = dst, .src_box = c->src_box,
                 .transform = wlr_output_transform_compose(wlr_output_transform_invert(c->transform), v->transform),
                 .alpha = &c->opacity, .filter_mode = c->filter_mode,
-                .wait_timeline = b->private.wait_timeline, .wait_point = b->private.wait_point,
+                .wait_timeline = b->wait_timeline, .wait_point = b->wait_point,
             };
             if (pixman_region32_not_empty(&core)) {
                 t.clip = &core;
@@ -837,7 +820,7 @@ static bool audit_read(struct wlr_renderer *renderer, struct wlr_buffer *buffer,
     wlr_texture_destroy(texture);
     return ok;
 }
-static void audit_damage(struct rediwm_output_renderer *r, struct wlr_scene_output *out,
+static void audit_damage(struct rediwm_output_renderer *r, struct rediwm_scene_output *out,
         struct wlr_buffer *real, struct entry *entries, size_t len, const struct output_view *v,
         const pixman_region32_t *damage, float veil) {
     struct wlr_output *output = out->output;
@@ -916,12 +899,10 @@ static void audit_damage(struct rediwm_output_renderer *r, struct wlr_scene_outp
 }
 #endif
 bool rediwm_scene_output_build_state(struct rediwm_output_renderer *r,
-        struct rediwm_projection *projection, struct wlr_scene_output *out, struct wlr_output_state *state) {
+        struct rediwm_projection *projection, struct rediwm_scene_output *out, struct wlr_output_state *state) {
     if ((state->committed & WLR_OUTPUT_STATE_ENABLED) && !state->enabled) return true;
     struct wlr_output *output = out->output;
-    // These scene services are not installed by RediWM. KMS colour state is
-    // applied later by Output.commitFrameState, for either presenter.
-    if (out->scene->gamma_control_manager_v1 || out->private.combined_color_transform) return false;
+    // KMS colour state is applied later by Output.commitFrameState, for either presenter.
     struct output_view v = {.width = output->width, .height = output->height,
         .scale = state->committed & WLR_OUTPUT_STATE_SCALE ? state->scale : output->scale,
         .transform = state->committed & WLR_OUTPUT_STATE_TRANSFORM ? state->transform : output->transform,
@@ -941,8 +922,8 @@ bool rediwm_scene_output_build_state(struct rediwm_output_renderer *r,
     r->projection = projection;
     rediwm_projection_feedback_begin(projection);
     struct collector collector = {.renderer = r, .view = &v};
-    struct wlr_scene_output *other;
-    wl_list_for_each(other, &out->scene->outputs, link) {
+    struct rediwm_scene_output *other;
+    wl_list_for_each(other, &out->outputs->outputs, link) {
         if (other == out || !other->output->enabled || collector.others == 15) continue;
         struct wlr_box *box = &collector.other[collector.others++];
         *box = (struct wlr_box){.x = other->x, .y = other->y};
@@ -978,14 +959,14 @@ bool rediwm_scene_output_build_state(struct rediwm_output_renderer *r,
     if (pixman_region32_not_empty(&changed)) {
         pixman_region32_intersect_rect(&changed, &changed, 0, 0, v.width, v.height);
         wlr_damage_ring_add(&out->damage_ring, &changed);
-        pixman_region32_union(&out->private.pending_commit_damage,
-            &out->private.pending_commit_damage, &changed);
+        pixman_region32_union(&out->pending_commit_damage,
+            &out->pending_commit_damage, &changed);
     }
     pixman_region32_fini(&changed);
-    wlr_output_state_set_damage(state, &out->private.pending_commit_damage);
+    wlr_output_state_set_damage(state, &out->pending_commit_damage);
     bool scanout = len == 1 && veil == 0 && try_scanout(&entries[0], out, state, &v);
-    if (out->private.prev_scanout != scanout) {
-        out->private.prev_scanout = scanout;
+    if (out->prev_scanout != scanout) {
+        out->prev_scanout = scanout;
         wlr_log(WLR_DEBUG, "Direct scan-out %s", scanout ? "enabled" : "disabled");
     }
     bool ok = scanout;
@@ -995,8 +976,8 @@ bool rediwm_scene_output_build_state(struct rediwm_output_renderer *r,
     buffer = wlr_swapchain_acquire(output->swapchain);
     if (!buffer) goto done;
     struct wlr_render_pass *pass = rediwm_scene_pass_begin(r->pass, buffer,
-        &(struct wlr_buffer_pass_options){.signal_timeline = out->private.in_timeline,
-            .signal_point = ++out->private.in_point});
+        &(struct wlr_buffer_pass_options){.signal_timeline = out->in_timeline,
+            .signal_point = ++out->in_point});
     if (!pass) goto done;
     pixman_region32_t damage, background;
     pixman_region32_init(&damage);
@@ -1029,9 +1010,9 @@ bool rediwm_scene_output_build_state(struct rediwm_output_renderer *r,
     pixman_region32_fini(&damage);
     if (ok) {
         wlr_output_state_set_buffer(state, buffer);
-        if (out->private.in_timeline) {
-            wlr_output_state_set_wait_timeline(state, out->private.in_timeline, out->private.in_point);
-            wlr_output_state_set_signal_timeline(state, out->private.out_timeline, ++out->private.out_point);
+        if (out->in_timeline) {
+            wlr_output_state_set_wait_timeline(state, out->in_timeline, out->in_point);
+            wlr_output_state_set_signal_timeline(state, out->out_timeline, ++out->out_point);
         }
     }
 done:

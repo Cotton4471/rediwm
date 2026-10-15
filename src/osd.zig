@@ -218,11 +218,10 @@ test "OSD is noninteractive, stays above lock covers, rescales and releases its 
     defer layout.destroy();
     var fixture = try sn.TestScene.create();
     defer fixture.destroy();
-    const scene = fixture.wlr_scene;
     defer PanelBuffer.drainPool();
     var server: Server = undefined;
     server.wl_server = display;
-    server.scene = scene;
+    server.scene_outputs = undefined;
     server.output_layout = layout;
     server.overlay_tree = try fixture.nodes.tree.createSceneTree();
     server.lock_tree = try fixture.nodes.tree.createSceneTree();
@@ -274,11 +273,10 @@ test "OSD sound and brightness glides smoothly between levels" {
     defer layout.destroy();
     var fixture = try sn.TestScene.create();
     defer fixture.destroy();
-    const scene = fixture.wlr_scene;
     defer PanelBuffer.drainPool();
     var server: Server = undefined;
     server.wl_server = display;
-    server.scene = scene;
+    server.scene_outputs = undefined;
     server.output_layout = layout;
     server.overlay_tree = try fixture.nodes.tree.createSceneTree();
     server.lock_tree = try fixture.nodes.tree.createSceneTree();

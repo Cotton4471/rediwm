@@ -25,6 +25,7 @@ pub const Node = extern struct {
     addons: wlr.AddonSet,
     props: ?*anyopaque,
     group: ?*anyopaque,
+    leaf: ?*anyopaque,
     scene: *Scene,
 
     extern fn rediwm_node_destroy(node: *Node) void;
@@ -125,10 +126,6 @@ pub const Tree = extern struct {
         return rediwm_buffer_create(parent, buffer) orelse error.OutOfMemory;
     }
 
-    extern fn rediwm_tree_host(tree: *const Tree) *wlr.SceneTree;
-    /// The hidden wlr_scene tree that holds the buffers' carriers.
-    pub const host = rediwm_tree_host;
-
     extern fn rediwm_xdg_surface_create(parent: *Tree, xdg_surface: *wlr.XdgSurface) ?*Tree;
     pub fn createSceneXdgSurface(parent: *Tree, xdg_surface: *wlr.XdgSurface) !*Tree {
         return rediwm_xdg_surface_create(parent, xdg_surface) orelse error.OutOfMemory;
@@ -154,7 +151,6 @@ pub const Rect = extern struct {
     width: c_int,
     height: c_int,
     color: [4]f32,
-    carrier: *wlr.SceneRect,
 
     extern fn rediwm_rect_set_color(rect: *Rect, color: *const [4]f32) void;
     pub const setColor = rediwm_rect_set_color;
@@ -168,8 +164,6 @@ pub const Rect = extern struct {
 
 pub const Buffer = extern struct {
     node: Node,
-    /// The hidden wlr_scene buffer that carries the pixels (see node.h).
-    carrier: *wlr.SceneBuffer,
     point_accepts_input: ?*const fn (buffer: *Buffer, sx: *f64, sy: *f64) callconv(.c) bool,
     opacity: f32,
     filter_mode: wlr.RenderPass.ScaleFilterMode,
@@ -182,11 +176,31 @@ pub const Buffer = extern struct {
     buffer_height: c_int,
     /// The client surface this node shows, if it is one.
     surface: ?*Surface,
+    /// The content (see node.h): null `buffer` once the renderer uploaded it and let it go.
+    buffer: ?*wlr.Buffer,
+    own_buffer: bool,
+    buffer_release: wl.Listener(void),
+    texture: ?*wlr.Texture,
+    renderer_destroy: wl.Listener(void),
+    wait_timeline: ?*wlr.DrmSyncobjTimeline,
+    wait_point: u64,
+    buffer_is_opaque: bool,
+    is_single_pixel_buffer: bool,
+    single_pixel_buffer_color: [4]u32,
+    transfer_function: u32,
+    primaries: u32,
+    color_encoding: u32,
+    color_range: u32,
+    events: extern struct {
+        outputs_update: wl.Signal(?*anyopaque),
+        output_sample: wl.Signal(?*anyopaque),
+        frame_done: wl.Signal(?*anyopaque),
+    },
 
     extern fn rediwm_buffer_set_buffer(buffer: *Buffer, wlr_buffer: ?*wlr.Buffer) void;
     pub const setBuffer = rediwm_buffer_set_buffer;
     extern fn rediwm_buffer_get_buffer(buffer: *const Buffer) ?*wlr.Buffer;
-    /// The buffer the carrier holds; null once the renderer released it after upload.
+    /// The buffer the node holds; null once the renderer released it after upload.
     pub const getBuffer = rediwm_buffer_get_buffer;
     extern fn rediwm_buffer_set_buffer_with_damage(buffer: *Buffer, wlr_buffer: ?*wlr.Buffer, damage: *const pixman.Region32) void;
     pub const setBufferWithDamage = rediwm_buffer_set_buffer_with_damage;
@@ -218,35 +232,29 @@ pub const Surface = extern struct {
 /// The own scene: its root tree's children are the layers, bottom to top.
 pub const Scene = extern struct {
     tree: Tree,
-    host: *wlr.SceneTree,
     changed: ?*const fn (data: ?*anyopaque, node: ?*Node, structural: bool) callconv(.c) void,
     buffer_damaged: ?*const fn (data: ?*anyopaque, buffer: *Buffer, damage: ?*const pixman.Region32) callconv(.c) void,
     changed_data: ?*anyopaque,
+    /// The outputs this scene is shown on (scene_outputs.h).
+    outputs: ?*anyopaque,
 
-    extern fn rediwm_scene_create(host: *wlr.SceneTree, changed: ?*const fn (?*anyopaque, ?*Node, bool) callconv(.c) void, data: ?*anyopaque) ?*Scene;
-    /// `host` is a hidden, disabled wlr_scene tree for the buffers' carriers.
-    pub fn create(host: *wlr.SceneTree) !*Scene {
-        return rediwm_scene_create(host, null, null) orelse error.OutOfMemory;
+    extern fn rediwm_scene_create(changed: ?*const fn (?*anyopaque, ?*Node, bool) callconv(.c) void, data: ?*anyopaque) ?*Scene;
+    pub fn create() !*Scene {
+        return rediwm_scene_create(null, null) orelse error.OutOfMemory;
     }
     extern fn rediwm_scene_destroy(scene: ?*Scene) void;
     pub const destroy = rediwm_scene_destroy;
 };
 
-/// A scene for unit tests: a wlroots scene with the own scene's hidden host in it.
+/// A scene for unit tests.
 pub const TestScene = struct {
-    wlr_scene: *wlr.Scene,
     nodes: *Scene,
 
     pub fn create() !TestScene {
-        const wlr_scene = try wlr.Scene.create();
-        errdefer wlr_scene.tree.node.destroy();
-        const host = try wlr_scene.tree.createSceneTree();
-        host.node.setEnabled(false);
-        return .{ .wlr_scene = wlr_scene, .nodes = try Scene.create(host) };
+        return .{ .nodes = try Scene.create() };
     }
 
     pub fn destroy(fixture: TestScene) void {
         fixture.nodes.destroy();
-        fixture.wlr_scene.tree.node.destroy();
     }
 };

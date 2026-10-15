@@ -7,7 +7,6 @@
 #include <stdlib.h>
 #include <wlr/interfaces/wlr_buffer.h>
 #include <wlr/types/wlr_buffer.h>
-#include <wlr/types/wlr_scene.h>
 
 static int changes;
 static void on_change(void *data, struct rediwm_node *node, bool structural) {
@@ -55,11 +54,7 @@ static void collect(struct rediwm_buffer *b, int sx, int sy, void *data) {
 }
 
 int main(void) {
-  struct wlr_scene *wlr_scene = wlr_scene_create();
-  assert(wlr_scene);
-  struct wlr_scene_tree *host = wlr_scene_tree_create(&wlr_scene->tree);
-  wlr_scene_node_set_enabled(&host->node, false);
-  struct rediwm_scene *scene = rediwm_scene_create(host, on_change, NULL);
+  struct rediwm_scene *scene = rediwm_scene_create(on_change, NULL);
   assert(scene && scene->tree.node.enabled && !scene->tree.node.parent);
 
   // Creation reports, a no-op mutation does not.
@@ -180,7 +175,6 @@ int main(void) {
   rediwm_node_destroy(&buf->node);
 
   rediwm_scene_destroy(scene);
-  wlr_scene_node_destroy(&wlr_scene->tree.node);
   puts("node tests passed");
   return 0;
 }

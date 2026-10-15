@@ -288,7 +288,7 @@ pub const Manager = struct {
             failJob(job, "SessionLocked");
             return;
         }
-        const scene_output = mgr.server.scene.getSceneOutput(job.output.wlr_output) orelse {
+        const scene_output = mgr.server.scene_outputs.get(job.output.wlr_output) orelse {
             log.err("processPendingJob: no scene output for {s}", .{job.output_name});
             failJob(job, "CaptureFailed: missing scene output");
             return;

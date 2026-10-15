@@ -1,6 +1,7 @@
 // The compositor's own scene nodes (stage 7 of docs/plans/scene-graph-stage7.md).
 //
-// What wlr_scene gave the compositor as a data model: a tree of nodes with a
+// What wlr_scene gave the compositor as a data model (and the compositor no longer links
+// it): a tree of nodes with a
 // position, an enabled flag and an owner pointer, whose leaves are buffers or
 // rectangles. It does no drawing, damage or picking here; the projection resolves
 // the tree into items and the output pass draws them. Every mutator that can change
@@ -19,15 +20,16 @@
 #include <stdint.h>
 #include <wayland-server-core.h>
 #include <wayland-server-protocol.h>
+#include <wlr/render/color.h>
 #include <wlr/render/pass.h>
 #include <wlr/util/addon.h>
 #include <wlr/util/box.h>
 
 struct wlr_buffer;
-struct wlr_scene_buffer;
-struct wlr_scene_rect;
-struct wlr_scene_tree;
+struct wlr_texture;
+struct wlr_drm_syncobj_timeline;
 struct rediwm_scene;
+struct rediwm_scene_outputs;
 struct rediwm_tree;
 
 enum rediwm_node_type {
@@ -48,8 +50,9 @@ struct rediwm_node {
   } events;
   struct wlr_addon_set addons;
   // The projection's per-node state, found without a walk of `addons` on every sync:
-  // a tree's presentation properties and the group a top-level node is.
-  void *props, *group;
+  // a tree's presentation properties, the group a top-level node is, and the leaf a
+  // buffer or rect is.
+  void *props, *group, *leaf;
   struct rediwm_scene *scene;
 };
 
@@ -61,22 +64,18 @@ struct rediwm_tree {
 struct rediwm_rect {
   struct rediwm_node node;
   int width, height;
-  float color[4]; // premultiplied, as wlr_scene_rect
-  // The hidden wlr_scene rect the output pass reads the colour from, kept in step.
-  struct wlr_scene_rect *carrier;
+  float color[4]; // premultiplied
 };
 
 struct rediwm_buffer;
 struct rediwm_surface;
 typedef bool (*rediwm_buffer_point_accepts_input)(struct rediwm_buffer *, double *x, double *y);
 
-// Geometry and content state live here; the pixels themselves (the locked buffer,
-// its texture, wait points, single-pixel colour) are carried by a hidden wlr_scene
-// buffer the output pass already knows how to read. Every setter keeps the two in
-// step. Stage 7c replaces the carrier with the pass's own texture cache.
+// A buffer node shows a wlr_buffer, or a colour, or nothing: the content is held here
+// (the lock, the texture the output pass uploads, wait points, a single-pixel colour),
+// as wlr_scene_buffer keeps it, and the setters keep it in step with the geometry.
 struct rediwm_buffer {
   struct rediwm_node node;
-  struct wlr_scene_buffer *carrier;
   rediwm_buffer_point_accepts_input point_accepts_input; // may be NULL
   float opacity;
   enum wlr_scale_filter_mode filter_mode;
@@ -88,13 +87,33 @@ struct rediwm_buffer {
   int buffer_width, buffer_height;
   // The client surface this node shows, or NULL (node_surface.h).
   struct rediwm_surface *surface;
+
+  // Content. `buffer` is NULL once the renderer has uploaded it and let it go (the
+  // texture then stands for it). `own_buffer`: this node holds a lock on `buffer`.
+  struct wlr_buffer *buffer;
+  bool own_buffer;
+  struct wl_listener buffer_release;
+  struct wlr_texture *texture;
+  struct wl_listener renderer_destroy;
+  struct wlr_drm_syncobj_timeline *wait_timeline;
+  uint64_t wait_point;
+  bool buffer_is_opaque;
+  bool is_single_pixel_buffer;
+  uint32_t single_pixel_buffer_color[4];
+  enum wlr_color_transfer_function transfer_function;
+  enum wlr_color_named_primaries primaries;
+  enum wlr_color_encoding color_encoding;
+  enum wlr_color_range color_range;
+  // What the output pass reports of a surface node (scene_outputs.h).
+  struct {
+    struct wl_signal outputs_update; // struct rediwm_outputs_update_event
+    struct wl_signal output_sample;  // struct rediwm_output_sample_event
+    struct wl_signal frame_done;     // struct rediwm_frame_done_event
+  } events;
 };
 
 struct rediwm_scene {
   struct rediwm_tree tree;
-  // A hidden, disabled wlr_scene tree that hosts every buffer's carrier, so wlroots
-  // computes nothing for them.
-  struct wlr_scene_tree *host;
   // Something the tree shows may have changed: the owner schedules a frame.
   // `node` is the one that changed (NULL when it is gone); `structural` when nodes
   // were made, moved, stacked or destroyed, or a layer changed.
@@ -104,6 +123,8 @@ struct rediwm_scene {
   // this into screen damage, as wlroots did for the nodes it tracked.
   void (*buffer_damaged)(void *data, struct rediwm_buffer *, const pixman_region32_t *damage);
   void *changed_data;
+  // The outputs this scene is shown on (what surfaces are told about).
+  struct rediwm_scene_outputs *outputs;
 };
 
 static inline struct rediwm_tree *rediwm_tree_from_node(struct rediwm_node *node) {
@@ -116,9 +137,8 @@ static inline struct rediwm_buffer *rediwm_buffer_from_node(struct rediwm_node *
   return node->type == REDIWM_NODE_BUFFER ? (struct rediwm_buffer *)node : NULL;
 }
 
-// A scene is its root tree. `host` is where carriers live (the caller disables it); `changed` may be NULL.
-struct rediwm_scene *rediwm_scene_create(struct wlr_scene_tree *host,
-                                         void (*changed)(void *, struct rediwm_node *, bool),
+// A scene is its root tree; `changed` may be NULL.
+struct rediwm_scene *rediwm_scene_create(void (*changed)(void *, struct rediwm_node *, bool),
                                          void *data);
 void rediwm_scene_destroy(struct rediwm_scene *);
 
@@ -128,8 +148,6 @@ struct rediwm_tree *rediwm_tree_create(struct rediwm_tree *parent);
 struct rediwm_rect *rediwm_rect_create(struct rediwm_tree *parent, int width, int height,
                                        const float color[4]);
 struct rediwm_buffer *rediwm_buffer_create(struct rediwm_tree *parent, struct wlr_buffer *);
-// Where the scene's carriers are made.
-struct wlr_scene_tree *rediwm_tree_host(const struct rediwm_tree *);
 
 // Destroys the node and everything under it; each node emits events.destroy first.
 void rediwm_node_destroy(struct rediwm_node *);
@@ -160,11 +178,22 @@ void rediwm_buffer_set_buffer(struct rediwm_buffer *, struct wlr_buffer *);
 // As wlr_scene_buffer_set_buffer_with_damage: `damage` is buffer-local.
 void rediwm_buffer_set_buffer_with_damage(struct rediwm_buffer *, struct wlr_buffer *,
                                           const pixman_region32_t *damage);
-// As wlr_scene_buffer_set_buffer_with_options: damage plus an acquire point to wait for.
-struct wlr_scene_buffer_set_buffer_options;
+// Damage (buffer-local, NULL for all of it) plus an acquire point to wait for before
+// the buffer is read.
+struct rediwm_buffer_options {
+  const pixman_region32_t *damage;
+  struct wlr_drm_syncobj_timeline *wait_timeline;
+  uint64_t wait_point;
+};
 void rediwm_buffer_set_buffer_with_options(struct rediwm_buffer *, struct wlr_buffer *,
-                                           const struct wlr_scene_buffer_set_buffer_options *);
-// The buffer the carrier holds; NULL once the renderer released it after upload.
+                                           const struct rediwm_buffer_options *);
+// Replaces the content without telling the scene or the projection: for a caller that
+// reports the damage itself (rediwm_projection_present_owned).
+void rediwm_buffer_set_content(struct rediwm_buffer *, struct wlr_buffer *);
+// The renderer's texture of the content, kept until the next buffer is set (the pass
+// uploads it); NULL drops it.
+void rediwm_buffer_set_texture(struct rediwm_buffer *, struct wlr_texture *);
+// The buffer the node holds; NULL once the renderer released it after upload.
 struct wlr_buffer *rediwm_buffer_get_buffer(const struct rediwm_buffer *);
 void rediwm_buffer_set_dest_size(struct rediwm_buffer *, int width, int height);
 void rediwm_buffer_set_source_box(struct rediwm_buffer *, const struct wlr_fbox *);

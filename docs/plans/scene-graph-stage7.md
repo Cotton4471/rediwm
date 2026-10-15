@@ -130,6 +130,19 @@ suites pass; integration batch: the same failures as HEAD plus flakes that also 
 the previous commit (`input_persistence`, `xwayland`, `xwayland_fractional`: xrdb sees no
 `Xft.dpi` about half the runs).
 
+**7c and 7d landed 2026-10-16 (one change).** `scene_outputs.c` keeps what each output
+needs (layout position, damage ring, pending commit damage, explicit-sync timelines,
+the `needs_frame` latch, and the registry's direct-scanout flag and colour manager); it
+replaces `wlr_scene_output`, `wlr_scene_output_layout` and the registration half of
+`wlr_scene`. A buffer node holds its own content (locked `wlr_buffer`, texture,
+wait point, single-pixel colour, the `outputs_update`/`output_sample`/`frame_done`
+signals), so the carriers, the hidden host and the leaf-on-carrier trick are gone: the
+projection's `source` is the node itself and its leaf lives in `node->leaf`. No file
+includes `wlr/types/wlr_scene.h` and `wlr.Scene` is not created. The test hook
+`tests/output_destroy_hook.c` now finds the unplug target at `wlr_output_set_name`
+(the wlr scene functions it interposed are no longer called). `rediwm_scene_output_damage_whole`
+moved to `scene_outputs.c`; `Server.sendFrameDone` is the projection's alone.
+
 ## Design
 
 An own node module, C core with a thin Zig wrapper, living beside `scene_graph.h`:

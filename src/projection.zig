@@ -2,7 +2,7 @@ const std = @import("std");
 const wlr = @import("wlroots");
 const node = @import("node.zig");
 pub const Projection = opaque {
-    extern fn rediwm_projection_create(own: *node.Scene, world: *node.Tree, scene: *wlr.Scene) ?*Projection;
+    extern fn rediwm_projection_create(own: *node.Scene, world: *node.Tree, outputs: *@import("scene_outputs.zig").SceneOutputs) ?*Projection;
     /// `own` is the compositor's scene (its root's children are layers, bottom to
     /// top) and `world` the layer that follows the camera. The projection asks for a
     /// frame whenever the scene changes.
@@ -15,18 +15,18 @@ pub const Projection = opaque {
     pub const sync = rediwm_projection_sync;
     extern fn rediwm_projection_sync_fixed(projection: ?*Projection, zoom: f64, cx: f64, cy: f64, ox: f64, oy: f64, fixed: ?*node.Tree) void;
     pub const syncFixed = rediwm_projection_sync_fixed;
-    extern fn rediwm_projection_damage_buffer(projection: *Projection, source: *wlr.SceneNode, damage: ?*const @import("pixman").Region32) void;
+    extern fn rediwm_projection_damage_buffer(projection: *Projection, source: *node.Node, damage: ?*const @import("pixman").Region32) void;
     /// Buffer-local damage for the buffer just set on a compositor-owned
     /// buffer node; null damages all of it.
     pub fn damageBuffer(projection: *Projection, buffer: *node.Buffer, damage: ?*const @import("pixman").Region32) void {
-        rediwm_projection_damage_buffer(projection, &buffer.carrier.node, damage);
+        rediwm_projection_damage_buffer(projection, &buffer.node, damage);
     }
-    extern fn rediwm_projection_present_owned(projection: *Projection, source: *wlr.SceneBuffer, renderer: *wlr.Renderer, buffer: *wlr.Buffer, damage: ?*const @import("pixman").Region32) bool;
+    extern fn rediwm_projection_present_owned(projection: *Projection, source: *node.Buffer, renderer: *wlr.Renderer, buffer: *wlr.Buffer, damage: ?*const @import("pixman").Region32) bool;
     /// Sets `buffer` on a compositor-owned buffer node, updating the texture
     /// in place with `damage` when the renderer allows; null replaces all.
     /// The caller may drop `buffer` afterwards. True when updated in place.
     pub fn presentOwned(projection: *Projection, target: *node.Buffer, renderer: *wlr.Renderer, buffer: *wlr.Buffer, damage: ?*const @import("pixman").Region32) bool {
-        return rediwm_projection_present_owned(projection, target.carrier, renderer, buffer, damage);
+        return rediwm_projection_present_owned(projection, target, renderer, buffer, damage);
     }
     pub const Hit = extern struct {
         /// The leaf that was hit: a client surface's node, or a shell node.
@@ -47,9 +47,8 @@ pub const Projection = opaque {
         var hit: Hit = undefined;
         return if (rediwm_projection_node_at(projection, lx, ly, &hit)) hit else null;
     }
-    extern fn rediwm_projection_send_frame_done(projection: *Projection, output: *wlr.SceneOutput, now: *std.posix.timespec) void;
-    /// Frame callbacks of the world's client surfaces for one output, beside
-    /// `wlr.SceneOutput.sendFrameDone`, which reaches the layout trees only.
+    extern fn rediwm_projection_send_frame_done(projection: *Projection, output: *@import("scene_outputs.zig").SceneOutput, now: *std.posix.timespec) void;
+    /// Frame callbacks of the world's client surfaces for one output.
     pub const sendFrameDone = rediwm_projection_send_frame_done;
 };
 extern fn rediwm_projection_set_tree_zoom(target: *node.Node, scale: f64) bool;

@@ -17,7 +17,7 @@
 #include <wlr/types/wlr_linux_drm_syncobj_v1.h>
 #include <wlr/types/wlr_output.h>
 #include <wlr/types/wlr_presentation_time.h>
-#include <wlr/types/wlr_scene.h>
+#include "scene_outputs.h"
 #include <wlr/types/wlr_single_pixel_buffer_v1.h>
 #include <wlr/types/wlr_subcompositor.h>
 #include <wlr/types/wlr_xdg_shell.h>
@@ -94,18 +94,10 @@ static void get_surface_preferred_image_description(struct wlr_surface *surface,
   };
 }
 
-// The wlr_scene whose host holds the node's carrier: it knows the outputs and the colour
-// manager (stage 7c replaces both with plain pointers).
-static struct wlr_scene *carrier_scene(struct wlr_scene_buffer *carrier) {
-  struct wlr_scene_tree *tree = carrier->node.parent;
-  while (tree->node.parent) tree = tree->node.parent;
-  return wl_container_of(tree, (struct wlr_scene *)NULL, tree);
-}
-
 static void handle_scene_buffer_outputs_update(struct wl_listener *listener, void *data) {
   struct rediwm_surface *surface = wl_container_of(listener, surface, outputs_update);
-  struct wlr_scene_outputs_update_event *event = data;
-  struct wlr_scene *scene = carrier_scene(surface->buffer->carrier);
+  struct rediwm_outputs_update_event *event = data;
+  struct rediwm_scene_outputs *scene = surface->buffer->node.scene->outputs;
 
   // If the surface is no longer visible on any output in the scene, keep the last sent
   // preferred configuration to avoid unnecessary redraws.
@@ -130,8 +122,8 @@ static void handle_scene_buffer_outputs_update(struct wl_listener *listener, voi
       }
     }
 
-    struct wlr_scene_output *scene_output;
-    wl_list_for_each(scene_output, &scene->outputs, link) {
+    struct rediwm_scene_output *scene_output;
+    if (scene) wl_list_for_each(scene_output, &scene->outputs, link) {
       if (scene_output->output == entered_output->output) {
         entered_output->private.suspended = suspend;
         if (!suspend && !active) wlr_surface_send_leave(surface->surface, entered_output->output);
@@ -154,7 +146,7 @@ static void handle_scene_buffer_outputs_update(struct wl_listener *listener, voi
   wlr_fractional_scale_v1_notify_scale(surface->surface, scale);
   wlr_surface_set_preferred_buffer_scale(surface->surface, ceil(scale));
 
-  if (scene->color_manager_v1 != NULL) {
+  if (scene && scene->color_manager_v1 != NULL) {
     struct wlr_image_description_v1_data img_desc = {0};
     get_surface_preferred_image_description(surface->surface, &img_desc);
     wlr_color_manager_v1_set_surface_preferred_image_description(scene->color_manager_v1,
@@ -164,7 +156,7 @@ static void handle_scene_buffer_outputs_update(struct wl_listener *listener, voi
 
 static void handle_scene_buffer_output_sample(struct wl_listener *listener, void *data) {
   struct rediwm_surface *surface = wl_container_of(listener, surface, output_sample);
-  const struct wlr_scene_output_sample_event *event = data;
+  const struct rediwm_output_sample_event *event = data;
   struct wlr_output *output = event->output->output;
   if (get_surface_frame_pacing_output(surface->surface) != output) return;
 
@@ -183,7 +175,7 @@ static void handle_scene_buffer_output_sample(struct wl_listener *listener, void
 
 static void handle_scene_buffer_frame_done(struct wl_listener *listener, void *data) {
   struct rediwm_surface *surface = wl_container_of(listener, surface, frame_done);
-  struct wlr_scene_frame_done_event *event = data;
+  struct rediwm_frame_done_event *event = data;
   if (get_surface_frame_pacing_output(surface->surface) != event->output->output) return;
 
   wlr_surface_send_frame_done(surface->surface, &event->when);
@@ -202,7 +194,7 @@ static void client_buffer_mark_next_can_damage(struct wlr_client_buffer *buffer)
   buffer->private.n_ignore_locks++;
 }
 
-static void carrier_unmark_client_buffer(struct wlr_scene_buffer *scene_buffer) {
+static void unmark_client_buffer(struct rediwm_buffer *scene_buffer) {
   if (!scene_buffer->buffer) return;
 
   struct wlr_client_buffer *buffer = wlr_client_buffer_get(scene_buffer->buffer);
@@ -217,7 +209,6 @@ static int min(int a, int b) { return a < b ? a : b; }
 
 static void surface_reconfigure(struct rediwm_surface *scene_surface) {
   struct rediwm_buffer *scene_buffer = scene_surface->buffer;
-  struct wlr_scene_buffer *carrier = scene_buffer->carrier;
   struct wlr_surface *surface = scene_surface->surface;
   struct wlr_surface_state *state = &surface->current;
 
@@ -290,13 +281,13 @@ static void surface_reconfigure(struct rediwm_surface *scene_surface) {
   rediwm_buffer_set_dest_size(scene_buffer, width, height);
   rediwm_buffer_set_transform(scene_buffer, state->transform);
   rediwm_buffer_set_opacity(scene_buffer, opacity);
-  // The colour description is the carrier's alone: the buffer set below reports it.
-  wlr_scene_buffer_set_transfer_function(carrier, tf);
-  wlr_scene_buffer_set_primaries(carrier, primaries);
-  wlr_scene_buffer_set_color_encoding(carrier, color_encoding);
-  wlr_scene_buffer_set_color_range(carrier, color_range);
+  // The colour description has no setters of its own: the buffer set below reports it.
+  scene_buffer->transfer_function = tf;
+  scene_buffer->primaries = primaries;
+  scene_buffer->color_encoding = color_encoding;
+  scene_buffer->color_range = color_range;
 
-  carrier_unmark_client_buffer(carrier);
+  unmark_client_buffer(scene_buffer);
 
   if (surface->buffer) {
     // If we've cached the buffer's single-pixel buffer color then any in-place updates
@@ -314,7 +305,7 @@ static void surface_reconfigure(struct rediwm_surface *scene_surface) {
     struct wlr_linux_drm_syncobj_surface_v1_state *syncobj_surface_state =
         wlr_linux_drm_syncobj_v1_get_surface_state(surface);
 
-    struct wlr_scene_buffer_set_buffer_options options = {
+    struct rediwm_buffer_options options = {
         .damage = &surface->buffer_damage,
     };
     if (syncobj_surface_state != NULL) {
@@ -358,7 +349,7 @@ static void surface_node_destroyed(struct wl_listener *listener, void *data) {
   (void)data;
   struct rediwm_surface *surface = wl_container_of(listener, surface, node_destroy);
 
-  carrier_unmark_client_buffer(surface->buffer->carrier);
+  unmark_client_buffer(surface->buffer);
   surface->buffer->surface = NULL;
   surface->buffer->point_accepts_input = NULL;
 
@@ -386,19 +377,18 @@ struct rediwm_surface *rediwm_surface_create(struct rediwm_tree *parent, struct 
   surface->surface = wlr_surface;
   scene_buffer->surface = surface;
   scene_buffer->point_accepts_input = scene_buffer_point_accepts_input;
-  struct wlr_scene_buffer *carrier = scene_buffer->carrier;
 
   surface->node_destroy.notify = surface_node_destroyed;
   wl_signal_add(&scene_buffer->node.events.destroy, &surface->node_destroy);
 
   surface->outputs_update.notify = handle_scene_buffer_outputs_update;
-  wl_signal_add(&carrier->events.outputs_update, &surface->outputs_update);
+  wl_signal_add(&scene_buffer->events.outputs_update, &surface->outputs_update);
 
   surface->output_sample.notify = handle_scene_buffer_output_sample;
-  wl_signal_add(&carrier->events.output_sample, &surface->output_sample);
+  wl_signal_add(&scene_buffer->events.output_sample, &surface->output_sample);
 
   surface->frame_done.notify = handle_scene_buffer_frame_done;
-  wl_signal_add(&carrier->events.frame_done, &surface->frame_done);
+  wl_signal_add(&scene_buffer->events.frame_done, &surface->frame_done);
 
   surface->surface_destroy.notify = scene_surface_handle_surface_destroy;
   wl_signal_add(&wlr_surface->events.destroy, &surface->surface_destroy);

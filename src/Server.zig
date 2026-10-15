@@ -19,6 +19,7 @@ const icon_theme = @import("icon_theme.zig");
 const icon_service_mod = @import("icon_service.zig");
 const glass = @import("glass.zig");
 const scene_output_mod = @import("scene_output.zig");
+const scene_outputs_mod = @import("scene_outputs.zig");
 const explicit_sync = @import("explicit_sync.zig");
 const ipc_server = @import("ipc/server.zig");
 const screenshot = @import("screenshot/capture.zig");
@@ -98,8 +99,8 @@ gpu_timer: ?*@import("gpu_timing.zig").Timer = null,
 gpu_timer_tried: bool = false,
 gpu_timer_used_ns: u64 = 0,
 allocator: *wlr.Allocator,
-/// wlroots' scene, kept for its outputs; the compositor draws from `nodes`.
-scene: *wlr.Scene,
+/// What each output keeps besides the output itself (scene_outputs.h).
+scene_outputs: *scene_outputs_mod.SceneOutputs,
 /// The compositor's own scene: its layers are the trees below, bottom to top.
 nodes: *sn.Scene,
 glass_engine: ?*glass.Engine = null,
@@ -109,7 +110,6 @@ output_renderer: *scene_output_mod.Renderer = undefined,
 read_fence: ?*explicit_sync.ReadFence = null,
 
 output_layout: *wlr.OutputLayout,
-scene_output_layout: *wlr.SceneOutputLayout,
 new_output: wl.Listener(*wlr.Output) = .init(newOutput),
 
 shell: Shell,
@@ -366,21 +366,12 @@ pub fn init(server: *Server, scale: ?f32, icon_theme_cfg: icon_theme.Config, io:
     const output_layout = wlr.OutputLayout.create(wl_server) catch return error.OutputLayoutCreateFailed;
     errdefer output_layout.destroy();
 
-    const scene = wlr.Scene.create() catch return error.SceneCreateFailed;
-    errdefer scene.tree.node.destroy();
-    // The world source tree stays disabled: wlroots ignores it, and the projection
-    // resolves it into the graph the output pass draws.
-    // wlroots would lower each mapped X11 source as if it were hidden,
-    // undoing our raise after the map listener runs. Toplevel owns X11
-    // stacking alongside its scene ordering instead.
-    scene.restack_xwayland_surfaces = false;
-
-    // Carriers and the clients' surface trees live under a disabled host, so wlroots
-    // computes nothing for them: the projection resolves our scene instead.
-    const host = scene.tree.createSceneTree() catch return error.SceneCreateFailed;
-    host.node.setEnabled(false);
-    const nodes = sn.Scene.create(host) catch return error.SceneCreateFailed;
+    const scene_outputs = scene_outputs_mod.SceneOutputs.create(output_layout) catch return error.SceneCreateFailed;
+    errdefer scene_outputs.destroy();
+    // The projection resolves the scene into the graph the output pass draws.
+    const nodes = sn.Scene.create() catch return error.SceneCreateFailed;
     errdefer nodes.destroy();
+    nodes.outputs = scene_outputs;
     const background_tree = nodes.tree.createSceneTree() catch return error.SceneCreateFailed;
     const desktop_tree = nodes.tree.createSceneTree() catch return error.SceneCreateFailed;
     const world_tree = nodes.tree.createSceneTree() catch return error.SceneCreateFailed;
@@ -389,7 +380,6 @@ pub fn init(server: *Server, scale: ?f32, icon_theme_cfg: icon_theme.Config, io:
     const overlay_tree = nodes.tree.createSceneTree() catch return error.SceneCreateFailed;
     const ime_tree = nodes.tree.createSceneTree() catch return error.SceneCreateFailed;
     const lock_tree = nodes.tree.createSceneTree() catch return error.SceneCreateFailed;
-    const scene_output_layout = scene.attachOutputLayout(output_layout) catch return error.SceneCreateFailed;
 
     const catalog = applications.Catalog.init(@import("main.zig").gpa, io, environ, !greeter) catch return error.ServerCreateFailed;
     errdefer catalog.deinit();
@@ -429,7 +419,7 @@ pub fn init(server: *Server, scale: ?f32, icon_theme_cfg: icon_theme.Config, io:
         .backend = backend,
         .renderer = renderer,
         .allocator = wlr_allocator,
-        .scene = scene,
+        .scene_outputs = scene_outputs,
         .nodes = nodes,
         .background_tree = background_tree,
         .desktop_tree = desktop_tree,
@@ -439,7 +429,6 @@ pub fn init(server: *Server, scale: ?f32, icon_theme_cfg: icon_theme.Config, io:
         .ime_tree = ime_tree,
         .lock_tree = lock_tree,
         .output_layout = output_layout,
-        .scene_output_layout = scene_output_layout,
         .shell = undefined,
         .world = undefined,
         .input = undefined,
@@ -817,8 +806,8 @@ pub fn reactivateSession(server: *Server) void {
 
     var it = server.outputs.iterator(.forward);
     while (it.next()) |output| {
-        if (server.scene.getSceneOutput(output.wlr_output)) |so| {
-            so.damage_ring.addWhole();
+        if (server.scene_outputs.get(output.wlr_output)) |so| {
+            so.damageWhole();
         }
         output.wlr_output.scheduleFrame();
     }
@@ -1087,7 +1076,7 @@ pub fn deinit(server: *Server) void {
     glass.Engine.destroy(server.glass_engine);
     scene_output_mod.Renderer.destroy(server.output_renderer);
     explicit_sync.ReadFence.destroy(server.read_fence);
-    server.scene.tree.node.destroy();
+    server.scene_outputs.destroy();
     server.output_layout.destroy();
     server.allocator.destroy();
     if (server.gpu_timer) |timer| timer.destroy();
@@ -1100,14 +1089,12 @@ pub fn deinit(server: *Server) void {
 
 /// All output builds, including capture between frames, use the owned pass and
 /// the same swapchain/damage history. Commits stay on Output.
-pub fn buildOutputState(server: *Server, output: *wlr.SceneOutput, state: *wlr.Output.State) bool {
+pub fn buildOutputState(server: *Server, output: *scene_outputs_mod.SceneOutput, state: *wlr.Output.State) bool {
     return server.output_renderer.buildState(server.world.projection, output, state);
 }
 
-/// Frame callbacks for everything the output shows: the layout trees through
-/// wlroots, the world's surfaces from the graph.
-pub fn sendFrameDone(server: *Server, output: *wlr.SceneOutput, now: *std.posix.timespec) void {
-    output.sendFrameDone(now);
+/// Frame callbacks for the surfaces the output shows, from the graph.
+pub fn sendFrameDone(server: *Server, output: *scene_outputs_mod.SceneOutput, now: *std.posix.timespec) void {
     server.world.projection.sendFrameDone(output, now);
 }
 

@@ -19,14 +19,13 @@ test "notifications unit: replaces_id, urgency, DND, lock suppression" {
     defer backend.destroy();
     var fixture = try sn.TestScene.create();
     defer fixture.destroy();
-    const scene = fixture.wlr_scene;
     const output_layout = try wlr.OutputLayout.create(display);
     defer output_layout.destroy();
     var dummy_cursor: wlr.Cursor = std.mem.zeroes(wlr.Cursor);
 
     var server: Server = undefined;
     server.wl_server = display;
-    server.scene = scene;
+    server.scene_outputs = undefined;
     server.overlay_tree = try fixture.nodes.tree.createSceneTree();
     server.locker = null;
     server.environ = std.process.Environ.empty;

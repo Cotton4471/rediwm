@@ -5,6 +5,7 @@ const wl = @import("wayland").server.wl;
 
 const wlr = @import("wlroots");
 const sn = @import("node.zig");
+const SceneOutput = @import("scene_outputs.zig").SceneOutput;
 
 const ControlCenter = @import("control_center/panel.zig").ControlCenter;
 const StartMenu = @import("start_menu/panel.zig").StartMenu;
@@ -630,8 +631,7 @@ pub fn create(server: *Server, wlr_output: *wlr.Output) !void {
         }
         break :blk try server.output_layout.addAuto(wlr_output);
     };
-    const scene_output = try server.scene.createSceneOutput(wlr_output);
-    server.scene_output_layout.addOutput(layout_output, scene_output);
+    _ = try server.scene_outputs.createOutput(wlr_output, layout_output);
 
     server.output_layout.getBox(wlr_output, &output.cached_box);
 
@@ -1120,8 +1120,7 @@ pub fn commitFrameState(output: *Output, state: *wlr.Output.State) bool {
         }
     }
     if (!success and state.committed.buffer) {
-        if (output.server.scene.getSceneOutput(output.wlr_output)) |scene_output|
-            @import("scene_output.zig").damageWhole(scene_output);
+        if (output.server.scene_outputs.get(output.wlr_output)) |scene_output| scene_output.damageWhole();
     }
     return success;
 }
@@ -1159,12 +1158,11 @@ const CursorState = struct {
 /// desktop with one such client. Anything else that raises `needs_frame`
 /// without scene damage is checked here: hardware cursor moves, output
 /// capture (which holds an attach-render lock) and gamma changes.
-fn commitIsRedundant(output: *Output, scene_output: *wlr.SceneOutput) bool {
+fn commitIsRedundant(output: *Output, scene_output: *SceneOutput) bool {
     if (output.vblank_timer == null or output.color.pending) return false;
     const wlr_output = output.wlr_output;
     if (!wlr_output.enabled or wlr_output.attach_render_locks > 0) return false;
-    if (scene_output.private.gamma_lut_changed) return false;
-    if (scene_output.private.pending_commit_damage.notEmpty()) return false;
+    if (scene_output.hasPendingDamage()) return false;
     return std.meta.eql(CursorState.of(wlr_output), output.committed_cursor);
 }
 
@@ -1203,7 +1201,7 @@ fn handleVblank(output: *Output) c_int {
 }
 
 fn sendFrameDone(output: *Output) void {
-    if (output.server.scene.getSceneOutput(output.wlr_output)) |scene_output| {
+    if (output.server.scene_outputs.get(output.wlr_output)) |scene_output| {
         var now = timestamp();
         output.server.sendFrameDone(scene_output, &now);
     }
@@ -1326,7 +1324,7 @@ fn runFrame(output: *Output) void {
         const longest: u64 = @intCast(anim.observeLongestMs());
         if (longest > stats.global_stats.anim_longest_ms) stats.global_stats.anim_longest_ms = longest;
     }
-    const scene_output = output.server.scene.getSceneOutput(output.wlr_output) orelse {
+    const scene_output = output.server.scene_outputs.get(output.wlr_output) orelse {
         // Safer than `.?`: a missing scene output is a setup failure, not a
         // reason to abort the compositor on every refresh.
         log.err("handleFrame: no scene output for {s}", .{output.wlr_output.name});
@@ -1516,7 +1514,7 @@ fn handleDestroy(listener: *wl.Listener(*wlr.Output), _: *wlr.Output) void {
     // and attach a bind listener which misses the in-progress destroy signal,
     // causing wlr_output_finish() to assert. The scene output removes its
     // addons when explicitly destroyed, so wlroots won't destroy it twice.
-    if (server.scene.getSceneOutput(output.wlr_output)) |scene_output| {
+    if (server.scene_outputs.get(output.wlr_output)) |scene_output| {
         scene_output.destroy();
     }
     // Remove the layout entry now so remaining automatic positions have

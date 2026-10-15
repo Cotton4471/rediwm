@@ -6,7 +6,6 @@
 // reads the framebuffer, and resolve gives it the target's box (projection.c).
 #define WLR_USE_UNSTABLE
 #include <stdlib.h>
-#include <wlr/types/wlr_scene.h>
 #include <wlr/util/addon.h>
 #include "glass.h"
 #include "node.h"
@@ -26,7 +25,7 @@ struct glass_effect {
 	struct wl_list link;
 	struct rediwm_buffer *node, *target;
 	struct wl_listener destroy, target_destroy;
-	struct wlr_addon addon; // on the node's carrier, for rediwm_glass_effect_info
+	struct wlr_addon addon; // on the node, for rediwm_glass_effect_info
 	enum glass_kind kind;
 	uint64_t serial;
 	float radius, opacity;
@@ -61,13 +60,13 @@ static void handle_target_destroy(struct wl_listener *listener, void *data)
 static void addon_destroy(struct wlr_addon *addon) { wlr_addon_finish(addon); }
 static const struct wlr_addon_interface effect_addon = {.name = "rediwm glass effect",
 							  .destroy = addon_destroy};
-static struct glass_effect *effect_of(struct wlr_scene_node *node)
+static struct glass_effect *effect_of(struct rediwm_node *node)
 {
 	struct wlr_addon *addon = wlr_addon_find(&node->addons, NULL, &effect_addon);
 	struct glass_effect *effect;
 	return addon ? (effect = wl_container_of(addon, effect, addon)) : NULL;
 }
-bool rediwm_glass_effect_info(struct wlr_scene_node *node, struct rediwm_glass_info *out)
+bool rediwm_glass_effect_info(struct rediwm_node *node, struct rediwm_glass_info *out)
 {
 	struct glass_effect *effect = effect_of(node);
 	if (!effect)
@@ -84,9 +83,9 @@ bool rediwm_glass_effect_info(struct wlr_scene_node *node, struct rediwm_glass_i
 	};
 	return true;
 }
-bool rediwm_glass_is_effect_node(struct wlr_scene_node *node)
+bool rediwm_glass_is_effect_node(struct rediwm_node *node)
 {
-	return node->type == WLR_SCENE_NODE_BUFFER && effect_of(node);
+	return node->type == REDIWM_NODE_BUFFER && effect_of(node);
 }
 static bool accepts_input(struct rediwm_buffer *buffer, double *x, double *y)
 {
@@ -115,7 +114,7 @@ struct glass_effect *rediwm_glass_attach(struct glass_engine *engine,
 	effect->opacity = 1;
 	effect->serial = ++engine->next_serial;
 	effect->node->point_accepts_input = accepts_input;
-	wlr_addon_init(&effect->addon, &effect->node->carrier->node.addons, NULL, &effect_addon);
+	wlr_addon_init(&effect->addon, &effect->node->node.addons, NULL, &effect_addon);
 	rediwm_node_place_below(&effect->node->node, before);
 	effect->destroy.notify = handle_destroy;
 	wl_signal_add(&effect->node->node.events.destroy, &effect->destroy);

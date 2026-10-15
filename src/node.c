@@ -3,8 +3,17 @@
 #include "node.h"
 #include <stdlib.h>
 #include <string.h>
+#include <wlr/render/drm_syncobj.h>
+#include <wlr/render/wlr_renderer.h>
+#include <wlr/render/wlr_texture.h>
 #include <wlr/types/wlr_buffer.h>
-#include <wlr/types/wlr_scene.h>
+#include <wlr/types/wlr_compositor.h>
+#include <wlr/types/wlr_single_pixel_buffer_v1.h>
+
+static void buffer_set_buffer(struct rediwm_buffer *b, struct wlr_buffer *buffer);
+static void buffer_set_texture(struct rediwm_buffer *b, struct wlr_texture *texture);
+static void buffer_set_wait_timeline(struct rediwm_buffer *b, struct wlr_drm_syncobj_timeline *timeline,
+                                     uint64_t point);
 
 // A change to `node`'s own state; `structural` when the tree's shape changed (nodes made,
 // moved, stacked or destroyed), which the owner treats as a change of everything.
@@ -31,7 +40,7 @@ static void node_init(struct rediwm_node *node, enum rediwm_node_type type, stru
   node->enabled = true;
   node->x = node->y = 0;
   node->data = NULL;
-  node->props = node->group = NULL;
+  node->props = node->group = node->leaf = NULL;
   wl_signal_init(&node->events.destroy);
   wlr_addon_set_init(&node->addons);
   wl_list_init(&node->link);
@@ -43,12 +52,10 @@ static void node_init(struct rediwm_node *node, enum rediwm_node_type type, stru
   }
 }
 
-struct rediwm_scene *rediwm_scene_create(struct wlr_scene_tree *host,
-                                         void (*notify)(void *, struct rediwm_node *, bool),
+struct rediwm_scene *rediwm_scene_create(void (*notify)(void *, struct rediwm_node *, bool),
                                          void *data) {
   struct rediwm_scene *scene = calloc(1, sizeof(*scene));
   if (!scene) return NULL;
-  scene->host = host;
   node_init(&scene->tree.node, REDIWM_NODE_TREE, NULL);
   wl_list_init(&scene->tree.children);
   scene->tree.node.scene = scene;
@@ -77,11 +84,6 @@ struct rediwm_rect *rediwm_rect_create(struct rediwm_tree *parent, int width, in
                                        const float color[4]) {
   struct rediwm_rect *rect = calloc(1, sizeof(*rect));
   if (!rect) return NULL;
-  rect->carrier = wlr_scene_rect_create(parent->node.scene->host, width, height, color);
-  if (!rect->carrier) {
-    free(rect);
-    return NULL;
-  }
   node_init(&rect->node, REDIWM_NODE_RECT, parent);
   rect->width = width;
   rect->height = height;
@@ -93,23 +95,19 @@ struct rediwm_rect *rediwm_rect_create(struct rediwm_tree *parent, int width, in
 struct rediwm_buffer *rediwm_buffer_create(struct rediwm_tree *parent, struct wlr_buffer *buffer) {
   struct rediwm_buffer *b = calloc(1, sizeof(*b));
   if (!b) return NULL;
-  b->carrier = wlr_scene_buffer_create(parent->node.scene->host, NULL);
-  if (!b->carrier) {
-    free(b);
-    return NULL;
-  }
   node_init(&b->node, REDIWM_NODE_BUFFER, parent);
   b->opacity = 1;
   b->filter_mode = WLR_SCALE_FILTER_BILINEAR;
   b->transform = WL_OUTPUT_TRANSFORM_NORMAL;
   pixman_region32_init(&b->opaque_region);
+  wl_list_init(&b->buffer_release.link);
+  wl_list_init(&b->renderer_destroy.link);
+  wl_signal_init(&b->events.outputs_update);
+  wl_signal_init(&b->events.output_sample);
+  wl_signal_init(&b->events.frame_done);
   if (buffer) rediwm_buffer_set_buffer(b, buffer);
   structure(&b->node);
   return b;
-}
-
-struct wlr_scene_tree *rediwm_tree_host(const struct rediwm_tree *tree) {
-  return tree->node.scene->host;
 }
 
 void rediwm_node_destroy(struct rediwm_node *node) {
@@ -119,11 +117,11 @@ void rediwm_node_destroy(struct rediwm_node *node) {
     struct rediwm_tree *tree = (struct rediwm_tree *)node;
     struct rediwm_node *child, *tmp;
     wl_list_for_each_safe(child, tmp, &tree->children, link) rediwm_node_destroy(child);
-  } else if (node->type == REDIWM_NODE_RECT) {
-    wlr_scene_node_destroy(&((struct rediwm_rect *)node)->carrier->node);
   } else if (node->type == REDIWM_NODE_BUFFER) {
     struct rediwm_buffer *b = (struct rediwm_buffer *)node;
-    wlr_scene_node_destroy(&b->carrier->node);
+    buffer_set_buffer(b, NULL);
+    buffer_set_texture(b, NULL);
+    buffer_set_wait_timeline(b, NULL, 0);
     pixman_region32_fini(&b->opaque_region);
   }
   // Report before the node and its scene are gone; a root has no parent to tell.
@@ -223,54 +221,135 @@ void rediwm_rect_set_size(struct rediwm_rect *rect, int width, int height) {
   if (rect->width == width && rect->height == height) return;
   rect->width = width;
   rect->height = height;
-  wlr_scene_rect_set_size(rect->carrier, width, height);
   changed(&rect->node);
 }
 
 void rediwm_rect_set_color(struct rediwm_rect *rect, const float color[4]) {
   if (!memcmp(rect->color, color, sizeof(rect->color))) return;
   memcpy(rect->color, color, sizeof(rect->color));
-  wlr_scene_rect_set_color(rect->carrier, color);
   changed(&rect->node);
 }
 
-void rediwm_buffer_set_buffer(struct rediwm_buffer *b, struct wlr_buffer *buffer) {
-  // A buffer set again is new content even if the pointer matches: a compositor-owned
-  // buffer is redrawn in place, and the projection is told its damage separately.
-  wlr_scene_buffer_set_buffer(b->carrier, buffer);
-  b->buffer_width = buffer ? buffer->width : 0;
-  b->buffer_height = buffer ? buffer->height : 0;
-  buffer_damaged(b, NULL);
-  changed(&b->node);
+static void buffer_released(struct wl_listener *listener, void *data) {
+  (void)data;
+  struct rediwm_buffer *b = wl_container_of(listener, b, buffer_release);
+  b->buffer = NULL;
+  wl_list_remove(&b->buffer_release.link);
+  wl_list_init(&b->buffer_release.link);
+}
+
+// As wlr_scene's scene_buffer_set_buffer: the node locks what it shows, and lets it
+// go if the buffer is released first.
+static void buffer_set_buffer(struct rediwm_buffer *b, struct wlr_buffer *buffer) {
+  wl_list_remove(&b->buffer_release.link);
+  wl_list_init(&b->buffer_release.link);
+  if (b->own_buffer) wlr_buffer_unlock(b->buffer);
+  b->buffer = NULL;
+  b->own_buffer = false;
+  b->buffer_width = b->buffer_height = 0;
+  b->buffer_is_opaque = false;
+
+  if (!buffer) return;
+
+  b->own_buffer = true;
+  b->buffer = wlr_buffer_lock(buffer);
+  b->buffer_width = buffer->width;
+  b->buffer_height = buffer->height;
+  b->buffer_is_opaque = wlr_buffer_is_opaque(buffer);
+
+  b->buffer_release.notify = buffer_released;
+  wl_signal_add(&buffer->events.release, &b->buffer_release);
+}
+
+static void texture_renderer_destroyed(struct wl_listener *listener, void *data) {
+  (void)data;
+  struct rediwm_buffer *b = wl_container_of(listener, b, renderer_destroy);
+  buffer_set_texture(b, NULL);
+}
+
+static void buffer_set_texture(struct rediwm_buffer *b, struct wlr_texture *texture) {
+  wl_list_remove(&b->renderer_destroy.link);
+  wlr_texture_destroy(b->texture);
+  b->texture = texture;
+
+  if (texture != NULL) {
+    b->renderer_destroy.notify = texture_renderer_destroyed;
+    wl_signal_add(&texture->renderer->events.destroy, &b->renderer_destroy);
+  } else {
+    wl_list_init(&b->renderer_destroy.link);
+  }
+}
+
+void rediwm_buffer_set_texture(struct rediwm_buffer *b, struct wlr_texture *texture) {
+  buffer_set_texture(b, texture);
+}
+
+static void buffer_set_wait_timeline(struct rediwm_buffer *b, struct wlr_drm_syncobj_timeline *timeline,
+                                     uint64_t point) {
+  wlr_drm_syncobj_timeline_unref(b->wait_timeline);
+  if (timeline != NULL) {
+    b->wait_timeline = wlr_drm_syncobj_timeline_ref(timeline);
+    b->wait_point = point;
+  } else {
+    b->wait_timeline = NULL;
+    b->wait_point = 0;
+  }
 }
 
 void rediwm_buffer_set_buffer_with_options(struct rediwm_buffer *b, struct wlr_buffer *buffer,
-                                           const struct wlr_scene_buffer_set_buffer_options *options) {
-  wlr_scene_buffer_set_buffer_with_options(b->carrier, buffer, options);
-  b->buffer_width = buffer ? buffer->width : 0;
-  b->buffer_height = buffer ? buffer->height : 0;
-  buffer_damaged(b, options ? options->damage : NULL);
+                                           const struct rediwm_buffer_options *options) {
+  static const struct rediwm_buffer_options none = {0};
+  if (!options) options = &none;
+
+  // If this is a buffer change, check if it's a single pixel buffer. Cache that so the
+  // pass can still draw it as a colour when the original buffer has been freed after
+  // texture upload.
+  if (buffer != b->buffer) {
+    b->is_single_pixel_buffer = false;
+    struct wlr_client_buffer *client_buffer = buffer ? wlr_client_buffer_get(buffer) : NULL;
+    if (client_buffer != NULL && client_buffer->source != NULL) {
+      struct wlr_single_pixel_buffer_v1 *spb = wlr_single_pixel_buffer_v1_try_from_buffer(client_buffer->source);
+      if (spb != NULL) {
+        b->is_single_pixel_buffer = true;
+        b->single_pixel_buffer_color[0] = spb->r;
+        b->single_pixel_buffer_color[1] = spb->g;
+        b->single_pixel_buffer_color[2] = spb->b;
+        b->single_pixel_buffer_color[3] = spb->a;
+      }
+    }
+  }
+
+  // A buffer set again is new content even if the pointer matches: a compositor-owned
+  // buffer is redrawn in place, and the projection is told its damage separately.
+  buffer_set_buffer(b, buffer);
+  buffer_set_texture(b, NULL);
+  buffer_set_wait_timeline(b, options->wait_timeline, options->wait_point);
+  buffer_damaged(b, options->damage);
   changed(&b->node);
+}
+
+void rediwm_buffer_set_buffer(struct rediwm_buffer *b, struct wlr_buffer *buffer) {
+  rediwm_buffer_set_buffer_with_options(b, buffer, NULL);
+}
+
+void rediwm_buffer_set_content(struct rediwm_buffer *b, struct wlr_buffer *buffer) {
+  buffer_set_buffer(b, buffer);
+  buffer_set_texture(b, NULL);
+  buffer_set_wait_timeline(b, NULL, 0);
 }
 
 void rediwm_buffer_set_buffer_with_damage(struct rediwm_buffer *b, struct wlr_buffer *buffer,
-                                         const pixman_region32_t *damage) {
-  wlr_scene_buffer_set_buffer_with_damage(b->carrier, buffer, damage);
-  b->buffer_width = buffer ? buffer->width : 0;
-  b->buffer_height = buffer ? buffer->height : 0;
-  buffer_damaged(b, damage);
-  changed(&b->node);
+                                          const pixman_region32_t *damage) {
+  const struct rediwm_buffer_options options = {.damage = damage};
+  rediwm_buffer_set_buffer_with_options(b, buffer, &options);
 }
 
-struct wlr_buffer *rediwm_buffer_get_buffer(const struct rediwm_buffer *b) {
-  return b->carrier->buffer;
-}
+struct wlr_buffer *rediwm_buffer_get_buffer(const struct rediwm_buffer *b) { return b->buffer; }
 
 void rediwm_buffer_set_dest_size(struct rediwm_buffer *b, int width, int height) {
   if (b->dst_width == width && b->dst_height == height) return;
   b->dst_width = width;
   b->dst_height = height;
-  wlr_scene_buffer_set_dest_size(b->carrier, width, height);
   changed(&b->node);
 }
 
@@ -279,28 +358,24 @@ void rediwm_buffer_set_source_box(struct rediwm_buffer *b, const struct wlr_fbox
   const struct wlr_fbox *next = box ? box : &none;
   if (!memcmp(&b->src_box, next, sizeof(*next))) return;
   b->src_box = *next;
-  wlr_scene_buffer_set_source_box(b->carrier, box);
   changed(&b->node);
 }
 
 void rediwm_buffer_set_opacity(struct rediwm_buffer *b, float opacity) {
   if (b->opacity == opacity) return;
   b->opacity = opacity;
-  wlr_scene_buffer_set_opacity(b->carrier, opacity);
   changed(&b->node);
 }
 
 void rediwm_buffer_set_filter_mode(struct rediwm_buffer *b, enum wlr_scale_filter_mode mode) {
   if (b->filter_mode == mode) return;
   b->filter_mode = mode;
-  wlr_scene_buffer_set_filter_mode(b->carrier, mode);
   changed(&b->node);
 }
 
 void rediwm_buffer_set_transform(struct rediwm_buffer *b, enum wl_output_transform transform) {
   if (b->transform == transform) return;
   b->transform = transform;
-  wlr_scene_buffer_set_transform(b->carrier, transform);
   changed(&b->node);
 }
 
@@ -312,7 +387,6 @@ void rediwm_buffer_set_opaque_region(struct rediwm_buffer *b, const pixman_regio
     if (pixman_region32_equal((pixman_region32_t *)region, &b->opaque_region)) return;
     pixman_region32_copy(&b->opaque_region, region);
   }
-  wlr_scene_buffer_set_opaque_region(b->carrier, &b->opaque_region);
   changed(&b->node);
 }
 

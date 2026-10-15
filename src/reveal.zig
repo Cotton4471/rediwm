@@ -148,7 +148,7 @@ pub fn tick(self: *Reveal, output: *Output, now_ms: i64) bool {
 
 fn setVeil(self: *Reveal, output: *Output, alpha: f32) void {
     const server = self.server orelse return;
-    const scene_output = server.scene.getSceneOutput(output.wlr_output) orelse return;
+    const scene_output = server.scene_outputs.get(output.wlr_output) orelse return;
     if (!server.output_renderer.setVeil(scene_output, alpha)) {
         std.log.scoped(.reveal).warn("could not veil {s}", .{output.wlr_output.name});
     }

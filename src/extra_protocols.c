@@ -16,7 +16,7 @@
 #include <wlr/types/wlr_drm_lease_v1.h>
 #include <wlr/types/wlr_ext_workspace_v1.h>
 #include <wlr/types/wlr_output_layout.h>
-#include <wlr/types/wlr_scene.h>
+#include "scene_outputs.h"
 #include <wlr/types/wlr_tearing_control_v1.h>
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/types/wlr_xdg_toplevel_tag_v1.h>
@@ -33,7 +33,7 @@ struct rediwm_protocols {
   bool workspace_mode;
   struct wl_listener tag, description, lease_request, layout_add;
   struct wl_list outputs;
-  struct wlr_scene *scene; // set once the scene follows the color manager
+  struct rediwm_scene_outputs *scene; // set once the outputs follow the color manager
   void *data;
   bool (*blocked)(void *);
   void (*changed)(void *, struct wlr_surface *);
@@ -227,19 +227,13 @@ void rediwm_protocols_destroy(struct rediwm_protocols *p) {
   wl_list_for_each_safe(o, tmp, &p->outputs, link) output_removed(&o->destroy, NULL);
   wl_list_remove(&p->tag.link); wl_list_remove(&p->description.link);
   wl_list_remove(&p->lease_request.link); wl_list_remove(&p->layout_add.link);
-  // wlroots 0.20's scene teardown leaves its color manager listener linked, and
-  // the scene goes before the display: the manager's display-destroy signal
-  // would then walk freed memory. Unlink it while both are alive.
-  if (p->scene && p->scene->color_manager_v1) {
-    wl_list_remove(&p->scene->private.color_manager_v1_destroy.link);
-    wl_list_init(&p->scene->private.color_manager_v1_destroy.link);
-    p->scene->color_manager_v1 = NULL;
-  }
+  // The outputs go before the display: detach the colour manager they follow.
+  if (p->scene) rediwm_scene_outputs_set_color_manager(p->scene, NULL);
   wl_list_remove(&p->workspace_commit.link);
   free(p);
 }
 struct rediwm_protocols *rediwm_protocols_create(struct wl_display *display,
-    struct wlr_backend *backend, struct wlr_renderer *renderer, struct wlr_scene *scene,
+    struct wlr_backend *backend, struct wlr_renderer *renderer, struct rediwm_scene_outputs *scene,
     struct wlr_output_layout *layout, void *data, bool (*blocked)(void *),
     void (*changed)(void *, struct wlr_surface *)) {
   struct rediwm_protocols *p = calloc(1, sizeof(*p));
@@ -266,7 +260,7 @@ struct rediwm_protocols *rediwm_protocols_create(struct wl_display *display,
   struct wlr_color_manager_v1 *color = wlr_color_manager_v1_create(display, 2, &options);
   free((void *)options.transfer_functions); free((void *)options.primaries);
   if (!color) goto fail;
-  wlr_scene_set_color_manager_v1(scene, color);
+  rediwm_scene_outputs_set_color_manager(scene, color);
   p->scene = scene;
   struct wlr_ext_workspace_manager_v1 *workspaces = wlr_ext_workspace_manager_v1_create(display, 1);
   if (!workspaces) goto fail;

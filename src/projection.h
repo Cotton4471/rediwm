@@ -1,13 +1,12 @@
 #pragma once
 #include <stdbool.h>
 #include <stdint.h>
-struct wlr_scene_node;
-struct wlr_scene_tree;
-struct wlr_scene;
+struct rediwm_node;
+struct rediwm_buffer;
+struct rediwm_scene_outputs;
 struct rediwm_node;
 struct rediwm_tree;
 struct rediwm_scene;
-struct wlr_scene_buffer;
 struct wlr_surface_state;
 struct rediwm_projection;
 struct rediwm_item;
@@ -18,7 +17,7 @@ struct rediwm_clip_spec;
 // node for the world, the node itself for the layout trees. Callbacks must not
 // mutate the scene; pointers are borrowed for this call.
 typedef bool (*rediwm_item_iterator)(const struct rediwm_item *,
-                                    struct wlr_scene_node *transport, void *);
+                                    struct rediwm_node *transport, void *);
 bool rediwm_projection_for_each_item(struct rediwm_projection *, bool reverse, rediwm_item_iterator, void *);
 // Whether a commit changed how buffer pixels map onto the surface, so damage
 // from before it cannot be combined with damage after it.
@@ -30,7 +29,7 @@ bool rediwm_surface_state_remapped(const struct wlr_surface_state *);
 // for its outputs.
 struct rediwm_projection *rediwm_projection_create(struct rediwm_scene *own,
                                                    struct rediwm_tree *world,
-                                                   struct wlr_scene *);
+                                                   struct rediwm_scene_outputs *);
 void rediwm_projection_destroy(struct rediwm_projection *);
 void rediwm_projection_sync(struct rediwm_projection *, double, double, double,
                             double, double);
@@ -93,17 +92,16 @@ struct rediwm_shadow_spec;
 // buffer node; NULL damages all of it. Surface leaves track their own.
 struct pixman_region32;
 void rediwm_projection_damage_buffer(struct rediwm_projection *,
-                                     struct wlr_scene_node *,
+                                     struct rediwm_node *,
                                      const struct pixman_region32 *);
 // Presents `buffer` on a compositor-owned source buffer node, updating its
 // texture in place with `damage` (buffer-local) when the renderer can. The
 // caller may release `buffer` afterwards. NULL damage replaces everything.
 // Returns whether the texture was updated in place.
-struct wlr_scene_buffer;
 struct wlr_renderer;
 struct wlr_buffer;
 bool rediwm_projection_present_owned(struct rediwm_projection *,
-                                     struct wlr_scene_buffer *,
+                                     struct rediwm_buffer *,
                                      struct wlr_renderer *,
                                      struct wlr_buffer *,
                                      const struct pixman_region32 *);
@@ -119,14 +117,14 @@ void rediwm_mirror_opaque(struct pixman_region32 *out, const struct pixman_regio
 // `end` works out and sends what changed: outputs entered and left, the primary
 // output.
 // What of an item nothing above hides, in layout space, as the pass saw it.
-struct wlr_scene_output;
-void rediwm_projection_note_visible(struct rediwm_projection *, struct wlr_scene_node *,
+struct rediwm_scene_output;
+void rediwm_projection_note_visible(struct rediwm_projection *, struct rediwm_node *,
                                     const struct pixman_region32 *visible);
 void rediwm_projection_feedback_begin(struct rediwm_projection *);
-void rediwm_projection_feedback_note(struct rediwm_projection *, struct wlr_scene_node *,
+void rediwm_projection_feedback_note(struct rediwm_projection *, struct rediwm_node *,
                                      const struct pixman_region32 *visible);
 void rediwm_projection_feedback_end(struct rediwm_projection *);
-// Frame callbacks of the world's surfaces, beside wlr_scene_output_send_frame_done.
+// Frame callbacks of the world's surfaces.
 struct timespec;
-void rediwm_projection_send_frame_done(struct rediwm_projection *, struct wlr_scene_output *,
+void rediwm_projection_send_frame_done(struct rediwm_projection *, struct rediwm_scene_output *,
                                        struct timespec *now);
