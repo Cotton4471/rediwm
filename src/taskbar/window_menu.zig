@@ -1,6 +1,7 @@
 //! The taskbar's window actions. Input owns one menu across all outputs.
 const std = @import("std");
 const wlr = @import("wlroots");
+const sn = @import("../node.zig");
 const Taskbar = @import("../Taskbar.zig");
 const Toplevel = @import("../Toplevel.zig");
 const Output = @import("../Output.zig");
@@ -19,7 +20,7 @@ pub const Menu = struct {
     pin_bytes: [512]u8 = undefined,
     pin_len: usize = 0,
     pinned: bool = false,
-    node: ?*wlr.SceneBuffer = null,
+    node: ?*sn.Buffer = null,
     box: wlr.Box = .{ .x = 0, .y = 0, .width = 0, .height = 0 },
     selected: ?usize = null,
 

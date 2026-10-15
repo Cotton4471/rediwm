@@ -12,6 +12,7 @@ const glass = @import("glass.zig");
 
 const wl = @import("wayland").server.wl;
 const wlr = @import("wlroots");
+const sn = @import("node.zig");
 const col = @import("color.zig");
 
 const c_time = @cImport({
@@ -170,18 +171,18 @@ const volume_scroll_step: f32 = 0.05;
 
 server: *Server,
 wlr_output: *wlr.Output,
-tree: *wlr.SceneTree,
+tree: *sn.Tree,
 // The background remains the taskbar's full-width glass anchor. Foreground
 // controls are separate scene buffers above it so their replacement damages
 // only their own bounds.
-buffer_node: *wlr.SceneBuffer,
-start_node: *wlr.SceneBuffer,
-clock_node: *wlr.SceneBuffer,
-tray_nodes: [tray_count]*wlr.SceneBuffer,
-app_tray_node: *wlr.SceneBuffer,
+buffer_node: *sn.Buffer,
+start_node: *sn.Buffer,
+clock_node: *sn.Buffer,
+tray_nodes: [tray_count]*sn.Buffer,
+app_tray_node: *sn.Buffer,
 app_tray_generation: u64 = 0,
-capture_node: *wlr.SceneBuffer,
-battery_node: *wlr.SceneBuffer,
+capture_node: *sn.Buffer,
+battery_node: *sn.Buffer,
 battery_state: battery.State = .{},
 battery_dirty: bool = true,
 battery_shimmer: battery_highlight.Highlight = .{},
@@ -268,7 +269,7 @@ pub const AppKind = enum { file_explorer, notes, terminal, settings, text_doc, b
 
 const ChipState = struct {
     toplevel: *Toplevel,
-    buffer_node: ?*wlr.SceneBuffer = null,
+    buffer_node: ?*sn.Buffer = null,
     dirty: bool = true,
     kind: AppKind = .other,
     // A real icon found via the XDG icon theme, when one exists; falls back
@@ -409,7 +410,7 @@ pub fn create(server: *Server, wlr_output: *wlr.Output) !*Taskbar {
     const buffer_node = try tree.createSceneBuffer(null);
     const start_node = try tree.createSceneBuffer(null);
     const clock_node = try tree.createSceneBuffer(null);
-    var tray_nodes: [tray_count]*wlr.SceneBuffer = undefined;
+    var tray_nodes: [tray_count]*sn.Buffer = undefined;
     for (&tray_nodes) |*node| node.* = try tree.createSceneBuffer(null);
     const app_tray_node = try tree.createSceneBuffer(null);
     const capture_node = try tree.createSceneBuffer(null);
@@ -1752,7 +1753,7 @@ fn render(bar: *Taskbar, now_ms: i64, causes: u8) void {
 
 /// `retain`, when given, keeps a reference to the new raster there (replacing
 /// the one it held) instead of leaving the scene node as its only owner.
-fn renderPart(bar: *Taskbar, now_ms: i64, part: Part, origin_x: i32, origin_y: i32, logical_width: i32, logical_height: i32, node: *wlr.SceneBuffer, retain: ?*?*BarBuffer) void {
+fn renderPart(bar: *Taskbar, now_ms: i64, part: Part, origin_x: i32, origin_y: i32, logical_width: i32, logical_height: i32, node: *sn.Buffer, retain: ?*?*BarBuffer) void {
     const started = stats.nowNs();
     const scale = bar.wlr_output.scale;
     const buf = BarBuffer.create(logical_width, logical_height, scale) catch |err| {
@@ -2117,7 +2118,7 @@ fn paintChipTitleColumns(paint: *const ChipPaint, pixels: []u32, width: i32, hei
 /// the title changed, copy the previous raster and repaint only the title
 /// box instead of the pill's edge and icon SDFs. False means a full raster
 /// is needed.
-fn repaintChipTitle(bar: *Taskbar, now_ms: i64, chip: *ChipState, memo: ChipMemo, key: ChipRasterKey, bar_h: i32, node: *wlr.SceneBuffer) bool {
+fn repaintChipTitle(bar: *Taskbar, now_ms: i64, chip: *ChipState, memo: ChipMemo, key: ChipRasterKey, bar_h: i32, node: *sn.Buffer) bool {
     const previous = chip.raster orelse return false;
     const previous_key = chip.raster_key orelse return false;
     var painted = chip.painted orelse return false;

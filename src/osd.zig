@@ -1,6 +1,7 @@
 const std = @import("std");
 const wl = @import("wayland").server.wl;
 const wlr = @import("wlroots");
+const sn = @import("node.zig");
 const Output = @import("Output.zig");
 const Server = @import("Server.zig");
 const painter = @import("osd_paint.zig");
@@ -9,7 +10,7 @@ const anim = @import("ui").anim;
 const ui_input = @import("ui").input;
 pub const State = painter.State;
 
-node: ?*wlr.SceneBuffer = null,
+node: ?*sn.Buffer = null,
 timer: ?*wl.EventSource = null,
 state: ?State = null,
 painted_state: ?State = null,
@@ -72,7 +73,7 @@ fn present(self: *Osd, output: *Output, state: State, restart: bool) !void {
     // Keep normal overlays inside the shell tree so isolated-window captures
     // exclude them. While locked, only this noninteractive buffer goes above
     // the opaque lock covers; the rest of the desktop remains covered.
-    const parent = if (output.server.locker != null) &output.server.scene.tree else output.server.overlay_tree;
+    const parent = if (output.server.locker != null) output.server.lock_tree else output.server.overlay_tree;
     if (self.node.?.node.parent != parent) self.node.?.node.reparent(parent);
 
     const is_wide = painter.hasLevel(state.kind);
@@ -141,7 +142,7 @@ fn position(self: *Osd, output: *Output) void {
 
 pub fn tick(self: *Osd, output: *Output, now: i64) bool {
     const state = self.state orelse return false;
-    const parent = if (output.server.locker != null) &output.server.scene.tree else output.server.overlay_tree;
+    const parent = if (output.server.locker != null) output.server.lock_tree else output.server.overlay_tree;
     if (self.node) |node| {
         if (node.node.parent != parent) node.node.reparent(parent);
     }
@@ -204,7 +205,7 @@ pub fn refreshAudio(server: *Server) void {
     }
 }
 
-fn ignoreInput(_: *wlr.SceneBuffer, _: *f64, _: *f64) callconv(.c) bool {
+fn ignoreInput(_: *sn.Buffer, _: *f64, _: *f64) callconv(.c) bool {
     return false;
 }
 
@@ -215,15 +216,16 @@ test "OSD is noninteractive, stays above lock covers, rescales and releases its 
     defer backend.destroy();
     const layout = try wlr.OutputLayout.create(display);
     defer layout.destroy();
-    const scene = try wlr.Scene.create();
-    defer scene.tree.node.destroy();
+    var fixture = try sn.TestScene.create();
+    defer fixture.destroy();
+    const scene = fixture.wlr_scene;
     defer PanelBuffer.drainPool();
     var server: Server = undefined;
     server.wl_server = display;
     server.scene = scene;
     server.output_layout = layout;
-    server.overlay_tree = try scene.tree.createSceneTree();
-    server.lock_tree = try scene.tree.createSceneTree();
+    server.overlay_tree = try fixture.nodes.tree.createSceneTree();
+    server.lock_tree = try fixture.nodes.tree.createSceneTree();
     server.locker = null;
     const output = try backend.headlessAddOutput(1280, 720);
     var mode = wlr.Output.State.init();
@@ -244,12 +246,12 @@ test "OSD is noninteractive, stays above lock covers, rescales and releases its 
     var lock: @import("session/lock.zig").Lock = undefined;
     server.locker = &lock;
     try out.osd.present(&out, .{ .kind = .microphone, .active = true }, true);
-    try std.testing.expect(node.node.parent == &scene.tree);
+    try std.testing.expect(node.node.parent == server.lock_tree);
     try std.testing.expectEqual(@as(i32, 76), node.dst_width);
     mode.setScale(1.5);
     try std.testing.expect(output.commitState(&mode));
     try out.osd.present(&out, .{ .kind = .caps_lock, .active = true }, true);
-    try std.testing.expectEqual(@as(i32, 114), node.buffer.?.width);
+    try std.testing.expectEqual(@as(i32, 114), node.getBuffer().?.width);
     server.locker = null;
     _ = out.osd.tick(&out, 0);
     try std.testing.expect(node.node.parent == server.overlay_tree);
@@ -270,15 +272,16 @@ test "OSD sound and brightness glides smoothly between levels" {
     defer backend.destroy();
     const layout = try wlr.OutputLayout.create(display);
     defer layout.destroy();
-    const scene = try wlr.Scene.create();
-    defer scene.tree.node.destroy();
+    var fixture = try sn.TestScene.create();
+    defer fixture.destroy();
+    const scene = fixture.wlr_scene;
     defer PanelBuffer.drainPool();
     var server: Server = undefined;
     server.wl_server = display;
     server.scene = scene;
     server.output_layout = layout;
-    server.overlay_tree = try scene.tree.createSceneTree();
-    server.lock_tree = try scene.tree.createSceneTree();
+    server.overlay_tree = try fixture.nodes.tree.createSceneTree();
+    server.lock_tree = try fixture.nodes.tree.createSceneTree();
     server.locker = null;
     const output = try backend.headlessAddOutput(1280, 720);
     var mode = wlr.Output.State.init();

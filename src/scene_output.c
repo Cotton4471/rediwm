@@ -8,6 +8,7 @@
 #include "scene_graph.h"
 #include "projection.h"
 #include "glass.h"
+#include "node.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -330,7 +331,7 @@ static bool collect(const struct rediwm_item *item, struct wlr_scene_node *trans
         e->padded = (struct wlr_box){box.x - pad, box.y - pad, box.width + 2 * pad, box.height + 2 * pad};
         pixman_region32_union_rect(&collector->reads, &collector->reads,
             e->padded.x, e->padded.y, e->padded.width, e->padded.height);
-        e->front = &glass.target->node;
+        e->front = &glass.target->carrier->node;
         return true;
     }
     bool full = item->kind == REDIWM_ITEM_RECT && item->content.color[3] == 1;

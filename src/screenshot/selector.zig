@@ -1,6 +1,7 @@
 //! Native, modal region picker. All geometry is output-local logical pixels.
 const std = @import("std");
 const wlr = @import("wlroots");
+const sn = @import("../node.zig");
 const col = @import("../color.zig");
 const Server = @import("../Server.zig");
 const Output = @import("../Output.zig");
@@ -10,14 +11,14 @@ const Self = @This();
 const stats = @import("../ipc/stats.zig");
 
 output: ?*Output = null,
-tree: ?*wlr.SceneTree = null,
-shades: [4]?*wlr.SceneRect = @splat(null),
-borders: [4]?*wlr.SceneBuffer = @splat(null),
+tree: ?*sn.Tree = null,
+shades: [4]?*sn.Rect = @splat(null),
+borders: [4]?*sn.Buffer = @splat(null),
 // GLES can release SceneBuffer.buffer after uploading its pixels. Keep the
 // immutable strip dimensions here; geometry must not borrow that buffer later.
 strip_sizes: [2]struct { width: f64 = 0, height: f64 = 0 } = @splat(.{}),
-corners: [8]?*wlr.SceneRect = @splat(null),
-label: ?*wlr.SceneBuffer = null,
+corners: [8]?*sn.Rect = @splat(null),
+label: ?*sn.Buffer = null,
 label_width: i32 = -1,
 label_height: i32 = -1,
 dirty: bool = false,
@@ -63,7 +64,7 @@ pub fn open(self: *Self, server: *Server) !void {
     self.flush(output);
 }
 
-fn setRect(node: *wlr.SceneRect, x: i32, y: i32, width: i32, height: i32) void {
+fn setRect(node: *sn.Rect, x: i32, y: i32, width: i32, height: i32) void {
     node.node.setEnabled(width > 0 and height > 0);
     if (width <= 0 or height <= 0) return;
     node.node.setPosition(x, y);

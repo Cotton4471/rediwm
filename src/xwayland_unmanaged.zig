@@ -6,6 +6,7 @@ const xscale = @import("xwayland_scale.zig");
 
 const wl = @import("wayland").server.wl;
 const wlr = @import("wlroots");
+const sn = @import("node.zig");
 
 const Server = @import("Server.zig");
 const scene_data = @import("scene_data.zig");
@@ -16,8 +17,8 @@ const log = std.log.scoped(.xwayland);
 
 server: *Server,
 xsurface: *wlr.XwaylandSurface,
-tree: *wlr.SceneTree,
-scene_tree: ?*wlr.SceneTree = null,
+tree: *sn.Tree,
+scene_tree: ?*sn.Foreign = null,
 node_data: scene_data.SceneData = undefined,
 
 destroy: wl.Listener(void) = .init(handleDestroy),

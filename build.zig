@@ -712,6 +712,7 @@ pub fn build(b: *std.Build) void {
     });
     projection_tests.root_module.addCSourceFile(.{ .file = b.path("src/projection_test.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     projection_tests.root_module.addCSourceFile(.{ .file = b.path("src/scene_damage.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    projection_tests.root_module.addCSourceFile(.{ .file = b.path("src/node.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     inline for (.{ "wlroots-0.20", "wayland-server", "pixman-1" }) |lib| {
         projection_tests.root_module.linkSystemLibrary(lib, .{});
     }
@@ -729,6 +730,7 @@ pub fn build(b: *std.Build) void {
     }
     glass_tests.root_module.addCSourceFile(.{ .file = b.path("src/projection.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra" } });
     glass_tests.root_module.addCSourceFile(.{ .file = b.path("src/scene_damage.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    glass_tests.root_module.addCSourceFile(.{ .file = b.path("src/node.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     const run_glass_tests = b.addRunArtifact(glass_tests);
     run_glass_tests.setEnvironmentVariable("WLR_RENDERER", "gles2");
     b.step("test-glass", "Test the glass registry and its geometry in the graph (no GPU)").dependOn(&run_glass_tests.step);
@@ -814,6 +816,7 @@ fn addGlass(b: *std.Build, module: *std.Build.Module, damage_audit: bool) void {
     module.linkSystemLibrary("egl", .{});
     module.linkSystemLibrary("glesv2", .{});
     module.addCSourceFile(.{ .file = b.path("src/projection.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra" } });
+    module.addCSourceFile(.{ .file = b.path("src/node.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     module.addCSourceFile(.{ .file = b.path("src/scene_pass.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     module.addCSourceFile(.{ .file = b.path("src/scene_output.c"), .flags = if (damage_audit) &.{ "-std=c11", "-Wall", "-Wextra", "-Werror", "-DREDIWM_DAMAGE_AUDIT" } else &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     module.addCSourceFile(.{ .file = b.path("src/scene_damage.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });

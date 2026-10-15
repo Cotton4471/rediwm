@@ -2,6 +2,7 @@
 //! generic widget tree, clipboard, text cache or IPC inspection payloads.
 const std = @import("std");
 const wlr = @import("wlroots");
+const sn = @import("../node.zig");
 const col = @import("../color.zig");
 const xkb = @import("xkbcommon");
 const Server = @import("../Server.zig");
@@ -22,8 +23,8 @@ const unlock_box: ui.widgets.field.Rect = .{ .x = 288, .y = 408, .w = 244, .h = 
 pub const Dialog = struct {
     server: *Server,
     output: *wlr.Output,
-    scrim: *wlr.SceneRect,
-    node: *wlr.SceneBuffer,
+    scrim: *sn.Rect,
+    node: *sn.Buffer,
     /// The response field's caret, above `node`.
     caret: CaretOverlay,
     /// Last key into the dialog: restarts the caret's blink phase.

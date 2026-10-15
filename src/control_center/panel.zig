@@ -6,6 +6,7 @@
 // Device and appearance actions reuse the existing sections.
 const std = @import("std");
 const wlr = @import("wlroots");
+const sn = @import("../node.zig");
 const pixman = @import("pixman");
 
 const gpa = @import("../main.zig").gpa;
@@ -141,7 +142,7 @@ pub const ControlCenter = struct {
     toplevel: *Toplevel,
     selected_output_name: [128]u8 = undefined,
     selected_output_name_len: usize = 0,
-    buffer_node: *wlr.SceneBuffer,
+    buffer_node: *sn.Buffer,
     node_data: scene_data.SceneData = undefined,
 
     dirty: bool = true,
@@ -265,7 +266,7 @@ pub const ControlCenter = struct {
             toplevel.backend.shell.control_center = null;
             toplevel.destroy();
         }
-        const buffer_node = try toplevel.scene_tree.createSceneBuffer(null);
+        const buffer_node = try toplevel.scene_tree.tree().?.createSceneBuffer(null);
         // Window zoom and fractional scales change the destination rounding;
         // interpolate glyph coverage instead of dropping rows/columns.
         buffer_node.setFilterMode(.bilinear);

@@ -3,6 +3,7 @@ const std = @import("std");
 const popup_style = @import("popup_style.zig");
 const glass = @import("glass.zig");
 const wlr = @import("wlroots");
+const sn = @import("node.zig");
 const Output = @import("Output.zig");
 const gpa = @import("main.zig").gpa;
 const scene = @import("scene_data.zig");
@@ -18,7 +19,7 @@ const slide_distance: f32 = 20;
 
 pub const Popup = struct {
     output: *Output,
-    buffer_node: *wlr.SceneBuffer,
+    buffer_node: *sn.Buffer,
     node_data: scene.SceneData = undefined,
     glass_effect: ?*glass.Effect = null,
     factor: f32 = 1,

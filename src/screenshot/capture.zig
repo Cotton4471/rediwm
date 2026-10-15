@@ -2,6 +2,7 @@ const std = @import("std");
 const posix = std.posix;
 const wl = @import("wayland").server.wl;
 const wlr = @import("wlroots");
+const sn = @import("../node.zig");
 
 const Server = @import("../Server.zig");
 const Output = @import("../Output.zig");
@@ -293,7 +294,7 @@ pub const Manager = struct {
             return;
         };
 
-        var disabled_nodes = std.ArrayList(*wlr.SceneNode).empty;
+        var disabled_nodes = std.ArrayList(*sn.Node).empty;
         defer disabled_nodes.deinit(mgr.allocator);
 
         const is_isolated = std.mem.eql(u8, job.capture_mode, "isolated-window");

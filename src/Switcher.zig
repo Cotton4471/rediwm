@@ -2,6 +2,7 @@
 //! gesture; scene buffers retain preview storage independently of clients.
 const std = @import("std");
 const wlr = @import("wlroots");
+const sn = @import("node.zig");
 const Server = @import("Server.zig");
 const Output = @import("Output.zig");
 const PanelBuffer = @import("panel_buffer.zig").PanelBuffer;
@@ -18,12 +19,12 @@ const height = 284;
 
 const Card = struct {
     id: u64,
-    label: *wlr.SceneBuffer,
+    label: *sn.Buffer,
     label_source: wlr.FBox,
-    icon: *wlr.SceneBuffer,
+    icon: *sn.Buffer,
     icon_source: wlr.FBox,
     icon_ready: bool = false,
-    preview: ?*wlr.SceneBuffer = null,
+    preview: ?*sn.Buffer = null,
     source: wlr.FBox = undefined,
     pw: i32 = 0,
     ph: i32 = 0,
@@ -31,9 +32,9 @@ const Card = struct {
 
 pub const Trigger = enum { alt, ctrl };
 trigger: Trigger = .alt,
-tree: ?*wlr.SceneTree = null,
+tree: ?*sn.Tree = null,
 output: ?*Output = null,
-background: ?*wlr.SceneBuffer = null,
+background: ?*sn.Buffer = null,
 cards: std.ArrayList(Card) = .empty,
 buffers: std.ArrayList(*wlr.Buffer) = .empty,
 selected: usize = 0,
@@ -135,7 +136,7 @@ fn open(self: *Self, server: *Server) !void {
     _ = self.tick(output, @import("Taskbar.zig").nowMs());
 }
 
-fn makeNode(self: *Self, buffer: *wlr.Buffer, w: i32, h: i32) !*wlr.SceneBuffer {
+fn makeNode(self: *Self, buffer: *wlr.Buffer, w: i32, h: i32) !*sn.Buffer {
     // Keep storage alive for the entire gesture, including CPU buffers whose
     // scene node releases its reference after the GLES2 texture upload.
     try self.buffers.append(gpa, buffer);
@@ -149,7 +150,7 @@ fn makeNode(self: *Self, buffer: *wlr.Buffer, w: i32, h: i32) !*wlr.SceneBuffer 
 
 /// Crop in source coordinates so partial cards slide cleanly behind the
 /// panel's edges, without allocating or repainting on animation frames.
-fn place(node: *wlr.SceneBuffer, source: wlr.FBox, x: i32, y: i32, w: i32, h: i32, viewport: i32) void {
+fn place(node: *sn.Buffer, source: wlr.FBox, x: i32, y: i32, w: i32, h: i32, viewport: i32) void {
     const left = @max(x, 16);
     const right = @min(x + w, viewport - 16);
     node.node.setEnabled(right > left);
@@ -273,6 +274,6 @@ pub fn cancel(self: *Self) void {
     self.* = .{};
 }
 
-fn ignoreInput(_: *wlr.SceneBuffer, _: *f64, _: *f64) callconv(.c) bool {
+fn ignoreInput(_: *sn.Buffer, _: *f64, _: *f64) callconv(.c) bool {
     return false;
 }

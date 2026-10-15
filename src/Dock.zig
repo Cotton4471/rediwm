@@ -5,6 +5,7 @@
 const std = @import("std");
 const wl = @import("wayland").server.wl;
 const wlr = @import("wlroots");
+const sn = @import("node.zig");
 const ui = @import("ui");
 const Output = @import("Output.zig");
 const Server = @import("Server.zig");
@@ -89,12 +90,12 @@ const ItemAnimation = struct {
 };
 
 output: ?*Output = null,
-tree: ?*wlr.SceneTree = null,
-node: ?*wlr.SceneBuffer = null,
+tree: ?*sn.Tree = null,
+node: ?*sn.Buffer = null,
 /// Transparent, fixed-size anchor: glass follows the dock background, while
 /// the painted buffer may extend inward to fit a fully enlarged icon.
-glass_anchor: ?*wlr.SceneBuffer = null,
-tooltip: ?*wlr.SceneBuffer = null,
+glass_anchor: ?*sn.Buffer = null,
+tooltip: ?*sn.Buffer = null,
 glass_effect: ?*glass.Effect = null,
 /// The glass corner radius of the last paint; its opacity follows `reveal`.
 glass_radius: f32 = 0,
@@ -194,11 +195,11 @@ fn ensureNodes(self: *Self, output: *Output) !void {
     self.reveal.cancel(if (output.server.config.compositor.dock_auto_hide) 0 else 1);
 }
 
-fn ignoreInput(_: *wlr.SceneBuffer, _: *f64, _: *f64) callconv(.c) bool {
+fn ignoreInput(_: *sn.Buffer, _: *f64, _: *f64) callconv(.c) bool {
     return false;
 }
 
-fn acceptsInput(node: *wlr.SceneBuffer, x: *f64, y: *f64) callconv(.c) bool {
+fn acceptsInput(node: *sn.Buffer, x: *f64, y: *f64) callconv(.c) bool {
     const self = SceneData.fromNode(&node.node).?.role.dock;
     const raster = self.rasterBox();
     const lx: f32 = @floatCast(x.* + @as(f64, @floatFromInt(raster.x)));

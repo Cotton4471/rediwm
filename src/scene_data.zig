@@ -5,6 +5,7 @@
 // `*SceneData`. Hit-testing must go through `fromNode` / `hitTest` rather than
 // casting the opaque pointer to a window or widget type.
 const wlr = @import("wlroots");
+const sn = @import("node.zig");
 
 const ControlCenter = @import("control_center/panel.zig").ControlCenter;
 const StartMenu = @import("start_menu/panel.zig").StartMenu;
@@ -43,17 +44,17 @@ pub const SceneData = struct {
         desktop: *@import("desktop/embedded.zig").Desktop,
     };
 
-    pub fn attach(data: *SceneData, node: *wlr.SceneNode) void {
+    pub fn attach(data: *SceneData, node: *sn.Node) void {
         node.data = data;
     }
 
-    pub fn fromNode(node: *wlr.SceneNode) ?*SceneData {
+    pub fn fromNode(node: *sn.Node) ?*SceneData {
         const ptr = node.data orelse return null;
         return @ptrCast(@alignCast(ptr));
     }
 
-    pub fn fromNodeOrParents(node: *wlr.SceneNode) ?*SceneData {
-        var current: ?*wlr.SceneNode = node;
+    pub fn fromNodeOrParents(node: *sn.Node) ?*SceneData {
+        var current: ?*sn.Node = node;
         while (current) |n| {
             if (fromNode(n)) |data| return data;
             current = if (n.parent) |tree| &tree.node else null;
@@ -61,6 +62,13 @@ pub const SceneData = struct {
         return null;
     }
 };
+
+/// The role of a node inside a client's surface tree: up to the root of the hosted
+/// subtree, then on through the own tree that places it.
+pub fn fromWlrNode(node: *wlr.SceneNode) ?*SceneData {
+    const hosted = sn.Foreign.of(node) orelse return null;
+    return SceneData.fromNodeOrParents(&hosted.node);
+}
 
 pub const Hit = union(enum) {
     none,
@@ -135,46 +143,16 @@ pub const Hit = union(enum) {
 
 /// Layout point relative to an output-local shell node. Window frames use
 /// Toplevel.frameLocal, and projected client buffers map through projection.c.
-pub fn toNodeLocal(node: *wlr.SceneNode, lx: f64, ly: f64) geometry.Vec2 {
+pub fn toNodeLocal(node: *sn.Node, lx: f64, ly: f64) geometry.Vec2 {
     var ox: i32 = 0;
     var oy: i32 = 0;
     _ = node.coords(&ox, &oy);
     return geometry.toLocal(lx, ly, ox, oy);
 }
 
-pub fn hitTest(server: *@import("Server.zig"), lx: f64, ly: f64) Hit {
-    server.world.syncPresentation();
-    var nx: f64 = undefined;
-    var ny: f64 = undefined;
-    var node = server.world.projection.nodeAt(lx, ly, &nx, &ny) orelse return .none;
-
-    // Let the latched preview receive input through other dimmed windows.
-    // Shell UI and layers keep their normal priority, as do points outside
-    // the selected window's input region. Reuse scene picking so subsurfaces,
-    // popups, chrome and client input regions retain their normal semantics.
-    if (server.world.peekTarget()) |selected| {
-        if (SceneData.fromNodeOrParents(node)) |data| {
-            const owner: ?*Toplevel = switch (data.role) {
-                .toplevel => |t| t,
-                .chrome => |t| t,
-                else => null,
-            };
-            if (owner != null and owner != selected) {
-                const local = selected.frameLocal(lx, ly);
-                const frame = &selected.frame_tree.node;
-                var sx: f64 = undefined;
-                var sy: f64 = undefined;
-                if (frame.at(local.x + @as(f64, @floatFromInt(frame.x)), local.y + @as(f64, @floatFromInt(frame.y)), &sx, &sy)) |picked| {
-                    node = picked;
-                    nx = sx;
-                    ny = sy;
-                }
-            }
-        }
-    }
-
-    if (SceneData.fromNode(node)) |data| {
-        return switch (data.role) {
+/// What an own node of the shell is, from its role.
+fn shellHit(data: *SceneData, lx: f64, ly: f64) Hit {
+    return switch (data.role) {
             .wifi_popup => |popup| blk: {
                 const local = toNodeLocal(&popup.buffer_node.node, lx, ly);
                 break :blk .{ .wifi_popup = .{ .popup = popup, .sx = local.x, .sy = local.y } };
@@ -224,15 +202,48 @@ pub fn hitTest(server: *@import("Server.zig"), lx: f64, ly: f64) Hit {
             },
             // The frame tree itself is not a pickable leaf.
             .toplevel, .layer, .xwayland_unmanaged => .none,
-        };
+    };
+}
+
+pub fn hitTest(server: *@import("Server.zig"), lx: f64, ly: f64) Hit {
+    server.world.syncPresentation();
+    const projection = server.world.projection;
+    var hit = projection.nodeAt(lx, ly) orelse return .none;
+
+    // Let the latched preview receive input through other dimmed windows.
+    // Shell UI and layers keep their normal priority, as do points outside
+    // the selected window's input region. Pick among the selected window's own
+    // leaves, so subsurfaces, popups, chrome and client input regions retain their
+    // normal semantics.
+    if (server.world.peekTarget()) |selected| {
+        if (SceneData.fromNodeOrParents(hitNode(hit))) |data| {
+            const owner: ?*Toplevel = switch (data.role) {
+                .toplevel => |t| t,
+                .chrome => |t| t,
+                else => null,
+            };
+            if (owner != null and owner != selected) {
+                if (projection.nodeAtIn(&selected.frame_tree.node, lx, ly)) |picked| hit = picked;
+            }
+        }
+    }
+    const nx = hit.x;
+    const ny = hit.y;
+
+    // An own node of the shell: its role says what it is.
+    if (hit.own) |own| {
+        const data = SceneData.fromNode(own) orelse return .none;
+        return shellHit(data, lx, ly);
     }
 
-    if (node.type != .buffer) return .none;
-    const scene_surface = wlr.SceneSurface.tryFromBuffer(wlr.SceneBuffer.fromNode(node)) orelse return .none;
+    // A client's surface: found through the subtree that hosts it.
+    if (hit.wlr.type != .buffer) return .none;
+    const scene_surface = wlr.SceneSurface.tryFromBuffer(wlr.SceneBuffer.fromNode(hit.wlr)) orelse return .none;
     if (wlr.InputPopupSurfaceV2.tryFromWlrSurface(scene_surface.surface.getRootSurface()) != null) {
         return .{ .input_popup = .{ .surface = scene_surface.surface, .sx = nx, .sy = ny } };
     }
-    const data = SceneData.fromNodeOrParents(node) orelse return .none;
+    const hosted = hit.foreign orelse return .none;
+    const data = SceneData.fromNodeOrParents(&hosted.node) orelse return .none;
     return switch (data.role) {
         .toplevel => |toplevel| .{ .surface = .{
             .toplevel = toplevel,
@@ -260,4 +271,10 @@ pub fn setXdgSceneTree(xdg_surface: *wlr.XdgSurface, tree: *wlr.SceneTree) void 
 pub fn xdgSceneTree(xdg_surface: *wlr.XdgSurface) ?*wlr.SceneTree {
     const ptr = xdg_surface.data orelse return null;
     return @ptrCast(@alignCast(ptr));
+}
+
+/// The own node a hit belongs to: the node itself, or the one that hosts the client
+/// surface it lies in.
+fn hitNode(hit: @import("projection.zig").Projection.Hit) *sn.Node {
+    return hit.own orelse &hit.foreign.?.node;
 }

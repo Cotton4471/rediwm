@@ -3,6 +3,7 @@
 //! Protocol: https://specifications.freedesktop.org/status-notifier-item/latest-single/
 const std = @import("std");
 const wlr = @import("wlroots");
+const sn = @import("node.zig");
 const col = @import("color.zig");
 const dbus = @import("dbus");
 const wire = dbus.wire;
@@ -79,7 +80,7 @@ pub const Tray = struct {
     menu_parent: i32 = 0,
     parents: std.ArrayList(i32) = .empty,
     rows: std.ArrayList(Row) = .empty,
-    menu_node: ?*wlr.SceneBuffer = null,
+    menu_node: ?*sn.Buffer = null,
     menu_box: wlr.Box = .{ .x = 0, .y = 0, .width = 0, .height = 0 },
     menu_bounds: wlr.Box = .{ .x = 0, .y = 0, .width = 0, .height = 0 },
     menu_scale: f32 = 1,

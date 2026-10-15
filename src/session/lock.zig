@@ -7,6 +7,7 @@ const std = @import("std");
 const Child = @import("child.zig");
 const wl = @import("wayland").server.wl;
 const wlr = @import("wlroots");
+const sn = @import("../node.zig");
 const col = @import("../color.zig");
 const xkb = @import("xkbcommon");
 const Server = @import("../Server.zig");
@@ -792,23 +793,23 @@ const Geometry = struct {
 const field_options: text_field.Options = .{ .size = .lg, .secret_dots = .{ .diameter = 0.46, .pitch = 1.05 }, .trailing = .reveal };
 
 pub const View = struct {
-    tree: *wlr.SceneTree,
-    guard: *wlr.SceneRect,
-    wallpaper: *wlr.SceneBuffer,
-    ui_node: *wlr.SceneBuffer,
+    tree: *sn.Tree,
+    guard: *sn.Rect,
+    wallpaper: *sn.Buffer,
+    ui_node: *sn.Buffer,
     /// The password field's caret, above `ui_node`: it blinks and glides
     /// without re-rastering the whole screen.
     caret: CaretOverlay,
     /// The volume/brightness block: its own small raster (`Lock.controls`),
     /// so dragging a slider never re-rasters the screen under it.
-    controls_node: *wlr.SceneBuffer,
+    controls_node: *sn.Buffer,
     controls_key: ?ControlsKey = null,
     revision: u64 = 0,
     width: i32 = 0,
     height: i32 = 0,
     scale: f32 = 0,
 
-    pub fn create(parent: *wlr.SceneTree) !View {
+    pub fn create(parent: *sn.Tree) !View {
         const tree = try parent.createSceneTree();
         errdefer tree.node.destroy();
         const guard = try col.createRect(tree, 0, 0, col.Straight.fromRgba(lockBackground()).premultiply());
@@ -1088,15 +1089,15 @@ test "lock IPC and client focus requests stop before touching desktop state" {
 }
 
 test "lock output guard is opaque independent of wallpaper and UI buffers" {
-    const scene = try wlr.Scene.create();
-    defer scene.tree.node.destroy();
-    var view = try View.create(&scene.tree);
+    var fixture = try sn.TestScene.create();
+    defer fixture.destroy();
+    var view = try View.create(&fixture.nodes.tree);
     try std.testing.expect(!view.tree.node.enabled);
     try std.testing.expectEqual(@as(f32, 1), view.guard.color[3]);
     view.tree.node.setEnabled(true);
     view.guard.setSize(1920, 1080);
     try std.testing.expectEqual(@as(i32, 1920), view.guard.width);
-    try std.testing.expect(view.ui_node.buffer == null);
+    try std.testing.expect(view.ui_node.getBuffer() == null);
     view.hide();
     try std.testing.expect(!view.tree.node.enabled);
 }
@@ -1106,9 +1107,9 @@ test "lock raster scales to small outputs and renders a solid accent unlock butt
     @memcpy(lock.name[0..11], "Alex Morgan");
     @memcpy(lock.user[0..10], "alexmorgan");
     lock.controls = .{ .has_volume = true, .volume = 0.5, .has_brightness = true, .brightness = 0.25, .active = .volume };
-    const scene = try wlr.Scene.create();
-    defer scene.tree.node.destroy();
-    var view = try View.create(&scene.tree);
+    var fixture = try sn.TestScene.create();
+    defer fixture.destroy();
+    var view = try View.create(&fixture.nodes.tree);
     for ([_][3]i32{ .{ 1672, 941, 1 }, .{ 640, 480, 1 }, .{ 1280, 720, 2 } }) |size| {
         const scale: f32 = if (size[2] == 2) 1.5 else 1;
         const buf = try Buffer.create(size[0], size[1], scale);
@@ -1124,7 +1125,7 @@ test "lock raster scales to small outputs and renders a solid accent unlock butt
         view.syncControls(&lock, .{ .x = 0, .y = 0, .width = size[0], .height = size[1] }, scale);
         const placed = geo.controlsBox(lock.controls.height());
         const node = &view.controls_node.node;
-        try std.testing.expect(node.enabled and view.controls_node.buffer != null);
+        try std.testing.expect(node.enabled and view.controls_node.getBuffer() != null);
         try std.testing.expectEqual(placed.x, node.x);
         try std.testing.expectEqual(placed.y, node.y);
         try std.testing.expect(node.y >= 0 and node.y + placed.h <= size[1]);
@@ -1172,7 +1173,7 @@ test "lock raster scales to small outputs and renders a solid accent unlock butt
     // a sound server show nothing there.
     lock.controls = .{};
     view.syncControls(&lock, .{ .x = 0, .y = 0, .width = 1280, .height = 720 }, 1);
-    try std.testing.expect(!view.controls_node.node.enabled and view.controls_node.buffer == null);
+    try std.testing.expect(!view.controls_node.node.enabled and view.controls_node.getBuffer() == null);
     Buffer.drainPool();
 }
 
@@ -1246,11 +1247,11 @@ test "lock covers new outputs and follows layout and mode changes without UI" {
     defer backend.destroy();
     const output_layout = try wlr.OutputLayout.create(display);
     defer output_layout.destroy();
-    const scene = try wlr.Scene.create();
-    defer scene.tree.node.destroy();
+    var fixture = try sn.TestScene.create();
+    defer fixture.destroy();
     var server: Server = undefined;
     server.output_layout = output_layout;
-    server.lock_tree = try scene.tree.createSceneTree();
+    server.lock_tree = try fixture.nodes.tree.createSceneTree();
     for (0..2) |i| {
         const output = try backend.headlessAddOutput(1280, 720);
         var state = wlr.Output.State.init();
@@ -1266,7 +1267,7 @@ test "lock covers new outputs and follows layout and mode changes without UI" {
         try std.testing.expectEqual(@as(i32, 100), out.lock_view.tree.node.y);
         try std.testing.expectEqual(@as(i32, 1280), out.lock_view.guard.width);
         try std.testing.expectEqual(@as(i32, 720), out.lock_view.guard.height);
-        try std.testing.expect(out.lock_view.ui_node.buffer == null);
+        try std.testing.expect(out.lock_view.ui_node.getBuffer() == null);
         state.setCustomMode(1920, 1080, 60000);
         try std.testing.expect(output.commitState(&state));
         _ = try output_layout.add(output, x, -50);

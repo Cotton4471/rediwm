@@ -1,11 +1,58 @@
 // Synthetic surface commits into the real projection and wlroots scene damage
 // path. No renderer, GPU, socket or host desktop is needed.
 #include "projection.c"
+#include "node.h"
 #include <assert.h>
 #include <stdio.h>
 #include <wlr/backend.h>
 #include <wlr/backend/headless.h>
 #include <wlr/interfaces/wlr_buffer.h>
+
+
+// One own scene with its hidden wlr_scene host and a world layer, per test.
+struct rig {
+  struct rediwm_scene *own, *parking; // `parking` holds what the pass no longer reaches
+  struct rediwm_tree *world;
+  struct wlr_scene_tree *host;
+};
+static struct rig rig_create(struct wlr_scene *scene) {
+  struct rig rig = {0};
+  rig.host = wlr_scene_tree_create(&scene->tree);
+  assert(rig.host);
+  wlr_scene_node_set_enabled(&rig.host->node, false);
+  rig.own = rediwm_scene_create(rig.host, NULL, NULL);
+  rig.parking = rediwm_scene_create(rig.host, NULL, NULL);
+  assert(rig.own && rig.parking);
+  rig.world = rediwm_tree_create(&rig.own->tree);
+  assert(rig.world);
+  return rig;
+}
+static void rig_destroy(struct rig *rig) {
+  rediwm_scene_destroy(rig->own);
+  rediwm_scene_destroy(rig->parking);
+  wlr_scene_node_destroy(&rig->host->node);
+}
+// The leaf of an own node: leaves hang on the node the pass reads, its carrier.
+static struct wlr_scene_node *carrier_of(struct rediwm_node *node) {
+  if (node->type == REDIWM_NODE_BUFFER) return &((struct rediwm_buffer *)node)->carrier->node;
+  if (node->type == REDIWM_NODE_RECT) return &((struct rediwm_rect *)node)->carrier->node;
+  return NULL;
+}
+static struct leaf *leaf_of(struct rediwm_projection *p, struct rediwm_node *node) {
+  struct wlr_scene_node *carrier = carrier_of(node);
+  assert(carrier);
+  struct wlr_addon *addon = wlr_addon_find(&carrier->addons, p, &source_lookup_impl);
+  struct leaf *l;
+  return addon ? (l = wl_container_of(addon, l, source_lookup)) : NULL;
+}
+
+static struct rediwm_node *pick(struct rediwm_projection *p, double x, double y, double *nx, double *ny) {
+  struct rediwm_hit hit;
+  if (!rediwm_projection_node_at(p, x, y, &hit)) return NULL;
+  if (nx) *nx = hit.x;
+  if (ny) *ny = hit.y;
+  return hit.own;
+}
 
 static struct wlr_scene_node *effect_node;
 bool rediwm_glass_is_effect_node(struct wlr_scene_node *node) {
@@ -39,15 +86,10 @@ static void clear_damage(struct wlr_scene_output *out) {
   pixman_region32_clear(&out->damage_ring.current);
   pixman_region32_clear(&out->private.pending_commit_damage);
 }
-static struct leaf *find_leaf(struct rediwm_projection *p, struct wlr_scene_node *source) {
-  struct wlr_addon *addon = wlr_addon_find(&source->addons, p, &source_lookup_impl);
-  struct leaf *l;
-  return addon ? (l = wl_container_of(addon, l, source_lookup)) : NULL;
-}
 // Where the graph puts a leaf once rounded in layout space.
 static void assert_position(struct rediwm_projection *p,
-                            struct wlr_scene_node *source, int x, int y) {
-  struct leaf *l = find_leaf(p, source);
+                            struct rediwm_node *source, int x, int y) {
+  struct leaf *l = leaf_of(p, source);
   assert(l);
   const struct rediwm_snap s = rediwm_edges_snap(l->item.edges);
   assert(s.x == x && s.y == y);
@@ -123,34 +165,35 @@ static bool probe_item(const struct rediwm_item *item, struct wlr_scene_node *tr
   return true;
 }
 static void test_graph(struct wlr_scene *scene) {
-  struct wlr_scene_tree *source = wlr_scene_tree_create(&scene->tree);
-  struct rediwm_projection *p = rediwm_projection_create(source, scene);
+  struct rig rig = rig_create(scene);
+  struct rediwm_tree *source = rig.world;
+  struct rediwm_projection *p = rediwm_projection_create(rig.own, source, scene);
   assert(p);
-  struct wlr_scene_tree *frame = wlr_scene_tree_create(source);
-  struct wlr_scene_tree *nested = wlr_scene_tree_create(frame);
-  struct wlr_scene_tree *other = wlr_scene_tree_create(source);
+  struct rediwm_tree *frame = rediwm_tree_create(source);
+  struct rediwm_tree *nested = rediwm_tree_create(frame);
+  struct rediwm_tree *other = rediwm_tree_create(source);
   float color[4] = {.2, .3, .1, 1};
-  struct wlr_scene_rect *border = wlr_scene_rect_create(frame, 17, 9, color);
+  struct rediwm_rect *border = rediwm_rect_create(frame, 17, 9, color);
   struct wlr_buffer *buffer = buffer_create(), *glass_buffer = buffer_create();
-  struct wlr_scene_buffer *client = wlr_scene_buffer_create(nested, buffer);
-  struct wlr_scene_buffer *glass = wlr_scene_buffer_create(frame, glass_buffer);
-  struct wlr_scene_rect *overlay = wlr_scene_rect_create(other, 20, 20, color);
+  struct rediwm_buffer *client = rediwm_buffer_create(nested, buffer);
+  struct rediwm_buffer *glass = rediwm_buffer_create(frame, glass_buffer);
+  struct rediwm_rect *overlay = rediwm_rect_create(other, 20, 20, color);
   assert(frame && nested && other && border && client && glass && overlay);
-  wlr_scene_node_set_position(&frame->node, 37, 29);
-  wlr_scene_node_set_position(&nested->node, -12, 5);
-  wlr_scene_node_set_position(&client->node, 4, 3);
-  wlr_scene_node_set_position(&border->node, -2, -3);
-  wlr_scene_node_set_position(&other->node, 90, 60);
-  effect_node = &glass->node;
-  wlr_scene_buffer_set_dest_size(client, 100, 60);
-  wlr_scene_buffer_set_dest_size(glass, 50, 20);
+  rediwm_node_set_position(&frame->node, 37, 29);
+  rediwm_node_set_position(&nested->node, -12, 5);
+  rediwm_node_set_position(&client->node, 4, 3);
+  rediwm_node_set_position(&border->node, -2, -3);
+  rediwm_node_set_position(&other->node, 90, 60);
+  effect_node = carrier_of(&glass->node);
+  rediwm_buffer_set_dest_size(client, 100, 60);
+  rediwm_buffer_set_dest_size(glass, 50, 20);
   assert(rediwm_projection_set_tree_zoom(&frame->node, .85));
 
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   assert_presented(p);
   struct group *g = get_group(p, &frame->node), *h = get_group(p, &other->node);
-  struct leaf *border_leaf = get_leaf(p, &border->node), *client_leaf = get_leaf(p, &client->node),
-              *glass_leaf = get_leaf(p, &glass->node), *overlay_leaf = get_leaf(p, &overlay->node);
+  struct leaf *border_leaf = leaf_of(p, &border->node), *client_leaf = leaf_of(p, &client->node),
+              *glass_leaf = leaf_of(p, &glass->node), *overlay_leaf = leaf_of(p, &overlay->node);
   struct leaf *order[8];
   assert(p->paint.next == &g->paint && g->paint.next == &h->paint && h->paint.next == &p->paint);
 
@@ -201,7 +244,7 @@ static void test_graph(struct wlr_scene *scene) {
   const struct rediwm_snap s = rediwm_edges_snap(e);
   assert(s.width == lround(e.x2) - lround(e.x1) && s.x == lround(e.x1));
   // Scaled content is filtered bilinearly whatever the client asked for.
-  wlr_scene_buffer_set_filter_mode(client, WLR_SCALE_FILTER_NEAREST);
+  rediwm_buffer_set_filter_mode(client, WLR_SCALE_FILTER_NEAREST);
   resolve(p, z, cx, cy, ox, oy, NULL);
   assert(client_leaf->item.content.filter_mode == WLR_SCALE_FILTER_BILINEAR);
   resolve(p, 1, 0, 0, 0, 0, NULL);
@@ -209,7 +252,7 @@ static void test_graph(struct wlr_scene *scene) {
   resolve(p, 1, 0, 0, 0, 0, NULL);
   assert(client_leaf->item.content.filter_mode == WLR_SCALE_FILTER_NEAREST);
   assert(rediwm_projection_set_tree_zoom(&frame->node, .85));
-  wlr_scene_buffer_set_filter_mode(client, WLR_SCALE_FILTER_BILINEAR);
+  rediwm_buffer_set_filter_mode(client, WLR_SCALE_FILTER_BILINEAR);
 
   // Presenting shows exactly that graph, and only that graph.
   present(p);
@@ -222,37 +265,37 @@ static void test_graph(struct wlr_scene *scene) {
   const double zooms[] = {.25, .5, .85, 1, 1.25};
   for (size_t i = 0; i < sizeof(zooms) / sizeof(zooms[0]); ++i)
     for (int x = -9; x <= 9; x += 3) {
-      wlr_scene_node_set_position(&frame->node, x * 7, -x * 5);
+      rediwm_node_set_position(&frame->node, x * 7, -x * 5);
       rediwm_projection_sync_fixed(p, zooms[i], x * .5, -x * .25, ox, oy, other);
       assert_presented(p);
       // Fixed: no camera.
       assert(near(overlay_leaf->item.edges.x1, other->node.x) && near(overlay_leaf->item.edges.y1, other->node.y));
     }
-  wlr_scene_node_set_position(&frame->node, 37, 29);
+  rediwm_node_set_position(&frame->node, 37, 29);
 
   // Order follows the source: raising a node reorders its list, a reparent
   // moves the leaf between lists, and a disabled branch is still resolved.
-  wlr_scene_node_raise_to_top(&border->node);
+  rediwm_node_raise_to_top(&border->node);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   assert(items_of(g, order, 8) == 3 && order[0] == client_leaf && order[1] == glass_leaf &&
          order[2] == border_leaf);
-  wlr_scene_node_reparent(&client->node, other);
-  wlr_scene_node_set_enabled(&other->node, false);
+  rediwm_node_reparent(&client->node, other);
+  rediwm_node_set_enabled(&other->node, false);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   assert(items_of(g, order, 8) == 2 && order[0] == glass_leaf && order[1] == border_leaf);
   assert(items_of(h, order, 8) == 2 && order[0] == overlay_leaf && order[1] == client_leaf);
   assert(!h->enabled && !client_leaf->item.enabled && !overlay_leaf->item.enabled);
   assert(border_leaf->item.enabled);
   assert_presented(p);
-  wlr_scene_node_set_enabled(&other->node, true);
+  rediwm_node_set_enabled(&other->node, true);
 
   // A subtree the pass no longer reaches leaves the graph and is hidden.
-  wlr_scene_node_reparent(&other->node, &scene->tree);
+  rediwm_node_reparent(&other->node, &rig.parking->tree);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   assert(wl_list_length(&p->paint) == 1 && wl_list_empty(&h->items));
   assert(!h->seen && !client_leaf->seen && !client_leaf->has_shown);
   assert(client_leaf->paint.next == &client_leaf->paint);
-  wlr_scene_node_reparent(&other->node, source);
+  rediwm_node_reparent(&other->node, source);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   assert(wl_list_length(&p->paint) == 2 && wl_list_length(&h->items) == 2);
   assert_presented(p);
@@ -260,19 +303,19 @@ static void test_graph(struct wlr_scene *scene) {
   // Destruction with the lists linked: a leaf leaves its list with its source,
   // a group takes the leaves it still lists with it, and neither order of
   // teardown touches freed list heads.
-  wlr_scene_node_destroy(&overlay->node);
+  rediwm_node_destroy(&overlay->node);
   assert(wl_list_length(&h->items) == 1 && wl_list_length(&p->leaves) == 3);
-  wlr_scene_node_destroy(&other->node);
+  rediwm_node_destroy(&other->node);
   assert(wl_list_length(&p->paint) == 1 && wl_list_length(&p->groups) == 1);
   assert(wl_list_length(&g->items) == 2);
   effect_node = NULL;
   int checks = 0;
   probe_group(g, &checks);
-  wlr_scene_node_destroy(&frame->node); // The group goes first, then its leaves.
+  rediwm_node_destroy(&frame->node); // The group goes first, then its leaves.
   assert(checks == 2); // Both leaves were checked after the group was freed.
   assert(wl_list_empty(&p->groups) && wl_list_empty(&p->leaves) && wl_list_empty(&p->paint));
   rediwm_projection_destroy(p);
-  wlr_scene_node_destroy(&source->node);
+  rig_destroy(&rig);
   wlr_buffer_drop(buffer);
   wlr_buffer_drop(glass_buffer);
 }
@@ -395,34 +438,35 @@ static void test_clip_opaque(void) {
   assert(one[0].x == 5 + 42 && one[0].y == 7 && one[0].width == 120 - 84 && one[0].height == 80);
 }
 static void test_clip_projection(struct wlr_scene *scene) {
-  struct wlr_scene_tree *source = wlr_scene_tree_create(&scene->tree);
-  struct rediwm_projection *p = rediwm_projection_create(source, scene);
+  struct rig rig = rig_create(scene);
+  struct rediwm_tree *source = rig.world;
+  struct rediwm_projection *p = rediwm_projection_create(rig.own, source, scene);
   assert(p);
-  struct wlr_scene_tree *frame = wlr_scene_tree_create(source);
-  struct wlr_scene_tree *nested = wlr_scene_tree_create(frame);
-  struct wlr_scene_tree *other = wlr_scene_tree_create(source);
+  struct rediwm_tree *frame = rediwm_tree_create(source);
+  struct rediwm_tree *nested = rediwm_tree_create(frame);
+  struct rediwm_tree *other = rediwm_tree_create(source);
   float color[4] = {.2, .3, .1, 1};
-  struct wlr_scene_rect *border = wlr_scene_rect_create(frame, 17, 9, color);
+  struct rediwm_rect *border = rediwm_rect_create(frame, 17, 9, color);
   struct wlr_buffer *buffer = buffer_create(), *glass_buffer = buffer_create(), *title_buffer = buffer_create();
-  struct wlr_scene_buffer *client = wlr_scene_buffer_create(nested, buffer);
-  struct wlr_scene_buffer *title = wlr_scene_buffer_create(frame, title_buffer);
-  struct wlr_scene_buffer *glass = wlr_scene_buffer_create(frame, glass_buffer);
-  struct wlr_scene_rect *overlay = wlr_scene_rect_create(other, 20, 20, color);
+  struct rediwm_buffer *client = rediwm_buffer_create(nested, buffer);
+  struct rediwm_buffer *title = rediwm_buffer_create(frame, title_buffer);
+  struct rediwm_buffer *glass = rediwm_buffer_create(frame, glass_buffer);
+  struct rediwm_rect *overlay = rediwm_rect_create(other, 20, 20, color);
   assert(frame && nested && other && border && client && title && glass && overlay);
-  wlr_scene_node_set_position(&frame->node, 37, 29);
-  wlr_scene_node_set_position(&nested->node, 2, 12);
-  wlr_scene_buffer_set_dest_size(client, 100, 60);
-  wlr_scene_buffer_set_dest_size(title, 100, 12);
-  wlr_scene_buffer_set_dest_size(glass, 100, 12);
-  effect_node = &glass->node;
+  rediwm_node_set_position(&frame->node, 37, 29);
+  rediwm_node_set_position(&nested->node, 2, 12);
+  rediwm_buffer_set_dest_size(client, 100, 60);
+  rediwm_buffer_set_dest_size(title, 100, 12);
+  rediwm_buffer_set_dest_size(glass, 100, 12);
+  effect_node = carrier_of(&glass->node);
   assert(rediwm_projection_set_tree_zoom(&frame->node, .85));
   assert(rediwm_projection_set_tree_scale(&nested->node, .5));
 
   // Nothing is clipped until a tree asks.
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
-  struct leaf *border_leaf = get_leaf(p, &border->node), *client_leaf = get_leaf(p, &client->node),
-              *title_leaf = get_leaf(p, &title->node), *glass_leaf = get_leaf(p, &glass->node),
-              *overlay_leaf = get_leaf(p, &overlay->node);
+  struct leaf *border_leaf = leaf_of(p, &border->node), *client_leaf = leaf_of(p, &client->node),
+              *title_leaf = leaf_of(p, &title->node), *glass_leaf = leaf_of(p, &glass->node),
+              *overlay_leaf = leaf_of(p, &overlay->node);
   assert(!border_leaf->item.clip && !client_leaf->item.clip && !overlay_leaf->item.clip);
 
   // Every leaf under the tree carries the one shape: the frame's rectangle after
@@ -453,17 +497,17 @@ static void test_clip_projection(struct wlr_scene *scene) {
 
   // A popup lives under its parent's tree but is no part of the window's shape;
   // its siblings, such as subsurfaces, still are. The barrier can be lifted.
-  struct wlr_scene_tree *subsurface = wlr_scene_tree_create(nested);
-  struct wlr_scene_tree *popup = wlr_scene_tree_create(nested);
+  struct rediwm_tree *subsurface = rediwm_tree_create(nested);
+  struct rediwm_tree *popup = rediwm_tree_create(nested);
   struct wlr_buffer *popup_buffer = buffer_create(), *sub_buffer = buffer_create();
-  struct wlr_scene_buffer *popup_content = wlr_scene_buffer_create(popup, popup_buffer);
-  struct wlr_scene_buffer *sub_content = wlr_scene_buffer_create(subsurface, sub_buffer);
+  struct rediwm_buffer *popup_content = rediwm_buffer_create(popup, popup_buffer);
+  struct rediwm_buffer *sub_content = rediwm_buffer_create(subsurface, sub_buffer);
   assert(popup_content && sub_content);
-  wlr_scene_node_set_position(&popup->node, 90, 70); // Hanging outside the 120x80 frame.
+  rediwm_node_set_position(&popup->node, 90, 70); // Hanging outside the 120x80 frame.
   assert(rediwm_projection_set_tree_unclipped(&popup->node, true));
   assert(rediwm_projection_set_tree_unclipped(&popup->node, true)); // Idempotent.
   resolve(p, 1, 0, 0, 0, 0, NULL);
-  struct leaf *popup_leaf = get_leaf(p, &popup_content->node), *sub_leaf = get_leaf(p, &sub_content->node);
+  struct leaf *popup_leaf = leaf_of(p, &popup_content->node), *sub_leaf = leaf_of(p, &sub_content->node);
   assert(!popup_leaf->item.clip && sub_leaf->item.clip && client_leaf->item.clip);
   assert(rediwm_projection_set_tree_unclipped(&popup->node, false));
   assert(rediwm_projection_set_tree_unclipped(&popup->node, false)); // Nothing to lift is fine.
@@ -512,10 +556,10 @@ static void test_clip_projection(struct wlr_scene *scene) {
   assert_presented(p);
   // Destroying the clipped tree frees its addon with it.
   effect_node = NULL;
-  wlr_scene_node_destroy(&frame->node);
+  rediwm_node_destroy(&frame->node);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   rediwm_projection_destroy(p);
-  wlr_scene_node_destroy(&source->node);
+  rig_destroy(&rig);
   wlr_buffer_drop(buffer);
   wlr_buffer_drop(glass_buffer);
   wlr_buffer_drop(title_buffer);
@@ -531,47 +575,48 @@ static bool layout_damaged(struct wlr_scene_output *out, double x, double y) {
   return damaged(out, (int)(x * out->output->scale), (int)(y * out->output->scale));
 }
 static void test_clip_output(struct wlr_scene *scene, struct wlr_scene_output *out) {
-  struct wlr_scene_tree *source = wlr_scene_tree_create(&scene->tree);
-  struct rediwm_projection *p = rediwm_projection_create(source, scene);
+  struct rig rig = rig_create(scene);
+  struct rediwm_tree *source = rig.world;
+  struct rediwm_projection *p = rediwm_projection_create(rig.own, source, scene);
   assert(p);
-  struct wlr_scene_tree *under_tree = wlr_scene_tree_create(source);
-  struct wlr_scene_tree *frame = wlr_scene_tree_create(source);
+  struct rediwm_tree *under_tree = rediwm_tree_create(source);
+  struct rediwm_tree *frame = rediwm_tree_create(source);
   struct wlr_buffer *under_buffer = buffer_create(), *client_buffer = buffer_create();
-  struct wlr_scene_buffer *under = wlr_scene_buffer_create(under_tree, under_buffer);
-  struct wlr_scene_buffer *client = wlr_scene_buffer_create(frame, client_buffer);
+  struct rediwm_buffer *under = rediwm_buffer_create(under_tree, under_buffer);
+  struct rediwm_buffer *client = rediwm_buffer_create(frame, client_buffer);
   assert(under_tree && frame && under && client);
-  wlr_scene_node_set_position(&under_tree->node, 300, 200);
-  wlr_scene_node_set_position(&frame->node, 300, 200);
-  wlr_scene_buffer_set_dest_size(under, 120, 80);
-  wlr_scene_buffer_set_dest_size(client, 120, 80);
+  rediwm_node_set_position(&under_tree->node, 300, 200);
+  rediwm_node_set_position(&frame->node, 300, 200);
+  rediwm_buffer_set_dest_size(under, 120, 80);
+  rediwm_buffer_set_dest_size(client, 120, 80);
   struct rediwm_clip_spec spec = {.width = 120, .height = 80, .radii = {10, 10, 10, 10}, .border = 1,
       .border_color = {.1f, .1f, .1f, .1f}};
   assert(rediwm_projection_set_tree_clip(&frame->node, &spec));
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
-  struct leaf *client_leaf = get_leaf(p, &client->node), *under_leaf = get_leaf(p, &under->node);
+  struct leaf *client_leaf = leaf_of(p, &client->node), *under_leaf = leaf_of(p, &under->node);
 
   // Points inside the window reach it; the corner pixel, which the arc cuts away,
   // goes to the window below, and so does the one just outside the box.
   double nx, ny;
-  struct wlr_scene_node *hit = rediwm_projection_node_at(p, 360, 240, &nx, &ny);
-  assert(hit == client_leaf->source);
-  hit = rediwm_projection_node_at(p, 300.5, 200.5, &nx, &ny);
-  assert(hit == under_leaf->source);
-  hit = rediwm_projection_node_at(p, 419.5, 279.5, &nx, &ny); // bottom-right corner
-  assert(hit == under_leaf->source);
-  hit = rediwm_projection_node_at(p, 310.5, 200.5, &nx, &ny); // on the straight edge
-  assert(hit == client_leaf->source);
+  struct rediwm_node *hit = pick(p, 360, 240, &nx, &ny);
+  assert(hit == client_leaf->own);
+  hit = pick(p, 300.5, 200.5, &nx, &ny);
+  assert(hit == under_leaf->own);
+  hit = pick(p, 419.5, 279.5, &nx, &ny); // bottom-right corner
+  assert(hit == under_leaf->own);
+  hit = pick(p, 310.5, 200.5, &nx, &ny); // on the straight edge
+  assert(hit == client_leaf->own);
   // An inert window is still drawn, but the pointer reaches what is below it.
   assert(rediwm_projection_set_tree_inert(&frame->node, true));
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
-  assert(client_leaf->item.enabled && rediwm_projection_node_at(p, 360, 240, &nx, &ny) == under_leaf->source);
+  assert(client_leaf->item.enabled && pick(p, 360, 240, &nx, &ny) == under_leaf->own);
   assert(rediwm_projection_set_tree_inert(&frame->node, false));
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
-  assert(rediwm_projection_node_at(p, 360, 240, &nx, &ny) == client_leaf->source);
+  assert(pick(p, 360, 240, &nx, &ny) == client_leaf->own);
   // Without a shape the corner is the window's again.
   assert(rediwm_projection_set_tree_clip(&frame->node, NULL));
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
-  assert(rediwm_projection_node_at(p, 300.5, 200.5, &nx, &ny) == client_leaf->source);
+  assert(pick(p, 300.5, 200.5, &nx, &ny) == client_leaf->own);
   clear_damage(out);
 
   // A shape appearing, a different border colour, and the shape going away each
@@ -603,15 +648,15 @@ static void test_clip_output(struct wlr_scene *scene, struct wlr_scene_output *o
   assert(rediwm_projection_set_tree_clip(&frame->node, &spec));
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   clear_damage(out);
-  wlr_scene_node_set_position(&frame->node, 310, 200);
+  rediwm_node_set_position(&frame->node, 310, 200);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   assert(layout_damaged(out, 370, 240)); // the views of the window moved
-  wlr_scene_node_set_position(&frame->node, 300, 200);
+  rediwm_node_set_position(&frame->node, 300, 200);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   assert(rediwm_projection_set_tree_clip(&frame->node, NULL));
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   // A hidden window damages nothing for a shape change.
-  wlr_scene_node_set_enabled(&frame->node, false);
+  rediwm_node_set_enabled(&frame->node, false);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   clear_damage(out);
   assert(rediwm_projection_set_tree_clip(&frame->node, &spec));
@@ -623,7 +668,7 @@ static void test_clip_output(struct wlr_scene *scene, struct wlr_scene_output *o
   assert(!pixman_region32_not_empty(&out->damage_ring.current));
 
   rediwm_projection_destroy(p);
-  wlr_scene_node_destroy(&source->node);
+  rig_destroy(&rig);
   wlr_buffer_drop(under_buffer);
   wlr_buffer_drop(client_buffer);
 }
@@ -631,20 +676,21 @@ static void test_clip_output(struct wlr_scene *scene, struct wlr_scene_output *o
 // projection damages the footprint itself: when it appears, moves, changes, is
 // hidden with its window, or goes away, and never when nothing changed.
 static void test_shadow_output(struct wlr_scene *scene, struct wlr_scene_output *out) {
-  struct wlr_scene_tree *source = wlr_scene_tree_create(&scene->tree);
-  struct rediwm_projection *p = rediwm_projection_create(source, scene);
+  struct rig rig = rig_create(scene);
+  struct rediwm_tree *source = rig.world;
+  struct rediwm_projection *p = rediwm_projection_create(rig.own, source, scene);
   assert(p);
-  struct wlr_scene_tree *frame = wlr_scene_tree_create(source);
-  struct wlr_scene_tree *shadow_tree = wlr_scene_tree_create(frame);
-  struct wlr_scene_buffer *footprint = wlr_scene_buffer_create(shadow_tree, NULL);
+  struct rediwm_tree *frame = rediwm_tree_create(source);
+  struct rediwm_tree *shadow_tree = rediwm_tree_create(frame);
+  struct rediwm_buffer *footprint = rediwm_buffer_create(shadow_tree, NULL);
   assert(frame && shadow_tree && footprint);
-  wlr_scene_node_set_position(&frame->node, 100, 100);
-  wlr_scene_node_set_position(&footprint->node, -16, -8);
-  wlr_scene_buffer_set_dest_size(footprint, 152, 112);
+  rediwm_node_set_position(&frame->node, 100, 100);
+  rediwm_node_set_position(&footprint->node, -16, -8);
+  rediwm_buffer_set_dest_size(footprint, 152, 112);
   struct rediwm_shadow_spec spec = {.width = 120, .height = 80, .radii = {10, 10, 10, 10},
       .offset_y = 8, .softness = 16, .color = {0, 0, 0, .4f}};
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
-  struct leaf *l = get_leaf(p, &footprint->node);
+  struct leaf *l = leaf_of(p, &footprint->node);
   assert(l->item.kind == REDIWM_ITEM_BUFFER && !l->item.shadow);
   clear_damage(out);
 
@@ -659,7 +705,7 @@ static void test_shadow_output(struct wlr_scene *scene, struct wlr_scene_output 
   rediwm_projection_sync(p, 1, 0, 0, 0, 0); // Nothing changed.
   assert(!pixman_region32_not_empty(&out->damage_ring.current));
   // A moved window damages where its shadow was and where it is.
-  wlr_scene_node_set_position(&frame->node, 140, 100);
+  rediwm_node_set_position(&frame->node, 140, 100);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   assert(layout_damaged(out, 85, 140) && layout_damaged(out, 270, 140));
   clear_damage(out);
@@ -670,20 +716,20 @@ static void test_shadow_output(struct wlr_scene *scene, struct wlr_scene_output 
   assert(layout_damaged(out, 130, 140) && !layout_damaged(out, 100, 140));
   clear_damage(out);
   // Hidden with its window, shown again, and destroyed.
-  wlr_scene_node_set_enabled(&frame->node, false);
+  rediwm_node_set_enabled(&frame->node, false);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   assert(layout_damaged(out, 130, 140));
   clear_damage(out);
-  wlr_scene_node_set_enabled(&frame->node, true);
+  rediwm_node_set_enabled(&frame->node, true);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   assert(layout_damaged(out, 130, 140));
   clear_damage(out);
-  wlr_scene_node_destroy(&footprint->node);
+  rediwm_node_destroy(&footprint->node);
   assert(layout_damaged(out, 130, 140));
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
 
   rediwm_projection_destroy(p);
-  wlr_scene_node_destroy(&source->node);
+  rig_destroy(&rig);
 }
 // Stage 5a: damage events name the leaf and the layout box its pixels changed in,
 // for consumers that must tell what lies below a backdrop effect from what lies
@@ -704,20 +750,21 @@ static bool event_is(const struct rediwm_damage_event *e, uint64_t leaf, int x, 
   return e->leaf == leaf && e->box.x == x && e->box.y == y && e->box.width == w && e->box.height == h;
 }
 static void test_damage_events(struct wlr_scene *scene) {
-  struct wlr_scene_tree *source = wlr_scene_tree_create(&scene->tree);
-  struct rediwm_projection *p = rediwm_projection_create(source, scene);
+  struct rig rig = rig_create(scene);
+  struct rediwm_tree *source = rig.world;
+  struct rediwm_projection *p = rediwm_projection_create(rig.own, source, scene);
   assert(p);
   uint64_t cursor = rediwm_projection_damage_cursor(p), other = cursor;
-  struct wlr_scene_tree *window = wlr_scene_tree_create(source);
+  struct rediwm_tree *window = rediwm_tree_create(source);
   struct wlr_buffer *buffer = buffer_create(); // 200x120
-  struct wlr_scene_buffer *a = wlr_scene_buffer_create(window, buffer);
-  struct wlr_scene_buffer *b = wlr_scene_buffer_create(window, buffer);
-  wlr_scene_node_set_position(&window->node, 40, 30);
-  wlr_scene_buffer_set_dest_size(a, 100, 60); // half size: one buffer px = 0.5
-  wlr_scene_node_set_position(&b->node, 0, 100);
-  wlr_scene_buffer_set_dest_size(b, 20, 20);
+  struct rediwm_buffer *a = rediwm_buffer_create(window, buffer);
+  struct rediwm_buffer *b = rediwm_buffer_create(window, buffer);
+  rediwm_node_set_position(&window->node, 40, 30);
+  rediwm_buffer_set_dest_size(a, 100, 60); // half size: one buffer px = 0.5
+  rediwm_node_set_position(&b->node, 0, 100);
+  rediwm_buffer_set_dest_size(b, 20, 20);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
-  struct leaf *la = get_leaf(p, &a->node), *lb = get_leaf(p, &b->node);
+  struct leaf *la = leaf_of(p, &a->node), *lb = leaf_of(p, &b->node);
   assert(la->item.id && lb->item.id && la->item.id != lb->item.id);
 
   // Appearing: each leaf's whole box.
@@ -731,50 +778,50 @@ static void test_damage_events(struct wlr_scene *scene) {
   // Reported buffer damage maps through the scale, a pixel wider for filtering.
   pixman_region32_t damage;
   pixman_region32_init_rect(&damage, 20, 40, 10, 10);
-  rediwm_projection_damage_buffer(p, &a->node, &damage);
+  rediwm_projection_damage_buffer(p, carrier_of(&a->node), &damage);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   seen = events_since(p, &cursor, NULL);
   assert(seen.count == 1 && event_is(&seen.last[0], la->item.id, 49, 49, 7, 7));
   // Unreported damage is the whole box.
-  rediwm_projection_damage_buffer(p, &a->node, NULL);
+  rediwm_projection_damage_buffer(p, carrier_of(&a->node), NULL);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   seen = events_since(p, &cursor, NULL);
   assert(seen.count == 1 && event_is(&seen.last[0], la->item.id, 40, 30, 100, 60));
 
   // A move changes the old and the new box; a hidden leaf its last one.
-  wlr_scene_node_set_position(&b->node, 10, 100);
+  rediwm_node_set_position(&b->node, 10, 100);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   seen = events_since(p, &cursor, NULL);
   assert(seen.count == 2);
   assert(event_is(&seen.last[0], lb->item.id, 40, 130, 20, 20));
   assert(event_is(&seen.last[1], lb->item.id, 50, 130, 20, 20));
-  wlr_scene_node_set_enabled(&b->node, false);
+  rediwm_node_set_enabled(&b->node, false);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   seen = events_since(p, &cursor, NULL);
   assert(seen.count == 1 && event_is(&seen.last[0], lb->item.id, 50, 130, 20, 20));
-  wlr_scene_node_set_enabled(&b->node, true);
+  rediwm_node_set_enabled(&b->node, true);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   seen = events_since(p, &cursor, NULL);
   assert(seen.count == 1 && event_is(&seen.last[0], lb->item.id, 50, 130, 20, 20));
   // A changed opacity is a restyle of the whole box.
-  wlr_scene_buffer_set_opacity(a, .5f);
+  rediwm_buffer_set_opacity(a, .5f);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   seen = events_since(p, &cursor, NULL);
   assert(seen.count == 2 && event_is(&seen.last[1], la->item.id, 40, 30, 100, 60));
   // A destroyed leaf reports its last box at once.
   const uint64_t gone = lb->item.id;
-  wlr_scene_node_destroy(&b->node);
+  rediwm_node_destroy(&b->node);
   seen = events_since(p, &cursor, NULL);
   assert(seen.count == 1 && event_is(&seen.last[0], gone, 50, 130, 20, 20));
 
   // A leaf that draws nothing (an input-only node such as a resize grab) has no
   // events, however it moves: glass would otherwise take it for a change below.
-  struct wlr_scene_buffer *grab = wlr_scene_buffer_create(window, NULL);
-  wlr_scene_buffer_set_dest_size(grab, 300, 300);
+  struct rediwm_buffer *grab = rediwm_buffer_create(window, NULL);
+  rediwm_buffer_set_dest_size(grab, 300, 300);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
-  wlr_scene_node_set_position(&grab->node, 5, 5);
+  rediwm_node_set_position(&grab->node, 5, 5);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
-  wlr_scene_node_destroy(&grab->node);
+  rediwm_node_destroy(&grab->node);
   assert(events_since(p, &cursor, NULL).count == 0);
 
   // A second consumer read nothing yet and sees everything since its cursor.
@@ -784,7 +831,7 @@ static void test_damage_events(struct wlr_scene *scene) {
   // One that falls behind the ring is told so.
   uint64_t stale = rediwm_projection_damage_cursor(p);
   for (int i = 0; i < 2100; i++) {
-    wlr_scene_node_set_position(&window->node, 40 + i % 2, 30);
+    rediwm_node_set_position(&window->node, 40 + i % 2, 30);
     rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   }
   events_since(p, &stale, &complete);
@@ -793,39 +840,40 @@ static void test_damage_events(struct wlr_scene *scene) {
 
   pixman_region32_fini(&damage);
   rediwm_projection_destroy(p);
-  wlr_scene_node_destroy(&source->node);
+  rig_destroy(&rig);
   wlr_buffer_drop(buffer);
 }
 // A window's dim is a field of what its leaves show: inherited down the tree like
 // its shape, ended where a popup hangs under it, and a change of it restyles (so
 // damages) every leaf under the tree and no other.
 static void test_dim(struct wlr_scene *scene) {
-  struct wlr_scene_tree *source = wlr_scene_tree_create(&scene->tree);
-  struct rediwm_projection *p = rediwm_projection_create(source, scene);
+  struct rig rig = rig_create(scene);
+  struct rediwm_tree *source = rig.world;
+  struct rediwm_projection *p = rediwm_projection_create(rig.own, source, scene);
   assert(p);
   uint64_t cursor = rediwm_projection_damage_cursor(p);
-  struct wlr_scene_tree *window = wlr_scene_tree_create(source);
-  struct wlr_scene_tree *content = wlr_scene_tree_create(window);
-  struct wlr_scene_tree *popup = wlr_scene_tree_create(content);
-  struct wlr_scene_tree *sibling = wlr_scene_tree_create(source);
+  struct rediwm_tree *window = rediwm_tree_create(source);
+  struct rediwm_tree *content = rediwm_tree_create(window);
+  struct rediwm_tree *popup = rediwm_tree_create(content);
+  struct rediwm_tree *sibling = rediwm_tree_create(source);
   float color[4] = {.2, .3, .1, 1};
   struct wlr_buffer *buffer = buffer_create();
-  struct wlr_scene_rect *ring = wlr_scene_rect_create(window, 10, 10, color);
-  struct wlr_scene_buffer *client = wlr_scene_buffer_create(content, buffer);
-  struct wlr_scene_buffer *menu = wlr_scene_buffer_create(popup, buffer);
-  struct wlr_scene_buffer *other = wlr_scene_buffer_create(sibling, buffer);
+  struct rediwm_rect *ring = rediwm_rect_create(window, 10, 10, color);
+  struct rediwm_buffer *client = rediwm_buffer_create(content, buffer);
+  struct rediwm_buffer *menu = rediwm_buffer_create(popup, buffer);
+  struct rediwm_buffer *other = rediwm_buffer_create(sibling, buffer);
   assert(ring && client && menu && other);
-  wlr_scene_node_set_position(&window->node, 40, 30);
-  wlr_scene_node_set_position(&client->node, 0, 10);
-  wlr_scene_buffer_set_dest_size(client, 100, 60);
-  wlr_scene_node_set_position(&popup->node, 50, 20);
-  wlr_scene_buffer_set_dest_size(menu, 30, 30);
-  wlr_scene_node_set_position(&sibling->node, 300, 200);
-  wlr_scene_buffer_set_dest_size(other, 20, 20);
+  rediwm_node_set_position(&window->node, 40, 30);
+  rediwm_node_set_position(&client->node, 0, 10);
+  rediwm_buffer_set_dest_size(client, 100, 60);
+  rediwm_node_set_position(&popup->node, 50, 20);
+  rediwm_buffer_set_dest_size(menu, 30, 30);
+  rediwm_node_set_position(&sibling->node, 300, 200);
+  rediwm_buffer_set_dest_size(other, 20, 20);
   assert(rediwm_projection_set_tree_unclipped(&popup->node, true));
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
-  struct leaf *lring = get_leaf(p, &ring->node), *lclient = get_leaf(p, &client->node),
-              *lmenu = get_leaf(p, &menu->node), *lother = get_leaf(p, &other->node);
+  struct leaf *lring = leaf_of(p, &ring->node), *lclient = leaf_of(p, &client->node),
+              *lmenu = leaf_of(p, &menu->node), *lother = leaf_of(p, &other->node);
   assert(events_since(p, &cursor, NULL).count == 4); // Appearing.
 
   // Nothing is dimmed until a tree asks, and taking nothing away makes no addon.
@@ -881,7 +929,7 @@ static void test_dim(struct wlr_scene *scene) {
   assert(events_since(p, &cursor, NULL).count == 4);
 
   rediwm_projection_destroy(p);
-  wlr_scene_node_destroy(&source->node);
+  rig_destroy(&rig);
   wlr_buffer_drop(buffer);
 }
 // The output pass hides what a client's opaque region covers, from the region as
@@ -935,34 +983,35 @@ static bool in_group(struct group *g, struct leaf *l) {
 }
 static int snap_width(struct leaf *l) { return rediwm_edges_snap(l->item.edges).width; }
 static void test_groups(struct wlr_scene *scene, struct wlr_scene_output *out) {
-  struct wlr_scene_tree *source = wlr_scene_tree_create(&scene->tree);
-  struct rediwm_projection *p = rediwm_projection_create(source, scene);
+  struct rig rig = rig_create(scene);
+  struct rediwm_tree *source = rig.world;
+  struct rediwm_projection *p = rediwm_projection_create(rig.own, source, scene);
   assert(p);
-  struct wlr_scene_tree *frame = wlr_scene_tree_create(source);
-  struct wlr_scene_tree *nested = wlr_scene_tree_create(frame);
-  struct wlr_scene_tree *other = wlr_scene_tree_create(source);
+  struct rediwm_tree *frame = rediwm_tree_create(source);
+  struct rediwm_tree *nested = rediwm_tree_create(frame);
+  struct rediwm_tree *other = rediwm_tree_create(source);
   float color[4] = {.2, .3, .1, 1};
-  struct wlr_scene_rect *border = wlr_scene_rect_create(frame, 17, 9, color);
+  struct rediwm_rect *border = rediwm_rect_create(frame, 17, 9, color);
   struct wlr_buffer *buffer = buffer_create();
-  struct wlr_scene_buffer *client = wlr_scene_buffer_create(nested, buffer);
-  struct wlr_scene_rect *overlay = wlr_scene_rect_create(other, 20, 20, color);
+  struct rediwm_buffer *client = rediwm_buffer_create(nested, buffer);
+  struct rediwm_rect *overlay = rediwm_rect_create(other, 20, 20, color);
   assert(frame && nested && other && border && client && overlay);
-  wlr_scene_node_set_position(&frame->node, 37, 29);
-  wlr_scene_node_set_position(&nested->node, -12, 5);
-  wlr_scene_node_set_position(&client->node, 4, 3);
-  wlr_scene_node_set_position(&border->node, -2, -3);
-  wlr_scene_node_set_position(&other->node, 90, 60);
+  rediwm_node_set_position(&frame->node, 37, 29);
+  rediwm_node_set_position(&nested->node, -12, 5);
+  rediwm_node_set_position(&client->node, 4, 3);
+  rediwm_node_set_position(&border->node, -2, -3);
+  rediwm_node_set_position(&other->node, 90, 60);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   struct group *g = get_group(p, &frame->node);
   struct group *h = get_group(p, &other->node);
-  struct leaf *l = get_leaf(p, &client->node);
-  struct leaf *border_leaf = get_leaf(p, &border->node);
-  assert(in_group(g, l) && in_group(g, border_leaf) && in_group(h, get_leaf(p, &overlay->node)));
+  struct leaf *l = leaf_of(p, &client->node);
+  struct leaf *border_leaf = leaf_of(p, &border->node);
+  assert(in_group(g, l) && in_group(g, border_leaf) && in_group(h, leaf_of(p, &overlay->node)));
   assert(wl_list_length(&p->paint) == 2);
   assert_position(p, &client->node, 29, 37);
   assert_position(p, &border->node, 35, 26);
   clear_damage(out);
-  wlr_scene_node_set_position(&frame->node, 83, 71);
+  rediwm_node_set_position(&frame->node, 83, 71);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   // Ordinary movement moves every leaf of the group.
   assert_position(p, &client->node, 75, 79);
@@ -987,7 +1036,7 @@ static void test_groups(struct wlr_scene *scene, struct wlr_scene_output *out) {
     double z = zooms[i], cx = 6.5, cy = -2.5, ox = -17, oy = 31;
     double tx = ox * (1 - z) - z * cx, ty = oy * (1 - z) - z * cy;
     for (int x = -13; x <= 13; ++x) {
-      wlr_scene_node_set_position(&frame->node, x, -x);
+      rediwm_node_set_position(&frame->node, x, -x);
       rediwm_projection_sync(p, z, cx, cy, ox, oy);
       assert_position(p, &client->node, lround(z * (x - 8) + tx),
                        lround(z * (-x + 8) + ty));
@@ -1000,7 +1049,7 @@ static void test_groups(struct wlr_scene *scene, struct wlr_scene_output *out) {
   // Window zoom multiplies the camera scale while preserving its world origin.
   // Nested geometry keeps the same per-leaf projected scale.
   assert(rediwm_projection_set_tree_zoom(&frame->node, .85));
-  wlr_scene_node_set_position(&frame->node, -17, 23);
+  rediwm_node_set_position(&frame->node, -17, 23);
   rediwm_projection_sync(p, .5, 3, -7, 0, 0);
   assert_position(p, &client->node, lround(.5 * -17 - 1.5 + (.85 * .5) * -8),
                    lround(.5 * 23 + 3.5 + (.85 * .5) * 8));
@@ -1018,41 +1067,41 @@ static void test_groups(struct wlr_scene *scene, struct wlr_scene_output *out) {
   assert(rediwm_projection_set_tree_zoom(&frame->node, 1.0));
 
   // Reorder a whole window and a leaf within it, retaining source paint order.
-  wlr_scene_node_raise_to_top(&frame->node);
-  wlr_scene_node_raise_to_top(&nested->node);
+  rediwm_node_raise_to_top(&frame->node);
+  rediwm_node_raise_to_top(&nested->node);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   struct leaf *order[8];
   assert(p->paint.next == &h->paint && h->paint.next == &g->paint && g->paint.next == &p->paint);
   assert(items_of(g, order, 8) == 2 && order[0] == border_leaf && order[1] == l);
   // The source node and its input stay attached to the leaf when a subsurface
   // changes source root, rather than retaining a stale group.
-  wlr_scene_node_reparent(&client->node, other);
+  rediwm_node_reparent(&client->node, other);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   assert(in_group(h, l) && !in_group(g, l));
   assert_position(p, &client->node, 94, 63);
   double input_x, input_y;
-  assert(rediwm_projection_node_at(p, 94 + 40, 63 + 24, &input_x, &input_y) == &client->node);
+  assert(pick(p, 94 + 40, 63 + 24, &input_x, &input_y) == &client->node);
   assert(input_x == 40 && input_y == 24);
-  wlr_scene_node_set_enabled(&other->node, false);
+  rediwm_node_set_enabled(&other->node, false);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
-  assert(!l->item.enabled && !rediwm_projection_node_at(p, 94 + 40, 63 + 24, &input_x, &input_y));
-  wlr_scene_node_set_enabled(&other->node, true);
+  assert(!l->item.enabled && !pick(p, 94 + 40, 63 + 24, &input_x, &input_y));
+  rediwm_node_set_enabled(&other->node, true);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   assert_position(p, &client->node, 94, 63);
 
   // A former source root can become nested, leave the projected tree, and
   // return. Its unused group is not reached while its leaves change group, and
   // neither its former position nor window zoom may leak into other leaves.
-  wlr_scene_node_reparent(&frame->node, other);
+  rediwm_node_reparent(&frame->node, other);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   assert(!g->seen);
   assert(in_group(h, border_leaf));
   assert_position(p, &border->node, 71, 80);
   assert_position(p, &client->node, 94, 63);
-  wlr_scene_node_reparent(&frame->node, &scene->tree);
+  rediwm_node_reparent(&frame->node, &rig.parking->tree);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   assert(!border_leaf->seen);
-  wlr_scene_node_reparent(&frame->node, source);
+  rediwm_node_reparent(&frame->node, source);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   assert(g->seen);
   assert(in_group(g, border_leaf));
@@ -1060,58 +1109,59 @@ static void test_groups(struct wlr_scene *scene, struct wlr_scene_output *out) {
 
   // A leaf moved out of a window's tree before the tree is destroyed keeps its
   // leaf: the surviving source node needs nothing recreated.
-  struct wlr_scene_tree *temporary = wlr_scene_tree_create(source);
-  struct wlr_scene_rect *survivor = wlr_scene_rect_create(temporary, 12, 12, color);
+  struct rediwm_tree *temporary = rediwm_tree_create(source);
+  struct rediwm_rect *survivor = rediwm_rect_create(temporary, 12, 12, color);
   assert(temporary && survivor);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
-  wlr_scene_node_reparent(&survivor->node, other);
-  wlr_scene_node_destroy(&temporary->node);
-  assert(find_leaf(p, &survivor->node));
+  rediwm_node_reparent(&survivor->node, other);
+  rediwm_node_destroy(&temporary->node);
+  assert(leaf_of(p, &survivor->node));
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   assert_position(p, &survivor->node, 90, 60);
-  wlr_scene_node_destroy(&survivor->node);
+  rediwm_node_destroy(&survivor->node);
 
   // A direct leaf can itself be a former group root. After it becomes nested,
   // destroying the source runs both leaf and group cleanup on the same node.
-  struct wlr_scene_rect *direct = wlr_scene_rect_create(source, 12, 12, color);
+  struct rediwm_rect *direct = rediwm_rect_create(source, 12, 12, color);
   assert(direct);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
-  wlr_scene_node_reparent(&direct->node, other);
+  rediwm_node_reparent(&direct->node, other);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
-  assert(in_group(h, get_leaf(p, &direct->node)));
-  wlr_scene_node_destroy(&direct->node);
+  assert(in_group(h, leaf_of(p, &direct->node)));
+  rediwm_node_destroy(&direct->node);
   assert(wl_list_length(&p->groups) == 2 && wl_list_length(&p->leaves) == 3);
 
   // Source-first teardown destroys its group without dangling leaf listeners.
-  wlr_scene_node_destroy(&frame->node);
+  rediwm_node_destroy(&frame->node);
   assert(wl_list_length(&p->groups) == 1 && wl_list_length(&p->leaves) == 2);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
-  wlr_scene_node_destroy(&other->node);
+  rediwm_node_destroy(&other->node);
   assert(wl_list_empty(&p->groups) && wl_list_empty(&p->leaves));
   rediwm_projection_destroy(p);
-  wlr_scene_node_destroy(&source->node);
+  rig_destroy(&rig);
   wlr_buffer_drop(buffer);
 }
 // Stage 6b: the screen's damage comes from the graph. A restack damages what
 // changed order, a change of what a leaf itself shows is cut to what was visible
 // of it at the last build, and a window going away is damaged at once.
 static void test_graph_damage(struct wlr_scene *scene, struct wlr_scene_output *out) {
-  struct wlr_scene_tree *source = wlr_scene_tree_create(&scene->tree);
-  struct rediwm_projection *p = rediwm_projection_create(source, scene);
+  struct rig rig = rig_create(scene);
+  struct rediwm_tree *source = rig.world;
+  struct rediwm_projection *p = rediwm_projection_create(rig.own, source, scene);
   assert(p);
   struct wlr_buffer *buffer = buffer_create(); // 200x120
-  struct wlr_scene_tree *frame_a = wlr_scene_tree_create(source);
-  struct wlr_scene_tree *frame_b = wlr_scene_tree_create(source);
-  struct wlr_scene_buffer *a = wlr_scene_buffer_create(frame_a, buffer);
-  struct wlr_scene_buffer *b = wlr_scene_buffer_create(frame_b, buffer);
-  wlr_scene_node_set_position(&frame_a->node, 20, 20);
-  wlr_scene_node_set_position(&frame_b->node, 60, 40);
+  struct rediwm_tree *frame_a = rediwm_tree_create(source);
+  struct rediwm_tree *frame_b = rediwm_tree_create(source);
+  struct rediwm_buffer *a = rediwm_buffer_create(frame_a, buffer);
+  struct rediwm_buffer *b = rediwm_buffer_create(frame_b, buffer);
+  rediwm_node_set_position(&frame_a->node, 20, 20);
+  rediwm_node_set_position(&frame_b->node, 60, 40);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   clear_damage(out);
 
   // Raising the window below changes the pixels where the two overlap, and says
   // nothing about the rest of the screen.
-  wlr_scene_node_raise_to_top(&frame_a->node);
+  rediwm_node_raise_to_top(&frame_a->node);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   assert(layout_damaged(out, 100, 60) && layout_damaged(out, 210, 130));
   assert(!layout_damaged(out, 350, 300) && !layout_damaged(out, 5, 5));
@@ -1121,30 +1171,30 @@ static void test_graph_damage(struct wlr_scene *scene, struct wlr_scene_output *
 
   // What changes only what a leaf shows is cut to what of it was visible at the
   // last build: the right part of `a` was hidden, so its change is not damaged.
-  struct leaf *la = get_leaf(p, &a->node), *lb = get_leaf(p, &b->node);
+  struct leaf *la = leaf_of(p, &a->node), *lb = leaf_of(p, &b->node);
   pixman_region32_t visible;
   pixman_region32_init_rect(&visible, 20, 20, 50, 120);
-  rediwm_projection_note_visible(p, &a->node, &visible);
-  rediwm_projection_damage_buffer(p, &a->node, NULL);
+  rediwm_projection_note_visible(p, carrier_of(&a->node), &visible);
+  rediwm_projection_damage_buffer(p, carrier_of(&a->node), NULL);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   assert(layout_damaged(out, 30, 60) && !layout_damaged(out, 150, 60));
   clear_damage(out);
   // Nothing visible, nothing to damage; a leaf the pass never saw is damaged whole.
   pixman_region32_clear(&visible);
-  rediwm_projection_note_visible(p, &a->node, &visible);
-  rediwm_projection_damage_buffer(p, &a->node, NULL);
+  rediwm_projection_note_visible(p, carrier_of(&a->node), &visible);
+  rediwm_projection_damage_buffer(p, carrier_of(&a->node), NULL);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   assert(!pixman_region32_not_empty(&out->damage_ring.current));
   assert(!lb->has_visible);
-  rediwm_projection_damage_buffer(p, &b->node, NULL);
+  rediwm_projection_damage_buffer(p, carrier_of(&b->node), NULL);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   assert(layout_damaged(out, 70, 50) && layout_damaged(out, 250, 150));
   clear_damage(out);
   // A leaf that is moved damages where it was only where it was visible, and
   // where it is whatever the last build saw.
   pixman_region32_init_rect(&visible, 60, 40, 40, 120);
-  rediwm_projection_note_visible(p, &b->node, &visible);
-  wlr_scene_node_set_position(&frame_b->node, 200, 150);
+  rediwm_projection_note_visible(p, carrier_of(&b->node), &visible);
+  rediwm_node_set_position(&frame_b->node, 200, 150);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   assert(layout_damaged(out, 70, 60) && !layout_damaged(out, 150, 60)); // old box, cut
   assert(layout_damaged(out, 250, 200)); // new box, whole
@@ -1153,12 +1203,12 @@ static void test_graph_damage(struct wlr_scene *scene, struct wlr_scene_output *
 
   // A window going away damages what it showed without waiting for a sync: a
   // capture can build a frame before the next one.
-  rediwm_projection_note_visible(p, &a->node, &(pixman_region32_t){.extents = {20, 20, 220, 140}, .data = NULL});
-  wlr_scene_node_destroy(&frame_a->node);
+  rediwm_projection_note_visible(p, carrier_of(&a->node), &(pixman_region32_t){.extents = {20, 20, 220, 140}, .data = NULL});
+  rediwm_node_destroy(&frame_a->node);
   assert(layout_damaged(out, 30, 30) && layout_damaged(out, 210, 130));
   pixman_region32_fini(&visible);
   rediwm_projection_destroy(p);
-  wlr_scene_node_destroy(&source->node);
+  rig_destroy(&rig);
   wlr_buffer_drop(buffer);
 }
 // Stage 6a: what the output pass reports of a surface becomes the signals wlroots
@@ -1201,58 +1251,59 @@ static void test_feedback(struct wlr_scene *scene, struct wlr_backend *backend, 
   wlr_output_effective_resolution(left_output, &seam, &unused);
   wlr_scene_output_set_position(right, seam, 0);
 
-  struct wlr_scene_tree *source = wlr_scene_tree_create(&scene->tree);
-  struct rediwm_projection *p = rediwm_projection_create(source, scene);
+  struct rig rig = rig_create(scene);
+  struct rediwm_tree *source = rig.world;
+  struct rediwm_projection *p = rediwm_projection_create(rig.own, source, scene);
   assert(p);
   struct wlr_buffer *buffer = buffer_create();
-  struct wlr_scene_buffer *node = wlr_scene_buffer_create(source, buffer);
-  wlr_scene_node_set_position(&node->node, seam - 26, 50);
+  struct rediwm_buffer *node = rediwm_buffer_create(source, buffer);
+  rediwm_node_set_position(&node->node, seam - 26, 50);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
-  struct leaf *l = get_leaf(p, &node->node);
+  struct leaf *l = leaf_of(p, &node->node);
   l->feedback = calloc(1, sizeof(*l->feedback));
   assert(l->feedback);
   l->feedback->leaf = l;
   wl_list_insert(&p->feedback, &l->feedback->link);
   struct wl_listener updated = {.notify = on_outputs_update}, done = {.notify = on_frame_done};
-  wl_signal_add(&node->events.outputs_update, &updated);
-  wl_signal_add(&node->events.frame_done, &done);
+  wl_signal_add(&node->carrier->events.outputs_update, &updated);
+  wl_signal_add(&node->carrier->events.frame_done, &done);
   struct timespec now = {0};
 
   // Over the seam: both outputs show more than a tenth, the one with most is primary.
-  report(p, &node->node, seam - 26, 50, 200, 100); // 26 columns left, 174 right
+  report(p, carrier_of(&node->node), seam - 26, 50, 200, 100); // 26 columns left, 174 right
   assert(outputs_updates == 1 && update_size == 2 && l->feedback->primary == right);
   assert(l->feedback->active == (1ull << left->private.index | 1ull << right->private.index));
-  report(p, &node->node, seam - 26, 50, 200, 100);
+  report(p, carrier_of(&node->node), seam - 26, 50, 200, 100);
   assert(outputs_updates == 1); // Unchanged: no signal.
   // A sliver on the other side is ignored (10 % rule): 2 of 28 columns.
-  report(p, &node->node, seam - 26, 50, 28, 100);
+  report(p, carrier_of(&node->node), seam - 26, 50, 28, 100);
   assert(outputs_updates == 2 && update_size == 1 && update_active[0] == left && l->feedback->primary == left);
   // Frames are sent for what is shown, and for no output it is not.
   rediwm_projection_send_frame_done(p, left, &now);
   assert(frame_dones == 1);
   // A hidden leaf hears none, whatever it was told last.
-  wlr_scene_node_set_enabled(&node->node, false);
+  rediwm_node_set_enabled(&node->node, false);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   rediwm_projection_send_frame_done(p, left, &now);
   assert(frame_dones == 1);
-  wlr_scene_node_set_enabled(&node->node, true);
+  rediwm_node_set_enabled(&node->node, true);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
-  report(p, &node->node, 0, 0, 0, 0); // hidden
+  report(p, carrier_of(&node->node), 0, 0, 0, 0); // hidden
   assert(outputs_updates == 3 && update_size == 0 && !l->feedback->active && !l->feedback->primary);
   rediwm_projection_send_frame_done(p, left, &now);
   assert(frame_dones == 1); // nothing shown, nothing sent
   // An active output whose scale changed hears again, whatever else is the same.
-  report(p, &node->node, seam - 26, 50, 26, 100);
+  report(p, carrier_of(&node->node), seam - 26, 50, 26, 100);
   assert(outputs_updates == 4 && update_size == 1);
-  report(p, &node->node, seam - 26, 50, 26, 100);
+  report(p, carrier_of(&node->node), seam - 26, 50, 26, 100);
   assert(outputs_updates == 4);
   wlr_output_state_init(&state);
   wlr_output_state_set_scale(&state, 1.25f);
   assert(wlr_output_commit_state(left_output, &state));
   wlr_output_state_finish(&state);
-  report(p, &node->node, seam - 26, 50, 26, 100);
+  report(p, carrier_of(&node->node), seam - 26, 50, 26, 100);
   assert(outputs_updates == 5);
-  report(p, &node->node, seam - 26, 50, 26, 100);
+  report(p, carrier_of(&node->node), seam - 26, 50, 26, 100);
   assert(outputs_updates == 5);
   wlr_output_state_init(&state);
   wlr_output_state_set_scale(&state, 1.f);
@@ -1262,7 +1313,7 @@ static void test_feedback(struct wlr_scene *scene, struct wlr_backend *backend, 
   wl_list_remove(&updated.link);
   wl_list_remove(&done.link);
   rediwm_projection_destroy(p);
-  wlr_scene_node_destroy(&source->node);
+  rig_destroy(&rig);
   wlr_buffer_drop(buffer);
   wlr_scene_output_destroy(right);
   wlr_output_destroy(right_output);
@@ -1283,17 +1334,18 @@ int main(void) {
   assert(scene);
   struct wlr_scene_output *out = wlr_scene_output_create(scene, output);
   assert(out);
-  struct wlr_scene_tree *source = wlr_scene_tree_create(&scene->tree);
-  struct rediwm_projection *p = rediwm_projection_create(source, scene);
+  struct rig rig = rig_create(scene);
+  struct rediwm_tree *source = rig.world;
+  struct rediwm_projection *p = rediwm_projection_create(rig.own, source, scene);
   assert(p);
   struct wlr_buffer *a = buffer_create(), *b = buffer_create();
-  struct wlr_scene_buffer *node = wlr_scene_buffer_create(source, a);
+  struct rediwm_buffer *node = rediwm_buffer_create(source, a);
   assert(node);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   assert(damaged(out, 100, 60)); // First presentation is fully damaged.
   clear_damage(out);
 
-  struct leaf *l = get_leaf(p, &node->node);
+  struct leaf *l = leaf_of(p, &node->node);
   struct wlr_surface surface = {.current = {.buffer_width = 200, .buffer_height = 120}};
   pixman_region32_init(&surface.buffer_damage);
   struct wlr_scene_surface scene_surface = {.surface = &surface};
@@ -1313,11 +1365,11 @@ int main(void) {
 
   // Rotation with empty damage is not a repaint; rotation with partial damage
   // must retain only that region. The source tree itself is disabled.
-  wlr_scene_buffer_set_buffer(node, b);
+  rediwm_buffer_set_buffer(node, b);
   commit_damage(l, 0, 0, 0, 0);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   assert(!pixman_region32_not_empty(&out->damage_ring.current));
-  wlr_scene_buffer_set_buffer(node, a);
+  rediwm_buffer_set_buffer(node, a);
   commit_damage(l, 20, 20, 4, 4);
   rediwm_projection_sync(p, 1, 0, 0, 0, 0);
   assert(damaged(out, 21, 21) && !damaged(out, 100, 60));
@@ -1349,8 +1401,8 @@ int main(void) {
   // Cropping and fractional zoom use wlroots' buffer-to-output damage mapping,
   // including filtering expansion, rather than treating buffer pixels as scene
   // coordinates.
-  wlr_scene_buffer_set_source_box(node, &(struct wlr_fbox){20, 20, 100, 60});
-  wlr_scene_buffer_set_dest_size(node, 100, 60);
+  rediwm_buffer_set_source_box(node, &(struct wlr_fbox){20, 20, 100, 60});
+  rediwm_buffer_set_dest_size(node, 100, 60);
   rediwm_projection_sync(p, .5, 0, 0, 0, 0);
   clear_damage(out);
   commit_damage(l, 40, 40, 4, 4);
@@ -1373,28 +1425,28 @@ int main(void) {
 
   // Geometry changes still damage both the old and new location, independently
   // of client buffer damage. Re-enabling a hidden node must repaint it too.
-  wlr_scene_node_set_position(&node->node, 200, 0);
+  rediwm_node_set_position(&node->node, 200, 0);
   rediwm_projection_sync(p, .5, 0, 0, 0, 0);
   assert(damaged(out, 20, 20) && damaged(out, 170, 20));
   clear_damage(out);
-  wlr_scene_node_set_enabled(&node->node, false);
+  rediwm_node_set_enabled(&node->node, false);
   rediwm_projection_sync(p, .5, 0, 0, 0, 0);
   clear_damage(out);
   commit_damage(l, 0, 0, 0, 0);
   rediwm_projection_sync(p, .5, 0, 0, 0, 0);
-  wlr_scene_node_set_enabled(&node->node, true);
+  rediwm_node_set_enabled(&node->node, true);
   rediwm_projection_sync(p, .5, 0, 0, 0, 0);
   assert(damaged(out, 170, 20));
-  wlr_scene_node_set_position(&node->node, 0, 0);
+  rediwm_node_set_position(&node->node, 0, 0);
   rediwm_projection_sync(p, .5, 0, 0, 0, 0);
   clear_damage(out);
 
   // Unmap/remap must repaint even when the remapping commit has empty damage.
-  wlr_scene_buffer_set_buffer(node, NULL);
+  rediwm_buffer_set_buffer(node, NULL);
   commit_damage(l, 0, 0, 0, 0);
   rediwm_projection_sync(p, .5, 0, 0, 0, 0);
   clear_damage(out);
-  wlr_scene_buffer_set_buffer(node, a);
+  rediwm_buffer_set_buffer(node, a);
   commit_damage(l, 0, 0, 0, 0);
   rediwm_projection_sync(p, .5, 0, 0, 0, 0);
   assert(damaged(out, 25, 15));

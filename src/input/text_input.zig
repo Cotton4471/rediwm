@@ -3,6 +3,7 @@
 const std = @import("std");
 const wl = @import("wayland").server.wl;
 const wlr = @import("wlroots");
+const sn = @import("../node.zig");
 const Server = @import("../Server.zig");
 const Keyboard = @import("../Keyboard.zig");
 const Toplevel = @import("../Toplevel.zig");
@@ -294,7 +295,7 @@ fn methodDestroy(listener: *wl.Listener(void)) void {
 const Popup = struct {
     relay: *Self,
     popup: *wlr.InputPopupSurfaceV2,
-    tree: *wlr.SceneTree,
+    tree: *sn.Tree,
     link: wl.list.Link = undefined,
     commit: wl.Listener(*wlr.Surface) = .init(committed),
     destroyed: wl.Listener(void) = .init(onDestroy),
@@ -341,15 +342,31 @@ fn newPopup(listener: *wl.Listener(*wlr.InputPopupSurfaceV2), popup: *wlr.InputP
     self.updatePopups();
 }
 
-fn surfaceNode(tree: *wlr.SceneTree, surface: *wlr.Surface) ?*wlr.SceneNode {
+fn wlrSurfaceNode(tree: *wlr.SceneTree, surface: *wlr.Surface) ?*wlr.SceneNode {
     var it = tree.children.iterator(.forward);
     while (it.next()) |node| {
         if (node.type == .tree) {
-            if (surfaceNode(@fieldParentPtr("node", node), surface)) |found| return found;
+            if (wlrSurfaceNode(wlr.SceneTree.fromNode(node), surface)) |found| return found;
         } else if (node.type == .buffer) {
             if (wlr.SceneSurface.tryFromBuffer(wlr.SceneBuffer.fromNode(node))) |scene_surface| {
                 if (scene_surface.surface == surface) return node;
             }
+        }
+    }
+    return null;
+}
+
+/// The node showing `surface` under `tree`: a client's surfaces are wlr_scene nodes
+/// inside the foreign nodes that host them.
+fn surfaceNode(tree: *sn.Tree, surface: *wlr.Surface) ?*wlr.SceneNode {
+    var it = tree.children.iterator(.forward);
+    while (it.next()) |node| {
+        switch (node.type) {
+            .tree => if (surfaceNode(@fieldParentPtr("node", node), surface)) |found| return found,
+            .foreign => if (node.foreign().?.wlr != null) {
+                if (wlrSurfaceNode(node.foreign().?.tree(), surface)) |found| return found;
+            },
+            else => {},
         }
     }
     return null;
@@ -366,10 +383,10 @@ pub fn updatePopups(self: *Self) void {
             const input = (self.active orelse break :visible false).input;
             const surface = input.focused_surface orelse break :visible false;
             if (!surface.mapped or !popup.popup.surface.mapped) break :visible false;
-            const node = surfaceNode(&self.server.scene.tree, surface) orelse break :visible false;
+            const node = surfaceNode(&self.server.nodes.tree, surface) orelse break :visible false;
             var sx: i32 = 0;
             var sy: i32 = 0;
-            _ = node.coords(&sx, &sy);
+            _ = sn.wlrCoords(node, &sx, &sy);
             var scale: f64 = 1;
             var x: f64 = @floatFromInt(sx);
             var y: f64 = @floatFromInt(sy);
@@ -430,7 +447,7 @@ pub fn popupPoint(self: *Self, surface: *wlr.Surface, x: f64, y: f64) ?@import("
     const node = surfaceNode(self.server.ime_tree, surface) orelse return null;
     var sx: i32 = 0;
     var sy: i32 = 0;
-    _ = node.coords(&sx, &sy);
+    _ = sn.wlrCoords(node, &sx, &sy);
     return .{ .x = x - @as(f64, @floatFromInt(sx)), .y = y - @as(f64, @floatFromInt(sy)) };
 }
 

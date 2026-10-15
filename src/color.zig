@@ -8,6 +8,7 @@
 //! `Straight.premultiply`.
 const std = @import("std");
 const wlr = @import("wlroots");
+const sn = @import("node.zig");
 
 pub const Straight = struct {
     r: f32,
@@ -76,11 +77,11 @@ pub const Premul = struct {
     }
 };
 
-pub fn createRect(tree: *wlr.SceneTree, width: c_int, height: c_int, c: Premul) !*wlr.SceneRect {
+pub fn createRect(tree: *sn.Tree, width: c_int, height: c_int, c: Premul) !*sn.Rect {
     return tree.createSceneRect(width, height, &c.rgba);
 }
 
-pub fn setRect(rect: *wlr.SceneRect, c: Premul) void {
+pub fn setRect(rect: *sn.Rect, c: Premul) void {
     rect.setColor(&c.rgba);
 }
 

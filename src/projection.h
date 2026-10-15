@@ -4,6 +4,10 @@
 struct wlr_scene_node;
 struct wlr_scene_tree;
 struct wlr_scene;
+struct rediwm_node;
+struct rediwm_tree;
+struct rediwm_foreign;
+struct rediwm_scene;
 struct wlr_scene_buffer;
 struct wlr_surface_state;
 struct rediwm_projection;
@@ -20,9 +24,13 @@ bool rediwm_projection_for_each_item(struct rediwm_projection *, bool reverse, r
 // Whether a commit changed how buffer pixels map onto the surface, so damage
 // from before it cannot be combined with damage after it.
 bool rediwm_surface_state_remapped(const struct wlr_surface_state *);
-// `source` is the world's tree, disabled so that wlroots ignores it; the
-// projection resolves it into the graph the output pass draws.
-struct rediwm_projection *rediwm_projection_create(struct wlr_scene_tree *source,
+// `own` is the compositor's scene: the children of its root are layers, bottom to
+// top, and `world` (one of them) follows the camera while the others are laid out as
+// they are. The projection resolves all of it into the graph the output pass draws,
+// and asks for a frame whenever the scene changes. `scene` is wlroots' scene, kept
+// for its outputs.
+struct rediwm_projection *rediwm_projection_create(struct rediwm_scene *own,
+                                                   struct rediwm_tree *world,
                                                    struct wlr_scene *);
 void rediwm_projection_destroy(struct rediwm_projection *);
 void rediwm_projection_sync(struct rediwm_projection *, double, double, double,
@@ -40,37 +48,59 @@ typedef void (*rediwm_damage_event_iterator)(const struct rediwm_damage_event *,
 bool rediwm_projection_damage_events(struct rediwm_projection *, uint64_t *cursor,
                                      rediwm_damage_event_iterator, void *);
 uint64_t rediwm_projection_damage_cursor(struct rediwm_projection *);
-// Optional root subtree presented in layout coordinates, independent of the camera.
+// Optional child of the world presented in layout coordinates, independent of the
+// camera.
 void rediwm_projection_sync_fixed(struct rediwm_projection *, double, double, double,
-                                  double, double, struct wlr_scene_tree *);
-// The topmost node at a layout point, with the point in the node's own coordinates
-// (source units for a client surface), or NULL. Hits in the world are source nodes.
-struct wlr_scene_node *rediwm_projection_node_at(struct rediwm_projection *, double lx, double ly,
-                                                 double *nx, double *ny);
+                                  double, double, struct rediwm_tree *);
+// What a point lands on. An own node has `own`; a node inside a client's subtree has
+// only `wlr`, and `foreign` is the own node that hosts that subtree. (`wlr` is
+// always the pixel source.) (x, y) is the point in the node's own coordinates
+// (source units for a client surface).
+struct rediwm_hit {
+  struct rediwm_node *own;
+  struct wlr_scene_node *wlr;
+  struct rediwm_foreign *foreign;
+  double x, y;
+};
+bool rediwm_projection_node_at(struct rediwm_projection *, double lx, double ly,
+                               struct rediwm_hit *);
+// The same, among the leaves of one top-level subtree of a layer (a window's frame
+// tree), whatever lies above it.
+bool rediwm_projection_node_at_in(struct rediwm_projection *, struct rediwm_node *subtree,
+                                  double lx, double ly, struct rediwm_hit *);
 // Window scale relative to its parent camera, around the frame origin.
-bool rediwm_projection_set_tree_zoom(struct wlr_scene_node *, double);
+bool rediwm_projection_set_tree_zoom(struct rediwm_node *, double);
 // Relative presentation scale. Composes with parent camera and window zoom.
-bool rediwm_projection_set_tree_scale(struct wlr_scene_node *, double);
+bool rediwm_projection_set_tree_scale(struct rediwm_node *, double);
 // One rounded-rectangle shape for every leaf under the tree, in the tree's own
 // units and anchored at its origin; NULL removes it. Returns false for a size
 // that is not positive or a radius or border that is negative or not finite.
-bool rediwm_projection_set_tree_clip(struct wlr_scene_node *, const struct rediwm_clip_spec *);
+bool rediwm_projection_set_tree_clip(struct rediwm_node *, const struct rediwm_clip_spec *);
 // Every leaf under the tree draws the analytic shadow of this shape (see
 // rediwm_shadow_spec in scene_graph.h); its node supplies only the footprint,
 // opacity and input. NULL removes it. False for a size that is not positive, or a
 // radius or softness that is negative or not finite.
 struct rediwm_shadow_spec;
-bool rediwm_projection_set_tree_shadow(struct wlr_scene_node *, const struct rediwm_shadow_spec *);
+bool rediwm_projection_set_tree_shadow(struct rediwm_node *, const struct rediwm_shadow_spec *);
 // Every leaf under the tree is drawn with this fraction of its brightness and of
 // its colour taken away (both 0 to 1; 0 and 0 removes the dim): a window that is not
 // the focus. It is part of what the leaf shows, so a change damages the leaves
 // under the tree; a shadow is not drawn dimmed. False for a value outside 0 to 1.
-bool rediwm_projection_set_tree_dim(struct wlr_scene_node *, float brightness, float saturation);
+bool rediwm_projection_set_tree_dim(struct rediwm_node *, float brightness, float saturation);
 // Ends the clip and the dim inherited from an ancestor for this subtree (an xdg
 // popup lives under its parent's tree but is no part of the window's frame).
-bool rediwm_projection_set_tree_unclipped(struct wlr_scene_node *, bool);
+bool rediwm_projection_set_tree_unclipped(struct rediwm_node *, bool);
 // Shows the subtree but lets the pick pass through it to what is below.
-bool rediwm_projection_set_tree_inert(struct wlr_scene_node *, bool);
+bool rediwm_projection_set_tree_inert(struct rediwm_node *, bool);
+// The same for a node inside a wlroots subtree (a client's popup).
+bool rediwm_projection_set_wlr_tree_zoom(struct wlr_scene_node *, double);
+bool rediwm_projection_set_wlr_tree_scale(struct wlr_scene_node *, double);
+bool rediwm_projection_set_wlr_tree_clip(struct wlr_scene_node *, const struct rediwm_clip_spec *);
+struct rediwm_shadow_spec;
+bool rediwm_projection_set_wlr_tree_shadow(struct wlr_scene_node *, const struct rediwm_shadow_spec *);
+bool rediwm_projection_set_wlr_tree_dim(struct wlr_scene_node *, float brightness, float saturation);
+bool rediwm_projection_set_wlr_tree_unclipped(struct wlr_scene_node *, bool);
+bool rediwm_projection_set_wlr_tree_inert(struct wlr_scene_node *, bool);
 // Buffer-local damage for the next buffer set on a compositor-owned source
 // buffer node; NULL damages all of it. Surface leaves track their own.
 struct pixman_region32;

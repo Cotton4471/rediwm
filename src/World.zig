@@ -14,11 +14,12 @@ pub const camera_mod = @import("camera.zig");
 
 const World = @This();
 const Projection = @import("projection.zig").Projection;
+const sn = @import("node.zig");
 const glass = @import("glass.zig");
 const anim = @import("ui").anim;
 
 server: *Server,
-tree: *wlr.SceneTree,
+tree: *sn.Tree,
 projection: *Projection,
 /// Mapped windows, front of the list is the focused/top of the stack.
 toplevels: wl.list.Head(Toplevel, .link) = undefined,
@@ -53,11 +54,11 @@ vel_z: anim.VelocityTracker = .{},
 /// Last chip selected during the current Super hold; IDs survive window teardown safely.
 peek_window_id: ?u64 = null,
 
-pub fn init(world: *World, server: *Server, tree: *wlr.SceneTree) !void {
+pub fn init(world: *World, server: *Server, tree: *sn.Tree) !void {
     world.* = .{
         .server = server,
         .tree = tree,
-        .projection = Projection.create(tree, server.scene) orelse return error.SceneCreateFailed,
+        .projection = Projection.create(server.nodes, tree, server.scene) orelse return error.SceneCreateFailed,
     };
     world.toplevels.init();
     world.closing.init();

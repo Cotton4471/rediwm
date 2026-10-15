@@ -6,6 +6,7 @@
 // Toplevel.setTiledOn converts them to world-space client geometry.
 const std = @import("std");
 const wlr = @import("wlroots");
+const sn = @import("node.zig");
 const col = @import("color.zig");
 const theme = @import("ui").theme;
 
@@ -197,13 +198,13 @@ pub fn step(layout: Layout, dir: Direction) Layout {
 /// The drop target shown while dragging: an accent-tinted fill with an
 /// outline, above windows so it stays visible over whatever it will cover.
 pub const Preview = struct {
-    tree: ?*wlr.SceneTree = null,
-    fill: ?*wlr.SceneRect = null,
-    outline: [4]?*wlr.SceneRect = .{ null, null, null, null },
+    tree: ?*sn.Tree = null,
+    fill: ?*sn.Rect = null,
+    outline: [4]?*sn.Rect = .{ null, null, null, null },
 
     const outline_px = 2;
 
-    pub fn show(preview: *Preview, parent: *wlr.SceneTree, box: wlr.Box) void {
+    pub fn show(preview: *Preview, parent: *sn.Tree, box: wlr.Box) void {
         const tree = preview.tree orelse preview.create(parent) catch return;
         tree.node.setPosition(box.x, box.y);
         preview.fill.?.setSize(box.width, box.height);
@@ -226,12 +227,12 @@ pub const Preview = struct {
         if (preview.tree) |tree| tree.node.setEnabled(false);
     }
 
-    fn create(preview: *Preview, parent: *wlr.SceneTree) !*wlr.SceneTree {
+    fn create(preview: *Preview, parent: *sn.Tree) !*sn.Tree {
         const tree = try parent.createSceneTree();
         errdefer tree.node.destroy();
         const accent = col.Straight.fromRgba(theme.shellPalette().accent).premultiply();
         const fill = try col.createRect(tree, 0, 0, accent.scale(0.16));
-        var outline: [4]?*wlr.SceneRect = undefined;
+        var outline: [4]?*sn.Rect = undefined;
         for (&outline) |*rect| rect.* = try col.createRect(tree, 0, 0, accent.scale(0.55));
         preview.* = .{ .tree = tree, .fill = fill, .outline = outline };
         return tree;

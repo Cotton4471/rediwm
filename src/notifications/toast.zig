@@ -2,6 +2,7 @@
 //! Rendered using the ui/ widget engine into a PanelBuffer scene node.
 const std = @import("std");
 const wlr = @import("wlroots");
+const sn = @import("../node.zig");
 
 const anim = @import("ui").anim;
 const panel_buffer = @import("../panel_buffer.zig");
@@ -45,7 +46,7 @@ pub const Toast = struct {
     icon_id: ?u64 = null,
     icon_entry: ?icon_service_mod.Entry = null,
 
-    buffer_node: *wlr.SceneBuffer,
+    buffer_node: *sn.Buffer,
     glass_effect: ?*glass.Effect = null,
     node_data: scene_data.SceneData = undefined,
     panel_box: wlr.Box = .{ .x = 0, .y = 0, .width = 0, .height = 0 },
@@ -73,7 +74,7 @@ pub const Toast = struct {
 
     pub fn create(
         allocator: std.mem.Allocator,
-        parent_tree: *wlr.SceneTree,
+        parent_tree: *sn.Tree,
         manager_ptr: *anyopaque,
         id: u32,
         app_name: []const u8,

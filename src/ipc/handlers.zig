@@ -1,6 +1,7 @@
 const std = @import("std");
 const wl = @import("wayland").server.wl;
 const wlr = @import("wlroots");
+const sn = @import("../node.zig");
 
 const Server = @import("../Server.zig");
 const Output = @import("../Output.zig");
@@ -509,7 +510,7 @@ pub fn handleRequest(
             var nodes = std.ArrayList(protocol.SceneNodeData).empty;
             var total: usize = 0;
             const max_depth = p.max_depth orelse 16;
-            try walkSceneTree(&server.scene.tree.node, &nodes, allocator, 0, max_depth, &total);
+            try walkSceneTree(&server.nodes.tree.node, &nodes, allocator, 0, max_depth, &total);
             return .{ .ok = .{ .scene_tree = .{
                 .nodes = try nodes.toOwnedSlice(allocator),
                 .total_nodes = total,
@@ -1184,20 +1185,20 @@ fn handleAction(
                     const toplevel = findToplevelById(server, win_id) orelse return .{ .err = "UnknownWindow" };
                     if (!toplevel.hasServerDecorations()) return .{ .err = "WindowHasNoServerDecorations" };
                     scale = toplevel.render_scale;
-                    target_buf = toplevel.titlebar_buffer.buffer;
+                    target_buf = toplevel.titlebar_buffer.getBuffer();
                 },
                 // Each tag names the Output field holding that panel.
                 .control_center => {
                     const cc = server.input.open_control_center orelse return .{ .err = comptime DumpTarget.control_center.missingError() };
                     scale = cc.painted_scale;
-                    target_buf = cc.buffer_node.buffer;
+                    target_buf = cc.buffer_node.getBuffer();
                 },
                 inline .taskbar, .start_menu, .power_menu => |tag| {
                     const out = if (p.output) |name| findOutputByName(server, name) else server.getDefaultOutput();
                     const target_out = out orelse return .{ .err = "NoOutput" };
                     scale = target_out.wlr_output.scale;
                     const panel = @field(target_out, @tagName(tag)) orelse return .{ .err = comptime tag.missingError() };
-                    target_buf = panel.buffer_node.buffer;
+                    target_buf = panel.buffer_node.getBuffer();
                 },
             }
 
@@ -1789,7 +1790,7 @@ fn matchWindowRules(server: *Server, params: protocol.MatchWindowRulesParams, al
 }
 
 fn walkSceneTree(
-    node: *wlr.SceneNode,
+    node: *sn.Node,
     list: *std.ArrayList(protocol.SceneNodeData),
     allocator: std.mem.Allocator,
     current_depth: u32,
@@ -1801,7 +1802,7 @@ fn walkSceneTree(
 
     var children_count: usize = 0;
     if (node.type == .tree) {
-        const tree = wlr.SceneTree.fromNode(node);
+        const tree = sn.Tree.fromNode(node);
         var it = tree.children.iterator(.forward);
         while (it.next()) |_| {
             children_count += 1;
@@ -1815,11 +1816,11 @@ fn walkSceneTree(
 
     var box: ?protocol.RectData = null;
     if (node.type == .rect) {
-        const r = wlr.SceneRect.fromNode(node);
+        const r = sn.Rect.fromNode(node);
         box = .{ .x = node.x, .y = node.y, .width = r.width, .height = r.height };
     } else if (node.type == .buffer) {
-        const b = wlr.SceneBuffer.fromNode(node);
-        if (b.buffer) |buf| {
+        const b = sn.Buffer.fromNode(node);
+        if (b.getBuffer()) |buf| {
             box = .{ .x = node.x, .y = node.y, .width = buf.width, .height = buf.height };
         } else {
             box = .{ .x = node.x, .y = node.y, .width = b.dst_width, .height = b.dst_height };
@@ -1838,7 +1839,7 @@ fn walkSceneTree(
     });
 
     if (node.type == .tree) {
-        const tree = wlr.SceneTree.fromNode(node);
+        const tree = sn.Tree.fromNode(node);
         var it = tree.children.iterator(.forward);
         while (it.next()) |child| {
             try walkSceneTree(child, list, allocator, current_depth + 1, max_depth, total_nodes);

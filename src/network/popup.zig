@@ -2,6 +2,7 @@ const std = @import("std");
 const popup_style = @import("../popup_style.zig");
 const glass = @import("../glass.zig");
 const wlr = @import("wlroots");
+const sn = @import("../node.zig");
 const xkb = @import("xkbcommon");
 const Output = @import("../Output.zig");
 const scene = @import("../scene_data.zig");
@@ -47,8 +48,8 @@ const expand_curve: anim.Curve = .{ .duration = .{ .ms = 220, .ease = .out_cubic
 
 pub const Popup = struct {
     output: *Output,
-    buffer_node: *wlr.SceneBuffer,
-    sonar_node: *wlr.SceneBuffer,
+    buffer_node: *sn.Buffer,
+    sonar_node: *sn.Buffer,
     sonar_step: i64 = -1,
     sonar_shown: bool = false,
     sonar_fade_start: i64 = -1,

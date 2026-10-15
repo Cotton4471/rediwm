@@ -1,11 +1,12 @@
 //! Shared taskbar popup surfaces; controls still use the shared widgets.
 const std = @import("std");
 const wlr = @import("wlroots");
+const sn = @import("node.zig");
 const ui = @import("ui");
 const glass = @import("glass.zig");
 const PanelBuffer = @import("panel_buffer.zig").PanelBuffer;
 
-pub fn configureGlass(effect: *?*glass.Effect, engine: ?*glass.Engine, node: *wlr.SceneBuffer, factor: f32) void {
+pub fn configureGlass(effect: *?*glass.Effect, engine: ?*glass.Engine, node: *sn.Buffer, factor: f32) void {
     const t = ui.theme.global;
     if (!t.popup_blur) {
         glass.Effect.detach(effect.*);

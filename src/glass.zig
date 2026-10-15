@@ -1,6 +1,7 @@
 // Glass effects are registered here and drawn by the owned output pass
 // (scene_output.c); see glass.c.
 const wlr = @import("wlroots");
+const sn = @import("node.zig");
 
 pub const Kind = enum(c_int) { titlebar, taskbar, panel, sidebar };
 pub const Effect = opaque {
@@ -14,7 +15,7 @@ pub const Engine = opaque {
     pub const create = rediwm_glass_create;
     extern fn rediwm_glass_destroy(engine: ?*Engine) void;
     pub const destroy = rediwm_glass_destroy;
-    extern fn rediwm_glass_attach(engine: ?*Engine, target: *wlr.SceneBuffer, before: *wlr.SceneNode, kind: Kind) ?*Effect;
+    extern fn rediwm_glass_attach(engine: ?*Engine, target: *sn.Buffer, before: *sn.Node, kind: Kind) ?*Effect;
     pub const attach = rediwm_glass_attach;
     extern fn rediwm_glass_hold(engine: ?*Engine, effect: ?*Effect) void;
     pub const hold = rediwm_glass_hold;

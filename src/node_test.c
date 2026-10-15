@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <wlr/interfaces/wlr_buffer.h>
 #include <wlr/types/wlr_buffer.h>
+#include <wlr/types/wlr_scene.h>
 
 static int changes;
 static void on_change(void *data) {
@@ -52,7 +53,11 @@ static void collect(struct rediwm_buffer *b, int sx, int sy, void *data) {
 }
 
 int main(void) {
-  struct rediwm_scene *scene = rediwm_scene_create(on_change, NULL);
+  struct wlr_scene *wlr_scene = wlr_scene_create();
+  assert(wlr_scene);
+  struct wlr_scene_tree *host = wlr_scene_tree_create(&wlr_scene->tree);
+  wlr_scene_node_set_enabled(&host->node, false);
+  struct rediwm_scene *scene = rediwm_scene_create(host, on_change, NULL);
   assert(scene && scene->tree.node.enabled && !scene->tree.node.parent);
 
   // Creation reports, a no-op mutation does not.
@@ -75,7 +80,7 @@ int main(void) {
   int lx, ly;
   assert(rediwm_node_coords(&inner->node, &lx, &ly) && lx == 15 && ly == 27);
   rediwm_node_set_enabled(&a->node, false);
-  assert(!rediwm_node_coords(&inner->node, &lx, &ly) && lx == 0 && ly == 0);
+  assert(!rediwm_node_coords(&inner->node, &lx, &ly) && lx == 15 && ly == 27);
   assert(!rediwm_node_visible(&inner->node));
   rediwm_node_set_enabled(&a->node, true);
   assert(rediwm_node_visible(&inner->node));
@@ -116,7 +121,7 @@ int main(void) {
   struct wlr_buffer *raw = buffer_create(200, 100);
   struct rediwm_buffer *buf = rediwm_buffer_create(&scene->tree, raw);
   wlr_buffer_drop(raw); // the node keeps its own lock
-  assert(buf->buffer == raw && buf->buffer_width == 200 && buf->buffer_height == 100);
+  assert(rediwm_buffer_get_buffer(buf) == raw && buf->buffer_width == 200 && buf->buffer_height == 100);
   int w, h;
   rediwm_buffer_size(buf, &w, &h);
   assert(w == 200 && h == 100);
@@ -173,6 +178,7 @@ int main(void) {
   rediwm_node_destroy(&buf->node);
 
   rediwm_scene_destroy(scene);
+  wlr_scene_node_destroy(&wlr_scene->tree.node);
   puts("node tests passed");
   return 0;
 }

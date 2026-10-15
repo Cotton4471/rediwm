@@ -2,6 +2,7 @@
 const std = @import("std");
 const wl = @import("wayland").server.wl;
 const wlr = @import("wlroots");
+const sn = @import("node.zig");
 const Server = @import("Server.zig");
 const Output = @import("Output.zig");
 const SceneData = @import("scene_data.zig").SceneData;
@@ -10,6 +11,9 @@ const Self = @This();
 server: *Server,
 layer: *wlr.LayerSurfaceV1,
 scene: *wlr.SceneLayerSurfaceV1,
+/// Places the layer's wlr_scene subtree in our scene; the layer shell positions the
+/// subtree's own root.
+foreign: *sn.Foreign,
 identity: SceneData,
 link: wl.list.Link = undefined,
 commit: wl.Listener(*wlr.Surface) = .init(committed),
@@ -25,8 +29,9 @@ pub fn create(server: *Server, layer: *wlr.LayerSurfaceV1) !void {
     layer.output = output;
     const self = try gpa.create(Self);
     errdefer gpa.destroy(self);
-    self.* = .{ .server = server, .layer = layer, .scene = try server.desktop_tree.createSceneLayerSurfaceV1(layer), .identity = .{ .role = .{ .layer = self } } };
-    self.identity.attach(&self.scene.tree.node);
+    const created = try server.desktop_tree.createSceneLayerSurfaceV1(layer);
+    self.* = .{ .server = server, .layer = layer, .scene = created.scene, .foreign = created.foreign, .identity = .{ .role = .{ .layer = self } } };
+    self.identity.attach(&self.foreign.node);
     server.layer_surfaces.prepend(self);
     layer.data = self;
     layer.surface.events.commit.add(&self.commit);
@@ -50,7 +55,10 @@ fn defaultOutput(server: *Server) ?*wlr.Output {
 }
 
 pub fn localPoint(self: *Self, x: f64, y: f64) @import("geometry.zig").Vec2 {
-    return @import("scene_data.zig").toNodeLocal(&self.scene.tree.node, x, y);
+    var ox: i32 = 0;
+    var oy: i32 = 0;
+    _ = sn.wlrCoords(&self.scene.tree.node, &ox, &oy);
+    return @import("geometry.zig").toLocal(x, y, ox, oy);
 }
 
 pub fn arrange(self: *Self) void {
@@ -60,7 +68,7 @@ pub fn arrange(self: *Self) void {
         .overlay => self.server.overlay_tree,
         _ => self.server.desktop_tree,
     };
-    self.scene.tree.node.reparent(parent);
+    self.foreign.node.reparent(parent);
     var full: wlr.Box = undefined;
     self.server.output_layout.getBox(self.layer.output, &full);
     const output = Output.fromWlr(self.layer.output.?);

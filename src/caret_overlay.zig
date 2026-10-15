@@ -10,6 +10,7 @@
 //! each paint (`update`); its output's frame handler calls `frame`.
 const std = @import("std");
 const wlr = @import("wlroots");
+const sn = @import("node.zig");
 
 const anim = @import("ui").anim;
 const PanelBuffer = @import("panel_buffer.zig").PanelBuffer;
@@ -17,7 +18,7 @@ const ui = @import("ui");
 const CaretPlace = ui.widgets.secret_input.Input.CaretPlace;
 
 pub const CaretOverlay = struct {
-    node: *wlr.SceneBuffer,
+    node: *sn.Buffer,
     caret: ui.input.Caret = .{},
     placed: ?Placed = null,
     /// What the node's buffer shows, so a frame that lands on the same device
@@ -55,7 +56,7 @@ pub const CaretOverlay = struct {
 
     /// Above everything already in `parent`: create it after the buffer
     /// holding the field.
-    pub fn create(parent: *wlr.SceneTree) !CaretOverlay {
+    pub fn create(parent: *sn.Tree) !CaretOverlay {
         const node = try parent.createSceneBuffer(null);
         node.node.setEnabled(false);
         return .{ .node = node };
@@ -168,9 +169,9 @@ test "the overlay caret appears, glides, blinks, goes solid and hides on a real 
     const saved = ui.input.caret_config;
     defer ui.input.caret_config = saved;
     ui.input.caret_config = .{ .blink_ms = 1000, .blink_timeout_s = 10, .motion_ms = 80 };
-    const scene = try wlr.Scene.create();
-    defer scene.tree.node.destroy();
-    var overlay = try CaretOverlay.create(&scene.tree);
+    var fixture = try sn.TestScene.create();
+    defer fixture.destroy();
+    var overlay = try CaretOverlay.create(&fixture.nodes.tree);
     defer overlay.destroy();
 
     const place = CaretOverlay.Placed{
@@ -184,7 +185,7 @@ test "the overlay caret appears, glides, blinks, goes solid and hides on a real 
     const node = &overlay.node.node;
     overlay.update(1000, place, 1000);
     try std.testing.expect(overlay.frame(1000));
-    try std.testing.expect(node.enabled and overlay.node.buffer != null);
+    try std.testing.expect(node.enabled and overlay.node.getBuffer() != null);
     try std.testing.expectEqual(@as(c_int, 130), node.x);
     try std.testing.expectEqual(@as(c_int, 55), node.y);
 

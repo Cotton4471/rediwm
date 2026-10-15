@@ -4,10 +4,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 struct wlr_scene_node;
-struct wlr_scene_buffer;
+struct rediwm_buffer;
 struct rediwm_glass_info {
   // The surface the effect backs: drawn over it, same parent, same box.
-  struct wlr_scene_buffer *target;
+  struct rediwm_buffer *target;
   float sigma;      // Gaussian sigma, logical px, before any zoom
   float saturation; // 1 leaves colours unchanged
   float opacity;
@@ -17,6 +17,6 @@ struct rediwm_glass_info {
   // Keep the last blur while the effect moves (a dragged opaque titlebar, camera motion).
   bool held;
 };
-// False when `node` is not a glass effect node.
+// False when `node` (the carrier of an effect's buffer node) is not a glass effect.
 bool rediwm_glass_effect_info(struct wlr_scene_node *node, struct rediwm_glass_info *out);
 bool rediwm_glass_is_effect_node(struct wlr_scene_node *node);

@@ -12,6 +12,7 @@
 //! drag.
 const std = @import("std");
 const wlr = @import("wlroots");
+const sn = @import("node.zig");
 const ui = @import("ui");
 const Input = @import("Input.zig");
 const Output = @import("Output.zig");
@@ -39,9 +40,9 @@ origin_y: f64 = 0,
 /// A press on an application is held, and may still turn out to be a click.
 armed: bool = false,
 dragging: bool = false,
-node: ?*wlr.SceneBuffer = null,
+node: ?*sn.Buffer = null,
 
-fn ignoreInput(_: *wlr.SceneBuffer, _: *f64, _: *f64) callconv(.c) bool {
+fn ignoreInput(_: *sn.Buffer, _: *f64, _: *f64) callconv(.c) bool {
     return false;
 }
 

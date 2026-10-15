@@ -24,6 +24,7 @@
 const std = @import("std");
 const wl = @import("wayland").server.wl;
 const wlr = @import("wlroots");
+const sn = @import("../node.zig");
 const col = @import("../color.zig");
 const pixman = @import("pixman");
 const explicit_sync = @import("../explicit_sync.zig");
@@ -67,7 +68,7 @@ pub const WindowCaptureSource = struct {
     /// `frame_tree`/`shadow_tree`: docs/screen-sharing.md's "Separate
     /// monitor and window semantics" excludes server decorations, shadows,
     /// and backdrop glass, which can sample unrelated windows.
-    content_node: *wlr.SceneNode,
+    content_node: *sn.Node,
     node_destroy: wl.Listener(void) = .init(handleNodeDestroy),
 
     swapchain: ?*wlr.Swapchain = null,
@@ -251,7 +252,9 @@ pub const WindowCaptureSource = struct {
             .off_y = geom.y,
             .shape = self.frameShape(geom.x, geom.y),
         };
-        self.content_node.forEachBuffer(*RenderCtx, renderNodeBuffer, &ctx);
+        // The compositor's own buffers (a shell window's), then the clients' surfaces.
+        self.content_node.forEachBuffer(*RenderCtx, renderOwnBuffer, &ctx);
+        self.content_node.forEachSurfaceBuffer(*RenderCtx, renderNodeBuffer, &ctx);
 
         const submitted = pass.submit();
         explicit_sync.ReadFence.end(server.read_fence, submitted);
@@ -277,6 +280,10 @@ pub const WindowCaptureSource = struct {
     /// Only enabled/visible buffers are visited, matching how the compositor
     /// already relies on `setEnabled(false)` to hide nodes from real output
     /// rendering elsewhere (e.g. `screenshot/capture.zig`'s isolation mode).
+    fn renderOwnBuffer(buffer: *sn.Buffer, sx: c_int, sy: c_int, ctx: *RenderCtx) void {
+        renderNodeBuffer(buffer.carrier, sx, sy, ctx);
+    }
+
     fn renderNodeBuffer(scene_buffer: *wlr.SceneBuffer, sx: c_int, sy: c_int, ctx: *RenderCtx) void {
         const buf = scene_buffer.buffer orelse return;
         const texture = wlr.Texture.fromBuffer(ctx.renderer, buf) orelse return;

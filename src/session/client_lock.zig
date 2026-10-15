@@ -14,6 +14,7 @@
 const std = @import("std");
 const wl = @import("wayland").server.wl;
 const wlr = @import("wlroots");
+const sn = @import("../node.zig");
 
 const Server = @import("../Server.zig");
 const Output = @import("../Output.zig");
@@ -262,7 +263,7 @@ const Surface = struct {
     lock_surface: *wlr.SessionLockSurfaceV1,
     /// Null once the output is gone; wlroots destroys the surface next.
     output: ?*Output,
-    tree: ?*wlr.SceneTree,
+    tree: ?*sn.Foreign,
     width: i32 = 0,
     height: i32 = 0,
     link: wl.list.Link = undefined,

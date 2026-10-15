@@ -3,6 +3,7 @@
 const std = @import("std");
 const wl = @import("wayland").server.wl;
 const wlr = @import("wlroots");
+const sn = @import("node.zig");
 const Server = @import("Server.zig");
 const Output = @import("Output.zig");
 const ui = @import("ui");
@@ -16,11 +17,11 @@ const gpa = @import("main.zig").gpa;
 
 server: ?*Server = null,
 output: ?*Output = null,
-tree: ?*wlr.SceneTree = null,
-background: ?*wlr.SceneBuffer = null,
-window_tree: ?*wlr.SceneTree = null,
+tree: ?*sn.Tree = null,
+background: ?*sn.Buffer = null,
+window_tree: ?*sn.Tree = null,
 outlines: std.ArrayList(Outline) = .empty,
-marker: ?*wlr.SceneBuffer = null,
+marker: ?*sn.Buffer = null,
 marker_cache: ?MarkerCache = null,
 scene_data: SceneData = undefined,
 timer: ?*wl.EventSource = null,
@@ -35,8 +36,8 @@ anchor: @import("camera.zig").Vec = .{ .x = 0, .y = 0 },
 cache: ?Cache = null,
 last_camera: ?@import("camera.zig").Camera = null,
 const Outline = struct {
-    tree: *wlr.SceneTree,
-    edges: [4]*wlr.SceneRect,
+    tree: *sn.Tree,
+    edges: [4]*sn.Rect,
     color: ?col.Premul = null,
 };
 const Cache = struct { map: geo.Map, bounds: @import("camera.zig").Bounds, columns: u32, rows: u32, scale: f32, bg: [4]f32, fg: [4]f32, bg_opacity: f32 = 0.91, grid_alpha: f32 = 0.065, border_alpha: f32 = 0.12, radius: f32 = 4 };
@@ -239,11 +240,9 @@ pub fn tick(self: *Self, output: *Output, now: i64) bool {
     // A map can appear beneath a stationary pointer. Resolve actual scene
     // ownership so a covering toast does not hold the map open underneath it.
     if (!self.dragging) {
-        var sx: f64 = 0;
-        var sy: f64 = 0;
-        const picked = server.world.projection.nodeAt(server.input.cursor.x, server.input.cursor.y, &sx, &sy);
+        const picked = server.world.projection.nodeAt(server.input.cursor.x, server.input.cursor.y);
         self.hovered = server.input.cursor_mode == .passthrough and server.input.active_buttons == 0 and
-            picked != null and SceneData.fromNode(picked.?) == &self.scene_data;
+            picked != null and picked.?.own != null and SceneData.fromNode(picked.?.own.?) == &self.scene_data;
     }
     const changed = self.last_camera == null or !std.meta.eql(self.last_camera.?, world.camera);
     self.last_camera = world.camera;
@@ -319,7 +318,7 @@ fn syncWindows(self: *Self, foreground: [4]f32, opacity: f32) !void {
         if (count == self.outlines.items.len) {
             const tree = try self.window_tree.?.createSceneTree();
             errdefer tree.node.destroy();
-            var edges: [4]*wlr.SceneRect = undefined;
+            var edges: [4]*sn.Rect = undefined;
             for (&edges) |*edge| {
                 edge.* = try col.createRect(tree, 1, 1, .transparent);
                 self.scene_data.attach(&edge.*.node);

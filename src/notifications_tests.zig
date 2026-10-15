@@ -2,6 +2,7 @@
 const std = @import("std");
 const wl = @import("wayland").server.wl;
 const wlr = @import("wlroots");
+const sn = @import("node.zig");
 
 const anim = @import("ui").anim;
 const notif = @import("notifications/mod.zig");
@@ -16,8 +17,9 @@ test "notifications unit: replaces_id, urgency, DND, lock suppression" {
     defer display.destroy();
     const backend = try wlr.Backend.createHeadless(display.getEventLoop());
     defer backend.destroy();
-    const scene = try wlr.Scene.create();
-    defer scene.tree.node.destroy();
+    var fixture = try sn.TestScene.create();
+    defer fixture.destroy();
+    const scene = fixture.wlr_scene;
     const output_layout = try wlr.OutputLayout.create(display);
     defer output_layout.destroy();
     var dummy_cursor: wlr.Cursor = std.mem.zeroes(wlr.Cursor);
@@ -25,7 +27,7 @@ test "notifications unit: replaces_id, urgency, DND, lock suppression" {
     var server: Server = undefined;
     server.wl_server = display;
     server.scene = scene;
-    server.overlay_tree = try scene.tree.createSceneTree();
+    server.overlay_tree = try fixture.nodes.tree.createSceneTree();
     server.locker = null;
     server.environ = std.process.Environ.empty;
     server.config = undefined;

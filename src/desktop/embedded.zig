@@ -13,6 +13,7 @@
 const std = @import("std");
 const wl = @import("wayland").server.wl;
 const wlr = @import("wlroots");
+const sn = @import("../node.zig");
 const pixman = @import("pixman");
 
 const c = @import("c.zig").api;
@@ -39,8 +40,8 @@ pub const Desktop = struct {
     server: *Server,
     worker: *Worker,
     app: app_mod.App,
-    tree: *wlr.SceneTree,
-    overlay: *wlr.SceneBuffer,
+    tree: *sn.Tree,
+    overlay: *sn.Buffer,
     overlay_rect: ?grid.Rect = null,
     output: ?*Output = null,
     /// Layout box and scale the canvas and tiles were built for.
@@ -74,7 +75,7 @@ pub const Desktop = struct {
 
     const Secondary = struct {
         output: *Output,
-        node: *wlr.SceneBuffer,
+        node: *sn.Buffer,
         box: wlr.Box,
         scale: f32,
         /// The App wallpaper revision this view shows; null repaints it.
@@ -82,7 +83,7 @@ pub const Desktop = struct {
     };
 
     const Tile = struct {
-        node: *wlr.SceneBuffer,
+        node: *sn.Buffer,
         /// Device-pixel rectangle within the canvas.
         x: i32,
         y: i32,
@@ -244,7 +245,7 @@ pub const Desktop = struct {
             const image = self.app.wallpaper orelse {
                 // No desktop wallpaper: the compositor's own shows through.
                 view.node.setBuffer(null);
-                projection.damageBuffer(&view.node.node, null);
+                projection.damageBuffer(view.node, null);
                 continue;
             };
             const width = geometry.devicePixels(view.box.width, view.scale);
@@ -429,7 +430,7 @@ pub const Desktop = struct {
         self.overlay.node.setEnabled(true);
     }
 
-    fn overlayAcceptsInput(node: *wlr.SceneBuffer, sx: *f64, sy: *f64) callconv(.c) bool {
+    fn overlayAcceptsInput(node: *sn.Buffer, sx: *f64, sy: *f64) callconv(.c) bool {
         const data = SceneData.fromNode(&node.node) orelse return false;
         const self = data.role.desktop;
         const rect = self.overlay_rect orelse return false;

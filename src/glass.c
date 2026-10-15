@@ -9,6 +9,7 @@
 #include <wlr/types/wlr_scene.h>
 #include <wlr/util/addon.h>
 #include "glass.h"
+#include "node.h"
 
 enum glass_kind { GLASS_TITLEBAR, GLASS_TASKBAR, GLASS_PANEL, GLASS_SIDEBAR };
 struct glass_effect;
@@ -23,9 +24,9 @@ struct glass_engine {
 struct glass_effect {
 	struct glass_engine *engine;
 	struct wl_list link;
-	struct wlr_scene_buffer *node, *target;
+	struct rediwm_buffer *node, *target;
 	struct wl_listener destroy, target_destroy;
-	struct wlr_addon addon; // on `node`, for rediwm_glass_effect_info
+	struct wlr_addon addon; // on the node's carrier, for rediwm_glass_effect_info
 	enum glass_kind kind;
 	uint64_t serial;
 	float radius, opacity;
@@ -55,7 +56,7 @@ static void handle_target_destroy(struct wl_listener *listener, void *data)
 {
 	(void)data;
 	struct glass_effect *effect = wl_container_of(listener, effect, target_destroy);
-	wlr_scene_node_destroy(&effect->node->node);
+	rediwm_node_destroy(&effect->node->node);
 }
 static void addon_destroy(struct wlr_addon *addon) { wlr_addon_finish(addon); }
 static const struct wlr_addon_interface effect_addon = {.name = "rediwm glass effect",
@@ -87,7 +88,7 @@ bool rediwm_glass_is_effect_node(struct wlr_scene_node *node)
 {
 	return node->type == WLR_SCENE_NODE_BUFFER && effect_of(node);
 }
-static bool accepts_input(struct wlr_scene_buffer *buffer, double *x, double *y)
+static bool accepts_input(struct rediwm_buffer *buffer, double *x, double *y)
 {
 	(void)buffer;
 	(void)x;
@@ -95,15 +96,15 @@ static bool accepts_input(struct wlr_scene_buffer *buffer, double *x, double *y)
 	return false;
 }
 struct glass_effect *rediwm_glass_attach(struct glass_engine *engine,
-					 struct wlr_scene_buffer *target,
-					 struct wlr_scene_node *before, enum glass_kind kind)
+					 struct rediwm_buffer *target,
+					 struct rediwm_node *before, enum glass_kind kind)
 {
 	if (!engine)
 		return NULL;
 	struct glass_effect *effect = calloc(1, sizeof(*effect));
 	if (!effect)
 		return NULL;
-	effect->node = wlr_scene_buffer_create(target->node.parent, NULL);
+	effect->node = rediwm_buffer_create(target->node.parent, NULL);
 	if (!effect->node) {
 		free(effect);
 		return NULL;
@@ -114,8 +115,8 @@ struct glass_effect *rediwm_glass_attach(struct glass_engine *engine,
 	effect->opacity = 1;
 	effect->serial = ++engine->next_serial;
 	effect->node->point_accepts_input = accepts_input;
-	wlr_addon_init(&effect->addon, &effect->node->node.addons, NULL, &effect_addon);
-	wlr_scene_node_place_below(&effect->node->node, before);
+	wlr_addon_init(&effect->addon, &effect->node->carrier->node.addons, NULL, &effect_addon);
+	rediwm_node_place_below(&effect->node->node, before);
 	effect->destroy.notify = handle_destroy;
 	wl_signal_add(&effect->node->node.events.destroy, &effect->destroy);
 	effect->target_destroy.notify = handle_target_destroy;
@@ -143,7 +144,7 @@ void rediwm_glass_configure(struct glass_effect *effect, float radius, float opa
 void rediwm_glass_detach(struct glass_effect *effect)
 {
 	if (effect)
-		wlr_scene_node_destroy(&effect->node->node);
+		rediwm_node_destroy(&effect->node->node);
 }
 void rediwm_glass_destroy(struct glass_engine *engine)
 {
@@ -151,6 +152,6 @@ void rediwm_glass_destroy(struct glass_engine *engine)
 		return;
 	struct glass_effect *effect, *tmp;
 	wl_list_for_each_safe(effect, tmp, &engine->effects, link)
-		wlr_scene_node_destroy(&effect->node->node);
+		rediwm_node_destroy(&effect->node->node);
 	free(engine);
 }

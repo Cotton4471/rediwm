@@ -6,6 +6,7 @@ const explicit_sync = @import("explicit_sync.zig");
 const wl = @import("wayland").server.wl;
 
 const wlr = @import("wlroots");
+const sn = @import("node.zig");
 const col = @import("color.zig");
 
 const Decoration = @import("Decoration.zig");
@@ -50,7 +51,7 @@ pub const Placeholder = struct {
     pid: ?i32 = null,
     client_width: i32,
     client_height: i32,
-    body_rect: *wlr.SceneRect,
+    body_rect: *sn.Rect,
     delay_timer: ?*wl.EventSource = null,
     timeout_timer: ?*wl.EventSource = null,
     child_source: ?*wl.EventSource = null,
@@ -144,23 +145,25 @@ link: wl.list.Link = undefined,
 backend: Backend,
 // The frame tree owns compositor-drawn chrome and the client surface tree.
 // Keeping it separate lets the client remain entirely undecorated.
-frame_tree: *wlr.SceneTree,
-shadow_tree: *wlr.SceneTree,
+frame_tree: *sn.Tree,
+shadow_tree: *sn.Tree,
 // The analytic shadow's leaf: no buffer, only footprint, opacity and input.
-shadow_node: *wlr.SceneBuffer,
-resize_grab: *wlr.SceneBuffer,
+shadow_node: *sn.Buffer,
+resize_grab: *sn.Buffer,
 glass_effect: ?*glass.Effect = null,
 // Backdrop beneath the themed app body; opaque content masks it, leaving only
 // the sidebar frosted. The bufferless target owns geometry, never pixels/input.
-sidebar_glass_target: ?*wlr.SceneBuffer = null,
+sidebar_glass_target: ?*sn.Buffer = null,
 sidebar_glass_effect: ?*glass.Effect = null,
-titlebar_buffer: *wlr.SceneBuffer,
+titlebar_buffer: *sn.Buffer,
 // Body under the border ring beside and below the client (left, right, bottom).
-frame_fills: [3]*wlr.SceneRect,
+frame_fills: [3]*sn.Rect,
 // The outline of a window that draws its own decorations.
-border_rects: [4]*wlr.SceneRect,
-content_tree: *wlr.SceneTree,
-scene_tree: *wlr.SceneTree,
+border_rects: [4]*sn.Rect,
+content_tree: *sn.Tree,
+/// What the client draws into: the hosted surface tree of an xdg or X11 surface, or a
+/// bare placeholder tree while there is none.
+scene_tree: *sn.Node,
 decoration: ?*Decoration = null,
 kde_decoration: ?*@import("KdeDecoration.zig") = null,
 frame_data: scene_data.SceneData = undefined,
@@ -250,7 +253,7 @@ size_wait: ConfigureWait = .none,
 // call; once a window's size has settled that call is pure per-commit waste.
 last_clip: ?wlr.Box = null,
 last_clip_valid: bool = false,
-close_snapshot: ?*wlr.SceneTree = null,
+close_snapshot: ?*sn.Tree = null,
 closing: bool = false,
 in_closing_list: bool = false,
 backend_gone: bool = false,
@@ -332,15 +335,15 @@ reconnect_tile: ?tiling.Tile = null,
 pub const RestoreGeometry = @import("undo.zig").Geometry;
 
 const ChromeNodes = struct {
-    frame_tree: *wlr.SceneTree,
-    shadow_tree: *wlr.SceneTree,
-    shadow_node: *wlr.SceneBuffer,
-    resize_grab: *wlr.SceneBuffer,
+    frame_tree: *sn.Tree,
+    shadow_tree: *sn.Tree,
+    shadow_node: *sn.Buffer,
+    resize_grab: *sn.Buffer,
     glass_effect: ?*glass.Effect,
-    titlebar_buffer: *wlr.SceneBuffer,
-    frame_fills: [3]*wlr.SceneRect,
-    border_rects: [4]*wlr.SceneRect,
-    content_tree: *wlr.SceneTree,
+    titlebar_buffer: *sn.Buffer,
+    frame_fills: [3]*sn.Rect,
+    border_rects: [4]*sn.Rect,
+    content_tree: *sn.Tree,
 };
 
 fn createChromeNodes(server: *Server) !ChromeNodes {
@@ -374,12 +377,12 @@ fn createChromeNodes(server: *Server) !ChromeNodes {
 
     // The titlebar backs the ring at the top with its fill. Carry that same
     // chrome under the ring beside and below the client.
-    var frame_fills: [3]*wlr.SceneRect = undefined;
+    var frame_fills: [3]*sn.Rect = undefined;
     for (&frame_fills) |*rect| {
         rect.* = try col.createRect(frame_tree, 1, 1, chrome.fillColor());
     }
     const border_color = chrome.borderColor(0);
-    var border_rects: [4]*wlr.SceneRect = undefined;
+    var border_rects: [4]*sn.Rect = undefined;
     for (&border_rects) |*rect| {
         rect.* = try col.createRect(frame_tree, 1, 1, border_color);
     }
@@ -398,7 +401,7 @@ fn createChromeNodes(server: *Server) !ChromeNodes {
     };
 }
 
-fn finishCreate(toplevel: *Toplevel, nodes: ChromeNodes, scene_tree: *wlr.SceneTree) void {
+fn finishCreate(toplevel: *Toplevel, nodes: ChromeNodes, scene_tree: *sn.Node) void {
     toplevel.frame_tree = nodes.frame_tree;
     toplevel.shadow_tree = nodes.shadow_tree;
     toplevel.shadow_node = nodes.shadow_node;
@@ -421,7 +424,8 @@ pub fn create(server: *Server, xdg_toplevel: *wlr.XdgToplevel) !void {
 
     const nodes = try createChromeNodes(server);
     errdefer nodes.frame_tree.node.destroy();
-    const scene_tree = try nodes.content_tree.createSceneXdgSurface(xdg_surface);
+    const hosted = try nodes.content_tree.createSceneXdgSurface(xdg_surface);
+    const scene_tree = &hosted.node;
 
     toplevel.* = .{
         .server = server,
@@ -443,7 +447,7 @@ pub fn create(server: *Server, xdg_toplevel: *wlr.XdgToplevel) !void {
     };
     server.next_toplevel_id += 1;
     finishCreate(toplevel, nodes, scene_tree);
-    scene_data.setXdgSceneTree(xdg_surface, scene_tree);
+    scene_data.setXdgSceneTree(xdg_surface, hosted.tree());
     server.shell.kde_decorations.attach(toplevel);
     switch (toplevel.backend) {
         .xdg => |*adapter| adapter.listen(),
@@ -461,7 +465,8 @@ pub fn createXwayland(server: *Server, xsurface: *wlr.XwaylandSurface) !void {
     if (scale_n > 1) {
         _ = @import("projection.zig").setTreeScale(&nodes.content_tree.node, 1.0 / scale_n);
     }
-    const scene_tree = try nodes.content_tree.createSceneTree();
+    const placeholder = try nodes.content_tree.createSceneTree();
+    const scene_tree = &placeholder.node;
 
     toplevel.* = .{
         .server = server,
@@ -547,7 +552,8 @@ pub fn createPlaceholder(
 
     const nodes = try createChromeNodes(server);
     errdefer nodes.frame_tree.node.destroy();
-    const scene_tree = try nodes.content_tree.createSceneTree();
+    const placeholder = try nodes.content_tree.createSceneTree();
+    const scene_tree = &placeholder.node;
 
     var init_w: i32 = 640;
     var init_h: i32 = 480;
@@ -703,7 +709,8 @@ pub fn createShell(server: *Server, cc: *ControlCenter, width: i32, height: i32)
 
     const nodes = try createChromeNodes(server);
     errdefer nodes.frame_tree.node.destroy();
-    const scene_tree = try nodes.content_tree.createSceneTree();
+    const placeholder = try nodes.content_tree.createSceneTree();
+    const scene_tree = &placeholder.node;
 
     toplevel.* = .{
         .server = server,
@@ -765,20 +772,20 @@ pub fn findMatchingPlaceholder(toplevel: *Toplevel) ?*Toplevel {
 }
 
 pub fn attachXwaylandScene(toplevel: *Toplevel, client_surface: *wlr.Surface) !void {
-    const new_tree = try toplevel.content_tree.createSceneSubsurfaceTree(client_surface);
-    toplevel.scene_tree.node.destroy();
-    toplevel.scene_tree = new_tree;
+    const hosted = try toplevel.content_tree.createSceneSubsurfaceTree(client_surface);
+    toplevel.scene_tree.destroy();
+    toplevel.scene_tree = &hosted.node;
 }
 
 pub fn detachXwaylandScene(toplevel: *Toplevel) void {
     const placeholder = toplevel.content_tree.createSceneTree() catch return;
-    toplevel.scene_tree.node.destroy();
-    toplevel.scene_tree = placeholder;
+    toplevel.scene_tree.destroy();
+    toplevel.scene_tree = &placeholder.node;
 }
 
 pub fn replaceDestroyedXwaylandScene(toplevel: *Toplevel) void {
     // The previous node is in its destroy signal and must not be touched.
-    toplevel.scene_tree = toplevel.content_tree.createSceneTree() catch return;
+    toplevel.scene_tree = &(toplevel.content_tree.createSceneTree() catch return).node;
 }
 
 /// Window that owns `surface`, walking xdg popup parents and subsurface roots.
@@ -1557,7 +1564,7 @@ fn chromeSizeForClient(toplevel: *const Toplevel, client_w: i32, client_h: i32) 
     };
 }
 
-fn ignoreCloseInput(_: *wlr.SceneBuffer, _: *f64, _: *f64) callconv(.c) bool {
+fn ignoreCloseInput(_: *sn.Buffer, _: *f64, _: *f64) callconv(.c) bool {
     return false;
 }
 
@@ -1822,7 +1829,7 @@ pub fn finishClose(toplevel: *Toplevel) void {
     toplevel.closing = false;
     toplevel.clearChromeCache();
     toplevel.frame_tree.node.setEnabled(false);
-    toplevel.scene_tree.node.setEnabled(true);
+    toplevel.scene_tree.setEnabled(true);
 }
 
 /// Idempotent: re-applying the clip a window already has is a no-op, so the
@@ -1840,9 +1847,9 @@ fn setSizeClip(toplevel: *Toplevel, clip: ?wlr.Box) void {
     toplevel.last_clip_valid = true;
     if (clip) |box| {
         var copy = box;
-        wlr.SceneNode.subsurfaceTreeSetClip(&toplevel.scene_tree.node, &copy);
+        if (toplevel.scene_tree.foreign()) |hosted| hosted.subsurfaceTreeSetClip(&copy);
     } else {
-        wlr.SceneNode.subsurfaceTreeSetClip(&toplevel.scene_tree.node, null);
+        if (toplevel.scene_tree.foreign()) |hosted| hosted.subsurfaceTreeSetClip(null);
     }
 }
 
@@ -1919,7 +1926,7 @@ fn beginCloseAnimation(toplevel: *Toplevel) bool {
             snap.node.destroy();
             toplevel.close_snapshot = null;
         }
-        toplevel.scene_tree.node.setEnabled(true);
+        toplevel.scene_tree.setEnabled(true);
         return false;
     }
     toplevel.closing = true;
@@ -1932,7 +1939,7 @@ fn beginCloseAnimation(toplevel: *Toplevel) bool {
 }
 
 const CloseSnapshot = struct {
-    tree: *wlr.SceneTree,
+    tree: *sn.Tree,
     count: u32 = 0,
     ok: bool = true,
 };
@@ -1960,12 +1967,12 @@ fn copyCloseBuffer(buffer: *wlr.SceneBuffer, sx: c_int, sy: c_int, ctx: *CloseSn
 fn snapshotClient(toplevel: *Toplevel) bool {
     const snap = toplevel.content_tree.createSceneTree() catch return false;
     var ctx: CloseSnapshot = .{ .tree = snap };
-    toplevel.scene_tree.node.forEachBuffer(*CloseSnapshot, copyCloseBuffer, &ctx);
+    toplevel.scene_tree.forEachSurfaceBuffer(*CloseSnapshot, copyCloseBuffer, &ctx);
     if (!ctx.ok or ctx.count == 0) {
         snap.node.destroy();
         return false;
     }
-    toplevel.scene_tree.node.setEnabled(false);
+    toplevel.scene_tree.setEnabled(false);
     toplevel.close_snapshot = snap;
     return true;
 }
@@ -1982,7 +1989,7 @@ fn cancelClose(toplevel: *Toplevel) void {
     toplevel.closing = false;
     toplevel.map_motion.cancel(1);
     toplevel.map_opacity.cancel(1);
-    toplevel.scene_tree.node.setEnabled(true);
+    toplevel.scene_tree.setEnabled(true);
 }
 
 /// Only committed negotiation may change the frame, so the client and
@@ -2675,7 +2682,7 @@ pub fn isGeometrySettled(toplevel: *Toplevel, now_ms: i64) bool {
         (toplevel.launch_origin == null or toplevel.map_motion.settled(now_ms));
 }
 
-pub fn chromeAcceptsInput(buffer: *wlr.SceneBuffer, sx: *f64, sy: *f64) callconv(.c) bool {
+pub fn chromeAcceptsInput(buffer: *sn.Buffer, sx: *f64, sy: *f64) callconv(.c) bool {
     const data = scene_data.SceneData.fromNode(&buffer.node) orelse return false;
     if (data.role == .chrome and data.role.chrome.closing) return false;
     const toplevel = switch (data.role) {
@@ -2892,11 +2899,11 @@ fn syncSidebarGlass(toplevel: *Toplevel, width: i32, height: i32) void {
     if (enabled and toplevel.sidebar_glass_target == null) {
         const target = toplevel.content_tree.createSceneBuffer(null) catch return;
         target.point_accepts_input = struct {
-            fn accepts(_: *wlr.SceneBuffer, _: *f64, _: *f64) callconv(.c) bool {
+            fn accepts(_: *sn.Buffer, _: *f64, _: *f64) callconv(.c) bool {
                 return false;
             }
         }.accepts;
-        target.node.placeBelow(&toplevel.scene_tree.node);
+        target.node.placeBelow(toplevel.scene_tree);
         const effect = glass.Engine.attach(toplevel.server.glass_engine, target, &target.node, .sidebar) orelse {
             target.node.destroy();
             return;
@@ -3116,6 +3123,11 @@ pub fn dimAnimating(toplevel: *const Toplevel, now_ms: i64) bool {
 pub fn applyOpacity(toplevel: *Toplevel, now_ms: i64) void {
     var opacity = std.math.clamp(toplevel.effectiveOpacity(now_ms) * toplevel.map_opacity.value(now_ms) * toplevel.switch_fade.value(now_ms), 0, 1);
     toplevel.frame_tree.node.forEachBuffer(*f32, struct {
+        fn iter(buffer: *sn.Buffer, _: c_int, _: c_int, value: *f32) void {
+            buffer.setOpacity(value.*);
+        }
+    }.iter, &opacity);
+    toplevel.frame_tree.node.forEachSurfaceBuffer(*f32, struct {
         fn iter(buffer: *wlr.SceneBuffer, _: c_int, _: c_int, value: *f32) void {
             buffer.setOpacity(value.*);
         }

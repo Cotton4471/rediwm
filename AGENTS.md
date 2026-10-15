@@ -31,6 +31,14 @@ panel painting. The key rules:
   `present` snaps edges once (`rediwm_edges_snap`), never origin plus size.
   New clip/opacity/placement rules belong on resolved items. Detach paint-list
   entries before freeing their heads.
+* **Scene nodes are ours** (`node.zig`/`node.c`, wlr_scene's method names). A
+  buffer or rect node keeps its pixels in a hidden wlr_scene *carrier* that the
+  output pass reads; every setter keeps the two in step, and every change asks
+  for a frame through the scene's hook. Client surfaces are still wlr_scene
+  trees, hosted under the scene's disabled host and placed by an own `Foreign`
+  node: their `data` points back at it (`Foreign.of`, `scene_data.fromWlrNode`),
+  and positions inside them go through `node.wlrCoords`. Hits come from
+  `Projection.nodeAt` (own node, or `foreign` for a client surface).
 * **The world has no second tree:** its source tree stays disabled. Pick with
   `rediwm_projection_node_at`, send callbacks through `Server.sendFrameDone`,
   and emit feedback/`output_sample` on source buffers. GLES may release

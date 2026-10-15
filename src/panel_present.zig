@@ -4,6 +4,7 @@
 // elsewhere; this file only moves and fades an already-installed buffer.
 const std = @import("std");
 const wlr = @import("wlroots");
+const sn = @import("node.zig");
 
 pub const Stats = struct {
     paints: u64 = 0,
@@ -66,7 +67,7 @@ pub fn slideOffset(t: f32, slide_distance: f32) i32 {
 /// so animation frames do not have to repaint pixels. No-ops when the node
 /// already has this position and opacity, so settled panels are not damaged
 /// on unrelated output frames.
-pub fn applySlide(buffer_node: *wlr.SceneBuffer, box: wlr.Box, t: f32, slide_distance: f32) void {
+pub fn applySlide(buffer_node: *sn.Buffer, box: wlr.Box, t: f32, slide_distance: f32) void {
     const clamped = std.math.clamp(t, 0, 1);
     const x = box.x;
     const y = box.y + slideOffset(clamped, slide_distance);

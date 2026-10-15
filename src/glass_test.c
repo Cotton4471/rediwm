@@ -44,39 +44,43 @@ static void registry_checks(void)
 {
 	struct wlr_scene *scene = wlr_scene_create();
 	assert(scene);
+	struct wlr_scene_tree *host = wlr_scene_tree_create(&scene->tree);
+	wlr_scene_node_set_enabled(&host->node, false);
+	struct rediwm_scene *own = rediwm_scene_create(host, NULL, NULL);
+	assert(own);
 	struct glass_engine *engine = rediwm_glass_create();
 	assert(engine);
-	struct wlr_scene_buffer *target = wlr_scene_buffer_create(&scene->tree, NULL);
-	wlr_scene_buffer_set_dest_size(target, 200, 60);
+	struct rediwm_buffer *target = rediwm_buffer_create(&own->tree, NULL);
+	rediwm_buffer_set_dest_size(target, 200, 60);
 	struct glass_effect *effect = rediwm_glass_attach(engine, target, &target->node, GLASS_TITLEBAR);
-	assert(effect && rediwm_glass_is_effect_node(&effect->node->node));
-	assert(!rediwm_glass_is_effect_node(&target->node));
+	assert(effect && rediwm_glass_is_effect_node(&effect->node->carrier->node));
+	assert(!rediwm_glass_is_effect_node(&target->carrier->node));
 	// Below its target, so the blur reads what lies under the surface.
 	assert(effect->node->node.link.next == &target->node.link);
 	struct rediwm_glass_info info;
-	assert(!rediwm_glass_effect_info(&target->node, &info));
-	assert(rediwm_glass_effect_info(&effect->node->node, &info));
+	assert(!rediwm_glass_effect_info(&target->carrier->node, &info));
+	assert(rediwm_glass_effect_info(&effect->node->carrier->node, &info));
 	assert(info.target == target && info.sigma == 22 && info.saturation == 1.5f && info.opacity == 1);
 	assert(!info.held && info.serial);
 	rediwm_glass_configure(effect, 10, .5f);
-	assert(rediwm_glass_effect_info(&effect->node->node, &info) && info.radius == 10 && info.opacity == .5f);
+	assert(rediwm_glass_effect_info(&effect->node->carrier->node, &info) && info.radius == 10 && info.opacity == .5f);
 	// A node address may be reused; the serial is not.
-	struct wlr_scene_buffer *panel = wlr_scene_buffer_create(&scene->tree, NULL);
+	struct rediwm_buffer *panel = rediwm_buffer_create(&own->tree, NULL);
 	struct glass_effect *other = rediwm_glass_attach(engine, panel, &panel->node, GLASS_PANEL);
 	struct rediwm_glass_info other_info;
-	assert(rediwm_glass_effect_info(&other->node->node, &other_info));
+	assert(rediwm_glass_effect_info(&other->node->carrier->node, &other_info));
 	assert(other_info.serial != info.serial && other_info.sigma == 26 && other_info.saturation == 1.6f);
 	// Holds: one dragged effect, or every effect during camera motion.
 	rediwm_glass_hold(engine, effect);
-	assert(rediwm_glass_effect_info(&effect->node->node, &info) && info.held);
-	assert(rediwm_glass_effect_info(&other->node->node, &other_info) && !other_info.held);
+	assert(rediwm_glass_effect_info(&effect->node->carrier->node, &info) && info.held);
+	assert(rediwm_glass_effect_info(&other->node->carrier->node, &other_info) && !other_info.held);
 	rediwm_glass_hold(engine, NULL);
 	rediwm_glass_hold_all(engine, true);
-	assert(rediwm_glass_effect_info(&other->node->node, &other_info) && other_info.held);
+	assert(rediwm_glass_effect_info(&other->node->carrier->node, &other_info) && other_info.held);
 	rediwm_glass_hold_all(engine, false);
 	rediwm_glass_hold(engine, effect);
 	// Removing the target removes its effect, and a held one is released.
-	wlr_scene_node_destroy(&target->node);
+	rediwm_node_destroy(&target->node);
 	assert(engine->held == NULL);
 	assert(engine->effects.next == &other->link && other->link.next == &engine->effects);
 	// Allocation failure leaves nothing behind.
@@ -86,17 +90,17 @@ static void registry_checks(void)
 	rediwm_glass_hold(engine, other);
 	rediwm_glass_detach(other);
 	assert(engine->held == NULL && wl_list_empty(&engine->effects));
-	assert(wl_list_length(&scene->tree.children) == 1);
+	assert(wl_list_length(&own->tree.children) == 1);
 	other = rediwm_glass_attach(engine, panel, &panel->node, GLASS_SIDEBAR);
-	assert(other && rediwm_glass_effect_info(&other->node->node, &info));
+	assert(other && rediwm_glass_effect_info(&other->node->carrier->node, &info));
 	assert(info.serial != other_info.serial);
 	assert(info.sigma == 8 && info.saturation == 1.6f);
 	rediwm_glass_destroy(engine);
-	assert(wl_list_length(&scene->tree.children) == 1); // the panel; its effect went
+	assert(wl_list_length(&own->tree.children) == 1); // the panel; its effect went
 	wlr_scene_node_destroy(&scene->tree.node);
 	fputs("PASS: glass registry: info, serials, holds, target lifetime, allocation failure\n", stderr);
 }
-static bool projection_input(struct wlr_scene_buffer *buffer, double *x, double *y) {
+static bool projection_input(struct rediwm_buffer *buffer, double *x, double *y) {
     (void)buffer;
     // Model a cropped surface's input callback, including a source-local offset.
     if (*x < 10) return false;
@@ -114,17 +118,20 @@ static bool find_items(const struct rediwm_item *item, struct wlr_scene_node *tr
     return true;
 }
 static void projection_checks(struct wlr_scene *scene, struct glass_engine *engine) {
-    struct wlr_scene_tree *source = wlr_scene_tree_create(&scene->tree);
-    struct rediwm_projection *p = rediwm_projection_create(source, scene);
-    assert(p);
-    struct wlr_scene_tree *frame = wlr_scene_tree_create(source);
-    wlr_scene_node_set_position(&frame->node, 101, 51);
+    struct wlr_scene_tree *host = wlr_scene_tree_create(&scene->tree);
+    wlr_scene_node_set_enabled(&host->node, false);
+    struct rediwm_scene *own = rediwm_scene_create(host, NULL, NULL);
+    struct rediwm_tree *source = rediwm_tree_create(&own->tree);
+    struct rediwm_projection *p = rediwm_projection_create(own, source, scene);
+    assert(own && source && p);
+    struct rediwm_tree *frame = rediwm_tree_create(source);
+    rediwm_node_set_position(&frame->node, 101, 51);
     struct test_buffer *image = buffer_create(400, 260);
-    struct wlr_scene_buffer *client = wlr_scene_buffer_create(frame, &image->base);
-    client_node = &client->node;
+    struct rediwm_buffer *client = rediwm_buffer_create(frame, &image->base);
+    client_node = &client->carrier->node;
     wlr_buffer_drop(&image->base);
-    wlr_scene_buffer_set_source_box(client, &(struct wlr_fbox){10, 10, 380, 240});
-    wlr_scene_buffer_set_dest_size(client, 400, 260);
+    rediwm_buffer_set_source_box(client, &(struct wlr_fbox){10, 10, 380, 240});
+    rediwm_buffer_set_dest_size(client, 400, 260);
     client->point_accepts_input = projection_input;
     const double levels[] = {1, .85, .70, .55, 1};
     for (size_t j = 0; j < sizeof(levels)/sizeof(levels[0]); j++) {
@@ -144,19 +151,18 @@ static void projection_checks(struct wlr_scene *scene, struct glass_engine *engi
             assert(shown->content.src_box.x == 10 && shown->content.src_box.width == 380);
             assert(frame->node.x == 101 && frame->node.y == 51);
             assert(client->dst_width == 400 && client->dst_height == 260);
-            double x, y;
-            struct wlr_scene_node *hit = rediwm_projection_node_at(p,
-                snap.x + snap.width * .5, snap.y + snap.height * .5, &x, &y);
-            assert(hit == &client->node);
-            assert(fabs(x - 207) < .0001 && fabs(y - 139) < .0001);
-            assert(!rediwm_projection_node_at(p, snap.x + 1, snap.y + 1, &x, &y));
+            struct rediwm_hit hit;
+            assert(rediwm_projection_node_at(p, snap.x + snap.width * .5, snap.y + snap.height * .5, &hit));
+            assert(hit.own == &client->node);
+            assert(fabs(hit.x - 207) < .0001 && fabs(hit.y - 139) < .0001);
+            assert(!rediwm_projection_node_at(p, snap.x + 1, snap.y + 1, &hit));
         }
     }
     // An effect has its target's box at every zoom, and is shown only with it.
     assert(rediwm_projection_set_tree_zoom(&frame->node, .70));
-    struct wlr_scene_buffer *target = wlr_scene_buffer_create(frame, NULL);
-    wlr_scene_node_set_position(&target->node, 0, 0);
-    wlr_scene_buffer_set_dest_size(target, 200, 60);
+    struct rediwm_buffer *target = rediwm_buffer_create(frame, NULL);
+    rediwm_node_set_position(&target->node, 0, 0);
+    rediwm_buffer_set_dest_size(target, 200, 60);
     struct glass_effect *effect = rediwm_glass_attach(engine, target, &target->node, GLASS_TITLEBAR);
     assert(effect);
     for (size_t i = 0; i < sizeof(levels)/sizeof(levels[0]); i++) {
@@ -168,18 +174,19 @@ static void projection_checks(struct wlr_scene *scene, struct glass_engine *engi
         assert(found.effect.width == 200 && found.effect.height == 60);
         assert(fabs(found.effect.scale - .70 * levels[i]) < .0001);
     }
-    wlr_scene_node_set_enabled(&target->node, false);
+    rediwm_node_set_enabled(&target->node, false);
     rediwm_projection_sync(p, .55, 0, 0, 0, 0);
     struct items hidden = {0};
     rediwm_projection_for_each_item(p, false, find_items, &hidden);
     assert(hidden.effect.kind != REDIWM_ITEM_EFFECT);
     // Source destruction tears down the graph's items, including effects.
-    wlr_scene_node_destroy(&frame->node);
+    rediwm_node_destroy(&frame->node);
     struct items gone = {0};
     rediwm_projection_for_each_item(p, false, find_items, &gone);
     assert(gone.client.width == 0 && gone.effect.kind != REDIWM_ITEM_EFFECT);
     rediwm_projection_destroy(p);
-    wlr_scene_node_destroy(&source->node);
+    rediwm_scene_destroy(own);
+    wlr_scene_node_destroy(&host->node);
     fputs("PASS: projection geometry, input, glass geometry and destruction\n", stderr);
 }
 int main(void)

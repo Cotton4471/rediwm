@@ -117,7 +117,7 @@ pub fn attachSurface(self: *Adapter) void {
             return;
         };
         self.scene_attached = true;
-        self.window.scene_tree.node.events.destroy.add(&self.scene_destroy);
+        self.window.scene_tree.events.destroy.add(&self.scene_destroy);
     }
     if (surface.mapped and !self.window.in_world) self.window.handleMapped();
 }

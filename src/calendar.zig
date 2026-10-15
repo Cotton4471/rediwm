@@ -2,6 +2,7 @@
 // output geometry changes, or the taskbar's existing minute tick.
 const std = @import("std");
 const wlr = @import("wlroots");
+const sn = @import("node.zig");
 const c = @cImport({
     @cInclude("time.h");
 });
@@ -20,7 +21,7 @@ const slide_distance: f32 = 20;
 
 pub const Calendar = struct {
     output: *Output,
-    buffer_node: *wlr.SceneBuffer,
+    buffer_node: *sn.Buffer,
     glass_effect: ?*glass.Effect = null,
     node_data: scene.SceneData = undefined,
     year: i32,

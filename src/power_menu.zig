@@ -3,6 +3,7 @@ const std = @import("std");
 const glass = @import("glass.zig");
 const wl = @import("wayland").server.wl;
 const wlr = @import("wlroots");
+const sn = @import("node.zig");
 const col = @import("color.zig");
 
 const gpa = @import("main.zig").gpa;
@@ -77,8 +78,8 @@ pub const PowerMenu = struct {
     // modal rather than just another floating panel. Purely decorative —
     // outside-click dismissal is driven by cursor-vs-panel_box math in
     // Input.zig, not by hit-testing this node.
-    scrim: *wlr.SceneRect,
-    buffer_node: *wlr.SceneBuffer,
+    scrim: *sn.Rect,
+    buffer_node: *sn.Buffer,
     glass_effect: ?*glass.Effect = null,
     node_data: scene_data.SceneData = undefined,
 

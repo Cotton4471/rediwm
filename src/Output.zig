@@ -4,6 +4,7 @@ const posix = std.posix;
 const wl = @import("wayland").server.wl;
 
 const wlr = @import("wlroots");
+const sn = @import("node.zig");
 
 const ControlCenter = @import("control_center/panel.zig").ControlCenter;
 const StartMenu = @import("start_menu/panel.zig").StartMenu;
@@ -72,7 +73,7 @@ const log = std.log.scoped(.output);
 lock_view: @import("session/lock.zig").View,
 server: *Server,
 wlr_output: *wlr.Output,
-wallpaper: ?*wlr.SceneBuffer = null,
+wallpaper: ?*sn.Buffer = null,
 taskbar: ?*Taskbar = null,
 dock: @import("Dock.zig") = .{},
 osd: @import("osd.zig") = .{},

@@ -6,6 +6,7 @@ const Allocator = std.mem.Allocator;
 const glass = @import("../glass.zig");
 const wl = @import("wayland").server.wl;
 const wlr = @import("wlroots");
+const sn = @import("../node.zig");
 const xkb = @import("xkbcommon");
 
 const gpa = @import("../main.zig").gpa;
@@ -56,7 +57,7 @@ pub const StartMenu = struct {
     card_selection: ?usize = null,
     server: *Server,
     wlr_output: *wlr.Output,
-    buffer_node: *wlr.SceneBuffer,
+    buffer_node: *sn.Buffer,
     glass_effect: ?*glass.Effect = null,
     node_data: scene_data.SceneData = undefined,
 

@@ -13,6 +13,7 @@ const Output = @import("Output.zig");
 const Taskbar = @import("Taskbar.zig");
 const Shell = @import("Shell.zig");
 const World = @import("World.zig");
+const sn = @import("node.zig");
 const geometry = @import("geometry.zig");
 const icon_theme = @import("icon_theme.zig");
 const icon_service_mod = @import("icon_service.zig");
@@ -97,7 +98,10 @@ gpu_timer: ?*@import("gpu_timing.zig").Timer = null,
 gpu_timer_tried: bool = false,
 gpu_timer_used_ns: u64 = 0,
 allocator: *wlr.Allocator,
+/// wlroots' scene, kept for its outputs; the compositor draws from `nodes`.
 scene: *wlr.Scene,
+/// The compositor's own scene: its layers are the trees below, bottom to top.
+nodes: *sn.Scene,
 glass_engine: ?*glass.Engine = null,
 output_renderer: *scene_output_mod.Renderer = undefined,
 // Set when wp_linux_drm_syncobj_v1 is advertised: release points for client
@@ -109,19 +113,19 @@ scene_output_layout: *wlr.SceneOutputLayout,
 new_output: wl.Listener(*wlr.Output) = .init(newOutput),
 
 shell: Shell,
-background_tree: *wlr.SceneTree,
-desktop_tree: *wlr.SceneTree,
-world_desktop_tree: *wlr.SceneTree,
+background_tree: *sn.Tree,
+desktop_tree: *sn.Tree,
+world_desktop_tree: *sn.Tree,
 new_layer: wl.Listener(*wlr.LayerSurfaceV1) = .init(newLayer),
 wallpaper: ?*ImageBuffer = null,
 world: World,
-taskbar_tree: *wlr.SceneTree,
+taskbar_tree: *sn.Tree,
 // While > 0 `refreshTaskbars` only records the request; see `holdTaskbars`.
 taskbar_hold: u32 = 0,
 taskbar_hold_pending: bool = false,
-overlay_tree: *wlr.SceneTree,
-ime_tree: *wlr.SceneTree,
-lock_tree: *wlr.SceneTree,
+overlay_tree: *sn.Tree,
+ime_tree: *sn.Tree,
+lock_tree: *sn.Tree,
 brightness: @import("brightness.zig") = .{},
 switcher: @import("Switcher.zig") = .{},
 night_light: @import("night_light/NightLight.zig").NightLight = .{},
@@ -371,14 +375,20 @@ pub fn init(server: *Server, scale: ?f32, icon_theme_cfg: icon_theme.Config, io:
     // stacking alongside its scene ordering instead.
     scene.restack_xwayland_surfaces = false;
 
-    const background_tree = scene.tree.createSceneTree() catch return error.SceneCreateFailed;
-    const desktop_tree = scene.tree.createSceneTree() catch return error.SceneCreateFailed;
-    const world_tree = scene.tree.createSceneTree() catch return error.SceneCreateFailed;
+    // Carriers and the clients' surface trees live under a disabled host, so wlroots
+    // computes nothing for them: the projection resolves our scene instead.
+    const host = scene.tree.createSceneTree() catch return error.SceneCreateFailed;
+    host.node.setEnabled(false);
+    const nodes = sn.Scene.create(host) catch return error.SceneCreateFailed;
+    errdefer nodes.destroy();
+    const background_tree = nodes.tree.createSceneTree() catch return error.SceneCreateFailed;
+    const desktop_tree = nodes.tree.createSceneTree() catch return error.SceneCreateFailed;
+    const world_tree = nodes.tree.createSceneTree() catch return error.SceneCreateFailed;
     const world_desktop_tree = world_tree.createSceneTree() catch return error.SceneCreateFailed;
-    const taskbar_tree = scene.tree.createSceneTree() catch return error.SceneCreateFailed;
-    const overlay_tree = scene.tree.createSceneTree() catch return error.SceneCreateFailed;
-    const ime_tree = scene.tree.createSceneTree() catch return error.SceneCreateFailed;
-    const lock_tree = scene.tree.createSceneTree() catch return error.SceneCreateFailed;
+    const taskbar_tree = nodes.tree.createSceneTree() catch return error.SceneCreateFailed;
+    const overlay_tree = nodes.tree.createSceneTree() catch return error.SceneCreateFailed;
+    const ime_tree = nodes.tree.createSceneTree() catch return error.SceneCreateFailed;
+    const lock_tree = nodes.tree.createSceneTree() catch return error.SceneCreateFailed;
     const scene_output_layout = scene.attachOutputLayout(output_layout) catch return error.SceneCreateFailed;
 
     const catalog = applications.Catalog.init(@import("main.zig").gpa, io, environ, !greeter) catch return error.ServerCreateFailed;
@@ -420,6 +430,7 @@ pub fn init(server: *Server, scale: ?f32, icon_theme_cfg: icon_theme.Config, io:
         .renderer = renderer,
         .allocator = wlr_allocator,
         .scene = scene,
+        .nodes = nodes,
         .background_tree = background_tree,
         .desktop_tree = desktop_tree,
         .world_desktop_tree = world_desktop_tree,
@@ -1071,6 +1082,7 @@ pub fn deinit(server: *Server) void {
     server.backend.destroy();
     server.input.deinit();
     server.world.deinit();
+    server.nodes.destroy();
     server.start_menu_catalog.deinit();
     glass.Engine.destroy(server.glass_engine);
     scene_output_mod.Renderer.destroy(server.output_renderer);

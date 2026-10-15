@@ -6,6 +6,7 @@
 // only ever sees a buffer after wlroots has dropped it.
 const std = @import("std");
 const wlr = @import("wlroots");
+const sn = @import("node.zig");
 
 const gpa = @import("main.zig").gpa;
 const geometry = @import("geometry.zig");
@@ -131,7 +132,7 @@ pub const PanelBuffer = struct {
         return buf;
     }
 
-    pub fn publish(buf: *PanelBuffer, node: *wlr.SceneBuffer, scale: f32, damage: ?@import("ui").paint.ClipRect) void {
+    pub fn publish(buf: *PanelBuffer, node: *sn.Buffer, scale: f32, damage: ?@import("ui").paint.ClipRect) void {
         if (damage) |box| {
             const pixman = @import("pixman");
             // Scene damage is buffer-local: use the actual raster scale,

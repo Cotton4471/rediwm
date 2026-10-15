@@ -99,6 +99,17 @@ Revised 7a order, each step gated by identical goldens and the suites that pass 
 
 1. `node.h`/`node.c` and `node_test.c` (`zig build test-node`): the data model, the
    change hook, stacking, picking, teardown. **Done.**
+
+**7a landed 2026-10-15 (steps 2 and 4 below, in one change).** Own buffer and rect
+nodes keep a hidden wlr_scene *carrier* (kept in step by every setter) that
+`scene_output.c` and `glass.c` read unchanged, so step 3 moves to 7c with the
+carrier's removal. The projection resolves the own scene's layers (the six layout
+trees and the world) into one graph, so `visit_items`, `layout_item` and the
+wlroots pick are gone; layout damage comes from the projection, and
+`set_buffer_with_damage` reports to it through the scene's `buffer_damaged` hook.
+Gates: `test-node`, `test-projection`, `test-glass`, `test-scene-pass`, `zig build
+test` pass; 100 of 136 integration scripts pass and the other 36 fail on HEAD with
+the same last error line (`scene_baseline` is a benchmark, not run).
 2. The projection reads `rediwm_node` sources (leaf/group/addons on the own node),
    resolves foreign subtrees, and takes the layout trees as extra groups with an
    identity transform; damage and picking for them move out of wlr_scene.
