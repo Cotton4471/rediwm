@@ -10,11 +10,9 @@ const battery_mod = @import("taskbar/battery.zig");
 const ImageBuffer = @import("ImageBuffer.zig");
 const Input = @import("Input.zig");
 const Output = @import("Output.zig");
-const Taskbar = @import("Taskbar.zig");
 const Shell = @import("Shell.zig");
 const World = @import("World.zig");
 const sn = @import("node.zig");
-const geometry = @import("geometry.zig");
 const icon_theme = @import("icon_theme.zig");
 const icon_service_mod = @import("icon_service.zig");
 const glass = @import("glass.zig");
@@ -42,15 +40,21 @@ const applications = @import("start_menu/applications.zig");
 const child_env = @import("child_env.zig");
 const Xwayland = @import("Xwayland.zig");
 const wallpaper_load = @import("wallpaper_load.zig");
-const wallpapers = @import("wallpapers.zig");
 const startup = @import("startup.zig");
-const png = @import("png.zig");
 
+const server_xwayland_scale = @import("server/xwayland_scale.zig");
+const server_session = @import("server/session.zig");
+const server_frame = @import("server/frame.zig");
+const server_outputs = @import("server/outputs.zig");
+const server_taskbars = @import("server/taskbars.zig");
+const server_icons = @import("server/icons.zig");
+const server_wakeups = @import("server/wakeups.zig");
+const server_wallpaper = @import("server/wallpaper.zig");
 const Server = @This();
 
 const log = std.log.scoped(.compositor);
 
-extern fn wl_display_set_default_max_buffer_size(display: *wl.Server, size: usize) void;
+pub extern fn wl_display_set_default_max_buffer_size(display: *wl.Server, size: usize) void;
 
 pub const CompositorError = error{
     ServerCreateFailed,
@@ -208,6 +212,8 @@ wallpaper_wake_source: ?*wl.EventSource = null,
 wallpaper_source: ?[]u8 = null,
 /// The Appearance page's preview of `wallpaper` (gpa-owned).
 wallpaper_thumb: ?wallpaper_load.Thumb = null,
+/// User-owned public snapshot directory, provisioned by rediwm-dm.
+login_appearance_dir: ?[]u8 = null,
 
 ipc: ?*ipc_server.Server = null,
 ipc_socket_path: ?[]const u8 = null,
@@ -326,7 +332,7 @@ pub fn effectivePrimaryOutput(server: *Server) ?*Output {
     return server.firstAvailableOutput();
 }
 
-fn firstAvailableOutput(server: *Server) ?*Output {
+pub fn firstAvailableOutput(server: *Server) ?*Output {
     var it = server.outputs.iterator(.forward);
     while (it.next()) |output| {
         if (output.isAvailable()) return output;
@@ -444,6 +450,10 @@ pub fn init(server: *Server, scale: ?f32, icon_theme_cfg: icon_theme.Config, io:
         .session = session,
         .greeter_mode = greeter,
     };
+
+    if (!greeter and session != null) server.login_appearance_dir = @import("session/login_appearance.zig").writableDirectory(@import("main.zig").gpa);
+    errdefer if (server.login_appearance_dir) |dir| @import("main.zig").gpa.free(dir);
+    server.saveLoginTheme();
 
     if (!greeter) {
         const app_theme = @import("config").app_theme;
@@ -669,7 +679,7 @@ pub fn init(server: *Server, scale: ?f32, icon_theme_cfg: icon_theme.Config, io:
 
 /// The greeter never writes a config: REDIWM_CONFIG, else the administrator's
 /// /etc/rediwm/greeter.toml, else built-in defaults.
-fn loadGreeterConfig(io: std.Io, environ: std.process.Environ) !config_loader.Config {
+pub fn loadGreeterConfig(io: std.Io, environ: std.process.Environ) !config_loader.Config {
     const allocator = @import("main.zig").gpa;
     const path = if (environ.getPosix("REDIWM_CONFIG")) |p| (if (p.len > 0) p else null) else null;
     const system = "/etc/rediwm/greeter.toml";
@@ -713,186 +723,21 @@ pub fn applyChildEnvWithToken(server: *Server, map: *child_env.Map, token: ?[]co
     });
 }
 
-pub fn configuredXwaylandNativeScaling(server: *Server) bool {
-    return server.config.compositor.xwayland_native_scaling or server.config.compositor.xwayland_scale != 0;
-}
+// server/xwayland_scale.zig
+pub const configuredXwaylandNativeScaling = server_xwayland_scale.configuredXwaylandNativeScaling;
+pub const computeXwaylandScale = server_xwayland_scale.computeXwaylandScale;
+pub const xwaylandScale = server_xwayland_scale.xwaylandScale;
+pub const xwaylandScalePending = server_xwayland_scale.xwaylandScalePending;
 
-pub fn computeXwaylandScale(server: *Server) f64 {
-    if (server.config.compositor.xwayland_scale != 0) return server.config.compositor.xwayland_scale;
-    if (!server.config.compositor.xwayland_native_scaling) return 1;
-    var factor: f64 = 1;
-    var have_output = false;
-    var it = server.outputs.iterator(.forward);
-    while (it.next()) |output| {
-        if (output.isLogicallyEnabled() and output.wlr_output.enabled) {
-            have_output = true;
-            factor = @max(factor, @as(f64, @ceil(output.wlr_output.scale)));
-        }
-    }
-    if (!have_output and server.config.compositor.xwayland_native_scaling) {
-        if (server.scale_override) |scale| factor = @ceil(scale);
-    }
-    return factor;
-}
-
-pub fn xwaylandScale(server: *Server) f64 {
-    if (server.xwayland) |xw| return xw.scale;
-    return server.computeXwaylandScale();
-}
-
-pub fn xwaylandScalePending(server: *Server) ?f64 {
-    const xwayland = server.xwayland orelse return null;
-    const desired = server.computeXwaylandScale();
-    if (desired != xwayland.scale or server.configuredXwaylandNativeScaling() != xwayland.native_scaling) return desired;
-    return null;
-}
-
-pub fn terminate(server: *Server) void {
-    if (server.shutting_down) return;
-    server.shutting_down = true;
-    log.info("terminating compositor session", .{});
-    if (server.layout_autosave) |as| as.saveNow();
-    // Unwind the event callback before tearing down clients. deinit destroys
-    // the owned Xwayland server first; disconnecting its Wayland client here
-    // would trigger wlroots' crash recovery and start it again during logout.
-    server.wl_server.terminate();
-}
-
-pub fn deactivateSession(server: *Server) void {
-    if (server.polkit) |agent| {
-        if (server.locker != null) agent.pauseForLock() else agent.cancelAll();
-    }
-    log.info("deactivating session: cancelling grabs, focus and menus", .{});
-    server.input.clearGrab();
-    server.screenshot_selector.cancel();
-    server.switcher.cancel();
-
-    if (server.input.gesture != .none) {
-        if (server.input.gesture == .compositor_pinch or server.input.gesture == .client_pinch) {
-            server.input.handlePinchEnd(0, true);
-        } else if (server.input.gesture == .compositor_swipe or server.input.gesture == .client_swipe) {
-            server.input.handleSwipeEnd(0, true);
-        }
-    }
-    if (server.input.finger_pan) {
-        server.input.finger_pan = false;
-        server.world.cancelPan();
-    }
-
-    server.input.seat.keyboardEndGrab();
-    server.input.seat.pointerEndGrab();
-    server.input.window_menu.close();
-    server.input.seat.keyboardClearFocus();
-    server.input.seat.pointerClearFocus();
-    server.input.setDefaultCursor();
-    @import("ui").input.reset();
-
-    var it = server.outputs.iterator(.forward);
-    while (it.next()) |out| {
-        out.closeStartMenu();
-        out.closePowerMenu();
-        out.closeBattery();
-        out.closeWifi();
-    }
-    if (server.input.open_control_center) |cc| cc.pointer_down = false;
-
-    if (server.layout_autosave) |as| as.saveNow();
-}
-
-pub fn reactivateSession(server: *Server) void {
-    log.info("reactivating session: restoring output layout, damage and presentation", .{});
-    Output.syncLayout(server);
-    server.input.refreshOutputScales();
-
-    var it = server.outputs.iterator(.forward);
-    while (it.next()) |output| {
-        if (server.scene_outputs.get(output.wlr_output)) |so| {
-            so.damageWhole();
-        }
-        output.wlr_output.scheduleFrame();
-    }
-}
-
-fn handleSessionActive(listener: *wl.Listener(void)) void {
-    const server: *Server = @fieldParentPtr("session_active", listener);
-    const session = server.session orelse return;
-    if (session.active) {
-        log.info("session became active (VT switch back)", .{});
-        server.reactivateSession();
-        server.startup_tasks.onSessionActive();
-    } else {
-        log.info("session became inactive (VT switch away)", .{});
-        server.deactivateSession();
-    }
-}
-
-fn handleSecurityContextDestroy(listener: *wl.Listener(void)) void {
-    const server: *Server = @fieldParentPtr("security_context_destroy", listener);
-    server.security_context = null;
-    server.security_context_destroy.link.remove();
-    server.security_context_commit.link.remove();
-}
-
-fn handleSecurityContextCommit(listener: *wl.Listener(*wlr.SecurityContextManagerV1.event.Commit), event: *wlr.SecurityContextManagerV1.event.Commit) void {
-    _ = listener;
-    const engine = if (event.state.sandbox_engine) |s| std.mem.span(s) else "<unspecified>";
-    const app_id = if (event.state.app_id) |s| std.mem.span(s) else "<unspecified>";
-    const instance_id = if (event.state.instance_id) |s| std.mem.span(s) else "<unspecified>";
-    log.info("security-context: commit engine='{s}' app_id='{s}' instance_id='{s}'", .{ engine, app_id, instance_id });
-}
-
-pub fn getSystemd(server: *Server) !*@import("systemd.zig").Client {
-    if (server.greeter_mode) return error.ServicesUnavailable;
-    if (server.systemd_client) |client| return client;
-    const client = try @import("systemd.zig").Client.create(server);
-    server.systemd_client = client;
-    return client;
-}
-
-/// One optional service per event-loop turn after the first desktop frame.
-/// Power/lock inhibitors and child ownership are initialized synchronously.
-pub fn startDesktopService(server: *Server, step: usize) bool {
-    if (server.greeter_mode) return false;
-    switch (step) {
-        0 => {
-            server.notifications = notifications_mod.Manager.create(server, @import("main.zig").gpa) catch |err| blk: {
-                log.warn("init: could not create notifications manager: {}", .{err});
-                break :blk null;
-            };
-        },
-        1 => {
-            server.configurePolkit(server.config.polkit);
-        },
-        2 => {
-            server.network = @import("network/manager.zig").Manager.create(server) catch null;
-        },
-        3 => {
-            server.power_profiles = power_profiles_mod.Manager.create(server, @import("main.zig").gpa) catch |err| blk: {
-                log.warn("init: could not create power profiles manager: {}", .{err});
-                break :blk null;
-            };
-        },
-        4 => {
-            server.audio = audio_mod.AudioManager.createAsync(@import("main.zig").gpa) catch |err| blk: {
-                log.warn("init: PipeWire/PulseAudio not available, audio control disabled: {}", .{err});
-                break :blk null;
-            };
-            if (server.audio) |mgr| {
-                if (createAudioWakeFd()) |fd| {
-                    mgr.setWakeFd(fd);
-                    server.audio_wake_source = server.wl_server.getEventLoop().addFd(*Server, fd, .{ .readable = true }, handleAudioWake, server) catch |err| blk: {
-                        log.warn("init: could not register audio wake fd: {}", .{err});
-                        break :blk null;
-                    };
-                } else {
-                    log.warn("init: could not create audio wake eventfd; taskbar/UI may lag behind external volume changes", .{});
-                }
-            }
-        },
-        else => return false,
-    }
-    return true;
-}
+// server/session.zig
+pub const terminate = server_session.terminate;
+pub const deactivateSession = server_session.deactivateSession;
+pub const reactivateSession = server_session.reactivateSession;
+pub const handleSessionActive = server_session.handleSessionActive;
+pub const handleSecurityContextDestroy = server_session.handleSecurityContextDestroy;
+pub const handleSecurityContextCommit = server_session.handleSecurityContextCommit;
+pub const getSystemd = server_session.getSystemd;
+pub const startDesktopService = server_session.startDesktopService;
 
 pub fn deinit(server: *Server) void {
     if (server.theme_job) |job| job.deinit();
@@ -932,6 +777,8 @@ pub fn deinit(server: *Server) void {
     }
     server.stopWallpaperLoad();
     server.forgetWallpaperSource();
+    if (server.login_appearance_dir) |dir| @import("main.zig").gpa.free(dir);
+    server.login_appearance_dir = null;
     @import("control_center/folder_picker.zig").cancel();
     if (server.wallpaper_thumb) |thumb| thumb.deinit(@import("main.zig").gpa);
     server.wallpaper_thumb = null;
@@ -1087,241 +934,22 @@ pub fn deinit(server: *Server) void {
     log.info("compositor session teardown complete", .{});
 }
 
-/// All output builds, including capture between frames, use the owned pass and
-/// the same swapchain/damage history. Commits stay on Output.
-pub fn buildOutputState(server: *Server, output: *scene_outputs_mod.SceneOutput, state: *wlr.Output.State) bool {
-    return server.output_renderer.buildState(server.world.projection, output, state);
-}
+// server/frame.zig
+pub const buildOutputState = server_frame.buildOutputState;
+pub const sendFrameDone = server_frame.sendFrameDone;
+pub const beginRenderPass = server_frame.beginRenderPass;
+pub const maxOutputScale = server_frame.maxOutputScale;
 
-/// Frame callbacks for the surfaces the output shows, from the graph.
-pub fn sendFrameDone(server: *Server, output: *scene_outputs_mod.SceneOutput, now: *std.posix.timespec) void {
-    server.world.projection.sendFrameDone(output, now);
-}
+// server/outputs.zig
+pub const newOutput = server_outputs.newOutput;
 
-pub fn beginRenderPass(server: *Server, buffer: *wlr.Buffer, options: ?*const wlr.Renderer.BufferPassOptions) !*wlr.RenderPass {
-    return server.output_renderer.beginPass(buffer, options) orelse error.RenderPassFailed;
-}
-
-pub fn maxOutputScale(server: *Server) f32 {
-    var scale: f32 = 1;
-    var it = server.outputs.iterator(.forward);
-    while (it.next()) |output| {
-        if (output.isLogicallyEnabled()) scale = @max(scale, output.wlr_output.scale);
-    }
-    return scale;
-}
-
-fn newOutput(listener: *wl.Listener(*wlr.Output), wlr_output: *wlr.Output) void {
-    const server: *Server = @fieldParentPtr("new_output", listener);
-
-    // wlroots' own `wlr_ext_image_capture_source_v1_create_with_scene_node`
-    // (capture/manager.zig, stage 3 window capture) creates a private
-    // `non_desktop` output to render a captured scene node, and drives it
-    // entirely itself. Before this check existed, this handler treated it
-    // like any other monitor — enabling it, attaching the *whole* scene via
-    // `Output.create`, and adding it to the layout — which raced wlroots'
-    // own internal rendering and made a window capture show whatever
-    // happened to be on top on the real desktop instead of that window's
-    // own isolated content (caught by `run_window_occlusion_case`: a
-    // captured background window showed its occluder's color). `non_desktop`
-    // is the standard wlroots signal (also used for VR/HMD outputs) that a
-    // compositor must leave an output alone rather than treat it as a
-    // desktop monitor.
-    if (wlr_output.non_desktop) {
-        @import("extra_protocols.zig").rediwm_protocols_offer(server.extra_protocols, wlr_output);
-        log.debug("newOutput: excluding non-desktop output {s} from desktop layout", .{wlr_output.name});
-        return;
-    }
-
-    if (!wlr_output.initRender(server.allocator, server.renderer)) {
-        log.err("newOutput: initRender failed for {s}", .{wlr_output.name});
-        return;
-    }
-
-    var state = wlr.Output.State.init();
-    defer state.finish();
-
-    state.setEnabled(true);
-    const saved = Output.configuredMode(server, wlr_output);
-    const preferred = if (saved) |mode| mode.advertised else wlr_output.preferredMode() orelse wlr_output.modes.first();
-    const output_scale = if (saved) |mode|
-        Output.scaleForDimensions(server, wlr_output, mode.width, mode.height)
-    else
-        Output.scaleForMode(server, wlr_output, preferred);
-    state.setScale(output_scale);
-    if (saved) |mode| {
-        mode.setState(&state);
-    } else if (preferred) |mode| {
-        // A real display's mode is already in device pixels; the scale only
-        // changes the logical size derived from it.
-        state.setMode(mode);
-    } else {
-        // Backends without modes (nested, headless) size themselves as though
-        // the scale were 1, so the buffer has to be enlarged to match it.
-        state.setCustomMode(
-            geometry.devicePixels(wlr_output.width, output_scale),
-            geometry.devicePixels(wlr_output.height, output_scale),
-            0,
-        );
-    }
-    if (!wlr_output.commitState(&state)) {
-        // A preferred mode can exceed available link bandwidth. Try only
-        // modes advertised by this connector before giving up on the display.
-        var modes = wlr_output.modes.iterator(.forward);
-        var recovered = false;
-        while (modes.next()) |mode| {
-            if (mode == preferred) continue;
-            state.setMode(mode);
-            state.setScale(Output.scaleForMode(server, wlr_output, mode));
-            if (wlr_output.commitState(&state)) {
-                recovered = true;
-                log.warn("output {s}: preferred mode rejected; using {d}x{d}@{d} mHz", .{ wlr_output.name, mode.width, mode.height, mode.refresh });
-                break;
-            }
-        }
-        if (!recovered) {
-            log.err("newOutput: no usable mode for {s}", .{wlr_output.name});
-            return;
-        }
-    }
-
-    log.info("output {s}: {d}x{d}@{d:.2} Hz, {d}x{d} mm, scale {d}", .{ wlr_output.name, wlr_output.width, wlr_output.height, @as(f64, @floatFromInt(wlr_output.refresh)) / 1000, wlr_output.phys_width, wlr_output.phys_height, wlr_output.scale });
-
-    Output.create(server, wlr_output) catch |err| {
-        log.err("newOutput: could not create output {s}: {}", .{ wlr_output.name, err });
-        wlr_output.destroy();
-        return;
-    };
-    if (server.xwayland) |xw| xw.refreshScale();
-}
-
-// Rebuilds every output's taskbar chip layout (FLIP-animating any that
-// moved) and keeps the bar above windows but below menus and modal overlays.
-pub fn refreshTaskbars(server: *Server) void {
-    if (server.taskbar_hold > 0) {
-        server.taskbar_hold_pending = true;
-        return;
-    }
-    var strip_moved = false;
-    var it = server.outputs.iterator(.forward);
-    while (it.next()) |output| {
-        output.dock.invalidate();
-        if (output.taskbar) |bar| {
-            var box: wlr.Box = undefined;
-            server.output_layout.getBox(output.wlr_output, &box);
-            if (box.width > 0 and box.height > 0 and !bar.isPlaced(box)) {
-                const strip = bar.reserved;
-                bar.relayout(box);
-                strip_moved = strip_moved or bar.reserved != strip;
-                if (server.input.open_start_menu) |sm| {
-                    if (sm.wlr_output == output.wlr_output) sm.relayout();
-                }
-            }
-            bar.notifyToplevelsChanged();
-        }
-    }
-    server.taskbar_tree.node.placeBelow(&server.overlay_tree.node);
-    server.updateTaskbarFullscreenVisibility();
-    if (strip_moved) server.applyTaskbarPosition();
-}
-
-// Coalesces taskbar refreshes until the matching `releaseTaskbars`, which
-// runs one. Mapping a window refreshes the bar before the window is known to
-// be a new tab of an existing group; without the hold the bar would show (and
-// FLIP-animate) a transient extra chip.
-pub fn holdTaskbars(server: *Server) void {
-    server.taskbar_hold += 1;
-}
-
-pub fn releaseTaskbars(server: *Server) void {
-    server.taskbar_hold -= 1;
-    if (server.taskbar_hold == 0 and server.taskbar_hold_pending) {
-        server.taskbar_hold_pending = false;
-        server.refreshTaskbars();
-    }
-}
-
-// Like refreshTaskbars, but always relayouts instead of only when bar height
-// changed. Item geometry (chip/tray/start-button size, the start button's
-// gap and icon size) also derives from `chip_gap`/`start_button_gap`/
-// `start_button_icon_size`, none of which move `bar.box.height`, so the
-// cheaper height-guarded path used by window-lifecycle events can't detect
-// them. Callers are theme-change sites only (the settings panel, config
-// hot-reload), not the frequent per-window-event ones, so the extra full
-// raster pass here is rare and not a hot-path concern.
-pub fn refreshTaskbarsGeometry(server: *Server) void {
-    var strip_moved = false;
-    var it = server.outputs.iterator(.forward);
-    while (it.next()) |output| {
-        output.dock.invalidate();
-        if (output.taskbar) |bar| {
-            var box: wlr.Box = undefined;
-            server.output_layout.getBox(output.wlr_output, &box);
-            const strip = bar.reserved;
-            bar.relayout(box);
-            strip_moved = strip_moved or bar.reserved != strip;
-            if (server.input.open_start_menu) |sm| {
-                if (sm.wlr_output == output.wlr_output) sm.relayout();
-            }
-        }
-    }
-    server.taskbar_tree.node.placeBelow(&server.overlay_tree.node);
-    server.updateTaskbarFullscreenVisibility();
-    if (strip_moved) server.applyTaskbarPosition();
-}
-
-/// Apply a changed taskbar edge, or a changed strip (size or gap, or the
-/// dock's: `Dock.reserves`), to panels, reserved space and fixed layouts.
-pub fn applyTaskbarPosition(server: *Server) void {
-    Output.syncLayout(server);
-    var it = server.world.toplevels.iterator(.forward);
-    while (it.next()) |toplevel| {
-        if (toplevel.fullscreen) continue;
-        const output = toplevel.resolveTargetOutput() orelse continue;
-        if (toplevel.maximized) {
-            toplevel.setMaximizedOn(output);
-        } else if (toplevel.tile) |tile| {
-            toplevel.setTiledOn(output, tile);
-        } else if (server.config.compositor.taskbar_position == .top) {
-            // Keep visible floating titlebars reachable when the strip moves
-            // over them, including the Settings window that made the change.
-            const usable = output.usableBox();
-            const position = server.world.toLayout(@floatFromInt(toplevel.x), @floatFromInt(toplevel.y));
-            const top: f64 = @floatFromInt(usable.y);
-            const bar_height: f64 = if (output.taskbar) |bar| @floatFromInt(bar.reserved) else 0;
-            if (position.y >= top - bar_height and position.y < top) {
-                const target = server.world.toWorld(position.x, top);
-                toplevel.finishMoveAnimation();
-                toplevel.setPosition(@intFromFloat(@round(target.x)), @intFromFloat(@round(target.y)));
-            }
-        }
-    }
-}
-
-// Hides the taskbar strip on whichever output currently hosts the focused
-// fullscreen window (e.g. a video fullscreened in a browser), the same way
-// a layer-shell panel would yield to an exclusive-fullscreen surface. Other
-// outputs keep their bar, since a fullscreen window elsewhere shouldn't
-// blank an unrelated monitor's taskbar.
-fn updateTaskbarFullscreenVisibility(server: *Server) void {
-    const focused = server.world.toplevels.first();
-    // The raw compositor-side intent flag, not `isFullscreen()`: for xdg
-    // surfaces that reads the client-acked `current.fullscreen`, which lags
-    // a round trip behind the resize we already applied synchronously in
-    // setFullscreenOn/toggleFullscreen. Reading the same flag those setters
-    // write keeps the bar in lockstep with the resize instead of flashing
-    // on top for a frame.
-    const fullscreen_output: ?*Output = if (focused) |t|
-        (if (t.fullscreen and @import("workspaces.zig").visible(t)) t.currentOutput() else null)
-    else
-        null;
-
-    var it = server.outputs.iterator(.forward);
-    while (it.next()) |output| {
-        const bar = output.taskbar orelse continue;
-        bar.tree.node.setEnabled(fullscreen_output != output);
-    }
-}
+// server/taskbars.zig
+pub const refreshTaskbars = server_taskbars.refreshTaskbars;
+pub const holdTaskbars = server_taskbars.holdTaskbars;
+pub const releaseTaskbars = server_taskbars.releaseTaskbars;
+pub const refreshTaskbarsGeometry = server_taskbars.refreshTaskbarsGeometry;
+pub const applyTaskbarPosition = server_taskbars.applyTaskbarPosition;
+pub const updateTaskbarFullscreenVisibility = server_taskbars.updateTaskbarFullscreenVisibility;
 
 /// Starts or stops the compositor-drawn desktop to match `[desktop] enabled`.
 pub fn syncDesktop(server: *Server) void {
@@ -1354,30 +982,23 @@ pub fn scheduleFrames(server: *Server) void {
     while (it.next()) |output| output.wlr_output.scheduleFrame();
 }
 
-/// Nonblocking icon lookup for titlebar/taskbar/start-menu rendering; see
-/// `icon_service.zig`. `.missing` whenever the service failed to start,
-/// matching how every other optional subsystem in this compositor degrades.
-pub fn iconLookup(server: *Server, name: []const u8, size_px: i32) icon_service_mod.Lookup {
-    const svc = server.icon_service orelse return .missing;
-    // Resolve the canonical icon name: many apps advertise an app_id /
-    // StartupWMClass that differs from their desktop Icon= name (e.g.
-    // "brave-browser" → "brave-desktop", "dev.zed.Zed" → "zed").
-    // Retain the snapshot for the duration of this call so any slice
-    // borrowed from its arena stays valid until after svc.request().
-    const snap = server.start_menu_catalog.retainSnapshot();
-    defer snap.release();
-    const icon_name = server.icon_names.resolve(snap, name);
-    return svc.request(icon_name, size_px);
-}
+// server/icons.zig
+pub const iconLookup = server_icons.iconLookup;
+pub const iconNameForAppId = server_icons.iconNameForAppId;
+pub const iconAcquire = server_icons.iconAcquire;
+pub const iconRelease = server_icons.iconRelease;
+pub const iconPrefetch = server_icons.iconPrefetch;
+pub const iconCancelSpeculative = server_icons.iconCancelSpeculative;
+pub const iconInvalidateAll = server_icons.iconInvalidateAll;
 
 /// Small direct-mapped memo for resolved icon names, keyed by app_id and
 /// invalidated wholesale whenever the catalog publishes a new generation.
 /// Names or app_ids longer than `max_len` simply bypass it and rescan.
-const IconNameCache = struct {
-    const capacity = 32;
-    const max_len = 96;
+pub const IconNameCache = struct {
+    pub const capacity = 32;
+    pub const max_len = 96;
 
-    const Entry = struct {
+    pub const Entry = struct {
         app_id: [max_len]u8 = undefined,
         app_id_len: u8 = 0,
         name: [max_len]u8 = undefined,
@@ -1389,14 +1010,14 @@ const IconNameCache = struct {
     generation: u64 = 0,
     primed: bool = false,
 
-    fn slot(app_id: []const u8) usize {
+    pub fn slot(app_id: []const u8) usize {
         return std.hash.Wyhash.hash(0, app_id) % capacity;
     }
 
     /// The returned slice is owned by the cache (stable until the entry is
     /// replaced) or borrowed from `snap` on the uncached path, so callers must
     /// keep `snap` retained for the rest of the call either way.
-    fn resolve(self: *IconNameCache, snap: *applications.Snapshot, app_id: []const u8) []const u8 {
+    pub fn resolve(self: *IconNameCache, snap: *applications.Snapshot, app_id: []const u8) []const u8 {
         if (!self.primed or self.generation != snap.generation) {
             self.generation = snap.generation;
             self.primed = true;
@@ -1421,326 +1042,29 @@ const IconNameCache = struct {
     }
 };
 
-/// Returns the icon name that should be used for a given app_id / WM class.
-/// Priority:
-///   1. A catalog entry whose StartupWMClass= exactly matches `app_id` → use
-///      that entry's Icon= name.
-///   2. A catalog entry whose desktop-file ID (sans ".desktop") exactly
-///      matches `app_id` → use its Icon= name.
-///   3. Reverse-DNS strip: "com.example.App" → last component, tried against
-///      catalog icon names.
-///   4. Fall back to `app_id` unchanged.
-/// The returned slice is either borrowed from `snap` arena memory or is a
-/// sub-slice of `app_id`; the caller must keep `snap` retained until done.
-fn iconNameForAppId(snap: *applications.Snapshot, app_id: []const u8) []const u8 {
-    if (app_id.len == 0) return app_id;
-    // The built-in settings window has no desktop entry.
-    if (std.mem.eql(u8, app_id, @import("Toplevel.zig").welcome_app_id)) return "builtin:redi-logo";
-    if (std.mem.eql(u8, app_id, @import("Toplevel.zig").settings_app_id)) return @import("ui").shell_icons.settings_icon_name;
+// server/wakeups.zig
+pub const createAudioWakeFd = server_wakeups.createAudioWakeFd;
+pub const handleAudioWake = server_wakeups.handleAudioWake;
+pub const handleBatteryUevent = server_wakeups.handleBatteryUevent;
+pub const ensureGpuTimer = server_wakeups.ensureGpuTimer;
+pub const observingStats = server_wakeups.observingStats;
+pub const expireGpuTimer = server_wakeups.expireGpuTimer;
 
-    // Pass 1: exact StartupWMClass match → use the desktop file's Icon= name.
-    for (snap.entries) |e| {
-        if (e.startup_wm_class) |wmc| {
-            if (std.mem.eql(u8, wmc, app_id)) {
-                return e.icon orelse app_id;
-            }
-        }
-    }
+pub const gpu_timer_idle_ns: u64 = 5 * 60 * std.time.ns_per_s;
 
-    // Pass 2: desktop-file ID (strip ".desktop" suffix) match.
-    for (snap.entries) |e| {
-        // e.id is the desktop file ID, e.g. "brave-browser.desktop" or
-        // "dev.zed.Zed.desktop"; strip the suffix before comparing.
-        const id = if (std.mem.endsWith(u8, e.id, ".desktop"))
-            e.id[0 .. e.id.len - ".desktop".len]
-        else
-            e.id;
-        if (std.mem.eql(u8, id, app_id)) {
-            return e.icon orelse app_id;
-        }
-    }
+// server/wallpaper.zig
+pub const themeColorArgb = server_wallpaper.themeColorArgb;
+pub const applyDecodedWallpaper = server_wallpaper.applyDecodedWallpaper;
+pub const handleCatalogWake = server_wallpaper.handleCatalogWake;
+pub const reloadWallpaper = server_wallpaper.reloadWallpaper;
+pub const saveLoginTheme = server_wallpaper.saveLoginTheme;
+pub const loadWallpaper = server_wallpaper.loadWallpaper;
+pub const stopWallpaperLoad = server_wallpaper.stopWallpaperLoad;
+pub const forgetWallpaperSource = server_wallpaper.forgetWallpaperSource;
+pub const handleWallpaperWake = server_wallpaper.handleWallpaperWake;
+pub const handleIconWake = server_wallpaper.handleIconWake;
 
-    // Pass 3: reverse-DNS heuristic — "dev.zed.Zed" → last component "Zed".
-    // Only fire when there are at least two dots (genuine reverse-DNS prefix).
-    if (std.mem.lastIndexOfScalar(u8, app_id, '.')) |dot| {
-        const last = app_id[dot + 1 ..];
-        if (std.mem.indexOfScalar(u8, app_id[0..dot], '.') != null and last.len > 0) {
-            // Try matching the last component against catalog icon names.
-            for (snap.entries) |e| {
-                const icon = e.icon orelse continue;
-                if (std.mem.eql(u8, icon, last)) return icon;
-            }
-            // Return the last component so the theme lookup at least tries it
-            // (e.g. "Zed" — some icon themes use that exact casing).
-            return last;
-        }
-    }
-
-    return app_id;
-}
-
-pub fn iconAcquire(server: *Server, id: u64) void {
-    if (server.icon_service) |svc| svc.acquire(id);
-}
-
-pub fn iconRelease(server: *Server, id: u64) void {
-    if (server.icon_service) |svc| svc.release(id);
-}
-
-/// Speculative scroll-ahead/initial-results prefetch (step 5); see
-/// `IconService.prefetch`. Fire-and-forget, budget-gated, safe to call
-/// every frame for names that may already be resolved.
-pub fn iconPrefetch(server: *Server, name: []const u8, size_px: i32) void {
-    if (server.icon_service) |svc| svc.prefetch(name, size_px);
-}
-
-/// Drops speculative work nothing is interested in anymore (a query/scroll
-/// change); see `IconService.cancelSpeculative`.
-pub fn iconCancelSpeculative(server: *Server) void {
-    if (server.icon_service) |svc| svc.cancelSpeculative();
-}
-
-/// Forces every titlebar/chip/logo icon to redecode on its next repaint;
-/// see `IconService.invalidateAll`. Nothing calls this automatically today
-/// (no runtime icon-theme reload path exists in this compositor) — it's
-/// available for a future explicit-refresh trigger.
-pub fn iconInvalidateAll(server: *Server) void {
-    if (server.icon_service) |svc| svc.invalidateAll();
-}
-
-/// Best-effort: `null` on any failure just means the taskbar/control-center
-/// UI catches up to an external volume change (another app, `pactl`) on its
-/// next incidental repaint instead of immediately — never fatal.
-fn createAudioWakeFd() ?std.posix.fd_t {
-    const rc = std.os.linux.eventfd(0, std.os.linux.EFD.NONBLOCK | std.os.linux.EFD.CLOEXEC);
-    if (std.os.linux.errno(rc) != .SUCCESS) return null;
-    return @intCast(rc);
-}
-
-/// Runs on the compositor thread, woken by `audio.AudioManager`'s PA-thread
-/// callback incrementing `fd` (see audio/pipewire.zig's module doc
-/// comment) — never touches `AudioManager` state directly, since the actual
-/// re-read happens in Taskbar.tick and the open control center's next frame.
-fn handleAudioWake(fd: c_int, mask: wl.EventMask, server: *Server) c_int {
-    _ = mask;
-    var buf: [8]u8 = undefined;
-    _ = std.posix.system.read(fd, &buf, buf.len);
-    @import("osd.zig").refreshAudio(server);
-    var it = server.outputs.iterator(.forward);
-    while (it.next()) |output| {
-        if (output.taskbar) |bar| bar.markDirty(Taskbar.paint_audio);
-    }
-    // Only General and Audio show audio state; elsewhere a rebuild is wasted.
-    if (server.input.open_control_center) |cc| if (cc.page == .general or cc.page == .audio) cc.refresh();
-    if (server.locker) |lock| lock.controlsChanged();
-    server.scheduleFrames();
-    return 0;
-}
-
-/// Drains everything queued, so events that arrive together (a plug-in sends
-/// several) cost one sysfs read, shared by every output's taskbar.
-fn handleBatteryUevent(fd: c_int, mask: wl.EventMask, server: *Server) c_int {
-    _ = mask;
-    if (!battery_mod.drainUevents(fd)) return 0;
-    const state = battery_mod.read(server.io, @import("main.zig").gpa);
-    var it = server.outputs.iterator(.forward);
-    while (it.next()) |output| {
-        if (output.taskbar) |bar| bar.applyBattery(state);
-    }
-    return 0;
-}
-
-pub fn ensureGpuTimer(server: *Server) void {
-    server.gpu_timer_used_ns = @import("ipc/stats.zig").nowNs();
-    if (server.gpu_timer_tried) return;
-    server.gpu_timer_tried = true;
-    server.gpu_timer = @import("gpu_timing.zig").Timer.create(server.renderer);
-}
-
-/// Whether a stats request came in recently enough that per-stage frame timing
-/// is worth its clock reads (the same window the GPU timer uses).
-pub fn observingStats(server: *const Server, now_ns: u64) bool {
-    return server.gpu_timer_tried and now_ns -% server.gpu_timer_used_ns < gpu_timer_idle_ns;
-}
-
-const gpu_timer_idle_ns: u64 = 5 * 60 * std.time.ns_per_s;
-
-/// One `perf` query must not leave the timer's per-frame cost (measured
-/// ~0.17 ms at 60 Hz on Iris Xe) running for the rest of the session. After
-/// five minutes without a stats request it stops; the next request restarts it.
-pub fn expireGpuTimer(server: *Server) void {
-    const timer = server.gpu_timer orelse return;
-    if (@import("ipc/stats.zig").nowNs() -% server.gpu_timer_used_ns < gpu_timer_idle_ns) return;
-    timer.destroy();
-    server.gpu_timer = null;
-    server.gpu_timer_tried = false;
-}
-
-/// Runs on the compositor thread, woken by `IconService`'s worker thread
-/// finishing a decode (see `icon_service.zig`'s module comment). Does not
-/// know or care which consumer wanted the icon that just became ready — it
-/// rechecks live consumers. Chrome/taskbar memos and the menu's visible icon
-/// IDs avoid repainting when nothing relevant changed, so touching them is safe and
-/// avoids tracking per-request subscriber pointers into windows/panels that
-/// could be destroyed before their icon arrives.
-fn themeColorArgb(color: [4]f32) u32 {
-    const a = std.math.clamp(color[3], 0, 1);
-    const a8: u32 = @intFromFloat(@round(a * 255.0));
-    const r8: u32 = @intFromFloat(@round(std.math.clamp(color[0] * a, 0, 1) * 255.0));
-    const g8: u32 = @intFromFloat(@round(std.math.clamp(color[1] * a, 0, 1) * 255.0));
-    const b8: u32 = @intFromFloat(@round(std.math.clamp(color[2] * a, 0, 1) * 255.0));
-    return (a8 << 24) | (r8 << 16) | (g8 << 8) | b8;
-}
-
-fn applyDecodedWallpaper(server: *Server, decoded: png.Image) void {
-    const image = ImageBuffer.createFromDecoded(decoded) catch |err| {
-        log.warn("applyDecodedWallpaper: {}", .{err});
-        decoded.deinit(@import("main.zig").gpa);
-        startup.markWallpaperFailed();
-        return;
-    };
-    const old = server.wallpaper;
-    server.wallpaper = image;
-    var it = server.outputs.iterator(.forward);
-    while (it.next()) |output| {
-        output.replaceWallpaper(image);
-    }
-    if (old) |prev| prev.base.drop();
-}
-
-fn handleCatalogWake(fd: c_int, mask: wl.EventMask, server: *Server) c_int {
-    _ = fd;
-    _ = mask;
-    if (!server.start_menu_catalog.drainCompletions()) return 0;
-    if (server.input.open_control_center) |cc| cc.refresh();
-    var it = server.outputs.iterator(.forward);
-    while (it.next()) |output| {
-        output.dock.invalidate();
-        if (output.start_menu) |sm| sm.refreshCatalog();
-    }
-    server.startup_warmup.onCatalogReady(server);
-    if (server.ipc) |ipc| ipc.wait_mgr.checkAll();
-    return 0;
-}
-
-/// Loads `[compositor] wallpaper` unless it is already shown or loading.
-/// The current wallpaper stays until the new one has decoded.
-pub fn reloadWallpaper(server: *Server) void {
-    server.loadWallpaper(0);
-}
-
-fn loadWallpaper(server: *Server, delay_ns: u64) void {
-    const gpa = @import("main.zig").gpa;
-    const path = @import("config_runtime/theme_pack.zig").wallpaperPath(server, gpa) catch |err| {
-        log.warn("wallpaper '{s}': {}", .{ server.config.compositor.wallpaper, err });
-        return;
-    };
-    if (server.wallpaper_source) |current| {
-        if (std.mem.eql(u8, current, path) and !server.wallpaper_failed) {
-            gpa.free(path);
-            return;
-        }
-        gpa.free(current);
-    }
-    server.wallpaper_source = path;
-    server.stopWallpaperLoad();
-
-    // A missing or broken choice falls back to the bundled image.
-    const default = wallpapers.resolve(gpa, server.io, "") catch null;
-    defer if (default) |d| gpa.free(d);
-    var candidates: [2][]const u8 = .{ path, undefined };
-    var count: usize = 1;
-    if (default) |d| {
-        if (!std.mem.eql(u8, d, path)) {
-            candidates[1] = d;
-            count = 2;
-        }
-    }
-    const loader = wallpaper_load.Loader.start(gpa, server.io, candidates[0..count], delay_ns) catch |err| {
-        server.wallpaper_failed = true;
-        log.warn("wallpaper decode worker failed: {}", .{err});
-        server.forgetWallpaperSource();
-        return;
-    };
-    server.wallpaper_failed = false;
-    server.wallpaper_loader = loader;
-    startup.markWallpaperDecoding();
-    server.wallpaper_wake_source = server.wl_server.getEventLoop().addFd(*Server, loader.wakeFd(), .{ .readable = true }, handleWallpaperWake, server) catch |err| {
-        server.wallpaper_failed = true;
-        log.warn("could not register wallpaper wake fd: {}", .{err});
-        server.stopWallpaperLoad();
-        server.forgetWallpaperSource();
-        return;
-    };
-}
-
-fn stopWallpaperLoad(server: *Server) void {
-    if (server.wallpaper_wake_source) |source| source.remove();
-    server.wallpaper_wake_source = null;
-    if (server.wallpaper_loader) |loader| loader.deinit();
-    server.wallpaper_loader = null;
-}
-
-fn forgetWallpaperSource(server: *Server) void {
-    if (server.wallpaper_source) |path| @import("main.zig").gpa.free(path);
-    server.wallpaper_source = null;
-}
-
-fn handleWallpaperWake(fd: c_int, mask: wl.EventMask, server: *Server) c_int {
-    _ = fd;
-    _ = mask;
-    const gpa = @import("main.zig").gpa;
-    const loader = server.wallpaper_loader orelse return 0;
-    if (loader.take()) |result| {
-        startup.markWallpaperDecoded(loader.decode_ns);
-        if (server.wallpaper_displayed_path) |path| gpa.free(path);
-        server.wallpaper_displayed_path = gpa.dupe(u8, loader.paths[result.path_index]) catch null;
-        server.wallpaper_failed = result.path_index != 0;
-        applyDecodedWallpaper(server, result.image);
-        if (server.wallpaper_thumb) |old| old.deinit(gpa);
-        server.wallpaper_thumb = result.thumb;
-    } else if (loader.takeFailed()) {
-        server.wallpaper_failed = true;
-        // Later failures keep the wallpaper already on screen.
-        if (startup.marks.wallpaper_state != .presented) startup.markWallpaperFailed();
-        server.forgetWallpaperSource();
-    } else return 0;
-    // Removing the source from its own callback is safe; the worker is done.
-    server.stopWallpaperLoad();
-    server.reveal.onWallpaper();
-    if (server.input.open_control_center) |cc| cc.refresh();
-    if (server.ipc) |ipc| ipc.wait_mgr.checkAll();
-    return 0;
-}
-
-fn handleIconWake(fd: c_int, mask: wl.EventMask, server: *Server) c_int {
-    _ = fd;
-    _ = mask;
-    const service = server.icon_service orelse return 0;
-    service.drainCompletions();
-
-    const now = @import("Toplevel.zig").nowMs();
-    var toplevel_it = server.world.toplevels.iterator(.forward);
-    while (toplevel_it.next()) |toplevel| {
-        toplevel.syncChrome(false, now) catch |err| {
-            log.warn("handleIconWake: syncChrome failed: {}", .{err});
-        };
-    }
-
-    var output_it = server.outputs.iterator(.forward);
-    while (output_it.next()) |output| {
-        if (output.taskbar) |bar| bar.notifyToplevelsChanged();
-        output.dock.invalidate();
-        if (output.start_menu) |sm| sm.iconsReady();
-    }
-    if (server.notifications) |mgr| mgr.iconsReady();
-    if (server.input.open_control_center) |cc| @import("control_center/sections/appearance.zig").iconsReady(&cc.appearance);
-    if (server.tray) |tray| tray.changed();
-    server.scheduleFrames();
-    return 0;
-}
-
-fn newLayer(listener: *wl.Listener(*wlr.LayerSurfaceV1), layer: *wlr.LayerSurfaceV1) void {
+pub fn newLayer(listener: *wl.Listener(*wlr.LayerSurfaceV1), layer: *wlr.LayerSurfaceV1) void {
     const server: *Server = @fieldParentPtr("new_layer", listener);
     @import("LayerSurface.zig").create(server, layer) catch {
         layer.destroy();
@@ -1765,7 +1089,7 @@ pub fn configurePolkit(server: *Server, config: config_loader.PolkitConfig) void
     };
 }
 
-fn polkitState(owner: ?*anyopaque, state: polkit_mod.Agent.State) void {
+pub fn polkitState(owner: ?*anyopaque, state: polkit_mod.Agent.State) void {
     if (state != .unavailable) return;
     const server: *Server = @ptrCast(@alignCast(owner.?));
     if (server.notifications) |mgr| {
@@ -1773,7 +1097,7 @@ fn polkitState(owner: ?*anyopaque, state: polkit_mod.Agent.State) void {
     }
 }
 
-fn parseGreeterFile(path: []const u8, a: std.mem.Allocator, io: std.Io) !config_loader.Config {
+pub fn parseGreeterFile(path: []const u8, a: std.mem.Allocator, io: std.Io) !config_loader.Config {
     const bytes = try std.Io.Dir.cwd().readFileAlloc(io, path, a, .limited(1 << 20));
     defer a.free(bytes);
     return config_loader.parse(a, bytes, path);

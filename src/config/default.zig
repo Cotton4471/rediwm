@@ -136,7 +136,9 @@ pub const source =
     \\dock_pinned_apps = [] # desktop entry IDs pinned by dragging them from the start menu
     \\# Taskbar sections, ordered within each section; prefix with - to hide an item.
     \\taskbar_position = "bottom" # top or bottom
-    \\taskbar_items = ["left:start", "left:windows", "right:capture", "right:tray", "right:battery", "right:network", "right:volume", "right:clock", "-right:power"]
+    \\taskbar_items = ["left:start", "left:windows", "right:capture", "right:tray", "right:battery", "~right:wifi", "~right:wired", "right:volume", "right:clock", "-right:power"]
+    \\# A ~ prefix (~right:wifi, ~right:wired) shows the item only while a wireless adapter
+    \\# exists, or a cable is connected; a plain or - entry always shows or hides it.
     \\# Hiding capture (-right:capture) removes the recording/sharing indicator; not recommended.
     \\focus_follows_mouse   = false
     \\canvas_columns        = 3      # screens wide (1-10)

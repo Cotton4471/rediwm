@@ -59,6 +59,7 @@ def run():
                 assert box('start')['x'] < row[0]['x'] < box('clock')['x']
                 check_bounds()
                 assert not any(w['name'] == 'power' for w in bar()), 'Power defaults off'
+                assert not any(w['name'] in ('tray/1', 'wired') for w in bar()), 'Wi-Fi and Ethernet follow the hardware: none here'
                 ipc.action('open_appearance')
                 ipc.wait_for_panel_settled('control_center')
                 def clock_image(name):
@@ -94,8 +95,10 @@ def run():
                         well = ui.find(f'taskbar_zone_{label}')['global_box']
                         if well['y'] <= row['y'] and row['y'] + row['height'] <= well['y'] + well['height']:
                             return zone
-                for name, expected in (('start', 0), ('windows', 0), ('capture', 2), ('tray', 2), ('clock', 2), ('power', 2)):
+                for name, expected in (('start', 0), ('windows', 0), ('capture', 2), ('tray', 2), ('clock', 2), ('power', 2), ('wifi', 2), ('wired', 2)):
                     assert zone_of(name) == expected, name
+                for name in ('wifi', 'wired'):
+                    assert not ui.scroll_into_view(f'taskbar_{name}_visible')['on'], f'{name} is off without its hardware'
                 toggle = ui.scroll_into_view('taskbar_capture_visible')
                 assert toggle['on'], 'Screen capture defaults on'
                 ipc.click_at(*center(toggle['global_box']))
@@ -121,7 +124,7 @@ def run():
                 ipc.click_at(*center(toggle['global_box']))
                 wait_for(lambda: any(w['name'] == 'power' for w in bar()), 'Power restored')
                 # Drag fixed controls and both primary groups into every section.
-                for name in ('clock', 'network', 'volume', 'start', 'windows', 'tray', 'power', 'capture'):
+                for name in ('clock', 'wifi', 'wired', 'volume', 'start', 'windows', 'tray', 'power', 'capture'):
                     for zone in (0, 1, 2):
                         if zone_of(name) == zone:
                             continue
@@ -139,7 +142,7 @@ def run():
                             ipc.move_cursor(round(well['x'] + well['width'] / 2), well['y'] + well['height'] - 3)
                             aimed = well
                         ipc.pointer_button(0x110, False)
-                        wait_for(lambda: any(entry.lstrip('-') == f'{zones[zone]}:{name}'
+                        wait_for(lambda: any(entry.lstrip('-~') == f'{zones[zone]}:{name}'
                             for entry in tomllib.loads(cfg.read_text())['compositor']['taskbar_items']), 'section saved')
                         ipc.wait_for_frame()
                         ipc.wait_for_panel_settled('control_center')
@@ -147,9 +150,9 @@ def run():
                         check_bounds()
                 # Drag and keyboard order within a section.
                 before = tomllib.loads(cfg.read_text())['compositor']['taskbar_items']
-                handle = ui.scroll_into_view('taskbar_network_order')
+                handle = ui.scroll_into_view('taskbar_wifi_order')
                 volume = ui.scroll_into_view('taskbar_volume_order')
-                handle = ui.find('taskbar_network_order')
+                handle = ui.find('taskbar_wifi_order')
                 fx, fy = center(handle['global_box'])
                 tx, ty = center(volume['global_box'])
                 assert handle['visible'] and not handle['clipped'], handle
@@ -157,8 +160,9 @@ def run():
                 wait_for(lambda: tomllib.loads(cfg.read_text())['compositor']['taskbar_items'] != before, 'drag reorder')
                 ipc.wait_for_panel_settled('control_center')
                 dragged = tomllib.loads(cfg.read_text())['compositor']['taskbar_items']
-                assert (dragged.index('right:network') > dragged.index('right:volume')) != (before.index('right:network') > before.index('right:volume')), dragged
-                handle = ui.scroll_into_view('taskbar_network_order')
+                def at(entries, name): return [entry.lstrip('-~') for entry in entries].index(name)
+                assert (at(dragged, 'right:wifi') > at(dragged, 'right:volume')) != (at(before, 'right:wifi') > at(before, 'right:volume')), dragged
+                handle = ui.scroll_into_view('taskbar_wifi_order')
                 ipc.click_at(*center(handle['global_box']))
                 ipc.key(108, True)
                 ipc.key(108, False)

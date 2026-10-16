@@ -13,6 +13,7 @@ const c = @cImport({
 
 test {
     _ = proto;
+    _ = @import("appearance.zig");
 }
 
 test "config: load defaults and custom dm.conf" {

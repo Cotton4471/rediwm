@@ -5,18 +5,14 @@
 //
 // Widget callbacks carry their owning Section explicitly.
 const std = @import("std");
-const Server = @import("../../Server.zig");
 
 const layout = @import("ui").layout;
 const ui_slider = @import("ui").widgets.slider;
 const theme = @import("ui").theme;
-const scrollbar = @import("ui").widgets.scrollbar;
 const theme_presets = @import("config").theme_pack;
 const Widget = layout.Widget;
 const main = @import("../../main.zig");
 const panel = @import("../panel.zig");
-const setting_save = @import("config").setting_save;
-const settings_portal = @import("../../session/settings_portal.zig");
 const loader = @import("config").loader;
 const Taskbar = @import("../../Taskbar.zig");
 const dock_mod = @import("../../Dock.zig");
@@ -26,42 +22,143 @@ const wallpapers = @import("../../wallpapers.zig");
 const wallpaper_strip = @import("../../wallpaper_strip.zig");
 const folder_picker = @import("../folder_picker.zig");
 const wl = @import("wayland").server.wl;
-const actions = @import("../../config_runtime/actions.zig");
 const anim = @import("ui").anim;
 const col = @import("../../color.zig");
 const geometry = @import("../../geometry.zig");
 const start_button = @import("../../taskbar/start_button.zig");
 const menu_size = @import("../../start_menu/size.zig");
 const wlr = @import("wlroots");
-const ipc_animations = @import("../../ipc/animations.zig");
 const app_theme = @import("config").app_theme;
 const AppColorsJob = @import("../../config_runtime/app_theme.zig").Job;
+const appearance_wallpaper = @import("appearance_wallpaper.zig");
+const appearance_colors = @import("appearance_colors.zig");
+const appearance_themes = @import("appearance_themes.zig");
+const appearance_chrome = @import("appearance_chrome.zig");
+const appearance_items = @import("appearance_items.zig");
+const appearance_dock = @import("appearance_dock.zig");
+pub const tile_w = appearance_wallpaper.tile_w;
+pub const tile_h = appearance_wallpaper.tile_h;
+pub const tile_pad = appearance_wallpaper.tile_pad;
+pub const tile_extent = appearance_wallpaper.tile_extent;
+pub const strip_gap = appearance_wallpaper.strip_gap;
+pub const check_size = appearance_wallpaper.check_size;
+pub const chosen_dir = appearance_wallpaper.chosen_dir;
+pub const stripFolder = appearance_wallpaper.stripFolder;
+pub const tildePath = appearance_wallpaper.tildePath;
+pub const stopStrip = appearance_wallpaper.stopStrip;
+pub const deinit = appearance_wallpaper.deinit;
+pub const appColorsNote = appearance_colors.appColorsNote;
+pub const onApplyAppColors = appearance_colors.onApplyAppColors;
+pub const appColorsFailure = appearance_colors.appColorsFailure;
+pub const finishAppColors = appearance_colors.finishAppColors;
+pub const appColorsReady = appearance_colors.appColorsReady;
+pub const stripWake = appearance_wallpaper.stripWake;
+pub const restartStrip = appearance_wallpaper.restartStrip;
+pub const buildWallpaper = appearance_wallpaper.buildWallpaper;
+pub const buildStrip = appearance_wallpaper.buildStrip;
+pub const onStripTile = appearance_wallpaper.onStripTile;
+pub const onStripCheck = appearance_wallpaper.onStripCheck;
+pub const pickStripEntry = appearance_wallpaper.pickStripEntry;
+pub const onWallpaperPicked = appearance_wallpaper.onWallpaperPicked;
+pub const applyWallpaper = appearance_wallpaper.applyWallpaper;
+pub const onChooseWallpaperFolder = appearance_wallpaper.onChooseWallpaperFolder;
+pub const onFolderChosen = appearance_wallpaper.onFolderChosen;
+pub const applyThemeChange = appearance_themes.applyThemeChange;
+pub const applyThemeChangeImpl = appearance_themes.applyThemeChangeImpl;
+pub const saveThemeChange = appearance_themes.saveThemeChange;
+pub const onChooseStartLogo = appearance_themes.onChooseStartLogo;
+pub const onStartLogoChosen = appearance_themes.onStartLogoChosen;
+pub const onAutoMenuSize = appearance_themes.onAutoMenuSize;
+pub const onResetStartLogo = appearance_themes.onResetStartLogo;
+pub const refreshTheme = appearance_themes.refreshTheme;
+pub const onResetTheme = appearance_themes.onResetTheme;
+pub const themeFailure = appearance_themes.themeFailure;
+pub const onInstallTheme = appearance_themes.onInstallTheme;
+pub const themeFileChosen = appearance_themes.themeFileChosen;
+pub const onReplaceTheme = appearance_themes.onReplaceTheme;
+pub const onRemoveTheme = appearance_themes.onRemoveTheme;
+pub const onExportTheme = appearance_themes.onExportTheme;
+pub const exportFileChosen = appearance_themes.exportFileChosen;
+pub const onIconThemePicked = appearance_themes.onIconThemePicked;
+pub const onThemePicked = appearance_themes.onThemePicked;
+pub const onTaskbarThemePicked = appearance_themes.onTaskbarThemePicked;
+pub const ClockStyle = appearance_chrome.ClockStyle;
+pub const onFontFamilyChanged = appearance_chrome.onFontFamilyChanged;
+pub const onFontSizeChanged = appearance_chrome.onFontSizeChanged;
+pub const onRadiusChanged = appearance_chrome.onRadiusChanged;
+pub const onShadowChanged = appearance_chrome.onShadowChanged;
+pub const onBorderGlowChanged = appearance_chrome.onBorderGlowChanged;
+pub const onChromeOpacityChanged = appearance_chrome.onChromeOpacityChanged;
+pub const onChromeDarknessChanged = appearance_chrome.onChromeDarknessChanged;
+pub const onInactiveDimChanged = appearance_chrome.onInactiveDimChanged;
+pub const onInactiveOpacityChanged = appearance_chrome.onInactiveOpacityChanged;
+pub const onTerminalOpacityChanged = appearance_chrome.onTerminalOpacityChanged;
+pub const max_window_gap = appearance_chrome.max_window_gap;
+pub const onWindowGapChanged = appearance_chrome.onWindowGapChanged;
+pub const onTaskbarPositionChanged = appearance_chrome.onTaskbarPositionChanged;
+pub const onFocusZoomChanged = appearance_chrome.onFocusZoomChanged;
+pub const onDragFeedbackChanged = appearance_chrome.onDragFeedbackChanged;
+pub const onDragScaleChanged = appearance_chrome.onDragScaleChanged;
+pub const onAnimationsEnabledChanged = appearance_chrome.onAnimationsEnabledChanged;
+pub const onAnimSpeedChanged = appearance_chrome.onAnimSpeedChanged;
+pub const onReducedMotionChanged = appearance_chrome.onReducedMotionChanged;
+pub const onCursorThemePicked = appearance_chrome.onCursorThemePicked;
+pub const onDarkModeChanged = appearance_chrome.onDarkModeChanged;
+pub const onSplashStartupChanged = appearance_chrome.onSplashStartupChanged;
+pub const onDodgeFileDragsChanged = appearance_chrome.onDodgeFileDragsChanged;
+pub const saveItems = appearance_items.saveItems;
+pub const item_row_height = appearance_items.item_row_height;
+pub const itemRowStyle = appearance_items.itemRowStyle;
+pub const itemZoneStyle = appearance_items.itemZoneStyle;
+pub const itemName = appearance_items.itemName;
+pub const syncItems = appearance_items.syncItems;
+pub const itemHandle = appearance_items.itemHandle;
+pub const beginItemDrag = appearance_items.beginItemDrag;
+pub const previewItems = appearance_items.previewItems;
+pub const moveItemDrag = appearance_items.moveItemDrag;
+pub const endItemDrag = appearance_items.endItemDrag;
+pub const restoreItemFocus = appearance_items.restoreItemFocus;
+pub const captureItemFocus = appearance_items.captureItemFocus;
+pub const itemKey = appearance_items.itemKey;
+pub const ItemToggle = appearance_items.ItemToggle;
+pub const buildWindowTabs = appearance_dock.buildWindowTabs;
+pub const onWindowTabsChanged = appearance_dock.onWindowTabsChanged;
+pub const section = appearance_dock.section;
+pub const onDockChanged = appearance_dock.onDockChanged;
+pub const onDockAutoHideChanged = appearance_dock.onDockAutoHideChanged;
+pub const onDockOpacityChanged = appearance_dock.onDockOpacityChanged;
+pub const onDockActiveHighlightChanged = appearance_dock.onDockActiveHighlightChanged;
+pub const onDockShowTrashChanged = appearance_dock.onDockShowTrashChanged;
+pub const onDockPositionChanged = appearance_dock.onDockPositionChanged;
+pub const onDockHeightChanged = appearance_dock.onDockHeightChanged;
+pub const updateDockZoomLabel = appearance_dock.updateDockZoomLabel;
+pub const onDockHoverZoomChanged = appearance_dock.onDockHoverZoomChanged;
 
-const segmented_width: f32 = 180;
+pub const segmented_width: f32 = 180;
 /// The dock's corner radius slider. A theme's `dock_radius` of zero means "the
 /// window radius", so the slider starts at 1 px (square to the eye) and a
 /// chosen value is never mistaken for it. Half the tallest dock caps it.
-const dock_radius_min: f32 = 1;
-const dock_radius_max: f32 = 48;
+pub const dock_radius_min: f32 = 1;
+pub const dock_radius_max: f32 = 48;
 
-const font_values = [3]f32{ 12, 13, 14 };
-const font_labels = [_][]const u8{ "Small", "Medium", "Large" };
-const radius_labels = [_][]const u8{ "Sharp", "Default", "Round" };
-const shadow_size_values = [3]f32{ 0, 16, 32 };
-const shadow_alpha_values = [3]f32{ 0, 0.28, 0.45 };
-const shadow_labels = [_][]const u8{ "None", "Soft", "Strong" };
-const anim_speed_values = [4]f32{ 0.5, 1.0, 1.5, 2.0 };
-const anim_speed_labels = [_][]const u8{ "0.5×", "1.0×", "1.5×", "2.0×" };
-const reduced_motion_values = [3]anim.ReducedMotion{ .auto, .on, .off };
-const reduced_motion_labels = [_][]const u8{ "Auto", "On", "Off" };
-const focus_zoom_labels = [_][]const u8{ "Keep zoom", "Boost window", "Focus camera" };
-const focus_zoom_descriptions = [_][]const u8{
+pub const font_values = [3]f32{ 12, 13, 14 };
+pub const font_labels = [_][]const u8{ "Small", "Medium", "Large" };
+pub const radius_labels = [_][]const u8{ "Sharp", "Default", "Round" };
+pub const shadow_size_values = [3]f32{ 0, 16, 32 };
+pub const shadow_alpha_values = [3]f32{ 0, 0.28, 0.45 };
+pub const shadow_labels = [_][]const u8{ "None", "Soft", "Strong" };
+pub const anim_speed_values = [4]f32{ 0.5, 1.0, 1.5, 2.0 };
+pub const anim_speed_labels = [_][]const u8{ "0.5×", "1.0×", "1.5×", "2.0×" };
+pub const reduced_motion_values = [3]anim.ReducedMotion{ .auto, .on, .off };
+pub const reduced_motion_labels = [_][]const u8{ "Auto", "On", "Off" };
+pub const focus_zoom_labels = [_][]const u8{ "Keep zoom", "Boost window", "Focus camera" };
+pub const focus_zoom_descriptions = [_][]const u8{
     "Pan to the selected window without changing zoom.",
     "Temporarily show the selected window at full size; keep desktop zoom.",
     "Zoom the desktop to the selected window's level; fade windows passed by the camera.",
 };
 
-fn indexOfReducedMotion(m: anim.ReducedMotion) usize {
+pub fn indexOfReducedMotion(m: anim.ReducedMotion) usize {
     return switch (m) {
         .auto => 0,
         .on => 1,
@@ -73,34 +170,34 @@ fn indexOfReducedMotion(m: anim.ReducedMotion) usize {
 /// index into `Section.px` below. Grouped into an array instead of one field
 /// per control since the pixel sliders
 /// are otherwise identical boilerplate.
-const PxControl = struct {
+pub const PxControl = struct {
     header_children: [2]Widget = undefined,
     group_children: [2]Widget = undefined,
     value_buf: [16]u8 = undefined,
 };
 
-const px_taskbar_size = 0;
-const px_chip_gap = 1;
-const px_start_button_gap = 2;
-const px_start_icon_size = 3;
-const px_menu_left = 4;
-const px_menu_bottom = 5;
-const px_icon_left = 6;
-const px_icon_bottom = 7;
-const px_scrollbar_width = 8;
-const px_chip_width = 9;
-const px_window_gap = 10;
-const px_chrome_height = 11;
-const px_chrome_control_gap = 12;
-const px_menu_width = 13;
-const px_menu_height = 14;
-const px_dock_height = 15;
-const px_dock_hover_zoom = 16;
-const px_taskbar_edge_gap = 17;
-const px_taskbar_length = 18;
-const px_taskbar_radius = 19;
-const px_dock_opacity = 20;
-const px_dock_radius = 21;
+pub const px_taskbar_size = 0;
+pub const px_chip_gap = 1;
+pub const px_start_button_gap = 2;
+pub const px_start_icon_size = 3;
+pub const px_menu_left = 4;
+pub const px_menu_bottom = 5;
+pub const px_icon_left = 6;
+pub const px_icon_bottom = 7;
+pub const px_scrollbar_width = 8;
+pub const px_chip_width = 9;
+pub const px_window_gap = 10;
+pub const px_chrome_height = 11;
+pub const px_chrome_control_gap = 12;
+pub const px_menu_width = 13;
+pub const px_menu_height = 14;
+pub const px_dock_height = 15;
+pub const px_dock_hover_zoom = 16;
+pub const px_taskbar_edge_gap = 17;
+pub const px_taskbar_length = 18;
+pub const px_taskbar_radius = 19;
+pub const px_dock_opacity = 20;
+pub const px_dock_radius = 21;
 
 pub const Section = struct {
     cc: *panel.ControlCenter = undefined,
@@ -226,13 +323,13 @@ pub const Section = struct {
 /// 320 x 240, which a hand-edited theme can still reach but leaves one row.
 /// Until a slider is moved the theme holds 0 and the menu is sized to the
 /// output (`start_menu/size.zig`); the sliders show that size.
-const menu_width_min = menu_size.min_width;
-const menu_width_max: f32 = 900;
-const menu_height_min = menu_size.min_height;
-const menu_height_max: f32 = 900;
-const start_logo_tile_size: f32 = 56;
+pub const menu_width_min = menu_size.min_width;
+pub const menu_width_max: f32 = 900;
+pub const menu_height_min = menu_size.min_height;
+pub const menu_height_max: f32 = 900;
+pub const start_logo_tile_size: f32 = 56;
 
-const StartLogo = struct {
+pub const StartLogo = struct {
     image: layout.ImageData,
     /// Logical size the image is drawn at.
     size: i32,
@@ -244,7 +341,7 @@ const StartLogo = struct {
 /// when the file cannot be loaded), with the bundled one tinted the way
 /// `Taskbar.paintPartPixel` tints it. Mirrors `Taskbar.refreshStartLogo`.
 /// Pixels are copied into `a`, so nothing is pinned in the icon service.
-fn startLogoImage(out: *Section, a: std.mem.Allocator, logical: i32) StartLogo {
+pub fn startLogoImage(out: *Section, a: std.mem.Allocator, logical: i32) StartLogo {
     const server = out.cc.server;
     const custom = theme.global.start_button_icon;
     const size_px = geometry.devicePixels(logical, out.cc.toplevel.render_scale);
@@ -283,7 +380,7 @@ pub fn iconsReady(s: *Section) void {
     if ((s.start_logo_pending or s.theme_preview_pending) and s.cc.page == .appearance) s.cc.refresh();
 }
 
-fn indexOfNearest(values: []const f32, v: f32) usize {
+pub fn indexOfNearest(values: []const f32, v: f32) usize {
     var best: usize = 0;
     var best_d = @abs(values[0] - v);
     for (values, 0..) |candidate, i| {
@@ -296,34 +393,34 @@ fn indexOfNearest(values: []const f32, v: f32) usize {
     return best;
 }
 
-fn labelWidget(content: []const u8) Widget {
+pub fn labelWidget(content: []const u8) Widget {
     const t = panel.palette();
     return .{ .kind = .{ .text = .{ .content = content, .font_size = theme.global.app_text_size, .weight = 600, .color = t.fg } } };
 }
 
-fn valueWidget(content: []const u8) Widget {
+pub fn valueWidget(content: []const u8) Widget {
     const t = panel.palette();
     return .{ .kind = .{ .text = .{ .content = content, .font_size = theme.global.app_text_size, .color = t.dim } } };
 }
 
 /// The readout beside a slider, in a rounded label.
-fn pillWidget(content: []const u8) Widget {
+pub fn pillWidget(content: []const u8) Widget {
     return ui_slider.valuePill(content, theme.global.app_text_size, panel.palette().dim);
 }
 
-fn sectionLabel(content: []const u8) Widget {
+pub fn sectionLabel(content: []const u8) Widget {
     const t = panel.palette();
     return .{ .kind = .{ .text = .{ .content = content, .font_size = theme.global.app_heading_size, .weight = 700, .color = t.dim } } };
 }
 
 /// Builds one "label ... value / slider" pixel-value row and formats its
 /// initial value into `out.px[idx].value_buf`.
-fn pxGroup(out: *Section, idx: usize, label_text: []const u8, value: f32, min: f32, max: f32, step: f32, on_change: *const fn (?*anyopaque, usize, f32) void) Widget {
+pub fn pxGroup(out: *Section, idx: usize, label_text: []const u8, value: f32, min: f32, max: f32, step: f32, on_change: *const fn (?*anyopaque, usize, f32) void) Widget {
     return unitGroup(out, idx, label_text, value, min, max, step, on_change, "px");
 }
 
 /// `pxGroup` for a value that isn't in pixels, such as a percentage.
-fn unitGroup(out: *Section, idx: usize, label_text: []const u8, value: f32, min: f32, max: f32, step: f32, on_change: *const fn (?*anyopaque, usize, f32) void, unit: []const u8) Widget {
+pub fn unitGroup(out: *Section, idx: usize, label_text: []const u8, value: f32, min: f32, max: f32, step: f32, on_change: *const fn (?*anyopaque, usize, f32) void, unit: []const u8) Widget {
     const formatted = std.fmt.bufPrint(&out.px[idx].value_buf, "{d}{s}", .{ @as(i32, @intFromFloat(@round(value))), unit }) catch "?";
     out.px[idx].header_children = .{ labelWidget(label_text), pillWidget(formatted) };
     const header: Widget = .{ .kind = .container, .direction = .row, .justify = .space_between, .children = &out.px[idx].header_children };
@@ -342,13 +439,13 @@ fn unitGroup(out: *Section, idx: usize, label_text: []const u8, value: f32, min:
 /// they can change item sizes without changing `bar.box.height`, the only
 /// thing the cheap height-guarded refresh notices; the start-menu-popup
 /// padding fields don't touch taskbar geometry at all.
-fn PxHandler(comptime idx: usize, comptime field: []const u8, comptime taskbar_geometry: bool) type {
+pub fn PxHandler(comptime idx: usize, comptime field: []const u8, comptime taskbar_geometry: bool) type {
     return UnitHandler(idx, field, taskbar_geometry, "px");
 }
 
-fn UnitHandler(comptime idx: usize, comptime field: []const u8, comptime taskbar_geometry: bool, comptime unit: []const u8) type {
+pub fn UnitHandler(comptime idx: usize, comptime field: []const u8, comptime taskbar_geometry: bool, comptime unit: []const u8) type {
     return struct {
-        fn changed(owner: ?*anyopaque, _: usize, value: f32) void {
+        pub fn changed(owner: ?*anyopaque, _: usize, value: f32) void {
             const s = section(owner);
             @field(theme.global, field) = value;
             const formatted = std.fmt.bufPrint(&s.px[idx].value_buf, "{d}" ++ unit, .{@as(i32, @intFromFloat(@round(value)))}) catch "?";
@@ -971,10 +1068,10 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
     out.root = .{ .kind = .container, .direction = .column, .gap = 8, .children = &out.top_children };
 }
 
-const strip_index = 1;
+pub const strip_index = 1;
 
 /// `row_storage`, in the order `build` fills it.
-const Row = enum {
+pub const Row = enum {
     theme_pack,
     icon_theme,
     theme,
@@ -1007,9 +1104,9 @@ const Row = enum {
     taskbar,
     start_menu,
 };
-const row_count = std.meta.fields(Row).len;
+pub const row_count = std.meta.fields(Row).len;
 
-const groups = [_]struct { title: ?[]const u8, rows: []const Row }{
+pub const groups = [_]struct { title: ?[]const u8, rows: []const Row }{
     .{ .title = "Themes & colours", .rows = &.{ .theme, .taskbar_theme, .theme_pack, .icon_theme, .dark_mode, .app_colors } },
     .{ .title = "Wallpaper", .rows = &.{.wallpaper} },
     .{ .title = "Fonts & cursor", .rows = &.{ .font_family, .font_size, .cursor } },
@@ -1028,1293 +1125,4 @@ comptime {
         seen[@intFromEnum(row)] = true;
     };
     for (seen, 0..) |shown, i| if (!shown) @compileError("row in no group: " ++ @tagName(@as(Row, @enumFromInt(i))));
-}
-const tile_w: f32 = wallpaper_strip.thumb_width / 2;
-const tile_h: f32 = wallpaper_strip.thumb_height / 2;
-const tile_pad: f32 = 3;
-const tile_extent = tile_w + 2 * tile_pad;
-const strip_gap: f32 = 8;
-const check_size: f32 = 18;
-
-/// A folder picked with "Choose folder" this session, gpa-owned.
-var chosen_dir: ?[]u8 = null;
-
-/// The folder the strip shows: the chosen one, else where a wallpaper set by
-/// path lives. Null means the wallpaper directories' own images.
-fn stripFolder(arena: std.mem.Allocator, io: std.Io, configured: []const u8) ?[]const u8 {
-    if (chosen_dir) |dir| return dir;
-    if (!wallpapers.isPath(configured)) return null;
-    const path = wallpapers.resolve(arena, io, configured) catch return null;
-    const dir = std.fs.path.dirname(path) orelse return null;
-    for ([_]?[]const u8{ wallpapers.userDir(arena) catch null, wallpapers.bundledDir(arena, io) catch null }) |own| {
-        if (own) |o| if (std.mem.eql(u8, o, dir)) return null;
-    }
-    return dir;
-}
-
-/// `/home/me/x` as `~/x`.
-fn tildePath(arena: std.mem.Allocator, path: []const u8) []const u8 {
-    const home = if (std.c.getenv("HOME")) |h| std.mem.span(h) else "";
-    if (home.len > 1 and std.mem.startsWith(u8, path, home) and path.len > home.len and path[home.len] == '/')
-        return std.fmt.allocPrint(arena, "~{s}", .{path[home.len..]}) catch path;
-    return path;
-}
-
-fn stopStrip(out: *Section) void {
-    if (out.strip_source) |source| source.remove();
-    out.strip_source = null;
-    if (out.strip) |strip| strip.deinit();
-    out.strip = null;
-}
-
-pub fn deinit(out: *Section) void {
-    stopStrip(out);
-    finishAppColors(out, false);
-    if (out.theme_pending_path) |p| main.gpa.free(p);
-    out.theme_pending_path = null;
-}
-
-fn appColorsNote(s: *Section, a: std.mem.Allocator, color: [4]f32) Widget {
-    const text = @import("ui").text;
-    const width: f32 = @floatFromInt(@max(120, s.cc.panel_box.width - @as(i32, if (s.cc.panel_box.width < 660) 70 else 238) - 100));
-    var lines: std.ArrayList(Widget) = .empty;
-    var start: usize = 0;
-    var words = std.mem.tokenizeScalar(u8, s.app_colors_message, ' ');
-    var end: usize = 0;
-    while (words.next()) |word| {
-        const next = @intFromPtr(word.ptr) - @intFromPtr(s.app_colors_message.ptr) + word.len;
-        const measured = text.measureWidthF(s.app_colors_message[start..next], .manrope, theme.global.settings_description_size, 1) catch 0;
-        if (end > start and measured > width) {
-            lines.append(a, .{ .name = std.fmt.allocPrint(a, "app_colors_status_{d}", .{lines.items.len}) catch "app_colors_status_line", .kind = .{ .text = .{ .content = s.app_colors_message[start..end], .font_size = theme.global.settings_description_size, .color = color } } }) catch break;
-            start = next - word.len;
-        }
-        end = next;
-    }
-    if (end > start) lines.append(a, .{ .name = std.fmt.allocPrint(a, "app_colors_status_{d}", .{lines.items.len}) catch "app_colors_status_line", .kind = .{ .text = .{ .content = s.app_colors_message[start..end], .font_size = theme.global.settings_description_size, .color = color } } }) catch {};
-    return .{ .name = "app_colors_status", .kind = .container, .direction = .column, .gap = 2, .children = lines.toOwnedSlice(a) catch &.{} };
-}
-
-fn onApplyAppColors(owner: ?*anyopaque, id: usize) void {
-    const s = section(owner);
-    if (s.app_colors_job != null or s.cc.server.greeter_mode) return;
-    const job = AppColorsJob.create(s.cc.server.io, s.cc.server.environ, if (id == 0) .gtk else .qt, app_theme.Palette.fromTheme(theme.global)) catch |err| {
-        appColorsFailure(s, err);
-        return;
-    };
-    const source = s.cc.server.wl_server.getEventLoop().addFd(*Section, job.fd, .{ .readable = true }, appColorsReady, s) catch |err| {
-        job.deinit();
-        appColorsFailure(s, err);
-        return;
-    };
-    job.start() catch |err| {
-        source.remove();
-        job.deinit();
-        appColorsFailure(s, err);
-        return;
-    };
-    s.app_colors_job = job;
-    s.app_colors_source = source;
-    s.app_colors_message = "Applying app colors…";
-    s.cc.refresh();
-}
-
-fn appColorsFailure(s: *Section, err: anyerror) void {
-    s.app_colors_message = switch (err) {
-        error.QtToolsMissing => "Install qt5ct for Qt 5 apps or qt6ct for Qt 6 apps, then apply again.",
-        error.ManagedSymlink => "A toolkit config folder is a symlink. Apply the colors in its real location, or make it a regular folder.",
-        error.InvalidManagedCss => "The RediWM block in gtk.css is incomplete. Repair it before applying colors.",
-        else => std.fmt.bufPrint(&s.app_colors_message_buf, "Could not apply app colors: {s}. Check your configuration files and permissions.", .{@errorName(err)}) catch "Could not apply app colors. Check your configuration files and permissions.",
-    };
-    std.log.warn("app colors export failed: {}", .{err});
-    s.cc.refresh();
-}
-
-fn finishAppColors(s: *Section, refresh: bool) void {
-    if (s.app_colors_source) |source| source.remove();
-    s.app_colors_source = null;
-    const job = s.app_colors_job orelse return;
-    s.app_colors_job = null;
-    job.join();
-    defer job.deinit();
-    const support = job.result catch |err| {
-        if (refresh) appColorsFailure(s, err);
-        return;
-    };
-    if (job.toolkit == .qt) s.cc.server.qt_app_colors = true;
-    if (!refresh) return;
-    s.app_colors_message = switch (job.toolkit) {
-        .gtk => "GTK colors applied. Restart GTK apps. Apps with their own styles or sandbox settings may differ.",
-        .qt => if (support.qt5 and support.qt6)
-            "Qt 5 and Qt 6 colors applied. Restart apps; sign in again if their colors do not change."
-        else if (support.qt6)
-            "Qt 6 colors applied. Install qt5ct for Qt 5 apps. Restart apps; sign in again if their colors do not change."
-        else
-            "Qt 5 colors applied. Install qt6ct for Qt 6 apps. Restart apps; sign in again if their colors do not change.",
-    };
-    s.cc.refresh();
-}
-
-fn appColorsReady(_: c_int, _: wl.EventMask, s: *Section) c_int {
-    finishAppColors(s, true);
-    return 0;
-}
-
-/// Thumbnails arrive one by one; each goes into its tile in the shown strip
-/// and repaints that tile alone. A later build reads them from the strip.
-fn stripWake(_: c_int, _: wl.EventMask, out: *Section) c_int {
-    const strip = out.strip orelse return 0;
-    strip.drain();
-    const cc = out.cc.server.input.open_control_center orelse return 0;
-    if (cc != out.cc or cc.page != .appearance or !out.strip_built) return 0;
-    const container = &out.wallpaper_children[strip_index];
-    if (container.kind != .scroll_container) return 0;
-    for (container.children, 0..) |*tile, i| {
-        const image = &tile.children[0];
-        if (image.kind != .image or image.kind.image.pixels != null) continue;
-        image.kind.image.pixels = strip.thumb(i) orelse continue;
-        image.markPaintDirty();
-    }
-    cc.requestWidgetRepaint();
-    return 0;
-}
-
-fn restartStrip(out: *Section, server: *@import("../../Server.zig")) void {
-    stopStrip(out);
-    if (out.strip_entries.len == 0) return;
-    const strip = wallpaper_strip.Strip.start(main.gpa, server.io, out.strip_entries) catch |err| {
-        std.log.warn("wallpaper strip: {}", .{err});
-        return;
-    };
-    out.strip = strip;
-    out.strip_source = server.wl_server.getEventLoop().addFd(*Section, strip.wakeFd(), .{ .readable = true }, stripWake, out) catch |err| {
-        std.log.warn("could not register wallpaper strip wake fd: {}", .{err});
-        stopStrip(out);
-        return;
-    };
-}
-
-/// A strip of the images to choose from and the folder chooser.
-fn buildWallpaper(out: *Section, arena: std.mem.Allocator) void {
-    const pal = panel.palette();
-    const server = out.cc.server;
-    const ordinary = wallpapers.list(arena, server.io) catch &.{};
-    const pack_images = if (server.config.theme_pack) |p| (if (p.root.len > 0) wallpapers.listDir(arena, server.io, std.fs.path.join(arena, &.{ p.root, "wallpapers" }) catch "") catch &.{} else &.{}) else &.{};
-    out.wallpapers = std.mem.concat(arena, wallpapers.Entry, &.{ pack_images, ordinary }) catch ordinary;
-    const configured = server.config.compositor.wallpaper;
-    var labels: [][]const u8 = &.{};
-    if (arena.alloc([]const u8, out.wallpapers.len)) |l| {
-        for (out.wallpapers, l) |entry, *dst| dst.* = entry.label;
-        labels = l;
-    } else |_| {}
-    out.wallpaper_row_children = .{
-        labelWidget("Image"),
-        .{
-            .name = "wallpaper",
-            .kind = .{
-                .select = .{
-                    .labels = labels,
-                    .selected = wallpapers.indexOf(out.wallpapers, configured),
-                    // A path outside the wallpaper directories.
-                    .placeholder = if (configured.len > 0) std.fs.path.basename(configured) else "RediWM",
-                    .disabled = labels.len == 0,
-                    .owner = out,
-                    .on_change = &onWallpaperPicked,
-                },
-            },
-            .width = .{ .fixed = segmented_width },
-        },
-    };
-
-    const folder: ?[]const u8 = stripFolder(arena, server.io, configured);
-    out.strip_entries = if (folder) |dir| (wallpapers.listDir(arena, server.io, dir) catch &.{}) else out.wallpapers;
-    var fresh = false;
-    if (out.strip == null or !out.strip.?.matches(out.strip_entries)) {
-        restartStrip(out, server);
-        fresh = true;
-    }
-    const resolved = @import("../../config_runtime/theme_pack.zig").wallpaperPath(server, arena) catch "";
-    var current_tile: ?usize = null;
-    for (out.strip_entries, 0..) |entry, i| {
-        if (std.mem.eql(u8, entry.path, resolved)) current_tile = i;
-    }
-    var state: layout.ScrollState = .{};
-    if (!fresh and out.strip_built and out.wallpaper_children[strip_index].kind == .scroll_container) {
-        const prev = out.wallpaper_children[strip_index].kind.scroll_container;
-        state.scroll_offset = prev.scroll_offset;
-        state.glide = prev.glide;
-        state.bar = prev.bar;
-        state.bar_observed = prev.bar_observed;
-    } else if (current_tile) |i| {
-        // Show the current one, with a couple of its neighbours before it.
-        state.scroll_offset = @max(0, (@as(f32, @floatFromInt(i)) - 2) * (tile_extent + strip_gap));
-    }
-    const bar = scrollbar.gutter(theme.global.scrollbar_width);
-    out.wallpaper_children[strip_index] = buildStrip(out, arena, pal, current_tile, state, bar);
-    out.strip_built = true;
-
-    const dir = wallpapers.userDir(arena) catch "";
-    const hint = if (folder) |f|
-        std.fmt.allocPrint(arena, "Images in {s}", .{tildePath(arena, f)}) catch "Images in the chosen folder"
-    else
-        std.fmt.allocPrint(arena, "Add your own images to {s}", .{tildePath(arena, dir)}) catch "Add your own images";
-    out.wallpaper_footer_children = .{
-        .{ .kind = .{ .text = .{ .content = hint, .font_size = theme.global.settings_description_size, .color = pal.dim } }, .width = .{ .flex = 1 } },
-        .{
-            .name = "wallpaper_folder",
-            .kind = .{ .button = .{ .label = "Choose folder", .owner = out, .on_click = &onChooseWallpaperFolder, .state = if (folder_picker.running()) .disabled else .idle } },
-            .width = .{ .fixed = 124 },
-            .height = .{ .fixed = 30 },
-        },
-    };
-    out.wallpaper_children[0] = .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.wallpaper_row_children };
-    out.wallpaper_children[2] = .{ .kind = .container, .direction = .row, .gap = 8, .@"align" = .center, .children = &out.wallpaper_footer_children };
-}
-
-/// One scrolling row: each image with a tick box inside it, ticked for the
-/// wallpaper in use. A tile and its box both select it.
-fn buildStrip(out: *Section, arena: std.mem.Allocator, pal: theme.Theme, current_tile: ?usize, state: layout.ScrollState, bar: f32) Widget {
-    const n = out.strip_entries.len;
-    if (n == 0) {
-        const note = arena.alloc(Widget, 1) catch return .{ .kind = .container };
-        note[0] = .{ .kind = .{ .text = .{ .content = "No images in this folder", .font_size = theme.global.settings_description_size, .color = pal.dim } } };
-        return .{ .name = "wallpaper_strip_empty", .kind = .container, .direction = .row, .children = note };
-    }
-    const tiles = arena.alloc(Widget, n) catch return .{ .kind = .container };
-    const images = arena.alloc([1]Widget, n) catch return .{ .kind = .container };
-    const checks = arena.alloc([1]Widget, n) catch return .{ .kind = .container };
-    const none: [4]f32 = .{ 0, 0, 0, 0 };
-    for (0..n) |i| {
-        const is_current = current_tile == i;
-        const ring: layout.RectStyle = .{ .color = none, .radius = 8, .border_width = 2, .border_color = pal.accent };
-        const hover: layout.RectStyle = .{ .color = none, .radius = 8, .border_width = 2, .border_color = pal.border_soft };
-        images[i] = .{.{
-            .kind = .{ .image = .{
-                .pixels = if (out.strip) |strip| strip.thumb(i) else null,
-                .width = wallpaper_strip.thumb_width,
-                .height = wallpaper_strip.thumb_height,
-                .radius = 6,
-                .fallback_color = pal.bg,
-                .fallback_icon = null,
-            } },
-            .width = .{ .fixed = tile_w },
-            .height = .{ .fixed = tile_h },
-            .padding = layout.Edges.all(8),
-            .justify = .end,
-            .@"align" = .end,
-            .children = &checks[i],
-        }};
-        checks[i] = .{.{
-            .name = std.fmt.allocPrint(arena, "wallpaper_check_{d}", .{i}) catch "wallpaper_check",
-            .kind = .{ .checkbox = .{ .label = "", .checked = is_current, .owner = out, .on_change = &onStripCheck, .id = i } },
-            .width = .{ .fixed = check_size },
-            .height = .{ .fixed = check_size },
-        }};
-        tiles[i] = .{
-            .name = std.fmt.allocPrint(arena, "wallpaper_tile_{d}", .{i}) catch "wallpaper_tile",
-            .kind = .{ .row = .{
-                .background = if (is_current) ring else .{ .color = none },
-                .hover_background = if (is_current) ring else hover,
-                .press_background = if (is_current) ring else hover,
-                .selected = is_current,
-                .owner = out,
-                .on_click = &onStripTile,
-                .id = i,
-            } },
-            .padding = layout.Edges.all(tile_pad),
-            .width = .{ .fixed = tile_extent },
-            .height = .{ .fixed = tile_h + 2 * tile_pad },
-            .children = &images[i],
-        };
-    }
-    return .{
-        .name = "wallpaper_strip",
-        .kind = .{ .scroll_container = state },
-        .direction = .row,
-        .gap = strip_gap,
-        .padding = .{ .bottom = bar },
-        .width = .{ .percent = 1 },
-        .height = .{ .fixed = tile_h + 2 * tile_pad + bar },
-        .children = tiles,
-    };
-}
-
-fn onStripTile(owner: ?*anyopaque, id: usize) void {
-    pickStripEntry(section(owner), id);
-}
-
-fn onStripCheck(owner: ?*anyopaque, id: usize, _: bool) void {
-    pickStripEntry(section(owner), id);
-}
-
-fn pickStripEntry(s: *Section, index: usize) void {
-    if (index >= s.strip_entries.len) return;
-    applyWallpaper(s, s.strip_entries[index]);
-    // Moves the tick, and re-ticks a box that was just unticked.
-    {
-        const server = s.cc.server;
-        if (server.input.open_control_center) |cc| cc.refresh();
-    }
-}
-
-/// Live first, then saved: the config watcher's reload then finds the same
-/// wallpaper and loads nothing. The bundled default saves as "", so a moved
-/// install keeps finding it.
-fn onWallpaperPicked(owner: ?*anyopaque, _: usize, index: usize) void {
-    const s = section(owner);
-    if (index >= s.wallpapers.len) return;
-    applyWallpaper(section(owner), s.wallpapers[index]);
-}
-
-fn applyWallpaper(s: *Section, entry: wallpapers.Entry) void {
-    const server = s.cc.server;
-    const value = if (entry.bundled and std.mem.eql(u8, entry.name, wallpapers.default_name)) "" else entry.name;
-    if (std.mem.eql(u8, server.config.compositor.wallpaper, value)) return;
-    // Config strings live in its arena, freed with it on the next reload.
-    server.config.compositor.wallpaper = server.config.arena.allocator().dupe(u8, value) catch return;
-    server.reloadWallpaper();
-    setting_save.saveCompositor(main.gpa, server.io, server.config.path, "wallpaper", value) catch |err| {
-        std.log.warn("could not save wallpaper: {}", .{err});
-    };
-}
-
-/// Opens Files as a folder chooser, starting in the folder the strip shows
-/// (or the user's wallpaper directory, created if needed).
-fn onChooseWallpaperFolder(owner: ?*anyopaque, _: usize) void {
-    const server = section(owner).cc.server;
-    var scratch = std.heap.ArenaAllocator.init(main.gpa);
-    defer scratch.deinit();
-    const a = scratch.allocator();
-    const start = stripFolder(a, server.io, server.config.compositor.wallpaper) orelse blk: {
-        const dir = wallpapers.userDir(a) catch break :blk "";
-        std.Io.Dir.cwd().createDirPath(server.io, dir) catch |err| {
-            std.log.warn("could not create {s}: {}", .{ dir, err });
-            break :blk "";
-        };
-        break :blk dir;
-    };
-    folder_picker.start(server, "Choose wallpaper folder", start, server, &onFolderChosen) catch |err| {
-        std.log.warn("could not open the folder chooser: {}", .{err});
-        return;
-    };
-    // The button reads as busy until the chooser closes.
-    if (server.input.open_control_center) |cc| cc.refresh();
-}
-
-fn onFolderChosen(owner: ?*anyopaque, path: ?[]const u8) void {
-    if (path) |picked| pick: {
-        // A folder path is saved as a plain TOML string (setting_save.zig).
-        if (std.mem.indexOfAny(u8, picked, "\"\\\n\r") != null) break :pick;
-        const copy = main.gpa.dupe(u8, picked) catch break :pick;
-        if (chosen_dir) |old| main.gpa.free(old);
-        chosen_dir = copy;
-    }
-    const server: *Server = @ptrCast(@alignCast(owner orelse return));
-    if (server.input.open_control_center) |cc| cc.refresh();
-}
-
-/// Persists the mutated `theme.global` to REDIWM_THEME (if configured) and
-/// re-parses it through the normal load path — the same "log and fall back
-/// rather than crash" handling a malformed hand-edit would hit — then
-/// refreshes every taskbar (chip accent) and this panel.
-fn applyThemeChange(s: *Section) void {
-    applyThemeChangeImpl(s, false);
-}
-
-/// Shared by every Appearance control. `taskbar_geometry` selects
-/// `refreshTaskbarsGeometry` (unconditional relayout) over the plain
-/// `refreshTaskbars` (relayouts only when `bar.box.height` itself changed):
-/// most fields here (colors, font size, radius, shadow) don't resize taskbar
-/// items, so forcing a full taskbar raster on every one of those would waste
-/// a repaint pass on each slider tick; see `PxHandler`'s doc comment
-/// for which fields need the full path.
-fn applyThemeChangeImpl(s: *Section, taskbar_geometry: bool) void {
-    saveThemeChange(s.cc.server, taskbar_geometry);
-}
-
-fn saveThemeChange(server: *Server, taskbar_geometry: bool) void {
-    if (server.theme_path) |path| {
-        theme.saveOverlay(main.gpa, server.io, path, theme.global, server.config.theme_config) catch |err| {
-            themeFailure(server, err);
-            return;
-        };
-        const loaded = loader.load(server.config.path, main.gpa, server.io, server.environ) catch |err| {
-            themeFailure(server, err);
-            return;
-        };
-        @import("../../config_runtime/watcher.zig").applyLoadedConfig(server, loaded);
-    } else if (server.config.path.len > 0) {
-        @import("config").loader.replaceThemeOverrides(main.gpa, server.io, server.config.path, theme.global, server.config.theme_defaults, server.config.theme_base);
-    }
-    refreshTheme(server, taskbar_geometry);
-}
-
-fn onChooseStartLogo(owner: ?*anyopaque, _: usize) void {
-    const s = section(owner);
-    const server = s.cc.server;
-    s.start_logo_error = null;
-    folder_picker.startWithOptions(server, .{
-        .title = "Choose Start button logo",
-        .accept_label = "Use logo",
-        .current_folder = std.fs.path.dirname(theme.global.start_button_icon) orelse "",
-        .filters = &.{.{ .name = "PNG and SVG images", .rules = &.{ .{ .kind = 0, .value = "*.png" }, .{ .kind = 0, .value = "*.svg" } } }},
-    }, server, &onStartLogoChosen) catch |err| {
-        std.log.warn("could not open the logo chooser: {}", .{err});
-        s.start_logo_error = "Could not open the file chooser.";
-    };
-    s.cc.refresh();
-}
-
-fn onStartLogoChosen(owner: ?*anyopaque, path: ?[]const u8) void {
-    // The server outlives the chooser, including when Settings is closed.
-    const server: *Server = @ptrCast(@alignCast(owner orelse return));
-    if (path) |picked| {
-        // Theme strings use a literal, double-quoted TOML dialect.
-        if (!std.fs.path.isAbsolute(picked) or std.mem.indexOfAny(u8, picked, "\"\\\n\r\t") != null) {
-            if (server.input.open_control_center) |cc| {
-                cc.appearance.start_logo_error = "Choose a path without quotes, backslashes or control characters.";
-                cc.refresh();
-            }
-            return;
-        }
-        theme.global.start_button_icon = server.config.arena.allocator().dupe(u8, picked) catch return;
-        saveThemeChange(server, false);
-    } else if (server.input.open_control_center) |cc| cc.refresh();
-}
-
-/// Hands the menu's size back to the output: 0 is "automatic".
-fn onAutoMenuSize(owner: ?*anyopaque, _: usize) void {
-    const s = section(owner);
-    theme.global.start_menu_width = 0;
-    theme.global.start_menu_max_height = 0;
-    applyThemeChange(s);
-}
-
-fn onResetStartLogo(owner: ?*anyopaque, _: usize) void {
-    const s = section(owner);
-    s.start_logo_error = null;
-    theme.global.start_button_icon = "";
-    applyThemeChange(s);
-}
-
-pub fn refreshTheme(server: *@import("../../Server.zig"), taskbar_geometry: bool) void {
-    if (server.desktop) |desktop| desktop.app.themeChanged();
-    @import("ui").text.setPreferredFamilies(theme.global.font, theme.global.mono_font);
-    if (taskbar_geometry) server.refreshTaskbarsGeometry() else server.refreshTaskbars();
-    var it = server.world.toplevels.iterator(.forward);
-    while (it.next()) |toplevel| {
-        toplevel.refreshTheme();
-        if (toplevel.isMaximized()) {
-            if (toplevel.resolveTargetOutput()) |out| toplevel.setMaximizedOn(out);
-        }
-    }
-    if (server.input.open_start_menu) |sm| {
-        sm.buildTree();
-        sm.relayout();
-    }
-    if (server.input.open_control_center) |cc| cc.refresh();
-}
-
-/// Replaces every `[theme]` field at once from the picked preset. Reads the
-/// preset bytes before mutating anything, and parses with `main.gpa` rather
-/// than the panel's per-open arena: `theme.global`'s string fields must
-/// outlive this build, and `applyThemeChange` below may trigger a repaint
-/// that resets the arena.
-fn onResetTheme(owner: ?*anyopaque, _: usize) void {
-    const server = section(owner).cc.server;
-    if (server.config.theme_base.len == 0) {
-        theme.global = .{};
-        saveThemeChange(server, true);
-        return;
-    }
-    @import("../../config_runtime/theme_pack.zig").apply(server, server.config.theme_base) catch |err| themeFailure(server, err);
-}
-fn themeFailure(server: *Server, err: anyerror) void {
-    if (server.input.open_control_center) |cc| {
-        cc.appearance.theme_message = std.fmt.bufPrint(&cc.appearance.theme_message_buf, "Theme operation failed: {s}", .{@errorName(err)}) catch "Theme operation failed.";
-        cc.refresh();
-    }
-}
-fn onInstallTheme(owner: ?*anyopaque, _: usize) void {
-    const server = section(owner).cc.server;
-    folder_picker.startWithOptions(server, .{ .title = "Install theme", .accept_label = "Install", .filters = &.{.{ .name = "Theme packs", .rules = &.{ .{ .kind = 0, .value = "*.rediwm-theme" }, .{ .kind = 0, .value = "*.zip" } } }} }, server, themeFileChosen) catch |err| themeFailure(server, err);
-}
-fn themeFileChosen(owner: ?*anyopaque, path: ?[]const u8) void {
-    const server: *Server = @ptrCast(@alignCast(owner orelse return));
-    const picked = path orelse return;
-    if (server.input.open_control_center) |cc| {
-        if (cc.appearance.theme_pending_path) |old| main.gpa.free(old);
-        cc.appearance.theme_pending_path = main.gpa.dupe(u8, picked) catch return;
-    }
-    @import("../../config_runtime/theme_job.zig").start(server, &.{ "install", picked }, null, null) catch |err| themeFailure(server, err);
-}
-fn onReplaceTheme(owner: ?*anyopaque, _: usize) void {
-    const s = section(owner);
-    const path = s.theme_pending_path orelse return;
-    @import("../../config_runtime/theme_job.zig").start(s.cc.server, &.{ "install", path, "--replace" }, null, null) catch |err| themeFailure(s.cc.server, err);
-}
-fn onRemoveTheme(owner: ?*anyopaque, _: usize) void {
-    const s = section(owner);
-    const server = s.cc.server;
-    const id = main.gpa.dupe(u8, server.config.theme_base) catch return;
-    defer main.gpa.free(id);
-    var permitted = false;
-    for (s.presets) |p| if (std.mem.eql(u8, p.id, id) and p.user_installed) {
-        permitted = true;
-    };
-    if (!permitted) return;
-    @import("../../config_runtime/theme_pack.zig").apply(server, "rediwm-dark") catch |err| {
-        themeFailure(server, err);
-        return;
-    };
-    @import("../../config_runtime/theme_job.zig").start(server, &.{ "remove", id }, null, null) catch |err| themeFailure(server, err);
-}
-fn onExportTheme(owner: ?*anyopaque, _: usize) void {
-    const server = section(owner).cc.server;
-    folder_picker.startWithOptions(server, .{ .mode = .save, .title = "Save current look as theme", .current_name = "my-theme.rediwm-theme", .accept_label = "Save" }, server, exportFileChosen) catch |err| themeFailure(server, err);
-}
-fn exportFileChosen(owner: ?*anyopaque, path: ?[]const u8) void {
-    const server: *Server = @ptrCast(@alignCast(owner orelse return));
-    const picked = path orelse return;
-    const filename = std.fs.path.basename(picked);
-    const id = filename[0 .. std.mem.lastIndexOfScalar(u8, filename, '.') orelse filename.len];
-    if (!theme_presets.validId(id)) {
-        themeFailure(server, error.InvalidPackId);
-        return;
-    }
-    @import("../../config_runtime/theme_job.zig").start(server, &.{ "share", id, server.config.path, server.wallpaper_source orelse "", theme.global.start_button_icon, picked }, null, null) catch |err| themeFailure(server, err);
-}
-fn onIconThemePicked(owner: ?*anyopaque, _: usize, index: usize) void {
-    const s = section(owner);
-    const labels = s.icon_theme_names;
-    if (index >= labels.len) return;
-    setting_save.saveCompositor(main.gpa, s.cc.server.io, s.cc.server.config.path, "icon_theme", labels[index]) catch return;
-    @import("../../config_runtime/watcher.zig").reloadConfig(s.cc.server);
-}
-
-fn onThemePicked(owner: ?*anyopaque, _: usize, index: usize) void {
-    const s = section(owner);
-    if (index >= s.presets.len) return;
-    @import("../../config_runtime/theme_pack.zig").apply(s.cc.server, s.presets[index].id) catch |err| {
-        std.log.warn("apply theme pack: {s}", .{@errorName(err)});
-    };
-}
-
-/// Gives the taskbar the colours and clock style of the picked preset (index 0 hands it back
-/// to the main theme). Only the bar changes: `theme.global` keeps whatever the
-/// theme row above chose, and so does the saved `[theme]` section.
-fn onTaskbarThemePicked(owner: ?*anyopaque, _: usize, index: usize) void {
-    const s = section(owner);
-    const server = s.cc.server;
-    if (index == 0) {
-        theme.taskbar_override = null;
-    } else {
-        if (index > s.presets.len) return;
-        const preset = s.presets[index - 1];
-        // Only the colour tokens are kept, so nothing outlives this arena.
-        var scratch: std.heap.ArenaAllocator = .init(main.gpa);
-        defer scratch.deinit();
-        const parsed = preset.tokens;
-        theme.taskbar_override = theme.taskbarTokens(parsed);
-    }
-    if (server.config.path.len > 0) loader.replaceTaskbarThemeSection(main.gpa, server.io, server.config.path, theme.taskbar_override);
-    server.refreshTaskbarsGeometry();
-    if (server.input.open_control_center) |cc| cc.refresh();
-}
-
-fn ClockStyle(comptime key: []const u8) type {
-    return struct {
-        fn changed(owner: ?*anyopaque, _: usize, on: bool) void {
-            const s = section(owner);
-            const server = s.cc.server;
-            if (theme.taskbar_override) |*chosen| {
-                @field(chosen, key) = on;
-                if (server.config.path.len > 0) loader.replaceTaskbarThemeSection(main.gpa, server.io, server.config.path, chosen.*);
-                server.refreshTaskbarsGeometry();
-                if (server.input.open_control_center) |cc| cc.refresh();
-            } else {
-                @field(theme.global, key) = on;
-                applyThemeChangeImpl(s, true);
-            }
-        }
-    };
-}
-
-fn onFontFamilyChanged(owner: ?*anyopaque, _: usize, index: usize) void {
-    const s = section(owner);
-    const families = s.font_families orelse return;
-    if (index >= families.len or std.mem.eql(u8, theme.global.font, families[index])) return;
-    // Theme strings outlive the panel, matching theme.parse's ownership.
-    theme.global.font = s.cc.server.config.arena.allocator().dupe(u8, families[index]) catch return;
-    applyThemeChangeImpl(section(owner), true);
-    {
-        const server = section(owner).cc.server;
-        if (server.input.open_control_center) |cc| cc.refresh();
-    }
-}
-
-fn onFontSizeChanged(owner: ?*anyopaque, _: usize, index: usize) void {
-    const delta = font_values[index] - theme.global.font_size;
-    theme.global.button_font_size = @max(1, theme.global.button_font_size + delta);
-    theme.global.title_size = @max(1, theme.global.title_size + delta);
-    theme.global.taskbar_title_size = @max(1, theme.global.taskbar_title_size + delta);
-    theme.global.font_size = font_values[index];
-    applyThemeChange(section(owner));
-}
-
-fn onRadiusChanged(owner: ?*anyopaque, _: usize, index: usize) void {
-    theme.applyRadiusPreset(&theme.global, @enumFromInt(index));
-    applyThemeChange(section(owner));
-}
-
-fn onShadowChanged(owner: ?*anyopaque, _: usize, index: usize) void {
-    theme.global.shadow_size = shadow_size_values[index];
-    theme.global.shadow[3] = shadow_alpha_values[index];
-    applyThemeChange(section(owner));
-}
-
-fn onBorderGlowChanged(owner: ?*anyopaque, _: usize, on: bool) void {
-    if (theme.global.border_glow_enabled == on) return;
-    theme.global.border_glow_enabled = on;
-    applyThemeChange(section(owner));
-}
-
-fn onChromeOpacityChanged(owner: ?*anyopaque, _: usize, value: f32) void {
-    const s = section(owner);
-    const clamped = std.math.clamp(value, 0.0, 1.0);
-    theme.global.window_bg[3] = clamped;
-    const formatted = std.fmt.bufPrint(&s.opacity_value_buf, "{d}%", .{@as(i32, @intFromFloat(@round(clamped * 100.0)))}) catch "?";
-    s.opacity_header_children[1].kind.text.content = formatted;
-    s.opacity_header_children[1].markDirty();
-    applyThemeChange(section(owner));
-}
-
-fn onChromeDarknessChanged(owner: ?*anyopaque, _: usize, value: f32) void {
-    const s = section(owner);
-    const clamped = std.math.clamp(value, 0.0, 1.0);
-    theme.global.window_bg = theme.withChromeDarkness(theme.global.window_bg, clamped);
-    const formatted = std.fmt.bufPrint(&s.darkness_value_buf, "{d}%", .{@as(i32, @intFromFloat(@round(clamped * 100.0)))}) catch "?";
-    s.darkness_header_children[1].kind.text.content = formatted;
-    s.darkness_header_children[1].markDirty();
-    applyThemeChange(section(owner));
-}
-
-/// Live first, then saved: the windows ease to the new dim.
-fn onInactiveDimChanged(owner: ?*anyopaque, _: usize, on: bool) void {
-    const server = section(owner).cc.server;
-    if (server.config.compositor.inactive_dim == on) return;
-    server.config.compositor.inactive_dim = on;
-    @import("../../config_runtime/apply.zig").applyWindowOpacity(server);
-    server.scheduleFrames();
-    setting_save.saveCompositor(main.gpa, server.io, server.config.path, "inactive_dim", on) catch |err| {
-        std.log.warn("could not save inactive_dim: {}", .{err});
-    };
-}
-
-fn onInactiveOpacityChanged(owner: ?*anyopaque, _: usize, value: f32) void {
-    const s = section(owner);
-    const server = section(owner).cc.server;
-    const clamped = std.math.clamp(value, 0.0, 1.0);
-    server.config.compositor.inactive_opacity = clamped;
-    @import("../../config_runtime/apply.zig").applyInactiveOpacity(server);
-    server.scheduleFrames();
-    const formatted = std.fmt.bufPrint(&s.inactive_opacity_value_buf, "{d}%", .{@as(i32, @intFromFloat(@round(clamped * 100.0)))}) catch "?";
-    s.inactive_opacity_header_children[1].kind.text.content = formatted;
-    s.inactive_opacity_header_children[1].markDirty();
-    setting_save.saveCompositor(main.gpa, server.io, server.config.path, "inactive_opacity", clamped) catch |err| {
-        std.log.warn("could not save inactive_opacity: {}", .{err});
-    };
-}
-
-/// Terminals read their alpha at launch, so this only reaches terminals opened
-/// afterwards (`config/terminal_theme.zig`); nothing to apply live.
-fn onTerminalOpacityChanged(owner: ?*anyopaque, _: usize, value: f32) void {
-    const s = section(owner);
-    const server = s.cc.server;
-    const clamped = std.math.clamp(value, 0.0, 1.0);
-    server.config.compositor.terminal_opacity = clamped;
-    const formatted = std.fmt.bufPrint(&s.terminal_opacity_value_buf, "{d}%", .{@as(i32, @intFromFloat(@round(clamped * 100.0)))}) catch "?";
-    s.terminal_opacity_header_children[1].kind.text.content = formatted;
-    s.terminal_opacity_header_children[1].markDirty();
-    setting_save.saveCompositor(main.gpa, server.io, server.config.path, "terminal_opacity", clamped) catch |err| {
-        std.log.warn("could not save terminal_opacity: {}", .{err});
-    };
-}
-
-/// Slider range only; the config accepts up to 512.
-const max_window_gap = 64;
-
-fn onWindowGapChanged(owner: ?*anyopaque, _: usize, value: f32) void {
-    const s = section(owner);
-    const server = section(owner).cc.server;
-    const gap: u32 = @intFromFloat(std.math.clamp(@round(value), 0.0, max_window_gap));
-    if (gap == server.config.compositor.windowGap()) return;
-    server.config.compositor.window_gap = gap;
-    const formatted = std.fmt.bufPrint(&s.px[px_window_gap].value_buf, "{d}px", .{gap}) catch "?";
-    s.px[px_window_gap].header_children[1].kind.text.content = formatted;
-    s.px[px_window_gap].header_children[1].markDirty();
-    // Windows already snapped follow the new gap.
-    var it = server.world.toplevels.iterator(.forward);
-    while (it.next()) |toplevel| {
-        const tile = toplevel.tile orelse continue;
-        if (!toplevel.in_world) continue;
-        const output = toplevel.currentOutput() orelse continue;
-        toplevel.setTiledOn(output, tile);
-    }
-    server.scheduleFrames();
-    setting_save.saveCompositor(main.gpa, server.io, server.config.path, "window_gap", gap) catch |err| {
-        std.log.warn("could not save window_gap: {}", .{err});
-    };
-    server.world.workspaces.tiler.schedule(server);
-}
-
-fn onTaskbarPositionChanged(owner: ?*anyopaque, _: usize, index: usize) void {
-    if (index > 1) return;
-    const s = section(owner);
-    const server = s.cc.server;
-    const position: @TypeOf(server.config.compositor.taskbar_position) = @enumFromInt(index);
-    if (position == server.config.compositor.taskbar_position) return;
-    setting_save.saveCompositor(main.gpa, server.io, server.config.path, "taskbar_position", position) catch |err| {
-        std.log.warn("could not save taskbar position: {}", .{err});
-        s.taskbar_position_children[1].kind.segmented.selected = @intFromEnum(server.config.compositor.taskbar_position);
-        s.taskbar_position_children[1].markDirty();
-        return;
-    };
-    server.config.compositor.taskbar_position = position;
-    server.applyTaskbarPosition();
-}
-
-fn onFocusZoomChanged(owner: ?*anyopaque, _: usize, index: usize) void {
-    if (index >= focus_zoom_labels.len) return;
-    const s = section(owner);
-    const server = section(owner).cc.server;
-    const mode: @import("../../camera.zig").FocusZoom = @enumFromInt(index);
-    setting_save.saveCompositor(main.gpa, server.io, server.config.path, "focus_zoom", mode) catch |err| {
-        std.log.warn("could not save focus_zoom: {}", .{err});
-        return;
-    };
-    server.config.compositor.focus_zoom = mode;
-    server.world.refreshFocusZoom();
-    s.focus_zoom_children[2].kind.text.content = focus_zoom_descriptions[index];
-    s.focus_zoom_children[2].markDirty();
-}
-
-fn onDragFeedbackChanged(owner: ?*anyopaque, _: usize, on: bool) void {
-    const server = section(owner).cc.server;
-    setting_save.saveCompositor(main.gpa, server.io, server.config.path, "drag_feedback", on) catch |err| {
-        std.log.warn("could not save drag_feedback: {}", .{err});
-        return;
-    };
-    server.config.compositor.drag_feedback = on;
-    server.scheduleFrames();
-}
-
-fn onDragScaleChanged(owner: ?*anyopaque, _: usize, value: f32) void {
-    const s = section(owner);
-    const server = s.cc.server;
-    // The slider's f32 steps drift (1.0299999); keep the saved value to its step.
-    const scale = std.math.clamp(@round(value * 1000) / 1000, loader.drag_scale_min, loader.drag_scale_max);
-    server.config.compositor.drag_scale = scale;
-    server.scheduleFrames();
-    s.drag_scale_header_children[1].kind.text.content = std.fmt.bufPrint(&s.drag_scale_value_buf, "{d:.3}×", .{scale}) catch "?";
-    s.drag_scale_header_children[1].markDirty();
-    setting_save.saveCompositor(main.gpa, server.io, server.config.path, "drag_scale", scale) catch |err| {
-        std.log.warn("could not save drag_scale: {}", .{err});
-    };
-}
-
-fn onAnimationsEnabledChanged(owner: ?*anyopaque, _: usize, on: bool) void {
-    const server = section(owner).cc.server;
-    if (server.config.animations.enabled == on) return;
-    const old_served = anim.servedEnableAnimations(server.config.animations);
-    server.config.animations.enabled = on;
-    ipc_animations.reloadSettings(server, server.config.animations);
-    const new_served = anim.servedEnableAnimations(server.config.animations);
-    if (!std.meta.eql(old_served, new_served)) settings_portal.emitEnableAnimations(server, new_served);
-    setting_save.saveAnimations(main.gpa, server.io, server.config.path, "enabled", on) catch |err| {
-        std.log.warn("could not save animations enabled: {}", .{err});
-    };
-}
-
-fn onAnimSpeedChanged(owner: ?*anyopaque, _: usize, index: usize) void {
-    const server = section(owner).cc.server;
-    if (index >= anim_speed_values.len) return;
-    const speed = anim_speed_values[index];
-    if (server.config.animations.speed == speed) return;
-    server.config.animations.speed = speed;
-    ipc_animations.reloadSettings(server, server.config.animations);
-    setting_save.saveAnimations(main.gpa, server.io, server.config.path, "speed", speed) catch |err| {
-        std.log.warn("could not save animations speed: {}", .{err});
-    };
-}
-
-fn onReducedMotionChanged(owner: ?*anyopaque, _: usize, index: usize) void {
-    const server = section(owner).cc.server;
-    if (index >= reduced_motion_values.len) return;
-    const motion = reduced_motion_values[index];
-    if (server.config.animations.reduced_motion == motion) return;
-    const old_served = anim.servedEnableAnimations(server.config.animations);
-    server.config.animations.reduced_motion = motion;
-    ipc_animations.reloadSettings(server, server.config.animations);
-    const new_served = anim.servedEnableAnimations(server.config.animations);
-    if (!std.meta.eql(old_served, new_served)) settings_portal.emitEnableAnimations(server, new_served);
-    setting_save.saveAnimations(main.gpa, server.io, server.config.path, "reduced_motion", motion) catch |err| {
-        std.log.warn("could not save animations reduced_motion: {}", .{err});
-    };
-}
-
-/// Live first, then saved; the config reload that follows updates what
-/// spawned clients are told (XCURSOR_THEME).
-fn onCursorThemePicked(owner: ?*anyopaque, _: usize, index: usize) void {
-    const s = section(owner);
-    const server = section(owner).cc.server;
-    const themes = s.cursor_themes orelse return;
-    if (index >= themes.len) return;
-    const id = themes[index].id;
-    if (std.mem.eql(u8, id, server.input.cursorThemeName())) return;
-    server.input.applyCursorTheme(id, server.config.input.cursor_size);
-    setting_save.saveInput(main.gpa, server.io, server.config.path, "cursor_theme", id) catch |err| {
-        std.log.warn("could not save cursor_theme: {}", .{err});
-    };
-}
-
-/// Live first, then saved: the config watcher's reload then finds nothing
-/// changed and emits no second SettingChanged.
-fn onDarkModeChanged(owner: ?*anyopaque, _: usize, on: bool) void {
-    const server = section(owner).cc.server;
-    if (server.config.compositor.dark_mode == on) return;
-    server.config.compositor.dark_mode = on;
-    settings_portal.emitColorScheme(server);
-    setting_save.saveCompositor(main.gpa, server.io, server.config.path, "dark_mode", on) catch |err| {
-        std.log.warn("could not save dark_mode: {}", .{err});
-    };
-}
-
-/// Enables or disables the launch-placeholder splash. On → 100 ms delay;
-/// the splash only becomes visible if the app has not mapped within that
-/// window — fast apps never show it. Off → 0 (disabled). Applied live so
-/// new launches immediately reflect the change; then persisted to config.toml.
-fn onSplashStartupChanged(owner: ?*anyopaque, _: usize, on: bool) void {
-    const server = section(owner).cc.server;
-    const new_val: u32 = if (on) 100 else 0;
-    if (server.config.compositor.placeholder_delay_ms == new_val) return;
-    server.config.compositor.placeholder_delay_ms = new_val;
-    setting_save.saveCompositor(main.gpa, server.io, server.config.path, "placeholder_delay_ms", new_val) catch |err| {
-        std.log.warn("could not save placeholder_delay_ms: {}", .{err});
-    };
-}
-
-/// Live first, then saved, like the other toggles.
-fn onDodgeFileDragsChanged(owner: ?*anyopaque, _: usize, on: bool) void {
-    const server = section(owner).cc.server;
-    if (server.config.compositor.dodge_file_drags == on) return;
-    server.config.compositor.dodge_file_drags = on;
-    setting_save.saveCompositor(main.gpa, server.io, server.config.path, "dodge_file_drags", on) catch |err| {
-        std.log.warn("could not save dodge_file_drags: {}", .{err});
-    };
-}
-
-fn saveItems(s: *Section, items: taskbar_items.Config) void {
-    const server = s.cc.server;
-    setting_save.saveCompositor(main.gpa, server.io, server.config.path, "taskbar_items", items) catch |err| {
-        std.log.warn("could not save taskbar items: {}", .{err});
-        if (server.input.open_control_center) |cc| cc.refresh();
-        return;
-    };
-    server.config.compositor.taskbar_items = items;
-    server.refreshTaskbarsGeometry();
-    if (server.input.open_control_center) |cc| cc.refresh();
-}
-
-const item_row_height: f32 = 40;
-
-fn itemRowStyle(lifted: bool) layout.RectStyle {
-    const pal = panel.palette();
-    return .{ .color = if (lifted) pal.app_item_selected else pal.app_item, .radius = 8, .border_width = 1, .border_color = if (lifted) pal.accent else pal.app_item_border };
-}
-
-fn itemZoneStyle(target: bool) layout.RectStyle {
-    const pal = panel.palette();
-    return .{ .color = pal.app_bg, .radius = 10, .border_width = 1, .border_color = if (target) pal.accent else pal.app_item_border };
-}
-
-fn itemName(item: taskbar_items.Item, comptime suffix: []const u8) []const u8 {
-    return switch (item) {
-        inline else => |tag| "taskbar_" ++ @tagName(tag) ++ suffix,
-    };
-}
-
-/// Points the rows at `items` (row `i` shows `order[i]`) and gives each
-/// section's well its run of rows, or its placeholder. True when a well's
-/// row count changed, which needs a layout.
-fn syncItems(out: *Section, items: taskbar_items.Config, dragged: ?usize) bool {
-    const pal = panel.palette();
-    for (&out.item_rows, &out.item_controls, items.order, 0..) |*row, *controls, item, i| {
-        const lifted = dragged == i;
-        row.name = itemName(item, "_row");
-        row.kind = .{ .rect = itemRowStyle(lifted) };
-        controls[0].name = itemName(item, "_order");
-        controls[0].kind.button.state = if (lifted) .press else .idle;
-        controls[1].kind.text.content = item.label();
-        // `panel.restyle` colours text by weight: a hidden item's label is dim.
-        controls[1].kind.text.weight = if (items.shown(item)) 600 else 400;
-        controls[1].kind.text.color = if (items.shown(item)) pal.fg else pal.dim;
-        controls[2].name = itemName(item, "_visible");
-        controls[2].kind.toggle.on = items.shown(item);
-        for (controls) |*control| control.markDirty();
-        row.markDirty();
-    }
-    var changed = false;
-    var start: usize = 0;
-    for (&out.items_section_children, &out.items_placeholder, 0..) |*zone, *placeholder, z| {
-        var end = start;
-        while (end < taskbar_items.count and @intFromEnum(items.section(items.order[end])) == z) end += 1;
-        const well = &zone[1];
-        const rows: []Widget = if (end == start) placeholder else out.item_rows[start..end];
-        changed = changed or rows.ptr != well.children.ptr or rows.len != well.children.len;
-        well.children = rows;
-        well.kind = .{ .rect = itemZoneStyle(dragged != null and start <= dragged.? and dragged.? < end) };
-        well.linkParents();
-        well.markDirty();
-        start = end;
-    }
-    return changed;
-}
-
-/// The row whose grip, label or background is at (x, y): a whole row drags,
-/// only its toggle does not.
-pub fn itemHandle(s: *Section, x: f32, y: f32) ?usize {
-    const ui = @import("ui");
-    const hit = ui.input.hitTest(&s.cc.root, x, y) orelse return null;
-    for (&s.item_rows, &s.item_controls, 0..) |*row, *controls, i| {
-        if (hit == row or hit == &controls[0] or hit == &controls[1]) return i;
-    }
-    return null;
-}
-
-pub fn beginItemDrag(s: *Section, x: f32, y: f32) bool {
-    const index = itemHandle(s, x, y) orelse return false;
-    // Keep the rows still if the handle was grabbed during a wheel glide.
-    const scroll = &s.cc.body_children[1].kind.scroll_container;
-    scroll.glide.cancel(scroll.scroll_offset);
-    s.item_drag = .{ .index = index, .press_y = y, .items = s.cc.server.config.compositor.taskbar_items };
-    @import("ui").input.reset();
-    previewItems(s);
-    return true;
-}
-
-fn previewItems(s: *Section) void {
-    const drag = s.item_drag;
-    const items = if (drag) |d| d.items else s.cc.server.config.compositor.taskbar_items;
-    if (syncItems(s, items, if (drag) |d| d.index else null)) s.cc.layoutContent();
-    s.cc.requestRepaint();
-}
-
-/// Rows move live: the pointer's section is the one whose title it is at or
-/// below, its slot the count of that section's other rows whose middle it has passed.
-pub fn moveItemDrag(s: *Section, y: f32) void {
-    const drag = if (s.item_drag) |*d| d else return;
-    if (!drag.moved and @abs(y - drag.press_y) < 4) return;
-    drag.moved = true;
-    var zone: usize = 0;
-    for (1..3) |z| {
-        if (y >= s.items_children[2 + z].computed_y) zone = z;
-    }
-    const current = @intFromEnum(drag.items.section(drag.items.order[drag.index]));
-    var slot: usize = 0;
-    var current_slot: usize = 0;
-    for (drag.items.order, 0..) |item, i| {
-        const z = @intFromEnum(drag.items.section(item));
-        if (i == drag.index) continue;
-        if (z == current and i < drag.index) current_slot += 1;
-        if (z == zone and y > s.item_rows[i].computed_y + s.item_rows[i].computed_height / 2) slot += 1;
-    }
-    if (zone == current and slot == current_slot) return;
-    drag.index = drag.items.place(drag.index, @enumFromInt(zone), slot);
-    previewItems(s);
-}
-
-pub fn endItemDrag(s: *Section, commit: bool) void {
-    const drag = s.item_drag orelse return;
-    s.item_drag = null;
-    s.item_focus = drag.items.order[drag.index];
-    const saved = s.cc.server.config.compositor.taskbar_items;
-    if (commit and !(std.meta.eql(drag.items.order, saved.order) and std.meta.eql(drag.items.sections, saved.sections))) {
-        // A config reload during the grab can change visibility independently.
-        var items = saved;
-        items.order = drag.items.order;
-        items.sections = drag.items.sections;
-        items.normalize();
-        saveItems(s, items);
-    }
-    previewItems(s);
-    if (!s.cc.refresh_pending) restoreItemFocus(s);
-}
-
-pub fn restoreItemFocus(s: *Section) void {
-    const item = s.item_focus orelse return;
-    for (s.cc.server.config.compositor.taskbar_items.order, 0..) |candidate, i| {
-        if (item == candidate) @import("ui").input.current.focus(&s.cc.root, &s.item_controls[i][0]);
-    }
-    s.item_focus = null;
-}
-
-pub fn captureItemFocus(s: *Section) void {
-    if (s.item_focus != null) return;
-    const focused = @import("ui").input.current.focused orelse return;
-    for (&s.item_controls) |*controls| {
-        if (focused != &controls[0]) continue;
-        for (std.enums.values(taskbar_items.Item)) |item| {
-            if (std.mem.eql(u8, controls[1].kind.text.content, item.label())) s.item_focus = item;
-        }
-        return;
-    }
-}
-
-/// Up/Down on a focused grip moves its item one step, across sections too.
-pub fn itemKey(s: *Section, key: @import("ui").input.Key) bool {
-    if (s.item_drag != null) {
-        if (key == .escape) endItemDrag(s, false);
-        return true;
-    }
-    if (key != .up and key != .down) return false;
-    const focused = @import("ui").input.current.focused orelse return false;
-    for (&s.item_controls, 0..) |*controls, i| {
-        if (focused != &controls[0]) continue;
-        const before = s.cc.server.config.compositor.taskbar_items;
-        var items = before;
-        s.item_focus = items.order[i];
-        items.move(i, key == .down);
-        if (!std.meta.eql(items, before)) saveItems(s, items);
-        return true;
-    }
-    return false;
-}
-
-fn ItemToggle(comptime index: usize) type {
-    return struct {
-        fn changed(owner: ?*anyopaque, _: usize, on: bool) void {
-            const server = section(owner).cc.server;
-            var items = server.config.compositor.taskbar_items;
-            items.visible[@intFromEnum(items.order[index])] = on;
-            saveItems(section(owner), items);
-        }
-    };
-}
-
-fn buildWindowTabs(out: *Section) Widget {
-    const list = @import("ui").widgets.checkbox_list;
-    const tabs = @import("../../window_tabs.zig");
-    const a = out.arena.allocator();
-    var items: std.ArrayList(list.Item) = .empty;
-    {
-        const server = out.cc.server;
-        server.window_tabs.loadKnown(server);
-        for (server.config.compositor.window_tab_apps) |id| _ = server.window_tabs.remember(id);
-        const snapshot = server.start_menu_catalog.retainSnapshot();
-        defer snapshot.release();
-        for (server.window_tabs.known.items, 0..) |id, index| {
-            const app = tabs.entry(snapshot.entries, id);
-            var icon: @import("ui").layout.ImageData = .{};
-            switch (server.iconLookup(id, 32)) {
-                .ready => |image| {
-                    icon = .{ .pixels = a.dupe(u32, image.pixels) catch null, .width = image.size, .height = image.size };
-                },
-                else => {},
-            }
-            items.append(a, .{
-                .id = index,
-                .name = std.fmt.allocPrint(a, "window_tabs:{s}", .{id}) catch id,
-                .label = a.dupe(u8, if (app) |e| e.name else id) catch id,
-                .icon = icon,
-                .checked = tabs.enabled(server, id),
-            }) catch break;
-        }
-    }
-    std.mem.sort(list.Item, items.items, {}, struct {
-        fn less(_: void, x: list.Item, y: list.Item) bool {
-            return std.ascii.lessThanIgnoreCase(x.label, y.label);
-        }
-    }.less);
-    out.tabs_children = .{
-        labelWidget("Enable window tabs for these apps"),
-        valueWidget(if (items.items.len == 0) "Open an app with RediWM chrome once to list it here." else "Use + in a window’s title bar to open another window as a tab."),
-        list.build(a, items.items, out, onWindowTabsChanged, out.tabs_scroll) catch .{ .kind = .container },
-    };
-    out.tabs_built = true;
-    return .{ .name = "window_tabs", .kind = .container, .direction = .column, .gap = 8, .children = &out.tabs_children };
-}
-
-fn onWindowTabsChanged(owner: ?*anyopaque, index: usize, checked: bool) void {
-    const server = section(owner).cc.server;
-    if (index >= server.window_tabs.known.items.len) return;
-    const id = server.window_tabs.known.items[index];
-    var arena = std.heap.ArenaAllocator.init(main.gpa);
-    defer arena.deinit();
-    const a = arena.allocator();
-    var enabled: std.ArrayList([]const u8) = .empty;
-    for (server.config.compositor.window_tab_apps) |app| {
-        if (!std.mem.eql(u8, @import("../../window_tabs.zig").identity(app), id)) enabled.append(a, app) catch return;
-    }
-    if (checked) enabled.append(a, id) catch return;
-    setting_save.saveCompositor(main.gpa, server.io, server.config.path, "window_tab_apps", @as([]const []const u8, enabled.items)) catch |err| {
-        std.log.warn("could not save window tabs: {}", .{err});
-        return;
-    };
-    const owned = server.config.arena.allocator().alloc([]const u8, enabled.items.len) catch return;
-    for (enabled.items, owned) |app, *dest| dest.* = server.config.arena.allocator().dupe(u8, app) catch return;
-    server.config.compositor.window_tab_apps = owned;
-    server.window_tabs.reconfigure(server);
-}
-
-fn section(owner: ?*anyopaque) *Section {
-    return @ptrCast(@alignCast(owner.?));
-}
-
-fn onDockChanged(owner: ?*anyopaque, _: usize, on: bool) void {
-    const server = section(owner).cc.server;
-    setting_save.saveCompositor(main.gpa, server.io, server.config.path, "dock_enabled", on) catch |err| {
-        std.log.warn("could not save dock: {}", .{err});
-        section(owner).dock_children[1].kind.toggle.on = server.config.compositor.dock_enabled;
-        section(owner).dock_children[1].markDirty();
-        return;
-    };
-    const reserved = dock_mod.reserves(&server.config.compositor);
-    server.config.compositor.dock_enabled = on;
-    if (reserved or dock_mod.reserves(&server.config.compositor)) server.applyTaskbarPosition();
-    server.scheduleFrames();
-}
-
-fn onDockAutoHideChanged(owner: ?*anyopaque, _: usize, on: bool) void {
-    const s = section(owner);
-    const server = s.cc.server;
-    setting_save.saveCompositor(main.gpa, server.io, server.config.path, "dock_auto_hide", on) catch |err| {
-        std.log.warn("could not save dock auto-hide: {}", .{err});
-        s.dock_auto_hide_children[1].kind.toggle.on = server.config.compositor.dock_auto_hide;
-        s.dock_auto_hide_children[1].markDirty();
-        return;
-    };
-    const reserved = dock_mod.reserves(&server.config.compositor);
-    server.config.compositor.dock_auto_hide = on;
-    // A docked dock keeps windows out of its strip; one that hides does not.
-    if (reserved or dock_mod.reserves(&server.config.compositor)) server.applyTaskbarPosition();
-    if (server.input.window_menu.dock != null) server.input.window_menu.close();
-    var it = server.outputs.iterator(.forward);
-    while (it.next()) |output| output.dock.invalidate();
-    // A parked dock schedules no frame of its own.
-    server.scheduleFrames();
-}
-
-/// The slider is 0-100 %. At 0 the dock is only its icons over the glass.
-fn onDockOpacityChanged(owner: ?*anyopaque, _: usize, value: f32) void {
-    const s = section(owner);
-    const server = s.cc.server;
-    const opacity = std.math.clamp(@round(value), 0, 100) / 100;
-    if (server.config.compositor.dock_opacity) |current| if (current == opacity) return;
-    server.config.compositor.dock_opacity = opacity;
-    s.px[px_dock_opacity].header_children[1].kind.text.content = std.fmt.bufPrint(&s.px[px_dock_opacity].value_buf, "{d}%", .{@as(i32, @intFromFloat(@round(opacity * 100)))}) catch "?";
-    s.px[px_dock_opacity].header_children[1].markDirty();
-    var it = server.outputs.iterator(.forward);
-    while (it.next()) |output| output.dock.invalidate();
-    server.scheduleFrames();
-    setting_save.saveCompositor(main.gpa, server.io, server.config.path, "dock_opacity", opacity) catch |err| {
-        std.log.warn("could not save dock_opacity: {}", .{err});
-    };
-}
-
-fn onDockActiveHighlightChanged(owner: ?*anyopaque, _: usize, on: bool) void {
-    const s = section(owner);
-    const server = s.cc.server;
-    setting_save.saveCompositor(main.gpa, server.io, server.config.path, "dock_active_highlight", on) catch |err| {
-        std.log.warn("could not save dock active highlight: {}", .{err});
-        s.dock_active_children[1].kind.toggle.on = server.config.compositor.dock_active_highlight;
-        s.dock_active_children[1].markDirty();
-        return;
-    };
-    server.config.compositor.dock_active_highlight = on;
-    var it = server.outputs.iterator(.forward);
-    while (it.next()) |output| output.dock.invalidate();
-    server.scheduleFrames();
-}
-
-fn onDockShowTrashChanged(owner: ?*anyopaque, _: usize, on: bool) void {
-    const s = section(owner);
-    const server = s.cc.server;
-    setting_save.saveCompositor(main.gpa, server.io, server.config.path, "dock_show_trash", on) catch |err| {
-        std.log.warn("could not save dock_show_trash: {}", .{err});
-        s.dock_trash_children[1].kind.toggle.on = server.config.compositor.dock_show_trash;
-        s.dock_trash_children[1].markDirty();
-        return;
-    };
-    server.config.compositor.dock_show_trash = on;
-    if (server.input.window_menu.dock != null) server.input.window_menu.close();
-    var it = server.outputs.iterator(.forward);
-    while (it.next()) |output| output.dock.invalidate();
-    server.scheduleFrames();
-}
-
-fn onDockPositionChanged(owner: ?*anyopaque, _: usize, index: usize) void {
-    if (index >= 4) return;
-    const s = section(owner);
-    const server = s.cc.server;
-    const position: @TypeOf(server.config.compositor.dock_position) = @enumFromInt(index);
-    if (position == server.config.compositor.dock_position) return;
-    setting_save.saveCompositor(main.gpa, server.io, server.config.path, "dock_position", position) catch |err| {
-        std.log.warn("could not save dock position: {}", .{err});
-        s.dock_position_children[1].kind.segmented.selected = @intFromEnum(server.config.compositor.dock_position);
-        s.dock_position_children[1].markDirty();
-        return;
-    };
-    const reserved = dock_mod.reserves(&server.config.compositor);
-    server.config.compositor.dock_position = position;
-    if (reserved) server.applyTaskbarPosition();
-    if (server.input.window_menu.dock != null) server.input.window_menu.close();
-    var it = server.outputs.iterator(.forward);
-    while (it.next()) |output| output.dock.invalidate();
-    server.scheduleFrames();
-}
-
-fn onDockHeightChanged(owner: ?*anyopaque, _: usize, value: f32) void {
-    const s = section(owner);
-    const server = s.cc.server;
-    const height: u32 = @intFromFloat(std.math.clamp(@round(value), @as(f32, @floatFromInt(loader.dock_height_min)), @as(f32, @floatFromInt(loader.dock_height_max))));
-    if (height == server.config.compositor.dock_height) return;
-    setting_save.saveCompositor(main.gpa, server.io, server.config.path, "dock_height", height) catch |err| {
-        std.log.warn("could not save dock height: {}", .{err});
-        s.px[px_dock_height].group_children[1].kind.slider.value = @floatFromInt(server.config.compositor.dock_height);
-        s.px[px_dock_height].group_children[1].markDirty();
-        return;
-    };
-    const reserved = dock_mod.reserves(&server.config.compositor);
-    server.config.compositor.dock_height = height;
-    if (reserved) server.applyTaskbarPosition();
-    const formatted = std.fmt.bufPrint(&s.px[px_dock_height].value_buf, "{d}px", .{height}) catch "?";
-    s.px[px_dock_height].header_children[1].kind.text.content = formatted;
-    s.px[px_dock_height].header_children[1].markDirty();
-    if (server.input.window_menu.dock != null) server.input.window_menu.close();
-    var it = server.outputs.iterator(.forward);
-    while (it.next()) |output| output.dock.invalidate();
-    server.scheduleFrames();
-}
-
-fn updateDockZoomLabel(s: *Section) void {
-    s.px[px_dock_hover_zoom].header_children[1].kind.text.content = std.fmt.bufPrint(&s.px[px_dock_hover_zoom].value_buf, "{d:.2}×", .{s.cc.server.config.compositor.dock_hover_zoom}) catch "?";
-    s.px[px_dock_hover_zoom].header_children[1].markDirty();
-}
-
-fn onDockHoverZoomChanged(owner: ?*anyopaque, _: usize, value: f32) void {
-    const s = section(owner);
-    const server = s.cc.server;
-    const zoom = std.math.clamp(@round(value * 20) / 20, 1, loader.dock_hover_zoom_max);
-    if (zoom == server.config.compositor.dock_hover_zoom) return;
-    setting_save.saveCompositor(main.gpa, server.io, server.config.path, "dock_hover_zoom", zoom) catch |err| {
-        std.log.warn("could not save dock hover zoom: {}", .{err});
-        s.px[px_dock_hover_zoom].group_children[1].kind.slider.value = server.config.compositor.dock_hover_zoom;
-        s.px[px_dock_hover_zoom].group_children[1].markDirty();
-        return;
-    };
-    server.config.compositor.dock_hover_zoom = zoom;
-    updateDockZoomLabel(s);
-    var it = server.outputs.iterator(.forward);
-    while (it.next()) |output| output.dock.invalidate();
-    server.scheduleFrames();
 }

@@ -18,6 +18,7 @@ const ap_iface = nm ++ ".AccessPoint";
 const settings_iface = nm ++ ".Settings.Connection";
 const properties = "org.freedesktop.DBus.Properties";
 const eq = std.mem.eql;
+const Presence = @import("config").taskbar_items.Presence;
 
 pub fn Text(comptime capacity: usize) type {
     return struct {
@@ -135,6 +136,8 @@ pub const Manager = struct {
     wired_generation: u64 = 0,
     /// What the taskbars were last told by `publishOffline`.
     offline_published: bool = false,
+    /// Likewise for `publishPresence`.
+    presence_published: Presence = .{},
 
     pub fn create(server: *Server) !*Manager {
         const self = try gpa.create(Manager);
@@ -163,6 +166,24 @@ pub const Manager = struct {
     pub fn offline(self: *const Manager) bool {
         return self.available and (self.state == 10 or self.state == 20);
     }
+    /// A wireless adapter exists (even switched off), and a cable is connected:
+    /// what decides the automatic Wi-Fi and Ethernet taskbar items.
+    pub fn presence(self: *const Manager) Presence {
+        if (!self.available) return .{};
+        var cabled = false;
+        for (self.ethernet[0..self.ethernet_count]) |eth| cabled = cabled or eth.connected();
+        return .{ .wifi = self.device.len != 0, .wired = cabled };
+    }
+    /// Only a change reaches the taskbars, which then lay out again.
+    fn publishPresence(self: *Manager) void {
+        const now = self.presence();
+        if (std.meta.eql(now, self.presence_published)) return;
+        self.presence_published = now;
+        var it = self.server.outputs.iterator(.forward);
+        while (it.next()) |output| if (output.taskbar) |bar| bar.applyNetworkPresence(now);
+        // Settings lists the items as shown.
+        if (self.server.input.open_control_center) |cc| cc.refresh();
+    }
     /// Only a flip reaches the taskbars, so an idle session stays idle.
     fn publishOffline(self: *Manager) void {
         const now = self.offline();
@@ -174,6 +195,7 @@ pub const Manager = struct {
     fn refresh(self: *Manager) void {
         if (self.closing) return;
         self.publishOffline();
+        self.publishPresence();
         if (self.server.input.open_wifi) |popup| popup.changed();
         if (self.server.input.open_control_center) |cc| if (cc.page == .network) cc.refresh();
     }
@@ -266,7 +288,17 @@ pub const Manager = struct {
             self.publishOffline();
         }
         const settings_open = if (self.server.input.open_control_center) |cc| cc.page == .network else false;
-        if (self.server.input.open_wifi != null or settings_open or self.busy or self.wired_pending != null) self.fetch();
+        // Adapters and cables coming and going decide which taskbar items show;
+        // access-point churn does not, so it only matters while a page is open.
+        const iface = msg.headers.interface orelse "";
+        const member = msg.headers.member orelse "";
+        var topology = (eq(u8, iface, nm) and (eq(u8, member, "StateChanged") or eq(u8, member, "DeviceAdded") or eq(u8, member, "DeviceRemoved"))) or
+            (eq(u8, iface, device_iface) and eq(u8, member, "StateChanged"));
+        if (eq(u8, member, "InterfacesAdded") or eq(u8, member, "InterfacesRemoved")) {
+            var body = msg.body;
+            topology = topology or std.mem.indexOf(u8, try body.objectPath(), "/AccessPoint/") == null;
+        }
+        if (topology or self.server.input.open_wifi != null or settings_open or self.busy or self.wired_pending != null) self.fetch();
     }
     fn fetch(self: *Manager) void {
         if (self.closing or self.owner.len == 0) return;

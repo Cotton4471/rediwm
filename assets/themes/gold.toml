@@ -182,6 +182,7 @@ lock_fg = "#F6EADB"
 lock_dim = "#CAB8A2"
 lock_divider = "#74604C"
 lock_session_fg = "#E4CFB5"
+lock_wallpaper_opacity = 0.24
 image_checker_dark = "#C1B6A7"
 image_checker_light = "#DDD4C6"
 terminal_bg = "#211F20"

@@ -236,9 +236,9 @@ Entry points:
 ### Security notes
 
 * The greeter loads no packs (it reads nothing from a user's home and
-  writes nothing under `$HOME`); `tests/greeter.py` must still pass. Themed
-  login screens from system packs (`share/rediwm/themes`, chosen in
-  `rediwm-dm.conf`) are a possible later item, not this plan.
+  writes nothing under `$HOME`); `tests/greeter.py` must still pass. Login
+  theming was deferred from this plan; it now follows each account's public
+  appearance snapshot without discovering packs (see `docs/themes.md`).
 * A broken or missing pack never blocks locking: lock UI and wallpaper are
   already optional there, and every asset falls back to the built-in one.
 * SVGs are rendered from data with no base URI, so they cannot pull in files

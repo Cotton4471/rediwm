@@ -8,3 +8,7 @@ Runs as root. The greeter (`rediwm --greeter`) is untrusted input.
 * Only the daemon and workers are root. Don't sandbox `rediwm-dm.service`:
   user sessions inherit it.
 * `--test`, `--confdir`, `--data-dir` and `--marker` are refused as root.
+* Login appearance: provision only the numeric UID directory after PAM has
+  opened a user session. Root never reads appearance files. The shared parent
+  stays root-owned and not writable by users; never follow or chown an existing
+  user-controlled entry. Test mode must not provision system directories.

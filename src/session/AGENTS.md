@@ -3,6 +3,13 @@
 Cross-cutting lock rules (greeter, crash handling, IPC refusal, client
 ext-session-lock) are in the root `AGENTS.md`.
 
+* Login appearance is a flattened snapshot in
+  `/var/lib/rediwm-appearance/<uid>/`, provisioned by the DM and written by
+  that account's real desktop session. `login_appearance.zig` reads only
+  bounded regular files with matching ownership and no symlinks. Never load
+  a user's config or discover packs in the greeter. Account changes reset
+  the palette and wallpaper before loading the next snapshot.
+
 * `Lock.covered()` releases the lock-before-sleep inhibitor; the builtin lock
   also sets `Output.lock_commit_pending`.
 

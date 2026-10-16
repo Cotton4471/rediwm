@@ -96,6 +96,7 @@ lock_fg = "#cdd6f4"
 lock_dim = "#a6adc8"
 lock_divider = "#45475a"
 lock_session_fg = "#bac2de"
+lock_wallpaper_opacity = 0.24
 switcher_bg = "#181825"
 switcher_border = "#45475a"
 switcher_item_bg = "#1e1e2e"

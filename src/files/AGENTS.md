@@ -5,6 +5,20 @@ Text, colour and theme rules shared with Images and PDF are in the root
 `REDIWM_FILES_DEVICES=0` and scratch `XDG_STATE_HOME`/`XDG_DATA_HOME`
 (`TESTING.md`, "Common knobs").
 
+## Where `App` lives
+
+`app.zig` holds the `App` fields, `init`/`deinit` and one `pub const name =
+app_x.name;` alias per method, so `self.name()` works everywhere. The bodies
+are free functions taking `self: *App` in `app_*.zig`, grouped by concern:
+`app_hover`, `app_listing` (navigation, sync, sorting), `app_dialogs`,
+`app_fileops`, `app_chooser`, `app_layout` (geometry), `app_folder_size`,
+`app_places` (sidebar rows, pins, devices), `app_sidebar_paint`,
+`app_git_sidebar`, `app_scroll`, `app_opening`, `app_pointer`,
+`app_keyboard`, `app_menu`, `app_paint`, `app_items`. Shared enums and
+records are in `app_model.zig`, drawing helpers in `app_draw.zig`, tests in
+`app_tests.zig`. A new method goes in its group file plus an alias line in
+`App`; a file that calls a sibling's non-method helper imports it directly.
+
 ## Git
 
 `git.zig` never runs a repository's own programs: a folder's `.git` arrives

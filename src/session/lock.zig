@@ -25,7 +25,9 @@ const power_cmd = @import("power.zig");
 const Controls = lock_controls.Controls;
 const CaretOverlay = @import("../caret_overlay.zig").CaretOverlay;
 const Greeter = greeter_mod.Greeter;
-const c = @cImport({
+const login_appearance = @import("login_appearance.zig");
+const ImageBuffer = @import("../ImageBuffer.zig");
+pub const c = @cImport({
     @cInclude("time.h");
     @cInclude("unistd.h");
     @cInclude("sys/mman.h");
@@ -37,7 +39,7 @@ const Auth = opaque {};
 extern fn rediwm_account([*]u8, usize, [*]u8, usize, [*]u8, usize) c_int;
 extern fn rediwm_secret_clear([*]u8, usize) void;
 extern fn rediwm_auth_start([*:0]const u8) ?*Auth;
-extern fn rediwm_auth_poll(*Auth) c_int;
+pub extern fn rediwm_auth_poll(*Auth) c_int;
 extern fn rediwm_auth_fd(*Auth) c_int;
 extern fn rediwm_auth_destroy(*Auth) void;
 
@@ -62,6 +64,10 @@ pub const Lock = struct {
     auth_source: ?*wl.EventSource = null,
     /// Set in greeter mode: rediwm-dm, not PAM, decides, and success exits.
     greeter: ?*Greeter = null,
+    greeter_appearance_root: []const u8 = login_appearance.root,
+    greeter_default_theme: ui.theme.Theme = .{},
+    greeter_appearance: ?login_appearance.Saved = null,
+    greeter_wallpaper: ?*ImageBuffer = null,
     /// Who started the lock. Only a client lock whose client died may be
     /// taken over by a new ext-session-lock client.
     origin: enum { builtin, client } = .builtin,
@@ -108,7 +114,7 @@ pub const Lock = struct {
         errdefer greeter.destroy();
         const self = try gpa.create(Lock);
         errdefer gpa.destroy(self);
-        self.* = .{ .server = server, .timer = undefined, .greeter = greeter };
+        self.* = .{ .server = server, .timer = undefined, .greeter = greeter, .greeter_default_theme = server.config.theme };
         self.timer = try server.wl_server.getEventLoop().addTimer(*Lock, tick, self);
         greeter.owner = self;
         greeter.notify = greeterEvent;
@@ -122,7 +128,7 @@ pub const Lock = struct {
         });
     }
 
-    fn engage(self: *Lock) void {
+    pub fn engage(self: *Lock) void {
         const server = self.server;
         // First, so a crash anywhere below still restarts the session locked.
         announce(server, true);
@@ -175,7 +181,7 @@ pub const Lock = struct {
     }
 
     /// Wakes for the next clock minute or transient controls timeout.
-    fn scheduleClock(self: *Lock) void {
+    pub fn scheduleClock(self: *Lock) void {
         var delay: i64 = (60 - @mod(c.time(null), 60)) * 1000 + 25;
         if (self.controls_visible and self.controls_hide_at > 0) {
             delay = @min(delay, @max(1, self.controls_hide_at - anim.nowMs()));
@@ -185,7 +191,7 @@ pub const Lock = struct {
 
     /// Everyone outside the compositor who tracks the lock: rediwm-session,
     /// so a crash restarts locked, and logind's LockedHint.
-    fn announce(server: *Server, locked: bool) void {
+    pub fn announce(server: *Server, locked: bool) void {
         @import("activation.zig").reportLocked(server.environ, locked);
         if (server.power) |power| power.lockChanged(locked);
     }
@@ -207,8 +213,9 @@ pub const Lock = struct {
     }
 
     /// Greeter: shows the selected account's name and picture.
-    fn showAccount(self: *Lock) void {
+    pub fn showAccount(self: *Lock) void {
         const greeter = self.greeter orelse return;
+        self.applyAccountAppearance(if (greeter.selectedUser()) |user| user.uid else null);
         if (self.avatar) |avatar| avatar.deinit(gpa);
         self.avatar = null;
         @memset(&self.user, 0);
@@ -223,24 +230,51 @@ pub const Lock = struct {
         self.loadAvatar(user.home);
     }
 
-    fn idleStatus(self: *const Lock) []const u8 {
+    pub fn applyAccountAppearance(self: *Lock, uid: ?u32) void {
+        // Reset first: an account without a snapshot must not inherit the
+        // preceding account's palette, fonts or wallpaper.
+        self.clearAccountAppearance();
+        if (uid) |id| if (self.greeter_appearance_root.len > 0) {
+            self.greeter_appearance = login_appearance.load(gpa, self.greeter_appearance_root, id) catch null;
+        };
+        if (self.greeter_appearance) |*saved| {
+            ui.theme.global = saved.tokens;
+            if (saved.wallpaper) |image| {
+                self.greeter_wallpaper = ImageBuffer.createFromDecoded(image) catch null;
+                if (self.greeter_wallpaper != null) saved.wallpaper = null; // buffer owns pixels
+            }
+        }
+        text.setPreferredFamilies(ui.theme.global.font, ui.theme.global.mono_font);
+        self.themeChanged();
+    }
+
+    pub fn clearAccountAppearance(self: *Lock) void {
+        ui.theme.global = self.greeter_default_theme;
+        text.setPreferredFamilies(ui.theme.global.font, ui.theme.global.mono_font);
+        if (self.greeter_wallpaper) |image| image.base.drop();
+        self.greeter_wallpaper = null;
+        if (self.greeter_appearance) |*saved| saved.deinit(gpa);
+        self.greeter_appearance = null;
+    }
+
+    pub fn idleStatus(self: *const Lock) []const u8 {
         const greeter = self.greeter orelse return unlock_hint;
         if (greeter.users.len == 0) return "No user accounts found";
         if (greeter.sessions.len == 0) return "No sessions installed";
         return login_hint;
     }
 
-    fn busy(self: *const Lock) bool {
+    pub fn busy(self: *const Lock) bool {
         if (self.greeter) |greeter| return greeter.busy();
         return self.auth != null;
     }
 
-    fn prompting(self: *const Lock) bool {
+    pub fn prompting(self: *const Lock) bool {
         const greeter = self.greeter orelse return false;
         return greeter.phase == .prompting;
     }
 
-    fn greeterEvent(owner: ?*anyopaque, event: greeter_mod.Event) void {
+    pub fn greeterEvent(owner: ?*anyopaque, event: greeter_mod.Event) void {
         const self: *Lock = @ptrCast(@alignCast(owner.?));
         switch (event) {
             .status => |message| self.status = message,
@@ -273,7 +307,7 @@ pub const Lock = struct {
         self.changed();
     }
 
-    fn loadAvatar(self: *Lock, home: []const u8) void {
+    pub fn loadAvatar(self: *Lock, home: []const u8) void {
         var path: [4352]u8 = undefined;
         if (home.len > 0) for ([_][]const u8{ ".face", ".face.png" }) |file| {
             const p = std.fmt.bufPrint(&path, "{s}/{s}", .{ home, file }) catch continue;
@@ -283,7 +317,7 @@ pub const Lock = struct {
         _ = self.readAvatar(p);
     }
 
-    fn readAvatar(self: *Lock, path: []const u8) bool {
+    pub fn readAvatar(self: *Lock, path: []const u8) bool {
         const bytes = std.Io.Dir.cwd().readFileAlloc(self.server.io, path, gpa, .limited(4 * 1024 * 1024)) catch return false;
         defer gpa.free(bytes);
         // Bound decoded allocation as well as file size before using the PNG decoder.
@@ -296,12 +330,12 @@ pub const Lock = struct {
     /// The password editor, bound to `password` on every access so a moved
     /// `Lock` (tests build them on the stack) never leaves it dangling. The
     /// last byte stays zero: PAM reads `password` as a C string.
-    fn field(self: *Lock) *SecretInput {
+    pub fn field(self: *Lock) *SecretInput {
         self.input.storage = self.password[0 .. self.password.len - 1];
         return &self.input;
     }
 
-    fn clear(self: *Lock) void {
+    pub fn clear(self: *Lock) void {
         rediwm_secret_clear(&self.password, self.password.len);
         self.input.len = 0;
         self.input.cursor = 0;
@@ -314,7 +348,10 @@ pub const Lock = struct {
         if (self.power_child) |child| child.detach();
         if (self.auth_source) |source| source.remove();
         if (self.auth) |auth| rediwm_auth_destroy(auth);
-        if (self.greeter) |greeter| greeter.destroy();
+        if (self.greeter) |greeter| {
+            self.clearAccountAppearance();
+            greeter.destroy();
+        }
         self.clear();
         _ = c.munlock(&self.password, self.password.len);
         if (self.avatar) |avatar| avatar.deinit(gpa);
@@ -352,7 +389,7 @@ pub const Lock = struct {
         self.changed();
     }
 
-    fn changed(self: *Lock) void {
+    pub fn changed(self: *Lock) void {
         self.revision +%= 1;
         self.server.scheduleFrames();
     }
@@ -388,7 +425,7 @@ pub const Lock = struct {
         self.showControls(kind);
     }
 
-    fn showControls(self: *Lock, requested: lock_controls.Kind) void {
+    pub fn showControls(self: *Lock, requested: lock_controls.Kind) void {
         if (self.greeter != null or self.controls.height() == 0) return;
         const kind = if (self.controls.drag) |drag| drag.kind else requested;
         const selected = self.controls.select(kind);
@@ -403,7 +440,7 @@ pub const Lock = struct {
     /// The control under a layout point, with its track's left edge and
     /// width in layout pixels. An ext-session-lock client's surface hides
     /// the built-in controls along with the rest of the screen.
-    fn controlsAt(self: *Lock, x: f64, y: f64) ?ControlsAt {
+    pub fn controlsAt(self: *Lock, x: f64, y: f64) ?ControlsAt {
         if (self.greeter != null) return null;
         const out = Output.atLayout(self.server, x, y) orelse return null;
         if (self.client) |client| if (client.covers(out)) return null;
@@ -437,14 +474,14 @@ pub const Lock = struct {
         }
     }
 
-    fn powerExited(owner: ?*anyopaque, _: *Child, status: ?u32) void {
+    pub fn powerExited(owner: ?*anyopaque, _: *Child, status: ?u32) void {
         const self: *Lock = @ptrCast(@alignCast(owner.?));
         self.power_child = null;
         self.status = if (status != null and status.? == 0) "Power request accepted" else "Power request denied or unavailable";
         self.changed();
     }
 
-    fn tick(self: *Lock) c_int {
+    pub fn tick(self: *Lock) c_int {
         const minute = @divTrunc(c.time(null), 60);
         if (minute != self.minute) {
             self.minute = minute;
@@ -461,7 +498,7 @@ pub const Lock = struct {
     }
 
     /// The PAM worker finished: its eventfd became readable.
-    fn authReady(_: c_int, _: wl.EventMask, self: *Lock) c_int {
+    pub fn authReady(_: c_int, _: wl.EventMask, self: *Lock) c_int {
         const auth = self.auth orelse return 0;
         const result = rediwm_auth_poll(auth);
         if (result == 0) return 0;
@@ -481,7 +518,7 @@ pub const Lock = struct {
         return 0;
     }
 
-    fn submit(self: *Lock) void {
+    pub fn submit(self: *Lock) void {
         if (self.greeter) |greeter| return self.submitGreeter(greeter);
         if (self.auth != null or self.input.len == 0 or anim.nowMs() < self.retry_at) return;
         self.auth = rediwm_auth_start(&self.password);
@@ -499,7 +536,7 @@ pub const Lock = struct {
         self.changed();
     }
 
-    fn submitGreeter(self: *Lock, greeter: *Greeter) void {
+    pub fn submitGreeter(self: *Lock, greeter: *Greeter) void {
         if (anim.nowMs() < self.retry_at) return;
         defer self.changed();
         if (greeter.phase == .prompting) {
@@ -521,7 +558,7 @@ pub const Lock = struct {
     }
 
     /// Greeter: account or session choice changed.
-    fn choose(self: *Lock, target: u8, delta: isize) void {
+    pub fn choose(self: *Lock, target: u8, delta: isize) void {
         const greeter = self.greeter orelse return;
         if (greeter.phase != .idle) return;
         if (target == focus_account) {
@@ -536,7 +573,7 @@ pub const Lock = struct {
     }
 
     /// Tab order; greeter mode adds the account and session choosers.
-    fn focusOrder(self: *const Lock, buf: *[7]u8) []const u8 {
+    pub fn focusOrder(self: *const Lock, buf: *[7]u8) []const u8 {
         const greeter = self.greeter orelse {
             buf[0..5].* = .{ 0, 1, 2, 3, 4 };
             return buf[0..5];
@@ -558,7 +595,7 @@ pub const Lock = struct {
         return buf[0 .. n + 2];
     }
 
-    fn moveFocus(self: *Lock, backward: bool) void {
+    pub fn moveFocus(self: *Lock, backward: bool) void {
         var buf: [7]u8 = undefined;
         const order = self.focusOrder(&buf);
         const at = std.mem.indexOfScalar(u8, order, self.focus) orelse 0;
@@ -631,7 +668,7 @@ pub const Lock = struct {
         }
     }
 
-    fn activate(self: *Lock, focus: u8) void {
+    pub fn activate(self: *Lock, focus: u8) void {
         switch (focus) {
             0, 2 => self.submit(),
             1 => self.reveal = !self.reveal,
@@ -725,12 +762,12 @@ pub const Lock = struct {
     }
 };
 
-const ControlsAt = struct { hit: lock_controls.Hit, left: f32, span: f32 };
+pub const ControlsAt = struct { hit: lock_controls.Hit, left: f32, span: f32 };
 
 /// What the volume/brightness block of a `w` x `h` output has at an
 /// output-local point: the control, and its track's left edge and width in
 /// the same pixels.
-fn controlsPick(controls: *const Controls, w: f32, h: f32, px: f32, py: f32) ?ControlsAt {
+pub fn controlsPick(controls: *const Controls, w: f32, h: f32, px: f32, py: f32) ?ControlsAt {
     if (controls.rows() == 0) return null;
     const geo = Geometry.init(w, h);
     const box = geo.controlsBox(controls.height());
@@ -740,18 +777,18 @@ fn controlsPick(controls: *const Controls, w: f32, h: f32, px: f32, py: f32) ?Co
     return .{ .hit = hit, .left = origin_x + lock_controls.track_x * geo.s, .span = lock_controls.track_w * geo.s };
 }
 
-const unlock_hint = "Press Enter to unlock";
-const login_hint = "Press Enter to log in";
-const focus_account: u8 = 5;
-const focus_session: u8 = 6;
+pub const unlock_hint = "Press Enter to unlock";
+pub const login_hint = "Press Enter to log in";
+pub const focus_account: u8 = 5;
+pub const focus_session: u8 = 6;
 
-const Geometry = struct {
+pub const Geometry = struct {
     s: f32,
     w: f32,
     h: f32,
     left: f32,
     top: f32,
-    fn init(w: f32, h: f32) Geometry {
+    pub fn init(w: f32, h: f32) Geometry {
         // ui_scale trims the whole panel (fonts, field, button) down from the
         // 600x900 design canvas's 1:1 cap — full size read as oversized on
         // typical outputs.
@@ -761,12 +798,12 @@ const Geometry = struct {
     }
 
     /// The password field in design units: draw through `Renderer.zoomed(s)`.
-    fn field(geo: Geometry) text_field.Rect {
+    pub fn field(geo: Geometry) text_field.Rect {
         return .{ .x = geo.left / geo.s, .y = geo.top / geo.s + 430, .w = 390, .h = 56 };
     }
 
     /// Power (0) and Restart (1), bottom right, in the same units.
-    fn powerAction(geo: Geometry, i: usize) text_field.Rect {
+    pub fn powerAction(geo: Geometry, i: usize) text_field.Rect {
         const center = geo.w / geo.s - 170 + @as(f32, @floatFromInt(i)) * 100;
         return .{ .x = center - 45, .y = geo.h / geo.s - 96, .w = 90, .h = 76 };
     }
@@ -775,7 +812,7 @@ const Geometry = struct {
     /// power buttons' band and horizontally on the screen, in whole layout
     /// pixels output-local. It never reaches the power buttons: the canvas is
     /// at least 705 design units wide, they start 215 from its right edge.
-    fn controlsBox(geo: Geometry, block_h: f32) struct { x: i32, y: i32, w: i32, h: i32 } {
+    pub fn controlsBox(geo: Geometry, block_h: f32) struct { x: i32, y: i32, w: i32, h: i32 } {
         const x = (geo.w / geo.s - lock_controls.width) / 2;
         const y = geo.h / geo.s - 58 - block_h / 2;
         return .{
@@ -787,12 +824,12 @@ const Geometry = struct {
     }
 
     /// The Unlock / Log In button, in the same units.
-    fn submit(geo: Geometry) text_field.Rect {
+    pub fn submit(geo: Geometry) text_field.Rect {
         return .{ .x = geo.left / geo.s, .y = geo.top / geo.s + 508, .w = 390, .h = 52 };
     }
 };
 
-const field_options: text_field.Options = .{ .size = .lg, .secret_dots = .{ .diameter = 0.46, .pitch = 1.05 }, .trailing = .reveal };
+pub const field_options: text_field.Options = .{ .size = .lg, .secret_dots = .{ .diameter = 0.46, .pitch = 1.05 }, .trailing = .reveal };
 
 pub const View = struct {
     tree: *sn.Tree,
@@ -849,7 +886,7 @@ pub const View = struct {
         Buffer.drainPool();
     }
 
-    fn hideControls(self: *View) void {
+    pub fn hideControls(self: *View) void {
         self.controls_node.node.setEnabled(false);
         self.controls_node.setBuffer(null);
         self.controls_key = null;
@@ -857,7 +894,7 @@ pub const View = struct {
 
     /// Rasters the volume/brightness block when it, or the output it sits
     /// on, changed. The greeter and an output without either backend show none.
-    fn syncControls(self: *View, lock: *Lock, b: wlr.Box, scale: f32) void {
+    pub fn syncControls(self: *View, lock: *Lock, b: wlr.Box, scale: f32) void {
         const block_h = lock.controls.height();
         if (lock.greeter != null or !lock.controls_visible or block_h == 0 or b.width <= 0 or b.height <= 0) return self.hideControls();
         const key = ControlsKey{ .revision = lock.controls.revision, .width = b.width, .height = b.height, .scale = scale };
@@ -902,10 +939,10 @@ pub const View = struct {
         if (b.width <= 0 or b.height <= 0) return false;
         // Drop stale pixels before a failed resize allocation.
         self.ui_node.setBuffer(null);
-        if (out.server.wallpaper) |image| {
+        if (lock.greeter_wallpaper orelse out.server.wallpaper) |image| {
             self.wallpaper.setBuffer(&image.base);
             self.wallpaper.setDestSize(b.width, b.height);
-        }
+        } else self.wallpaper.setBuffer(null);
         const buf = Buffer.create(b.width, b.height, scale) catch return false;
         defer buf.base.drop();
         buf.sensitive = true;
@@ -929,14 +966,14 @@ pub const View = struct {
     }
 };
 
-const ControlsKey = struct { revision: u64, width: i32, height: i32, scale: f32 };
+pub const ControlsKey = struct { revision: u64, width: i32, height: i32, scale: f32 };
 
-fn lockBackground() [4]f32 {
+pub fn lockBackground() [4]f32 {
     var bg = ui.theme.global.lock_bg;
     bg[3] = 1;
     return bg;
 }
-fn label(r: *ui.paint.Renderer, cx: f32, y: f32, width: f32, height: f32, value: []const u8, size: f32, color: [4]f32) void {
+pub fn label(r: *ui.paint.Renderer, cx: f32, y: f32, width: f32, height: f32, value: []const u8, size: f32, color: [4]f32) void {
     const measured = text.measureWidthF(value, .manrope, size, r.scale) catch width;
     const w = @min(width, measured + 1);
     r.drawText(cx - w / 2, y, w, height, .{ .content = value, .font_size = size, .color = color });
@@ -944,9 +981,9 @@ fn label(r: *ui.paint.Renderer, cx: f32, y: f32, width: f32, height: f32, value:
 
 /// Where the field's caret went, in design units `factor` layout pixels
 /// wide; the caret itself is the view's overlay.
-const Painted = struct { caret: ?ui.widgets.secret_input.Input.CaretPlace, factor: f32 };
+pub const Painted = struct { caret: ?ui.widgets.secret_input.Input.CaretPlace, factor: f32 };
 
-fn paint(r: *ui.paint.Renderer, lock: *Lock, w: f32, h: f32, clock_24h: bool) Painted {
+pub fn paint(r: *ui.paint.Renderer, lock: *Lock, w: f32, h: f32, clock_24h: bool) Painted {
     const fg = ui.theme.global.lock_fg;
     const muted = ui.theme.global.lock_dim;
     const geo = Geometry.init(w, h);
@@ -1011,7 +1048,7 @@ fn paint(r: *ui.paint.Renderer, lock: *Lock, w: f32, h: f32, clock_24h: bool) Pa
 }
 
 /// Greeter: account arrows beside the picture, session chooser bottom-left.
-fn paintChoices(r: *ui.paint.Renderer, lock: *const Lock, greeter: *const Greeter, geo: Geometry, h: f32) void {
+pub fn paintChoices(r: *ui.paint.Renderer, lock: *const Lock, greeter: *const Greeter, geo: Geometry, h: f32) void {
     const fg = ui.theme.global.lock_fg;
     const muted = ui.theme.global.lock_dim;
     const s = geo.s;
@@ -1042,488 +1079,6 @@ fn paintChoices(r: *ui.paint.Renderer, lock: *const Lock, greeter: *const Greete
     if (lock.focus == focus_session) r.fillRect(x - 12 * s, h - 96 * s, @max(name_w, caption_w) + 24 * s, 76 * s, .{ .color = .{ 0, 0, 0, 0 }, .radius = 10 * s, .border_width = s, .border_color = fg });
 }
 
-test "lock password editing clears complete UTF-8 characters and Escape never unlocks" {
-    var server: Server = undefined;
-    server.polkit = null;
-    server.outputs.init();
-    var lock = Lock{ .server = &server, .timer = undefined };
-    server.locker = &lock;
-    lock.key(@enumFromInt('a'), "a", .{});
-    lock.key(@enumFromInt('e'), "é", .{});
-    try std.testing.expectEqualStrings("aé", lock.field().value());
-    lock.key(@enumFromInt(xkb.Keysym.BackSpace), "", .{});
-    try std.testing.expectEqualStrings("a", lock.field().value());
-    try std.testing.expectEqual(@as(u8, 0), lock.password[2]);
-    lock.reveal = true;
-    lock.key(@enumFromInt(xkb.Keysym.Escape), "", .{});
-    try std.testing.expect(server.locker == &lock);
-    try std.testing.expect(!lock.reveal);
-    try std.testing.expectEqual(@as(usize, 0), lock.input.len);
-    for (lock.password) |byte| try std.testing.expectEqual(@as(u8, 0), byte);
-    // Oversized input must not produce a partial UTF-8 sequence or overrun.
-    const full = [_]u8{'a'} ** 511;
-    lock.key(@enumFromInt('a'), &full, .{});
-    lock.key(@enumFromInt('e'), "é", .{});
-    try std.testing.expectEqual(@as(usize, 511), lock.input.len);
-    try std.testing.expectEqual(@as(u8, 0), lock.password[511]);
-    lock.clear();
-}
-
-test "lock IPC and client focus requests stop before touching desktop state" {
-    var server: Server = undefined;
-    var lock = Lock{ .server = &server, .timer = undefined };
-    server.locker = &lock;
-    const response = try @import("../ipc/handlers.zig").handleRequest(&server, null, .version, std.testing.allocator, null);
-    try std.testing.expectEqualStrings("SessionLocked", response.err);
-    var world: @import("../World.zig") = undefined;
-    world.server = &server;
-    var top: @import("../Toplevel.zig") = undefined;
-    world.focusSurface(&top, null);
-    var layer: @import("../LayerSurface.zig") = undefined;
-    layer.server = &server;
-    layer.focus();
-    var input: @import("../Input.zig") = undefined;
-    input.server = &server;
-    input.processCursorMotion(1);
-    input.warpCursor(100, 100, 1);
-    // These deliberately undefined desktop structures would fault if any of
-    // the locked guards reached their ordinary client-facing paths.
-}
-
-test "lock output guard is opaque independent of wallpaper and UI buffers" {
-    var fixture = try sn.TestScene.create();
-    defer fixture.destroy();
-    var view = try View.create(&fixture.nodes.tree);
-    try std.testing.expect(!view.tree.node.enabled);
-    try std.testing.expectEqual(@as(f32, 1), view.guard.color[3]);
-    view.tree.node.setEnabled(true);
-    view.guard.setSize(1920, 1080);
-    try std.testing.expectEqual(@as(i32, 1920), view.guard.width);
-    try std.testing.expect(view.ui_node.getBuffer() == null);
-    view.hide();
-    try std.testing.expect(!view.tree.node.enabled);
-}
-
-test "lock raster scales to small outputs and renders a solid accent unlock button" {
-    var lock = Lock{ .server = undefined, .timer = undefined, .controls_visible = true };
-    @memcpy(lock.name[0..11], "Alex Morgan");
-    @memcpy(lock.user[0..10], "alexmorgan");
-    lock.controls = .{ .has_volume = true, .volume = 0.5, .has_brightness = true, .brightness = 0.25, .active = .volume };
-    var fixture = try sn.TestScene.create();
-    defer fixture.destroy();
-    var view = try View.create(&fixture.nodes.tree);
-    for ([_][3]i32{ .{ 1672, 941, 1 }, .{ 640, 480, 1 }, .{ 1280, 720, 2 } }) |size| {
-        const scale: f32 = if (size[2] == 2) 1.5 else 1;
-        const buf = try Buffer.create(size[0], size[1], scale);
-        defer buf.base.drop();
-        @memset(buf.pixels, 0xff090b12);
-        var renderer = ui.paint.Renderer{ .pixels = buf.pixels, .width = buf.width, .height = buf.height, .scale = scale };
-        _ = paint(&renderer, &lock, @floatFromInt(size[0]), @floatFromInt(size[1]), size[0] == 640);
-        const geo = Geometry.init(@floatFromInt(size[0]), @floatFromInt(size[1]));
-        const px: usize = @intFromFloat((geo.left + 15 * geo.s) * scale);
-        const py: usize = @intFromFloat((geo.top + 530 * geo.s) * scale);
-        // The volume/brightness block is its own raster, bottom centre, and
-        // never reaches the power buttons however small the output.
-        view.syncControls(&lock, .{ .x = 0, .y = 0, .width = size[0], .height = size[1] }, scale);
-        const placed = geo.controlsBox(lock.controls.height());
-        const node = &view.controls_node.node;
-        try std.testing.expect(node.enabled and view.controls_node.getBuffer() != null);
-        try std.testing.expectEqual(placed.x, node.x);
-        try std.testing.expectEqual(placed.y, node.y);
-        try std.testing.expect(node.y >= 0 and node.y + placed.h <= size[1]);
-        try std.testing.expect(node.x + placed.w <= @as(i32, @intFromFloat(geo.powerAction(0).x * geo.s)));
-        // Pointer: the volume track is found where it is drawn, and a drag
-        // maps the pointer across exactly that track, clamped at its ends.
-        var no_audio: Server = undefined;
-        no_audio.audio = null;
-        const w: f32 = @floatFromInt(size[0]);
-        const h: f32 = @floatFromInt(size[1]);
-        const row_y: f32 = @as(f32, @floatFromInt(placed.y)) + 16 * geo.s;
-        const track = controlsPick(&lock.controls, w, h, @as(f32, @floatFromInt(placed.x)) + 100 * geo.s, row_y) orelse return error.TestUnexpectedResult;
-        try std.testing.expectEqual(lock_controls.Kind.volume, track.hit.kind);
-        try std.testing.expectEqual(lock_controls.Part.track, track.hit.part);
-        try std.testing.expectApproxEqAbs(@as(f32, @floatFromInt(placed.x)) + lock_controls.track_x * geo.s, track.left, 0.01);
-        try std.testing.expectEqual(lock_controls.Part.icon, controlsPick(&lock.controls, w, h, @as(f32, @floatFromInt(placed.x)) + 10 * geo.s, row_y).?.hit.part);
-        try std.testing.expectEqual(lock_controls.Kind.brightness, controlsPick(&lock.controls, w, h, @as(f32, @floatFromInt(placed.x)) + 100 * geo.s, row_y + 40 * geo.s).?.hit.kind);
-        try std.testing.expect(controlsPick(&lock.controls, w, h, w / 2, h / 4) == null);
-        var drag = lock.controls;
-        drag.beginDrag(&no_audio, .volume, track.left, track.span, track.left + track.span * 0.75);
-        try std.testing.expectApproxEqAbs(@as(f32, 0.75), drag.volume, 0.0001);
-        drag.dragTo(&no_audio, track.left + track.span * 3);
-        try std.testing.expectEqual(@as(f32, 1), drag.volume);
-        drag.dragTo(&no_audio, track.left - 50);
-        try std.testing.expectEqual(@as(f32, 0), drag.volume);
-        try std.testing.expect(drag.endDrag() and !drag.endDrag());
-        const actual = buf.pixels[py * @as(usize, @intCast(buf.width)) + px];
-        try std.testing.expectEqual(@as(u32, 255), actual >> 24);
-        inline for (.{ 16, 8, 0 }, 0..) |shift, channel| {
-            const got: f32 = @floatFromInt((actual >> shift) & 255);
-            try std.testing.expectApproxEqAbs(ui.theme.shellPalette().accent[channel] * 255, got, 1);
-        }
-        if (size[0] == 1672) {
-            const env = @cImport({
-                @cInclude("stdlib.h");
-            });
-            if (env.getenv("REDIWM_LOCK_PREVIEW")) |path| {
-                const bytes = try @import("../screenshot/encode.zig").encodePng(std.testing.allocator, @intCast(buf.width), @intCast(buf.height), buf.pixels, @intCast(buf.width));
-                defer std.testing.allocator.free(bytes);
-                try std.Io.Dir.cwd().writeFile(std.testing.io, .{ .sub_path = std.mem.span(path), .data = bytes });
-            }
-        }
-    }
-    // No backend, no block: the greeter and a desktop without a backlight or
-    // a sound server show nothing there.
-    lock.controls = .{};
-    view.syncControls(&lock, .{ .x = 0, .y = 0, .width = 1280, .height = 720 }, 1);
-    try std.testing.expect(!view.controls_node.node.enabled and view.controls_node.getBuffer() == null);
-    Buffer.drainPool();
-}
-
-test "lock authentication failure stays locked and success releases lock state" {
-    // This symbol is provided exclusively by tests/auth_test.c, never by the
-    // production executable. It controls PAM results at link time.
-    const fixture = struct {
-        extern fn rediwm_test_auth_scenario(c_int) void;
-    };
-    const display = try wl.Server.create();
-    defer display.destroy();
-    const seat = try wlr.Seat.create(display, "lock-test");
-    defer seat.destroy();
-    var server: Server = undefined;
-    // Resume the real agent only after successful PAM, without opening a bus.
-    var conn: @import("dbus").Connection = undefined;
-    conn.closed = true;
-    var agent = @import("../polkit/agent.zig").Agent{
-        .allocator = gpa,
-        .conn = &conn,
-        .loop = display.getEventLoop(),
-        .locale = "C",
-        .suspended = true,
-    };
-    server.polkit = &agent;
-    server.undo = .{};
-    server.wl_server = display;
-    server.outputs.init();
-    server.world.toplevels.init();
-    server.input.seat = seat;
-    // Releasing announces the unlock: no supervisor fd and no logind here.
-    server.environ = std.process.Environ.empty;
-    server.power = null;
-    for ([_]c_int{ 1, 2, 3, 4, 0 }) |scenario| {
-        fixture.rediwm_test_auth_scenario(scenario);
-        const lock = try gpa.create(Lock);
-        lock.* = .{ .server = &server, .timer = undefined };
-        lock.timer = try display.getEventLoop().addTimer(*Lock, Lock.tick, lock);
-        server.locker = lock;
-        try std.testing.expect(lock.field().insert("fixture-password"));
-        lock.submit();
-        try std.testing.expectEqual(@as(usize, 0), lock.input.len);
-        try std.testing.expect(lock.auth != null);
-        for (0..10000) |_| {
-            if (rediwm_auth_poll(lock.auth.?) != 0) break;
-            _ = c.usleep(1000);
-        }
-        try std.testing.expect(rediwm_auth_poll(lock.auth.?) != 0);
-        // The worker's eventfd, not a timer, reports the result.
-        try std.testing.expect(lock.auth_source != null);
-        try display.getEventLoop().dispatch(1000);
-        if (scenario == 0) {
-            try std.testing.expect(server.locker == null);
-            try std.testing.expect(!agent.suspended);
-        } else {
-            try std.testing.expect(server.locker == lock);
-            try std.testing.expect(agent.suspended);
-            try std.testing.expect(lock.auth == null);
-            try std.testing.expect(lock.retry_at > @import("ui").anim.nowMs());
-            for (lock.password) |byte| try std.testing.expectEqual(@as(u8, 0), byte);
-            lock.destroy();
-            server.locker = null;
-        }
-    }
-}
-
-test "lock covers new outputs and follows layout and mode changes without UI" {
-    const display = try wl.Server.create();
-    defer display.destroy();
-    const backend = try wlr.Backend.createHeadless(display.getEventLoop());
-    defer backend.destroy();
-    const output_layout = try wlr.OutputLayout.create(display);
-    defer output_layout.destroy();
-    var fixture = try sn.TestScene.create();
-    defer fixture.destroy();
-    var server: Server = undefined;
-    server.output_layout = output_layout;
-    server.lock_tree = try fixture.nodes.tree.createSceneTree();
-    for (0..2) |i| {
-        const output = try backend.headlessAddOutput(1280, 720);
-        var state = wlr.Output.State.init();
-        defer state.finish();
-        state.setEnabled(true);
-        try std.testing.expect(output.commitState(&state));
-        const x: i32 = if (i == 0) -1280 else 0;
-        _ = try output_layout.add(output, x, 100);
-        var out = Output{ .server = &server, .wlr_output = output, .lock_view = try View.create(server.lock_tree) };
-        out.lock_view.cover(&out);
-        try std.testing.expect(out.lock_view.tree.node.enabled);
-        try std.testing.expectEqual(x, out.lock_view.tree.node.x);
-        try std.testing.expectEqual(@as(i32, 100), out.lock_view.tree.node.y);
-        try std.testing.expectEqual(@as(i32, 1280), out.lock_view.guard.width);
-        try std.testing.expectEqual(@as(i32, 720), out.lock_view.guard.height);
-        try std.testing.expect(out.lock_view.ui_node.getBuffer() == null);
-        state.setCustomMode(1920, 1080, 60000);
-        try std.testing.expect(output.commitState(&state));
-        _ = try output_layout.add(output, x, -50);
-        out.lock_view.cover(&out);
-        try std.testing.expectEqual(@as(i32, 1920), out.lock_view.guard.width);
-        try std.testing.expectEqual(@as(i32, 1080), out.lock_view.guard.height);
-        try std.testing.expectEqual(@as(i32, -50), out.lock_view.tree.node.y);
-    }
-}
-
-test "greeter signs in through rediwm-dm and exits only once the session starts" {
-    const sock = @cImport({
-        @cInclude("sys/socket.h");
-        @cInclude("unistd.h");
-    });
-    const peer = struct {
-        fd: c_int,
-        buf: [4096]u8 = undefined,
-        fn read(self: *@This()) ![]const u8 {
-            var header: [4]u8 = undefined;
-            if (sock.read(self.fd, &header, 4) != 4) return error.Short;
-            const n = std.mem.readInt(u32, &header, @import("builtin").cpu.arch.endian());
-            var got: usize = 0;
-            while (got < n) {
-                const r = sock.read(self.fd, self.buf[got..].ptr, n - got);
-                if (r <= 0) return error.Short;
-                got += @intCast(r);
-            }
-            return self.buf[0..n];
-        }
-        fn write(self: *@This(), json: []const u8) void {
-            var header: [4]u8 = undefined;
-            std.mem.writeInt(u32, &header, @intCast(json.len), @import("builtin").cpu.arch.endian());
-            _ = sock.write(self.fd, &header, 4);
-            _ = sock.write(self.fd, json.ptr, json.len);
-        }
-    };
-    const display = try wl.Server.create();
-    defer display.destroy();
-    var server: Server = undefined;
-    server.outputs.init();
-    server.wl_server = display;
-    server.io = std.testing.io;
-    server.shutting_down = false;
-    server.layout_autosave = null;
-    server.reveal = .{};
-    var users = [_]greeter_mod.User{
-        .{ .name = "rediwm-test-a", .real = "Test A", .home = "", .uid = 1000 },
-        .{ .name = "rediwm-test-b", .real = "", .home = "", .uid = 1001 },
-    };
-    var sessions = [_]greeter_mod.Session{
-        .{ .id = "rediwm", .name = "RediWM", .exec = "/usr/local/bin/rediwm-session", .desktops = "rediwm" },
-        .{ .id = "sway", .name = "Sway", .exec = "sway", .desktops = "sway" },
-    };
-    // Greeter.destroy frees through libc, as Greeter.create allocates.
-    const greeter = try std.heap.c_allocator.create(Greeter);
-    greeter.* = .{ .arena = .init(std.heap.c_allocator), .io = std.testing.io, .loop = display.getEventLoop(), .users = &users, .sessions = &sessions };
-    var fds: [2]c_int = undefined;
-    try std.testing.expectEqual(@as(c_int, 0), sock.socketpair(sock.AF_UNIX, sock.SOCK_STREAM | sock.SOCK_CLOEXEC, 0, &fds));
-    defer _ = sock.close(fds[1]);
-    try greeter.adopt(fds[0]);
-    var daemon = peer{ .fd = fds[1] };
-    var lock = Lock{ .server = &server, .timer = undefined, .greeter = greeter };
-    greeter.owner = &lock;
-    greeter.notify = Lock.greeterEvent;
-    server.locker = &lock;
-    defer {
-        greeter.destroy();
-        if (lock.avatar) |avatar| avatar.deinit(gpa);
-        lock.clear();
-    }
-    lock.showAccount();
-    try std.testing.expectEqualStrings("rediwm-test-a", std.mem.sliceTo(&lock.user, 0));
-
-    // Account and session choice.
-    lock.key(@enumFromInt(xkb.Keysym.Down), "", .{});
-    try std.testing.expectEqualStrings("rediwm-test-b", std.mem.sliceTo(&lock.user, 0));
-    lock.key(@enumFromInt(xkb.Keysym.Up), "", .{});
-    try std.testing.expectEqualStrings("Test A", std.mem.sliceTo(&lock.name, 0));
-    lock.key(@enumFromInt(xkb.Keysym.ISO_Left_Tab), "", .{ .shift = true });
-    try std.testing.expectEqual(focus_account, lock.focus);
-    lock.key(@enumFromInt(xkb.Keysym.Tab), "", .{});
-    try std.testing.expectEqual(@as(u8, 0), lock.focus);
-    for (0..3) |_| lock.key(@enumFromInt(xkb.Keysym.Tab), "", .{});
-    try std.testing.expectEqual(focus_session, lock.focus);
-    lock.key(@enumFromInt(xkb.Keysym.Right), "", .{});
-    try std.testing.expectEqualStrings("sway", greeter.selectedSession().?.id);
-    lock.key(@enumFromInt(xkb.Keysym.Left), "", .{});
-    lock.focus = 0;
-
-    // The password typed up front answers dm's first question.
-    for ("pw") |ch| lock.key(@enumFromInt(ch), &.{ch}, .{});
-    lock.key(@enumFromInt(xkb.Keysym.Return), "", .{});
-    try std.testing.expectEqualStrings("{\"type\":\"login\",\"user\":\"rediwm-test-a\"}", try daemon.read());
-    try std.testing.expectEqual(@as(usize, 0), lock.input.len);
-    lock.key(@enumFromInt('x'), "x", .{});
-    try std.testing.expectEqual(@as(usize, 0), lock.input.len);
-    try std.testing.expect(lock.busy());
-    daemon.write("{\"type\":\"question\",\"kind\":\"secret\",\"text\":\"Password:\"}");
-    greeter.pump();
-    try std.testing.expectEqualStrings("{\"type\":\"answer\",\"response\":\"pw\"}", try daemon.read());
-    for (greeter.pending) |byte| try std.testing.expectEqual(@as(u8, 0), byte);
-
-    // A second factor is asked of the user; info messages need an empty reply.
-    daemon.write("{\"type\":\"question\",\"kind\":\"info\",\"text\":\"Touch the key\"}");
-    greeter.pump();
-    try std.testing.expectEqualStrings("Touch the key", lock.status);
-    try std.testing.expectEqualStrings("{\"type\":\"answer\",\"response\":null}", try daemon.read());
-    daemon.write("{\"type\":\"question\",\"kind\":\"visible\",\"text\":\"Code: \"}");
-    greeter.pump();
-    try std.testing.expectEqualStrings("Code:", lock.status);
-    try std.testing.expect(lock.prompting() and lock.reveal and !lock.busy());
-    for ("123") |ch| lock.key(@enumFromInt(ch), &.{ch}, .{});
-    try std.testing.expectEqualStrings("Code:", lock.status);
-    lock.key(@enumFromInt(xkb.Keysym.Return), "", .{});
-    try std.testing.expectEqualStrings("{\"type\":\"answer\",\"response\":\"123\"}", try daemon.read());
-
-    // Wrong answers cancel the attempt and never start a session.
-    daemon.write("{\"type\":\"denied\",\"text\":\"pam_authenticate: AUTH_ERR\"}");
-    greeter.pump();
-    try std.testing.expectEqualStrings("Incorrect password. Try again.", lock.status);
-    try std.testing.expectEqualStrings("{\"type\":\"cancel\"}", try daemon.read());
-    daemon.write("{\"type\":\"ok\"}");
-    greeter.pump();
-    try std.testing.expectEqual(greeter_mod.Phase.idle, greeter.phase);
-    try std.testing.expect(!server.shutting_down);
-
-    // Escape abandons a question.
-    lock.retry_at = 0;
-    for ("pw") |ch| lock.key(@enumFromInt(ch), &.{ch}, .{});
-    lock.key(@enumFromInt(xkb.Keysym.Return), "", .{});
-    _ = try daemon.read();
-    daemon.write("{\"type\":\"question\",\"kind\":\"secret\",\"text\":\"Password:\"}");
-    greeter.pump();
-    _ = try daemon.read();
-    daemon.write("{\"type\":\"question\",\"kind\":\"secret\",\"text\":\"New password:\"}");
-    greeter.pump();
-    lock.key(@enumFromInt(xkb.Keysym.Escape), "", .{});
-    try std.testing.expectEqualStrings("{\"type\":\"cancel\"}", try daemon.read());
-    daemon.write("{\"type\":\"ok\"}");
-    greeter.pump();
-    try std.testing.expectEqual(greeter_mod.Phase.idle, greeter.phase);
-
-    // Success starts the chosen session with its desktop identity, and the
-    // greeter exits only after dm accepts it.
-    for ("pw") |ch| lock.key(@enumFromInt(ch), &.{ch}, .{});
-    lock.key(@enumFromInt(xkb.Keysym.Return), "", .{});
-    _ = try daemon.read();
-    daemon.write("{\"type\":\"ok\"}");
-    greeter.pump();
-    try std.testing.expectEqualStrings(
-        "{\"type\":\"start\",\"session\":\"rediwm\"}",
-        try daemon.read(),
-    );
-    for (greeter.pending) |byte| try std.testing.expectEqual(@as(u8, 0), byte);
-    try std.testing.expect(!server.shutting_down);
-    lock.key(@enumFromInt(xkb.Keysym.Down), "", .{});
-    try std.testing.expectEqualStrings("rediwm-test-a", std.mem.sliceTo(&lock.user, 0));
-    daemon.write("{\"type\":\"ok\"}");
-    greeter.pump();
-    try std.testing.expect(server.shutting_down);
-    try std.testing.expectEqual(greeter_mod.Phase.done, greeter.phase);
-}
-
-test "greeter reports a lost login service and exits to be replaced" {
-    const sock = @cImport({
-        @cInclude("sys/socket.h");
-        @cInclude("unistd.h");
-    });
-    const display = try wl.Server.create();
-    defer display.destroy();
-    var server: Server = undefined;
-    server.outputs.init();
-    server.wl_server = display;
-    server.shutting_down = false;
-    server.layout_autosave = null;
-    server.reveal = .{};
-    var users = [_]greeter_mod.User{.{ .name = "rediwm-test-a", .real = "", .home = "", .uid = 1000 }};
-    var sessions = [_]greeter_mod.Session{.{ .id = "rediwm", .name = "RediWM", .exec = "rediwm-session", .desktops = "rediwm" }};
-    const greeter = try std.heap.c_allocator.create(Greeter);
-    greeter.* = .{ .arena = .init(std.heap.c_allocator), .io = std.testing.io, .loop = display.getEventLoop(), .users = &users, .sessions = &sessions };
-    var lock = Lock{ .server = &server, .timer = undefined, .greeter = greeter };
-    greeter.owner = &lock;
-    greeter.notify = Lock.greeterEvent;
-    defer {
-        greeter.destroy();
-        lock.clear();
-    }
-    // No REDIWM_GREETER_FD: a clear message, not a crash or an unlock.
-    for ("pw") |ch| lock.key(@enumFromInt(ch), &.{ch}, .{});
-    lock.key(@enumFromInt(xkb.Keysym.Return), "", .{});
-    try std.testing.expectEqualStrings("No login service", lock.status);
-    try std.testing.expectEqual(@as(usize, 0), lock.input.len);
-    try std.testing.expectEqual(greeter_mod.Phase.idle, greeter.phase);
-
-    var fds: [2]c_int = undefined;
-    try std.testing.expectEqual(@as(c_int, 0), sock.socketpair(sock.AF_UNIX, sock.SOCK_STREAM | sock.SOCK_CLOEXEC, 0, &fds));
-    try greeter.adopt(fds[0]);
-    for ("pw") |ch| lock.key(@enumFromInt(ch), &.{ch}, .{});
-    lock.key(@enumFromInt(xkb.Keysym.Return), "", .{});
-    try std.testing.expect(lock.busy());
-    _ = sock.close(fds[1]);
-    greeter.pump();
-    try std.testing.expectEqualStrings("Lost contact with login service. Try again.", lock.status);
-    try std.testing.expect(!lock.busy() and greeter.client == null);
-    try std.testing.expect(server.shutting_down);
-    for (greeter.pending) |byte| try std.testing.expectEqual(@as(u8, 0), byte);
-}
-
-test "greeter raster shows account arrows and the session chooser" {
-    var users = [_]greeter_mod.User{
-        .{ .name = "alexmorgan", .real = "Alex Morgan", .home = "", .uid = 1000 },
-        .{ .name = "sam", .real = "", .home = "", .uid = 1001 },
-    };
-    var sessions = [_]greeter_mod.Session{
-        .{ .id = "rediwm", .name = "RediWM", .exec = "", .desktops = "" },
-        .{ .id = "sway", .name = "Sway", .exec = "", .desktops = "" },
-    };
-    var greeter = Greeter{ .arena = .init(gpa), .io = undefined, .loop = undefined, .users = &users, .sessions = &sessions };
-    defer greeter.arena.deinit();
-    var lock = Lock{ .server = undefined, .timer = undefined, .greeter = &greeter, .focus = focus_session };
-    lock.status = lock.idleStatus();
-    @memcpy(lock.name[0..11], "Alex Morgan");
-    @memcpy(lock.user[0..10], "alexmorgan");
-    const width = 1672;
-    const height = 941;
-    const buf = try Buffer.create(width, height, 1);
-    defer buf.base.drop();
-    @memset(buf.pixels, 0xff090b12);
-    var renderer = ui.paint.Renderer{ .pixels = buf.pixels, .width = buf.width, .height = buf.height, .scale = 1 };
-    _ = paint(&renderer, &lock, width, height, false);
-    const geo = Geometry.init(width, height);
-    // Something is drawn in the session corner and beside the picture.
-    const lit = struct {
-        fn any(b: *Buffer, x0: f32, y0: f32, x1: f32, y1: f32) bool {
-            var y: usize = @intFromFloat(y0);
-            while (y < @as(usize, @intFromFloat(y1))) : (y += 1) {
-                var x: usize = @intFromFloat(x0);
-                while (x < @as(usize, @intFromFloat(x1))) : (x += 1) {
-                    if (b.pixels[y * @as(usize, @intCast(b.width)) + x] & 0xff != 0x12) return true;
-                }
-            }
-            return false;
-        }
-    };
-    try std.testing.expect(lit.any(buf, 30 * geo.s, height - 90 * geo.s, 120 * geo.s, height - 60 * geo.s));
-    try std.testing.expect(lit.any(buf, width / 2 - 130 * geo.s, geo.top + 244 * geo.s, width / 2 - 90 * geo.s, geo.top + 304 * geo.s));
-    const env = @cImport({
-        @cInclude("stdlib.h");
-    });
-    if (env.getenv("REDIWM_GREETER_PREVIEW")) |path| {
-        const bytes = try @import("../screenshot/encode.zig").encodePng(std.testing.allocator, @intCast(buf.width), @intCast(buf.height), buf.pixels, @intCast(buf.width));
-        defer std.testing.allocator.free(bytes);
-        try std.Io.Dir.cwd().writeFile(std.testing.io, .{ .sub_path = std.mem.span(path), .data = bytes });
-    }
-    Buffer.drainPool();
+test {
+    _ = @import("lock_tests.zig");
 }

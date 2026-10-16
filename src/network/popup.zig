@@ -125,8 +125,7 @@ pub const Popup = struct {
     fn openSettings(self: *Popup) void {
         const output = self.output;
         // Opening Settings destroys this popup; do not touch self afterwards.
-        output.toggleControlCenter();
-        if (output.server.input.open_control_center) |cc| cc.selectPage(.network);
+        output.openNetworkSettings();
     }
     fn manager(self: *Popup) ?*network.Manager {
         return self.output.server.network;
@@ -531,7 +530,7 @@ pub const Popup = struct {
     }
     pub fn refresh(self: *Popup) void {
         const bar = self.output.taskbar orelse return;
-        const anchor = bar.itemBox(.network) orelse return;
+        const anchor = bar.itemBox(.wifi) orelse return;
         var output_box: wlr.Box = undefined;
         self.output.server.output_layout.getBox(self.output.wlr_output, &output_box);
         self.factor = @min(1, @min(@as(f32, @floatFromInt(@max(1, output_box.width - 24))) / width, @as(f32, @floatFromInt(@max(1, output_box.height - @import("../Taskbar.zig").barHeight() - 24))) / 200));

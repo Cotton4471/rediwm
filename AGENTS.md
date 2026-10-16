@@ -18,6 +18,22 @@ the one for the directory you work in: `src/files`, `src/editor`,
   suites fail on HEAD: compare with a `git worktree` of HEAD before calling a
   failure a regression.
 
+## Split files
+
+Large types are spread over sibling files by concern. `Toplevel.zig` (`toplevel/`),
+`Input.zig` (`input/`), `Taskbar.zig` (`taskbar/`), `Server.zig` (`server/`),
+`Output.zig` (`output/`), `files/app.zig`, `pdf/app.zig` and `desktop/app.zig`
+(`app_*.zig` beside them) keep the fields, `init`/`deinit` and one
+`pub const name = group.name;` alias per method, so `self.name()` is unchanged;
+the bodies are free functions taking the struct pointer. A new method goes in
+its group file plus an alias line. `ipc/protocol_*.zig`, `ipc/handlers_*.zig`,
+`config/loader_*.zig`, `control_center/sections/appearance_*.zig` and
+`msg/msg_*.zig`, `ui/paint_*.zig` and `ui/anim_*.zig` re-export their public
+declarations from the original file.
+Tests that used to sit in the big file are in a `*tests.zig` file reached by a
+`test { _ = @import(...); }` block: a file nothing imports contributes no tests.
+State (`var`) stays in the file that uses it; an alias would copy it.
+
 ## Rendering and damage
 
 Read [rendering details](docs/agent-notes/rendering.md) before changing

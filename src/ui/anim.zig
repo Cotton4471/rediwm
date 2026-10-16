@@ -19,6 +19,32 @@
 // "should I keep waking up?".
 const std = @import("std");
 
+const anim_curves = @import("anim_curves.zig");
+pub const SettleTimes = anim_curves.SettleTimes;
+pub const computeSettle = anim_curves.computeSettle;
+pub const f32_eps = anim_curves.f32_eps;
+pub const SpringMode = anim_curves.SpringMode;
+pub const SpringEval = anim_curves.SpringEval;
+pub const springEval = anim_curves.springEval;
+pub const springOscillate = anim_curves.springOscillate;
+pub const springVelocityAt = anim_curves.springVelocityAt;
+pub const secondsToMs = anim_curves.secondsToMs;
+pub const springSettle = anim_curves.springSettle;
+pub const springDuration = anim_curves.springDuration;
+pub const springClampedDuration = anim_curves.springClampedDuration;
+pub const sampleSpring = anim_curves.sampleSpring;
+pub const decayCoeff = anim_curves.decayCoeff;
+pub const decayResting = anim_curves.decayResting;
+pub const decayDurationMs = anim_curves.decayDurationMs;
+pub const sampleDecay = anim_curves.sampleDecay;
+pub const sampleDuration = anim_curves.sampleDuration;
+pub const easeDeriv = anim_curves.easeDeriv;
+pub const bezierComponent64 = anim_curves.bezierComponent64;
+pub const bezierDeriv64 = anim_curves.bezierDeriv64;
+pub const cubicBezierDeriv = anim_curves.cubicBezierDeriv;
+pub const bezierComponent = anim_curves.bezierComponent;
+pub const cubicBezierY = anim_curves.cubicBezierY;
+
 pub const Ease = enum { out_cubic, flip_bezier, in_out_sine };
 
 pub const Spring = struct {
@@ -227,10 +253,10 @@ pub const FrameBudget = struct {
     }
 };
 
-var raster_step: f32 = 1;
-var sampling_clock: ?*const fn () u64 = null;
-var sampling_ns: u64 = 0;
-var frame_ms: ?i64 = null;
+pub var raster_step: f32 = 1;
+pub var sampling_clock: ?*const fn () u64 = null;
+pub var sampling_ns: u64 = 0;
+pub var frame_ms: ?i64 = null;
 
 /// Scope these settings to an output frame; event/IPC sampling is unmeasured.
 /// `clock` is null unless somebody is reading the sampling cost (two clock
@@ -259,68 +285,6 @@ pub fn rasterAlphaQuantum() f32 {
     return raster_step * quantum_alpha;
 }
 
-test "frame pressure is consecutive, per output and refresh aware" {
-    var slow: FrameBudget = .{};
-    var fast: FrameBudget = .{};
-    for (0..2) |_| {
-        slow.record(8_000_000, 144_000);
-        fast.record(8_000_000, 60_000);
-    }
-    try std.testing.expect(!slow.coarse);
-    slow.record(8_000_000, 144_000);
-    try std.testing.expect(slow.coarse);
-    try std.testing.expect(!fast.coarse);
-    for (0..2) |_| slow.record(1_000_000, 144_000);
-    try std.testing.expect(slow.coarse);
-    slow.record(1_000_000, 144_000);
-    try std.testing.expect(!slow.coarse);
-    for (0..6) |i| slow.record(if (i % 2 == 0) 20_000_000 else 1, 0);
-    try std.testing.expect(!slow.coarse);
-}
-
-test "raster degradation preserves sampling and settlement, and publishes endpoint" {
-    resetGlobals();
-    defer resetGlobals();
-    const Clock = struct {
-        fn read() u64 {
-            return 0;
-        }
-    };
-    var a = Anim.initDuration(0, 1, 0, 100, .out_cubic);
-    const before = a.value(50);
-    beginFrame(true, Clock.read, 0);
-    defer _ = endFrame();
-    try std.testing.expectEqual(@as(f32, 2), rasterPixelQuantum(1));
-    try std.testing.expectApproxEqAbs(@as(f32, 2.0 / 1.5), rasterPixelQuantum(1.5), 0.0001);
-    try std.testing.expectEqual(before, a.value(50));
-    try std.testing.expect(!a.settled(99));
-    try std.testing.expect(a.settled(100));
-    try std.testing.expect(a.sampleChanged(99, 1));
-    try std.testing.expect(!a.sampleChanged(99, 1));
-    try std.testing.expect(a.sampleChanged(100, 1));
-    try std.testing.expect(!a.sampleChanged(100, 1));
-    try std.testing.expect(!a.sampleChanged(100, 2.0 / 255.0));
-}
-
-test "sampling timer excludes work between samples and outside frames" {
-    const Clock = struct {
-        var ns: u64 = 0;
-        fn read() u64 {
-            ns += 10;
-            return ns;
-        }
-    };
-    Clock.ns = 0;
-    const a = Anim.initDuration(0, 1, 0, 100, .out_cubic);
-    beginFrame(false, Clock.read, 0);
-    _ = a.value(20);
-    Clock.ns += 1_000_000; // Raster work between samples.
-    _ = a.velocity(20);
-    try std.testing.expectEqual(@as(u64, 20), endFrame());
-    _ = a.value(30);
-    try std.testing.expectEqual(@as(u64, 20), endFrame());
-    try std.testing.expectEqual(@as(f32, 1), rasterPixelQuantum(1));
-}
 /// Opening windows scale up from this fraction of their rest size.
 pub const window_open_scale: f32 = 0.92;
 
@@ -516,7 +480,7 @@ pub const Anim = struct {
         return changed;
     }
 
-    fn commit(self: *Anim, now_ms: i64, from: f32, to: f32, v0: f32, curve: Curve) void {
+    pub fn commit(self: *Anim, now_ms: i64, from: f32, to: f32, v0: f32, curve: Curve) void {
         self.from = from;
         self.to = to;
         self.v0 = v0;
@@ -525,7 +489,7 @@ pub const Anim = struct {
         self.installCurve(curve);
     }
 
-    fn installCurve(self: *Anim, curve: Curve) void {
+    pub fn installCurve(self: *Anim, curve: Curve) void {
         if (curve == .decay) {
             self.to = decayResting(self.from, self.v0, curve.decay.rate);
         }
@@ -535,7 +499,7 @@ pub const Anim = struct {
         self.clamped_ms = times.clamped;
     }
 
-    fn completesInstantly(self: Anim) bool {
+    pub fn completesInstantly(self: Anim) bool {
         if (!enabled_g or speed_g <= 0) return true;
         if (reduced_motion_g and self.property != .opacity) return true;
         return switch (self.curve) {
@@ -545,16 +509,16 @@ pub const Anim = struct {
         };
     }
 
-    fn elapsedEffective(self: Anim, now_ms: i64) f64 {
+    pub fn elapsedEffective(self: Anim, now_ms: i64) f64 {
         const raw = @as(f64, @floatFromInt(now_ms - self.start_ms));
         if (raw <= 0) return 0;
         if (speed_g == 1.0) return raw;
         return raw * @as(f64, speed_g);
     }
 
-    const Sample = struct { value: f32, velocity: f32 };
+    pub const Sample = struct { value: f32, velocity: f32 };
 
-    fn sample(self: Anim, now_ms: i64) Sample {
+    pub fn sample(self: Anim, now_ms: i64) Sample {
         const clock = sampling_clock;
         const started = if (clock) |read| read() else 0;
         defer if (clock) |read| {
@@ -584,8 +548,8 @@ pub const Anim = struct {
 };
 
 pub const VelocityTracker = struct {
-    const cap = 32;
-    const Sample = struct { time_ms: i64, position: f32 };
+    pub const cap = 32;
+    pub const Sample = struct { time_ms: i64, position: f32 };
 
     samples: [cap]Sample = undefined,
     head: u8 = 0,
@@ -638,11 +602,11 @@ pub const VelocityTracker = struct {
         return @floatCast((nf * sum_tx - sum_t * sum_x) / denom);
     }
 
-    fn at(self: VelocityTracker, i: u8) Sample {
+    pub fn at(self: VelocityTracker, i: u8) Sample {
         return self.samples[(@as(usize, self.head) + i) % cap];
     }
 
-    fn dropOlderThan(self: *VelocityTracker, now_ms: i64, window_ms: i64) void {
+    pub fn dropOlderThan(self: *VelocityTracker, now_ms: i64, window_ms: i64) void {
         while (self.count > 0 and now_ms - self.at(0).time_ms > window_ms) {
             self.head = @intCast((@as(usize, self.head) + 1) % cap);
             self.count -= 1;
@@ -665,12 +629,12 @@ pub fn rubberClamp(value: f32, min: f32, max: f32, dimension: f32, c: f32) f32 {
     return value;
 }
 
-var override_ms: ?i64 = null;
-var speed_g: f32 = 1.0;
-var enabled_g: bool = true;
-var reduced_motion_g: bool = false;
-var settings_g: Settings = .{};
-var desktop_enable_animations_g: bool = true;
+pub var override_ms: ?i64 = null;
+pub var speed_g: f32 = 1.0;
+pub var enabled_g: bool = true;
+pub var reduced_motion_g: bool = false;
+pub var settings_g: Settings = .{};
+pub var desktop_enable_animations_g: bool = true;
 
 /// Per-frame observation for scheduling stats. `observeBegin` at the start
 /// of an output frame; `sampleChanged` fills these; the frame handler reads
@@ -684,9 +648,9 @@ var desktop_enable_animations_g: bool = true;
 /// something other than a curve, such as a caret blink (`observeNoteActive` /
 /// `observeNoteChanged`). Forgetting one only over-reports a wasted wakeup —
 /// it can no longer hide a spinning output.
-var observe_active: bool = false;
-var observe_changed: bool = false;
-var observe_longest_ms: i64 = 0;
+pub var observe_active: bool = false;
+pub var observe_changed: bool = false;
+pub var observe_longest_ms: i64 = 0;
 
 pub fn observeBegin() void {
     observe_active = false;
@@ -694,7 +658,7 @@ pub fn observeBegin() void {
     observe_longest_ms = 0;
 }
 
-fn observeElapsed(start_ms: i64, now_ms: i64) void {
+pub fn observeElapsed(start_ms: i64, now_ms: i64) void {
     observe_active = true;
     const elapsed = now_ms - start_ms;
     if (elapsed > observe_longest_ms) observe_longest_ms = elapsed;
@@ -843,7 +807,7 @@ pub fn captureIfLive(
     });
 }
 
-fn resetGlobals() void {
+pub fn resetGlobals() void {
     override_ms = null;
     frame_ms = null;
     speed_g = 1.0;
@@ -854,784 +818,6 @@ fn resetGlobals() void {
     observeBegin();
 }
 
-const SettleTimes = struct { settle: i64, clamped: i64 };
-
-fn computeSettle(from: f32, to: f32, v0: f32, curve: Curve) SettleTimes {
-    return switch (curve) {
-        .off => .{ .settle = 0, .clamped = 0 },
-        .duration => |d| .{ .settle = @max(d.ms, 0), .clamped = @max(d.ms, 0) },
-        .spring => |s| springSettle(from, to, v0, s),
-        .decay => |d| blk: {
-            const ms = decayDurationMs(v0, d.rate, d.threshold);
-            break :blk .{ .settle = ms, .clamped = ms };
-        },
-    };
-}
-
-const f32_eps: f64 = std.math.floatEps(f32);
-
-const SpringMode = enum { critical, under, over };
-
-const SpringEval = struct {
-    to: f64,
-    x0: f64,
-    v0: f64,
-    beta: f64,
-    omega: f64,
-    mode: SpringMode,
-    epsilon: f64,
-};
-
-fn springEval(from: f32, to: f32, v0: f32, params: Spring) ?SpringEval {
-    const k: f64 = params.stiffness;
-    if (!(k > 0) or !std.math.isFinite(k)) return null;
-    const ratio = @max(@as(f64, params.damping_ratio), 1e-3);
-    const mass: f64 = 1.0;
-    const critical = 2.0 * @sqrt(mass * k);
-    const b = ratio * critical;
-    const beta = b / (2.0 * mass);
-    const omega0 = @sqrt(k / mass);
-    const mode: SpringMode = if (@abs(beta - omega0) <= f32_eps)
-        .critical
-    else if (beta < omega0)
-        .under
-    else
-        .over;
-    const omega = switch (mode) {
-        .critical => 0.0,
-        .under => @sqrt(omega0 * omega0 - beta * beta),
-        .over => @sqrt(beta * beta - omega0 * omega0),
-    };
-    return .{
-        .to = to,
-        .x0 = @as(f64, from) - @as(f64, to),
-        .v0 = v0,
-        .beta = beta,
-        .omega = omega,
-        .mode = mode,
-        .epsilon = @max(@as(f64, params.epsilon), 1e-12),
-    };
-}
-
-fn springOscillate(e: SpringEval, t: f64) f64 {
-    const env = @exp(-e.beta * t);
-    switch (e.mode) {
-        .critical => return e.to + env * (e.x0 + (e.beta * e.x0 + e.v0) * t),
-        .under => {
-            const w = e.omega;
-            const c = (e.beta * e.x0 + e.v0) / w;
-            return e.to + env * (e.x0 * @cos(w * t) + c * @sin(w * t));
-        },
-        .over => {
-            const w = e.omega;
-            const d = (e.beta * e.x0 + e.v0) / w;
-            const arg = w * t;
-            const ch = std.math.cosh(arg);
-            const sh = std.math.sinh(arg);
-            const y = e.to + env * (e.x0 * ch + d * sh);
-            if (!std.math.isFinite(y)) return e.to;
-            return y;
-        },
-    }
-}
-
-fn springVelocityAt(e: SpringEval, t: f64) f64 {
-    const env = @exp(-e.beta * t);
-    switch (e.mode) {
-        .critical => {
-            const a = e.beta * e.x0 + e.v0;
-            return env * (a - e.beta * (e.x0 + a * t));
-        },
-        .under => {
-            const w = e.omega;
-            const c = (e.beta * e.x0 + e.v0) / w;
-            const wt = w * t;
-            const cos_wt = @cos(wt);
-            const sin_wt = @sin(wt);
-            return env * (-e.beta * (e.x0 * cos_wt + c * sin_wt) + w * (c * cos_wt - e.x0 * sin_wt));
-        },
-        .over => {
-            const w = e.omega;
-            const d = (e.beta * e.x0 + e.v0) / w;
-            const arg = w * t;
-            const ch = std.math.cosh(arg);
-            const sh = std.math.sinh(arg);
-            const y = env * (-e.beta * (e.x0 * ch + d * sh) + w * (e.x0 * sh + d * ch));
-            if (!std.math.isFinite(y)) return 0;
-            return y;
-        },
-    }
-}
-
-fn secondsToMs(s: f64) i64 {
-    if (!std.math.isFinite(s) or s >= 60) return 60_000;
-    if (s <= 0) return 0;
-    return @intFromFloat(@ceil(s * 1000.0));
-}
-
-fn springSettle(from: f32, to: f32, v0: f32, params: Spring) SettleTimes {
-    const e = springEval(from, to, v0, params) orelse return .{ .settle = 0, .clamped = 0 };
-    if (@abs(e.x0) <= e.epsilon and @abs(e.v0) <= e.epsilon) return .{ .settle = 0, .clamped = 0 };
-
-    const settle_s = springDuration(e);
-    const settle = secondsToMs(settle_s);
-    const clamped_s = springClampedDuration(e) orelse settle_s;
-    var clamped = secondsToMs(clamped_s);
-    if (clamped > settle) clamped = settle;
-    return .{ .settle = settle, .clamped = clamped };
-}
-
-fn springDuration(e: SpringEval) f64 {
-    const delta: f64 = 0.001;
-    if (@abs(e.beta) <= f32_eps or e.beta < 0) return 60;
-    if (@abs(e.x0) <= e.epsilon and @abs(e.v0) <= e.epsilon) return 0;
-
-    var x0 = -@log(e.epsilon) / e.beta;
-    if (e.mode != .over) return x0;
-
-    var y0 = springOscillate(e, x0);
-    var m = (springOscillate(e, x0 + delta) - y0) / delta;
-    if (@abs(m) < 1e-18 or !std.math.isFinite(m)) return x0;
-    var x1 = (e.to - y0 + m * x0) / m;
-    var y1 = springOscillate(e, x1);
-    var i: usize = 0;
-    while (@abs(e.to - y1) > e.epsilon) {
-        if (i > 1000) return x0;
-        x0 = x1;
-        y0 = y1;
-        m = (springOscillate(e, x0 + delta) - y0) / delta;
-        if (@abs(m) < 1e-18 or !std.math.isFinite(m) or !std.math.isFinite(x0)) return x0;
-        x1 = (e.to - y0 + m * x0) / m;
-        y1 = springOscillate(e, x1);
-        if (!std.math.isFinite(y1) or !std.math.isFinite(x1)) return x0;
-        i += 1;
-    }
-    if (!std.math.isFinite(x1) or x1 < 0) return x0;
-    return x1;
-}
-
-test "window reveal eases through the old 33ms snap and reaches its destination" {
-    const a = Anim.initCurve(0, 602, 1000, defaultSpec(.camera_reveal).curve);
-    try std.testing.expect(!a.settled(1033));
-    try std.testing.expect(@abs(a.value(1033) - a.value(1032)) < 6);
-    try std.testing.expect(a.value(1160) > a.value(1033));
-    try std.testing.expect(a.value(1160) < 602);
-    try std.testing.expect(a.settled(1320));
-    try std.testing.expectEqual(@as(f32, 602), a.value(1320));
-}
-
-fn springClampedDuration(e: SpringEval) ?f64 {
-    if (@abs(e.beta) <= f32_eps or e.beta < 0) return 60;
-    if (@abs(e.x0) <= e.epsilon) return 0;
-    const from = e.to + e.x0;
-    var i: u16 = 1;
-    var y = springOscillate(e, @as(f64, i) / 1000.0);
-    while ((e.to - from > f32_eps and e.to - y > e.epsilon) or
-        (from - e.to > f32_eps and y - e.to > e.epsilon))
-    {
-        if (i > 3000) return null;
-        i += 1;
-        y = springOscillate(e, @as(f64, i) / 1000.0);
-    }
-    return @as(f64, i) / 1000.0;
-}
-
-fn sampleSpring(from: f32, to: f32, v0: f32, params: Spring, t_s: f64) Anim.Sample {
-    const e = springEval(from, to, v0, params) orelse return .{ .value = to, .velocity = 0 };
-    const x = springOscillate(e, t_s);
-    const v = springVelocityAt(e, t_s);
-    // niri's numerical-stability clamp: 10× the travel, in case cosh blows up.
-    const range = (@as(f64, to) - @as(f64, from)) * 10.0;
-    const lo = @min(@as(f64, from) - range, @as(f64, to) + range);
-    const hi = @max(@as(f64, from) - range, @as(f64, to) + range);
-    const clamped = std.math.clamp(x, @min(lo, hi), @max(lo, hi));
-    return .{
-        .value = @floatCast(if (std.math.isFinite(clamped)) clamped else to),
-        .velocity = @floatCast(if (std.math.isFinite(v)) v else 0),
-    };
-}
-
-fn decayCoeff(rate: f32) f64 {
-    const r = std.math.clamp(@as(f64, rate), 0.001, 0.999);
-    return 1000.0 * @log(r);
-}
-
-fn decayResting(from: f32, v0: f32, rate: f32) f32 {
-    const coeff = decayCoeff(rate);
-    return @floatCast(@as(f64, from) - @as(f64, v0) / coeff);
-}
-
-fn decayDurationMs(v0: f32, rate: f32, threshold: f32) i64 {
-    const coeff = decayCoeff(rate);
-    const vel = @abs(@as(f64, v0));
-    const thresh = @max(@as(f64, threshold), 1e-6);
-    if (vel <= thresh) return 0;
-    const inner = -coeff * thresh / vel;
-    if (inner <= 0) return 0;
-    const seconds = @log(inner) / coeff;
-    return secondsToMs(seconds);
-}
-
-fn sampleDecay(from: f32, v0: f32, d: Decay, t_s: f64) Anim.Sample {
-    const coeff = decayCoeff(d.rate);
-    const env = @exp(coeff * t_s);
-    const x = @as(f64, from) + (@as(f64, v0) / coeff) * (env - 1.0);
-    const v = @as(f64, v0) * env;
-    return .{ .value = @floatCast(x), .velocity = @floatCast(v) };
-}
-
-fn sampleDuration(from: f32, to: f32, elapsed_ms: f64, duration_ms: i64, ease: Ease) Anim.Sample {
-    if (duration_ms <= 0) return .{ .value = to, .velocity = 0 };
-    const dur: f64 = @floatFromInt(duration_ms);
-    if (elapsed_ms >= dur) return .{ .value = to, .velocity = 0 };
-    const t = if (elapsed_ms <= 0) 0 else elapsed_ms / dur;
-    const t32: f32 = @floatCast(t);
-    const eased: f32 = switch (ease) {
-        .out_cubic => 1 - std.math.pow(f32, 1 - t32, 3),
-        .flip_bezier => cubicBezierY(t32, 0.22, 0.9, 0.3, 1),
-        .in_out_sine => 0.5 - 0.5 * @cos(std.math.pi * t32),
-    };
-    const deriv = easeDeriv(ease, t);
-    const vel = (to - from) * deriv * (1000.0 / dur);
-    return .{
-        .value = from + (to - from) * eased,
-        .velocity = @floatCast(vel),
-    };
-}
-
-fn easeDeriv(ease: Ease, t: f64) f64 {
-    const tt = std.math.clamp(t, 0, 1);
-    return switch (ease) {
-        .out_cubic => 3.0 * (1.0 - tt) * (1.0 - tt),
-        .flip_bezier => cubicBezierDeriv(tt, 0.22, 0.9, 0.3, 1.0),
-        .in_out_sine => 0.5 * std.math.pi * @sin(std.math.pi * tt),
-    };
-}
-
-fn bezierComponent64(u: f64, p1: f64, p2: f64) f64 {
-    const mu = 1.0 - u;
-    return 3.0 * mu * mu * u * p1 + 3.0 * mu * u * u * p2 + u * u * u;
-}
-
-fn bezierDeriv64(u: f64, p1: f64, p2: f64) f64 {
-    const mu = 1.0 - u;
-    return 3.0 * mu * mu * p1 + 6.0 * mu * u * (p2 - p1) + 3.0 * u * u * (1.0 - p2);
-}
-
-fn cubicBezierDeriv(t: f64, x1: f64, y1: f64, x2: f64, y2: f64) f64 {
-    var lo: f64 = 0;
-    var hi: f64 = 1;
-    var u: f64 = t;
-    for (0..24) |_| {
-        const x = bezierComponent64(u, x1, x2);
-        if (@abs(x - t) < 1e-6) break;
-        if (x < t) lo = u else hi = u;
-        u = (lo + hi) / 2.0;
-    }
-    const dx = bezierDeriv64(u, x1, x2);
-    const dy = bezierDeriv64(u, y1, y2);
-    if (@abs(dx) < 1e-12) return 0;
-    return dy / dx;
-}
-
-fn bezierComponent(u: f32, p1: f32, p2: f32) f32 {
-    const mu = 1 - u;
-    return 3 * mu * mu * u * p1 + 3 * mu * u * u * p2 + u * u * u;
-}
-
-// Solves x(u) = t for the CSS-style cubic-bezier(x1,y1,x2,y2) easing curve
-// (implicit endpoints (0,0) and (1,1)) and returns y(u). Bisection keeps this
-// robust without needing the curve's derivative. Kept for the existing f32
-// duration path's exact historical samples.
-fn cubicBezierY(t: f32, x1: f32, y1: f32, x2: f32, y2: f32) f32 {
-    var lo: f32 = 0;
-    var hi: f32 = 1;
-    var u: f32 = t;
-    for (0..20) |_| {
-        const x = bezierComponent(u, x1, x2);
-        if (@abs(x - t) < 1e-4) break;
-        if (x < t) lo = u else hi = u;
-        u = (lo + hi) / 2;
-    }
-    return bezierComponent(u, y1, y2);
-}
-
-test "retarget is a no-op when already animating toward the same target" {
-    var a = Anim.initDuration(0, 1, 0, 100, .out_cubic);
-    a.retarget(50, 1, 999, .out_cubic);
-    try std.testing.expectEqual(@as(i64, 100), a.settle_ms);
-    a.retarget(150, 1, 999, .out_cubic);
-    try std.testing.expectEqual(@as(i64, 100), a.settle_ms);
-    try std.testing.expect(a.settled(150));
-}
-
-test "pulse starts displaced and eases to rest" {
-    var a: Anim = .{};
-    a.pulse(0, 0.9, 1, 100);
-    try std.testing.expectEqual(@as(f32, 0.9), a.value(0));
-    try std.testing.expectEqual(@as(f32, 1), a.value(100));
-}
-
-test "setNowMs overrides the monotonic clock until cleared" {
-    defer resetGlobals();
-    setNowMs(1234);
-    try std.testing.expect(clockOverridden());
-    try std.testing.expectEqual(@as(i64, 1234), nowMs());
-    setNowMs(null);
-    try std.testing.expect(!clockOverridden());
-}
-
-test "out_cubic mid-duration matches the historical sample" {
-    var a = Anim.initDuration(0.50, 0.55, 1000, 80, .out_cubic);
-    try std.testing.expectApproxEqAbs(@as(f32, 0.54375), a.value(1040), 0.001);
-    try std.testing.expect(!a.settled(1040));
-    try std.testing.expect(a.settled(1080));
-    try std.testing.expectEqual(@as(f32, 0.55), a.value(1080));
-}
-
-test "velocity at start_ms equals v0 for all three damping regimes" {
-    const cases = [_]Spring{
-        .{ .damping_ratio = 1.0, .stiffness = 800 },
-        .{ .damping_ratio = 0.7, .stiffness = 800 },
-        .{ .damping_ratio = 1.6, .stiffness = 800 },
-    };
-    const v0: f32 = 12.5;
-    for (cases) |spring| {
-        var a: Anim = .{};
-        a.retargetWith(100, 1, .{ .spring = spring }, v0);
-        try std.testing.expectApproxEqAbs(v0, a.velocity(100), 1e-4);
-        try std.testing.expectApproxEqAbs(@as(f32, 0), a.value(100), 1e-5);
-    }
-}
-
-test "analytic spring matches RK4 integration" {
-    const cases = [_]Spring{
-        .{ .damping_ratio = 1.0, .stiffness = 800, .epsilon = 1e-4 },
-        .{ .damping_ratio = 0.7, .stiffness = 800, .epsilon = 1e-4 },
-        .{ .damping_ratio = 1.6, .stiffness = 800, .epsilon = 1e-4 },
-    };
-    for (cases) |spring| {
-        var a: Anim = .{};
-        a.retargetTo(0, 1, .{ .spring = spring });
-        const Acc = struct {
-            b: f64,
-            k: f64,
-            to: f64,
-            fn call(self: @This(), x: f64, v: f64) f64 {
-                return -self.b * v - self.k * (x - self.to);
-            }
-        };
-        const k: f64 = spring.stiffness;
-        const ratio: f64 = spring.damping_ratio;
-        const acc = Acc{ .b = ratio * 2.0 * @sqrt(k), .k = k, .to = 1 };
-        const dt: f64 = 0.0001;
-        var t_ms: i64 = 0;
-        const end = a.settle_ms;
-        while (t_ms <= end) : (t_ms += 8) {
-            const t_s = @as(f64, @floatFromInt(t_ms)) / 1000.0;
-            var x: f64 = 0;
-            var v: f64 = 0;
-            var t: f64 = 0;
-            while (t < t_s) {
-                const step = @min(dt, t_s - t);
-                const k1x = v;
-                const k1v = acc.call(x, v);
-                const k2x = v + 0.5 * step * k1v;
-                const k2v = acc.call(x + 0.5 * step * k1x, v + 0.5 * step * k1v);
-                const k3x = v + 0.5 * step * k2v;
-                const k3v = acc.call(x + 0.5 * step * k2x, v + 0.5 * step * k2v);
-                const k4x = v + step * k3v;
-                const k4v = acc.call(x + step * k3x, v + step * k3v);
-                x += step / 6.0 * (k1x + 2 * k2x + 2 * k3x + k4x);
-                v += step / 6.0 * (k1v + 2 * k2v + 2 * k3v + k4v);
-                t += step;
-            }
-            try std.testing.expectApproxEqAbs(@as(f32, @floatCast(x)), a.value(t_ms), 1e-3);
-        }
-    }
-}
-
-test "retarget is velocity-continuous" {
-    const spring = Spring{ .damping_ratio = 0.85, .stiffness = 700 };
-    var a: Anim = .{};
-    a.retargetTo(0, 1, .{ .spring = spring });
-    const mid: i64 = 40;
-    const v = a.velocity(mid);
-    const x = a.value(mid);
-    a.retargetTo(mid, 0, .{ .spring = spring });
-    try std.testing.expectApproxEqAbs(v, a.velocity(mid), 1e-4);
-    try std.testing.expectApproxEqAbs(x, a.value(mid), 1e-5);
-    try std.testing.expectApproxEqAbs(v, a.v0, 1e-4);
-
-    const start = a.start_ms;
-    a.retargetTo(mid + 5, 0, .{ .spring = spring });
-    try std.testing.expectEqual(start, a.start_ms);
-
-    a.cancel(0);
-    a.retargetTo(1000, 1, .{ .spring = spring });
-    try std.testing.expectApproxEqAbs(@as(f32, 0), a.v0, 1e-5);
-}
-
-test "spring settle time is finite and from==to is immediate" {
-    const ratios = [_]f32{ 0.1, 0.5, 1.0, 2.0, 5.0, 10.0 };
-    var prev_under: i64 = std.math.maxInt(i64);
-    for (ratios) |ratio| {
-        var a: Anim = .{};
-        a.retargetTo(0, 1, .{ .spring = .{ .damping_ratio = ratio, .stiffness = 800, .epsilon = 1e-4 } });
-        try std.testing.expect(a.settle_ms > 0);
-        try std.testing.expect(a.settle_ms < 60_000);
-        if (ratio <= 1.0) {
-            try std.testing.expect(a.settle_ms <= prev_under);
-            prev_under = a.settle_ms;
-        }
-    }
-
-    var same: Anim = .{};
-    same.retargetTo(0, 0, .{ .spring = .{ .damping_ratio = 1.15, .stiffness = 850, .epsilon = 0.0001 } });
-    try std.testing.expectEqual(@as(i64, 0), same.settle_ms);
-    try std.testing.expect(same.settled(0));
-
-    var stiff: Anim = .{};
-    stiff.retargetTo(0, 1, .{ .spring = .{ .damping_ratio = 6, .stiffness = 1200, .epsilon = 0.0001 } });
-    try std.testing.expect(std.math.isFinite(@as(f32, @floatFromInt(stiff.settle_ms))));
-    const late = sampleSpring(0, 1, 0, .{ .damping_ratio = 6, .stiffness = 1200, .epsilon = 0.0001 }, 10.0);
-    try std.testing.expect(std.math.isFinite(late.value));
-}
-
-test "decay resting value, duration and 2-D angle" {
-    const rate: f32 = 0.998;
-    const v0: f32 = 800;
-    var a: Anim = .{};
-    a.retargetWith(0, 0, .{ .decay = .{ .rate = rate, .threshold = 0.5 } }, v0);
-    const rest = a.restingValue();
-    try std.testing.expectApproxEqAbs(rest, a.to, 1e-4);
-    const far = a.settle_ms * 2;
-    try std.testing.expectApproxEqAbs(rest, a.value(@max(far, a.settle_ms)), 0.6);
-    try std.testing.expect(a.settled(a.settle_ms));
-    try std.testing.expect(@abs(a.velocity(a.settle_ms)) <= 0.5 + 1e-3);
-
-    var ax: Anim = .{};
-    var ay: Anim = .{};
-    ax.retargetWith(0, 0, .{ .decay = .{ .rate = rate, .threshold = 0.5 } }, 300);
-    ay.retargetWith(0, 0, .{ .decay = .{ .rate = rate, .threshold = 0.5 } }, 400);
-    const ang0 = std.math.atan2(@as(f64, 400), @as(f64, 300));
-    var t: i64 = 8;
-    while (t < ax.settle_ms) : (t += 16) {
-        const ang = std.math.atan2(@as(f64, ay.value(t)), @as(f64, ax.value(t)));
-        try std.testing.expectApproxEqAbs(@as(f32, @floatCast(ang0)), @as(f32, @floatCast(ang)), 1e-5);
-    }
-}
-
-test "rubber band is monotone, bounded and continuous at zero" {
-    try std.testing.expectEqual(@as(f32, 0), rubber(0, 800, rubber_c));
-    var prev: f32 = 0;
-    const d: f32 = 800;
-    const xs = [_]f32{ 0, 1, 10, 50, 200, 800, 4000 };
-    for (xs) |x| {
-        const y = rubber(x, d, rubber_c);
-        try std.testing.expect(y >= prev);
-        try std.testing.expect(y < d);
-        prev = y;
-    }
-    try std.testing.expectEqual(@as(f32, 100), rubberClamp(100, 0, 400, 400, rubber_c));
-    const just_out = rubberClamp(401, 0, 400, 400, rubber_c);
-    try std.testing.expect(just_out > 400);
-    try std.testing.expect(just_out < 401);
-}
-
-test "sampleChanged observe tracks activity, change and longest" {
-    defer resetGlobals();
-    observeBegin();
-    var a: Anim = .{};
-    a.retargetTo(0, 10, .{ .spring = .{ .damping_ratio = 1.0, .stiffness = 800, .epsilon = 1e-4 } });
-    try std.testing.expect(a.sampleChanged(0, 1));
-    try std.testing.expect(observeActive());
-    try std.testing.expect(observeChanged());
-    try std.testing.expectEqual(@as(i64, 0), observeLongestMs());
-
-    observeBegin();
-    try std.testing.expect(!a.sampleChanged(0, 1));
-    try std.testing.expect(observeActive());
-    try std.testing.expect(!observeChanged());
-
-    observeBegin();
-    try std.testing.expect(a.sampleChanged(50, 1));
-    try std.testing.expect(observeActive());
-    try std.testing.expect(observeChanged());
-    try std.testing.expectEqual(@as(i64, 50), observeLongestMs());
-
-    try std.testing.expectEqualStrings("spring", a.curveName());
-    try std.testing.expectEqualStrings("off", (Anim{ .curve = .off }).curveName());
-}
-
-test "a settled()-only keep-awake is invisible until it reports itself" {
-    defer resetGlobals();
-    var a: Anim = .{};
-    a.retargetTo(0, 10, .{ .spring = .{ .damping_ratio = 0.9, .stiffness = 700, .epsilon = 1e-3 } });
-    try std.testing.expect(a.settle_ms > 60);
-
-    // The regression: a live curve that a frame only ever asks `settled()`
-    // leaves the frame looking idle, so `anim_frames_scheduled` read zero while
-    // the output was being re-armed every refresh.
-    observeBegin();
-    try std.testing.expect(!a.settled(50));
-    try std.testing.expect(!observeActive());
-    try std.testing.expectEqual(@as(i64, 0), observeLongestMs());
-
-    observeBegin();
-    try std.testing.expect(observeUnsettled(a, 50));
-    try std.testing.expect(observeActive());
-    try std.testing.expectEqual(@as(i64, 50), observeLongestMs());
-    // Still not a *visible* change: that stays `sampleChanged`'s to report,
-    // so such a frame is correctly counted as a wasted wakeup.
-    try std.testing.expect(!observeChanged());
-
-    // Past the settle point it must stop claiming the output.
-    observeBegin();
-    try std.testing.expect(!observeUnsettled(a, a.settle_ms));
-    try std.testing.expect(!observeActive());
-}
-
-test "non-curve keep-awakes report activity and change" {
-    defer resetGlobals();
-    observeBegin();
-    try std.testing.expect(!observeActive());
-    try std.testing.expect(!observeChanged());
-
-    // A caret blink is a phase timer, not an Anim; it still owns the output.
-    observeNoteActive(1000, 1400);
-    try std.testing.expect(observeActive());
-    try std.testing.expectEqual(@as(i64, 400), observeLongestMs());
-
-    observeNoteChanged();
-    try std.testing.expect(observeChanged());
-
-    observeBegin();
-    try std.testing.expect(!observeActive());
-    try std.testing.expect(!observeChanged());
-    try std.testing.expectEqual(@as(i64, 0), observeLongestMs());
-}
-
-test "sampleChanged reports each quantum crossing once" {
-    var a = Anim.initDuration(0, 10, 0, 1000, .out_cubic);
-    try std.testing.expect(a.sampleChanged(0, 1));
-    try std.testing.expect(!a.sampleChanged(0, 1));
-    var saw_one = false;
-    var t: i64 = 1;
-    while (t <= 1000) : (t += 1) {
-        const changed = a.sampleChanged(t, 1);
-        const bucket = @round(a.value(t));
-        if (bucket == 1 and changed) {
-            try std.testing.expect(!saw_one);
-            saw_one = true;
-        }
-    }
-    try std.testing.expect(saw_one);
-}
-
-test "speed scales elapsed time; reduced_motion keeps opacity" {
-    defer resetGlobals();
-    const spring = Spring{ .damping_ratio = 1.0, .stiffness = 800 };
-    var slow: Anim = .{};
-    slow.retargetTo(0, 1, .{ .spring = spring });
-    const at100 = slow.value(100);
-
-    setSpeed(2);
-    var fast: Anim = .{};
-    fast.retargetTo(0, 1, .{ .spring = spring });
-    try std.testing.expectApproxEqAbs(at100, fast.value(50), 1e-4);
-    setSpeed(1);
-
-    setReducedMotion(true);
-    var motion: Anim = .{ .property = .motion };
-    motion.retargetTo(0, 1, .{ .spring = spring });
-    try std.testing.expect(motion.settled(0));
-    try std.testing.expectEqual(@as(f32, 1), motion.value(0));
-
-    var fade: Anim = .{ .property = .opacity };
-    fade.retargetTo(0, 1, .{ .spring = spring });
-    try std.testing.expect(!fade.settled(0));
-    try std.testing.expect(fade.value(0) < 1);
-    try std.testing.expect(fade.settled(reduced_opacity_ms));
-    try std.testing.expectEqual(@as(f32, 1), fade.value(reduced_opacity_ms));
-}
-
-test "pinned clock: settled flips at stored settle_ms and sampleChanged terminates" {
-    defer resetGlobals();
-    setNowMs(1000);
-    var a: Anim = .{};
-    a.retargetTo(1000, 1, .{ .spring = .{ .damping_ratio = 1.0, .stiffness = 800, .epsilon = 1e-4 } });
-    try std.testing.expect(a.settle_ms > 0);
-    try std.testing.expect(!a.settled(1000));
-    try std.testing.expect(!a.settled(1000 + a.settle_ms - 1));
-    try std.testing.expect(a.settled(1000 + a.settle_ms));
-
-    var paints: usize = 0;
-    while (a.sampleChanged(1000, 0.01)) {
-        paints += 1;
-        if (paints > 8) return error.DidNotTerminate;
-    }
-    try std.testing.expect(paints >= 1);
-}
-
-test "active and cancel replace the duration_ms sentinel" {
-    var a: Anim = .{};
-    try std.testing.expect(!a.active());
-    a.retarget(0, 1, 160, .out_cubic);
-    try std.testing.expect(a.active());
-    try std.testing.expect(!a.settled(0));
-    a.cancel(1);
-    try std.testing.expect(!a.active());
-    try std.testing.expect(a.settled(0));
-    try std.testing.expectEqual(@as(f32, 1), a.value(50));
-
-    var s: Anim = .{};
-    s.retargetTo(0, 1, .{ .spring = .{ .damping_ratio = 1, .stiffness = 800 } });
-    try std.testing.expect(s.active());
-    s.cancel(0.25);
-    try std.testing.expect(!s.active());
-    try std.testing.expectEqual(@as(f32, 0.25), s.value(0));
-}
-
-test "velocity tracker least-squares and pause" {
-    var tr: VelocityTracker = .{};
-    try std.testing.expectEqual(@as(f32, 0), tr.velocity(0));
-    tr.push(0, 0);
-    try std.testing.expectEqual(@as(f32, 0), tr.velocity(10));
-    tr.push(10, 20);
-    tr.push(20, 40);
-    tr.push(30, 60);
-    try std.testing.expectApproxEqAbs(@as(f32, 2000), tr.velocity(30), 1);
-    try std.testing.expectEqual(@as(f32, 0), tr.velocity(90));
-}
-
-test "critical-damping window does not divide by zero" {
-    var a: Anim = .{};
-    a.retargetWith(0, 1, .{ .spring = .{ .damping_ratio = 1.0, .stiffness = 800 } }, 3);
-    var t: i64 = 0;
-    while (t <= a.settle_ms) : (t += 4) {
-        const v = a.value(t);
-        const vel = a.velocity(t);
-        try std.testing.expect(std.math.isFinite(v));
-        try std.testing.expect(std.math.isFinite(vel));
-    }
-}
-
-test "enabled false and speed 0 complete instantly" {
-    defer resetGlobals();
-    var a: Anim = .{};
-    a.retargetTo(0, 1, .{ .spring = .{ .damping_ratio = 1, .stiffness = 800 } });
-    setEnabled(false);
-    try std.testing.expect(a.settled(0));
-    try std.testing.expectEqual(@as(f32, 1), a.value(0));
-    setEnabled(true);
-    setSpeed(0);
-    try std.testing.expect(a.settled(0));
-    try std.testing.expectEqual(@as(f32, 1), a.value(0));
-}
-
-// Keep the f32 bezier solver referenced so a future duration path that still
-// wants bit-identical historical samples can call it without the compiler
-// folding the function away.
-test "flip_bezier f32 solver stays wired" {
-    const y = cubicBezierY(0.5, 0.22, 0.9, 0.3, 1);
-    try std.testing.expect(y > 0.5);
-    try std.testing.expect(y < 1);
-}
-
-test "desktop switches respond immediately and settle at the requested time" {
-    for ([_]u32{ 220, 400, 1500 }) |ms| {
-        var a: Anim = .{};
-        a.retargetTo(0, 1000, desktopSwitchCurve(ms));
-        // A tenth of the duration should already cover over a quarter of the
-        // distance: no spring-style acceleration delay on a keyboard action.
-        try std.testing.expect(a.value(@intCast(ms / 10)) > 250);
-        try std.testing.expect(a.velocity(0) > 0);
-        try std.testing.expect(!a.settled(ms - 1));
-        try std.testing.expect(a.settled(ms));
-        try std.testing.expectEqual(@as(f32, 1000), a.value(ms));
-    }
-}
-
-test "panel_slide spring double-toggle is velocity-continuous" {
-    const curve = Curve{ .spring = springs.panel_slide };
-    var a: Anim = .{};
-    a.retargetTo(0, 1, curve);
-    try std.testing.expect(a.active());
-    const mid: i64 = 80;
-    const v = a.velocity(mid);
-    const x = a.value(mid);
-    a.retargetTo(mid, 0, curve);
-    try std.testing.expectApproxEqAbs(v, a.velocity(mid), 1e-4);
-    try std.testing.expectApproxEqAbs(x, a.value(mid), 1e-5);
-    try std.testing.expect(a.settle_ms > 0);
-}
-
-test "windowMapScale interpolates from open scale to rest" {
-    try std.testing.expectEqual(window_open_scale, windowMapScale(0));
-    try std.testing.expectEqual(@as(f32, 1.0), windowMapScale(1));
-    try std.testing.expectApproxEqAbs(@as(f32, 0.96), windowMapScale(0.5), 1e-6);
-}
-
-test "every animation target has a compiled-in default" {
-    inline for (std.meta.tags(Target)) |tag| {
-        const spec = defaultSpec(tag);
-        try std.testing.expect(std.meta.activeTag(spec.curve) != .off or tag == .taskbar_press);
-        _ = curveFor(tag);
-        _ = decayFor(tag);
-        const bounds = epsilonBounds(tag);
-        try std.testing.expect(bounds.min > 0);
-        try std.testing.expect(bounds.max > bounds.min);
-    }
-}
-
-test "applySettings overlays speed enabled and reduced_motion auto" {
-    defer resetGlobals();
-    var cfg: Settings = .{};
-    cfg.speed = 0.5;
-    cfg.enabled = true;
-    cfg.reduced_motion = .auto;
-    setDesktopEnableAnimations(true);
-    applySettings(cfg);
-    try std.testing.expectEqual(@as(f32, 0.5), speed());
-    try std.testing.expect(enabled());
-    try std.testing.expect(!reducedMotion());
-
-    setDesktopEnableAnimations(false);
-    applySettings(cfg);
-    try std.testing.expect(reducedMotion());
-
-    cfg.reduced_motion = .off;
-    applySettings(cfg);
-    try std.testing.expect(!reducedMotion());
-    try std.testing.expectEqual(@as(?bool, true), servedEnableAnimations(cfg));
-
-    cfg.reduced_motion = .on;
-    applySettings(cfg);
-    try std.testing.expect(reducedMotion());
-    try std.testing.expectEqual(@as(?bool, false), servedEnableAnimations(cfg));
-
-    cfg.enabled = false;
-    cfg.reduced_motion = .auto;
-    try std.testing.expectEqual(@as(?bool, false), servedEnableAnimations(cfg));
-}
-
-test "config overlay continueFrom keeps velocity" {
-    defer resetGlobals();
-    const soft = Curve{ .spring = .{ .damping_ratio = 1.0, .stiffness = 400, .epsilon = 1e-4 } };
-    const stiff = Curve{ .spring = .{ .damping_ratio = 1.0, .stiffness = 2000, .epsilon = 1e-4 } };
-    var a: Anim = .{};
-    a.retargetTo(0, 1, soft);
-    const mid: i64 = 80;
-    const x = a.value(mid);
-    const v = a.velocity(mid);
-    a.continueFrom(mid, x, 1, v, stiff);
-    try std.testing.expectApproxEqAbs(x, a.value(mid), 1e-5);
-    try std.testing.expectApproxEqAbs(v, a.velocity(mid), 1e-4);
-    try std.testing.expect(a.settle_ms > 0);
-    try std.testing.expect(a.settle_ms != blk: {
-        var b: Anim = .{};
-        b.retargetTo(0, 1, soft);
-        break :blk b.settle_ms;
-    });
+test {
+    _ = @import("anim_tests.zig");
 }

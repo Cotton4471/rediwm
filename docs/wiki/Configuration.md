@@ -106,7 +106,7 @@ animations off or reduced motion it opens like any other window.
 
 The taskbar has **Left**, **Center**, and **Right** sections in Appearance.
 Start and the window list default to the left, and application tray
-icons plus Battery, Network, Volume, and Clock to the right. Drag an item's row
+icons plus Battery, Wi-Fi, Ethernet, Volume, and Clock to the right. Drag an item's row
 anywhere into any section to reorder or move it (Escape cancels); an empty
 section shows where to drop. Up/Down on a focused row handle moves it one step,
 into the next section at a section's end. Visibility toggles keep its place.
@@ -114,7 +114,13 @@ The center group stays centered on the display when it fits, and shifts or
 narrows the window list to avoid the side groups.
 
 For example, `taskbar_items = ["left:start", "left:windows", "right:capture", "right:tray",
-"right:battery", "right:network", "right:volume", "right:clock", "-right:power"]` is the default.
+"right:battery", "~right:wifi", "~right:wired", "right:volume", "right:clock", "-right:power"]` is the default.
+Wi-Fi and Ethernet are automatic (the `~` prefix): Wi-Fi shows only when the
+machine has a wireless adapter, and Ethernet only while a cable is connected;
+Wi-Fi opens the network menu, Ethernet opens Settings → Network. Turning an item
+on or off in Appearance is an explicit choice that overrides this, and `wifi` or
+`-wifi` in the list does the same. Older lists with `network` keep working: it
+is the Wi-Fi item (shown means automatic), and Ethernet is added after it.
 Power is off by default on the right; enable it in Appearance to open the same
 power menu as the Start menu’s power icon.
 Screen capture is enabled by default at the start of the right section and

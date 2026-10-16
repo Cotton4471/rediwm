@@ -49,8 +49,10 @@ pub const Loader = struct {
     result: ?Result = null,
     failed: bool = false,
     decode_ns: u64 = 0,
+    /// Borrowed until deinit joins this worker; never set for the greeter.
+    login_appearance_dir: ?[]const u8 = null,
 
-    pub fn start(allocator: Allocator, io: std.Io, candidates: []const []const u8, delay_ns: u64) !*Loader {
+    pub fn start(allocator: Allocator, io: std.Io, candidates: []const []const u8, delay_ns: u64, login_appearance_dir: ?[]const u8) !*Loader {
         const self = try allocator.create(Loader);
         errdefer allocator.destroy(self);
 
@@ -75,6 +77,7 @@ pub const Loader = struct {
             .paths = paths,
             .delay_ns = delay_ns,
             .eventfd = efd,
+            .login_appearance_dir = login_appearance_dir,
         };
         self.thread = try std.Thread.spawn(.{}, run, .{self});
         return self;
@@ -132,6 +135,12 @@ pub const Loader = struct {
             break;
         }
         const decode_ns = stats.nowNs() -% t0;
+
+        if (self.running.load(.seq_cst)) if (self.login_appearance_dir) |dir| {
+            if (decoded) |result| @import("session/login_appearance.zig").saveWallpaper(self.allocator, dir, result.image) catch |err| {
+                log.warn("could not save login wallpaper: {s}", .{@errorName(err)});
+            };
+        };
 
         _ = c.pthread_mutex_lock(&self.mutex);
         if (!self.running.load(.seq_cst)) {

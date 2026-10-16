@@ -88,7 +88,7 @@ Gold uses warm charcoal decorations, ivory app content, champagne accents,
 the bundled gold wallpaper and colour icons. It puts the taskbar at the top
 and enables the bottom dock. Its 38-pixel bar has 12-pixel corners, a centered
 bold clock with italics off, Start on the left, the window list hidden, and
-capture, tray, battery, network, volume and Power on the right. Notifications
+capture, tray, battery, Wi-Fi, volume and Power on the right. Notifications
 use tinted backdrop glass.
 Choosing Gold also applies its folder, Home and Trash artwork to the desktop,
 Files and its sidebar; no separate icon-theme selection is needed. Pack icons
@@ -112,8 +112,8 @@ Packs may include this optional section:
 [layout]
 taskbar_position = "top"   # top or bottom
 # Section (left, center, right), order and visibility of each taskbar item, as
-# in [compositor]; prefix an entry with - to hide it. All seven items are listed.
-taskbar_items = ["left:start", "left:clock", "center:windows", "right:tray", "right:battery", "right:network", "right:volume"]
+# in [compositor]; prefix an entry with - to hide it (or ~ to show Wi-Fi/Ethernet only with the hardware). Every item but Power, capture and Ethernet is listed.
+taskbar_items = ["left:start", "left:clock", "center:windows", "right:tray", "right:battery", "right:wifi", "right:volume"]
 dock_enabled = true
 dock_position = "bottom" # top, bottom, left or right
 dock_height = 76          # thickness; 48–96 logical pixels
@@ -252,7 +252,27 @@ XDG special directories come from `user-dirs.dirs`.
 The small pack in `tests/fixtures/theme-pack/` supplies a glyph, folder icon,
 wallpaper and logo. `tests/theme_packs.py` adds a real cursor and exercises
 installation, live switching, restoration, overrides and hostile archives.
-The greeter never discovers or reads user packs.
+The greeter never discovers or reads user packs. The login screen follows
+the selected account's saved Appearance theme, using the same `lock_bg`,
+`lock_fg`, `lock_dim`, `lock_divider`, `lock_session_fg` and
+`lock_wallpaper_opacity` tokens as the lock screen, plus the shared font and
+control styling. All bundled themes define these colours.
+
+After a successful login, `rediwm-dm` provisions
+`/var/lib/rediwm-appearance/<uid>/` for that account. A normal desktop session
+saves its resolved theme there at startup and when Appearance changes. The
+wallpaper worker saves a decoded copy, preserving aspect ratio and limiting
+each dimension to 1920 pixels. These snapshots are deliberately public so
+the greeter can read them even when the home directory is private or encrypted;
+the original theme pack and wallpaper stay in the user's home.
+
+Selecting another account switches to its saved appearance. Missing or invalid
+snapshots fall back to `/etc/rediwm/greeter.toml` or the built-in default; a bad
+wallpaper does not discard valid colours. The first login after upgrading
+creates the snapshot. Nested/headless sessions never publish it. Sessions
+started without `rediwm-dm` can update an already provisioned directory, but
+cannot create one. The greeter only reads the snapshots and never runs their
+configuration as commands or reads paths from them.
 
 ## Application launcher
 

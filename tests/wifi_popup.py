@@ -166,7 +166,7 @@ def run(scale, gold=False, top=False):
                 bar = ipc.get_shell_state()['taskbars'][0]
                 boxes = {item['name']: item['box'] for item in bar['right_items']}
                 def center(box): return box['x']+box['width']//2, box['y']+box['height']//2
-                anchor = center(boxes['network'])
+                anchor = center(boxes['wifi'])
                 factor = min(1, (bar['box']['width']-24)/420)
                 available_h = ipc.get_outputs()[0]['logical_height'] - bar['box']['height'] - 24
                 point = (anchor[0], bar['box']['y'] + bar['box']['height'] + 40 if top else bar['box']['y']-40)
@@ -202,7 +202,7 @@ def run(scale, gold=False, top=False):
                             red, green, blue = image.convert('RGB').getpixel((round(x * float(scale)), round(y * float(scale))))
                         assert red > 190 and green > 180 and blue > 155, ('Gold network card', (red, green, blue))
                 def tray_red():
-                    box,raster,target=boxes['network'],float(scale),tmp/'tray.png'
+                    box,raster,target=boxes['wifi'],float(scale),tmp/'tray.png'
                     target.unlink(missing_ok=True)
                     ipc.screenshot(str(target))
                     with Image.open(target) as image:
@@ -438,11 +438,22 @@ def settings(scale):
                 click('wifi_enabled')
                 assert read_line(fake) == {'enabled': True}
                 wait_for(lambda: 'REDI_Home' in labels(), 'radio on')
+                def taskbar_items():
+                    return {i['name']: i for i in ipc.get_shell_state()['taskbars'][0]['right_items']}
+                def shown(*names):
+                    return all(taskbar_items()[n]['box'] for n in names) and not any(taskbar_items()[n]['box'] for n in ('wifi', 'wired') if n not in names)
+                wait_for(lambda: shown('wifi', 'wired'), 'adapter and cable show their taskbar items')
+                command(eth_state=30, global_state=70)
+                wait_for(lambda: shown('wifi'), 'unplugged cable hides the Ethernet item')
+                command(eth_state=100, global_state=70)
+                wait_for(lambda: shown('wifi', 'wired'), 'connected cable shows the Ethernet item')
                 command(ethernet=False, device=False)
                 wait_for(lambda: 'No wired adapter found' in labels() and 'No Wi-Fi adapter found' in labels(), 'adapter removal')
+                wait_for(lambda: shown(), 'no hardware, no taskbar network items')
                 assert find('ethernet_enabled')['is_disabled'] and find('wifi_enabled')['is_disabled']
                 command(ethernet=True, device=True)
                 wait_for(lambda: ready() and 'REDI_Home' in labels(), 'adapter hotplug')
+                wait_for(lambda: shown('wifi', 'wired'), 'hotplug shows the items again')
                 window = next(w for w in ipc.get_windows() if w['app_id'] == 'rediwm-settings')
                 ipc.action('set_window_size', {'id': window['id'], 'width': 760, 'height': 640})
                 ui.wait_settled('control_center')
@@ -452,6 +463,14 @@ def settings(scale):
                 fake = start_fake()
                 wait_for(lambda: 'REDI_Home' in labels(), 'service restart')
                 ipc.close_window(window['id'])
+                ui.wait_absent('control_center')
+                # The Ethernet item opens Settings on the Network page.
+                wait_for(lambda: shown('wifi', 'wired'), 'items after service restart')
+                box = taskbar_items()['wired']['box']
+                ipc.click_at(box['x'] + box['width'] // 2, box['y'] + box['height'] // 2)
+                ui.wait_settled('control_center')
+                assert ipc.get_shell_state()['control_center']['category'] == 'network'
+                ipc.close_window(next(w for w in ipc.get_windows() if w['app_id'] == 'rediwm-settings')['id'])
                 ui.wait_absent('control_center')
                 assert process.poll() is None
                 print(f'PASS Network settings: layout, Ethernet details/activation/errors, Wi-Fi forms/joins/radio, service lifecycle, scale={scale}')

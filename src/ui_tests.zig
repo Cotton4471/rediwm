@@ -105,6 +105,7 @@ comptime {
     _ = @import("session/lock.zig");
     _ = @import("session/lock_controls.zig");
     _ = @import("session/greeter.zig");
+    _ = @import("session/login_appearance.zig");
     _ = @import("session/dm_ipc.zig");
     _ = @import("session/wayland_sessions.zig");
 }

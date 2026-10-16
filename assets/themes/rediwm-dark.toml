@@ -4,6 +4,14 @@ id = "rediwm-dark"
 name = "RediWM Dark"
 
 [theme]
+# Shared lock screen and login screen.
+lock_bg = "#040507"
+lock_fg = "#F7F7FA"
+lock_dim = "#A8ADBA"
+lock_divider = "rgba(77,82,92,0.6)"
+lock_session_fg = "#DBDEE6"
+lock_wallpaper_opacity = 0.24
+
 font = "Manrope"
 mono_font = "JetBrains Mono"
 font_size = 13

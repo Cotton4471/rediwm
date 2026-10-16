@@ -1,0 +1,261 @@
+//! Files hover glide: which toolbar button, item or place is under the pointer, and the damage it causes.
+
+const std = @import("std");
+const App = @import("app.zig").App;
+const anim = @import("ui").anim;
+const header = @import("header.zig");
+const hover_glide = @import("ui").hover_glide;
+const pins_mod = @import("pins.zig");
+const HoverLayout = App.HoverLayout;
+const column_labels = App.column_labels;
+const places = App.places;
+const pin_base = App.pin_base;
+
+pub fn hoverBounds(self: *App, key: usize) ?header.Rect {
+    if (key == 0) return .{ .x = 0, .y = 0, .w = 0, .h = 0 };
+    if (key >= 2_000_000) {
+        const index = key - 2_000_000;
+        return self.sizeButtonRect(index);
+    }
+    if (key >= 1000) {
+        const index = key - 1000;
+        if (index >= self.items.items.len or self.items.items[index].text().len > 8) return null; // May show a full-name tooltip.
+        const i: i32 = @intCast(index);
+        return .{ .x = @floatFromInt(self.sidebarWidth() + 19 + @mod(i, self.columns()) * self.cellWidth()), .y = @floatFromInt(self.viewTop() + self.itemInset() - 1 + @divTrunc(i, self.columns()) * self.rowHeight() - self.scroll_y), .w = @floatFromInt(self.cellWidth() - 18), .h = @floatFromInt(self.cardHeight() + 2) };
+    }
+    if (self.chooser != null and key >= 500 and key < 513) {
+        if (key > 500) return self.chooserRect(key - 501);
+        return .{ .x = 0, .y = @floatFromInt(self.h - self.footerHeight()), .w = @floatFromInt(self.w), .h = @floatFromInt(self.footerHeight()) };
+    }
+    if (key >= 300 and key < 300 + places.len) {
+        const row = self.placeRect(key - 300);
+        return .{ .x = row.x - 1, .y = row.y - 1, .w = row.w + 2, .h = row.h + 2 };
+    }
+    if (key >= 800 and key < 800 + pins_mod.max) {
+        if (key - 800 >= self.pins.items.items.len) return null;
+        const row = self.placeRect(pin_base + key - 800);
+        return .{ .x = row.x - 1, .y = row.y - 1, .w = row.w + 2, .h = row.h + 2 };
+    }
+    if (key >= 600 and key < 800) {
+        const index = self.deviceBase() + key % 100;
+        if (!self.placeVisible(index)) return null;
+        const row = if (key < 700) self.placeRect(index) else self.ejectRect(index);
+        return .{ .x = row.x - 1, .y = row.y - 1, .w = row.w + 2, .h = row.h + 2 };
+    }
+    if (key >= 400 and key < 400 + column_labels.len) return self.listColumn(key - 400);
+    if (key >= 200 and key < 200 + std.meta.tags(header.Action).len) {
+        var rect = header.rect(self.w, self.inRepository(), @enumFromInt(key - 200));
+        rect.x -= 1;
+        rect.y -= 1;
+        rect.w += 2;
+        rect.h += 2;
+        return rect;
+    }
+    return null;
+}
+
+/// Queues `rect` for the next partial repaint. A queued full repaint
+/// absorbs it; damage left over from the last paint is not pending, or
+/// every hover would grow the next repaint by all the ones before it.
+pub fn addDamage(self: *App, rect: header.Rect) void {
+    if (self.dirty and self.paint_damage == null) return;
+    self.paint_damage = if (self.dirty) unionRect(self.paint_damage.?, rect) else rect;
+    self.dirty = true;
+}
+
+pub fn invalidateHover(self: *App, old: usize, new: usize) void {
+    if (self.dirty and self.paint_damage == null) return;
+    const before = self.hoverBounds(old) orelse {
+        self.invalidate();
+        return;
+    };
+    const after = self.hoverBounds(new) orelse {
+        self.invalidate();
+        return;
+    };
+    var rect = unionRect(before, after);
+    // Out-of-viewport rows must not repaint over the pinned header or status.
+    if ((old == 0 or old >= 1000) and (new == 0 or new >= 1000)) rect = self.clipToViewport(rect);
+    self.addDamage(rect);
+}
+
+pub fn clipToViewport(self: *App, rect: header.Rect) header.Rect {
+    const top: f64 = @floatFromInt(self.viewTop());
+    const bottom = @min(rect.y + rect.h, @as(f64, @floatFromInt(self.contentBottom())));
+    const y = @max(rect.y, top);
+    return .{ .x = rect.x, .y = y, .w = rect.w, .h = @max(0, bottom - y) };
+}
+
+/// The pointer's sidebar row, unless that is the current place, which
+/// paints its own fill.
+pub fn hoveredPlace(self: *App) ?usize {
+    if (self.dialog != null or self.menu != null) return null;
+    if (self.sidebar_resize != null or self.overSidebarDivider(self.mouse_x, self.mouse_y)) return null;
+    const width: f64 = @floatFromInt(self.sidebarWidth());
+    if (self.mouse_x < 0 or self.mouse_x >= width) return null;
+    if (self.sidebarScrollbar()) |bar| if (self.mouse_x >= @as(f64, bar.track.x)) return null;
+    if (self.mouse_y < @as(f64, @floatFromInt(self.contentTop())) or self.mouse_y >= @as(f64, @floatFromInt(self.h - self.sidebarFooter()))) return null;
+    for (0..self.rowCount()) |i| {
+        if (!self.placeVisible(i)) continue;
+        const row = self.placeRect(i);
+        if (self.mouse_y < row.y or self.mouse_y >= row.y + row.h) continue;
+        return if (self.placeActive(i)) null else i;
+    }
+    return null;
+}
+
+/// The pointer's item, unless it is selected, which paints its own fill.
+pub fn hoveredItem(self: *App) ?usize {
+    if (self.dialog != null or self.menu != null) return null;
+    const idx = self.itemAt(self.mouse_x, self.mouse_y) orelse return null;
+    return if (self.items.items[idx].selected) null else idx;
+}
+
+/// The sidebar highlight at fractional place `frame.row`, between the
+/// rows' real positions (they are not evenly spaced).
+pub fn navHighlight(self: *App, frame: hover_glide.Frame) header.Rect {
+    const last = self.rowCount() - 1;
+    const row = std.math.clamp(frame.row, 0, @as(f32, @floatFromInt(last)));
+    const low: usize = @min(@as(usize, @intFromFloat(@floor(row))), last);
+    const high = @min(low + 1, last);
+    const t: f64 = row - @floor(row);
+    var rect = self.placeRect(low);
+    rect.y += (self.placeRect(high).y - rect.y) * t;
+    return rect;
+}
+
+/// The item highlight at fractional cell (`frame.col`, `frame.row`).
+pub fn itemHighlight(self: *App, frame: hover_glide.Frame) header.Rect {
+    const cell: f64 = @floatFromInt(self.cellWidth());
+    return .{
+        .x = @as(f64, @floatFromInt(self.sidebarWidth() + 20)) + frame.col * cell,
+        .y = @as(f64, @floatFromInt(self.viewTop() + self.itemInset() - self.scroll_y)) + frame.row * @as(f64, @floatFromInt(self.rowHeight())),
+        .w = cell - 20,
+        .h = @floatFromInt(self.cardHeight()),
+    };
+}
+
+pub fn toolbarButtonVisible(self: *App, action: header.Action) bool {
+    return action != .git_view and !(self.chooser != null and
+        (action == .cut or action == .copy or action == .paste or action == .trash));
+}
+
+pub fn toolbarButtonEnabled(self: *App, action: header.Action) bool {
+    if (self.isRecent() and (action == .new or action == .paste)) return false;
+    if (self.history.archive_len > 0) switch (action) {
+        .new, .cut, .copy, .paste, .trash => return false,
+        else => {},
+    };
+    return switch (action) {
+        .back => self.history.canBack(),
+        .forward => self.history.canForward(),
+        .up => self.history.canUp(),
+        .cut, .copy, .trash => self.hasSelection(),
+        else => true,
+    };
+}
+
+pub fn hoveredToolbarButton(self: *App) ?header.Rect {
+    if (self.dialog != null or self.menu != null) return null;
+    const action = header.hit(self.w, self.inRepository(), self.mouse_x, self.mouse_y) orelse return null;
+    if (!self.toolbarButtonVisible(action) or !self.toolbarButtonEnabled(action)) return null;
+    return header.rect(self.w, self.inRepository(), action);
+}
+
+/// Samples the hover highlights and queues damage for what moved or
+/// faded. Once per loop, before painting: the painters draw the sampled
+/// `frame`, so a partial repaint and a complete one agree.
+pub fn stepHover(self: *App, now: i64) void {
+    const pixel = anim.rasterPixelQuantum(@floatFromInt(self.scale));
+
+    if (self.sidebarWidth() > 0) {
+        const before = self.nav_hover.frame;
+        self.nav_hover.setTarget(now, if (self.hoveredPlace()) |i| .{ .col = 0, .row = @intCast(i) } else null);
+        // Rows are at least 32 px apart, so this is at most a pixel.
+        if (self.nav_hover.step(now, pixel, pixel / 32)) {
+            const side: header.Rect = .{ .x = 0, .y = @floatFromInt(self.contentTop()), .w = @floatFromInt(self.sidebarWidth()), .h = @floatFromInt(self.h - self.contentTop() - self.sidebarFooter()) };
+            self.damageHighlight(side, if (before.alpha > 0) self.navHighlight(before) else null, if (self.nav_hover.frame.alpha > 0) self.navHighlight(self.nav_hover.frame) else null);
+        }
+    } else self.nav_hover.reset();
+
+    // Cells mean something else once the grid reflows or becomes a list.
+    const layout: HoverLayout = .{ .columns = self.columns(), .list = self.list_view };
+    if (!std.meta.eql(layout, self.item_hover_layout)) {
+        self.item_hover_layout = layout;
+        if (self.item_hover.frame.alpha > 0) self.invalidate();
+        self.item_hover.reset();
+    }
+    const before = self.item_hover.frame;
+    const per_row: usize = @intCast(self.columns());
+    self.item_hover.setTarget(now, if (self.hoveredItem()) |idx| .{ .col = @intCast(idx % per_row), .row = @intCast(idx / per_row) } else null);
+    const cell: f32 = @floatFromInt(@max(1, self.cellWidth()));
+    const row: f32 = @floatFromInt(@max(1, self.rowHeight()));
+    if (self.item_hover.step(now, pixel / cell, pixel / row)) {
+        const view: header.Rect = self.clipToViewport(.{ .x = @floatFromInt(self.sidebarWidth()), .y = 0, .w = @floatFromInt(self.w - self.sidebarWidth()), .h = @floatFromInt(self.h) });
+        self.damageHighlight(view, if (before.alpha > 0) self.itemHighlight(before) else null, if (self.item_hover.frame.alpha > 0) self.itemHighlight(self.item_hover.frame) else null);
+    }
+    if (self.toolbar_hover.step(now, self.hoveredToolbarButton(), pixel)) {
+        self.addDamage(.{ .x = 0, .y = 0, .w = @floatFromInt(self.w), .h = @floatFromInt(self.contentTop()) });
+    }
+    self.hover_active = self.nav_hover.animating(now) or self.item_hover.animating(now) or self.toolbar_hover.active(now);
+    if (self.sort_feedback.step(now, false) and self.list_view) {
+        // Full rows avoid cutting neighbouring rounded selection outlines.
+        self.addDamage(.{ .x = @floatFromInt(self.sidebarWidth()), .y = @floatFromInt(self.contentTop()), .w = @floatFromInt(self.w - self.sidebarWidth()), .h = @floatFromInt(@max(0, self.h - self.contentTop() - self.footerHeight())) });
+    }
+    self.hover_active = self.hover_active or !self.sort_feedback.animation.settled(now);
+    // Only visible cards need samples or a frame clock. Logical selection
+    // changes immediately; painting and damage share these sampled fades.
+    const viewport_h = @max(0, self.contentBottom() - self.viewTop());
+    const first: usize = @min(self.items.items.len, @as(usize, @intCast(@divTrunc(self.scroll_y, self.rowHeight()))) * per_row);
+    const last: usize = @min(self.items.items.len, @as(usize, @intCast(@divTrunc(self.scroll_y + viewport_h, self.rowHeight()) + 1)) * per_row);
+    for (self.items.items[first..last], first..) |*item, idx| {
+        const fill_changed = item.selection_fill.step(now, item.selected);
+        const border_changed = item.selection_border.step(now, item.selected or self.focused_index == idx);
+        if (fill_changed or border_changed) {
+            var rect = self.itemHighlight(.{ .col = @floatFromInt(idx % per_row), .row = @floatFromInt(idx / per_row) });
+            // Repair the whole row: a merged header/hover clip can otherwise
+            // cut a neighbouring rounded card and change Cairo's antialiasing.
+            rect.x = @floatFromInt(self.sidebarWidth());
+            rect.w = @floatFromInt(self.w - self.sidebarWidth());
+            rect.y -= 1;
+            rect.h += 2;
+            self.addDamage(self.clipToViewport(rect));
+        }
+        self.hover_active = self.hover_active or !item.selection_fill.animation.settled(now) or !item.selection_border.animation.settled(now);
+    }
+    const field = header.field(self.w);
+    const hit = if (!self.search_visible and self.focus != .location_bar and
+        self.dialog == null and self.menu == null and field.contains(self.mouse_x, self.mouse_y))
+        self.breadcrumbs(null, self.mouse_x)
+    else
+        null;
+    for (&self.breadcrumb_hover, 0..) |*fade, i| {
+        fade.setTarget(now, if (hit != null and hit.?.index == i) .{ .col = 0, .row = 0 } else null);
+        if (fade.step(now, 1, 1)) self.addDamage(field);
+        self.hover_active = self.hover_active or fade.animating(now);
+    }
+}
+
+/// Damage for a highlight that moved from `old` to `new` (null when it
+/// was not drawn), inside `area`; a pixel wider for the border's edge.
+pub fn damageHighlight(self: *App, area: header.Rect, old: ?header.Rect, new: ?header.Rect) void {
+    var rect: header.Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 };
+    for ([_]?header.Rect{ old, new }) |candidate| {
+        const r = candidate orelse continue;
+        rect = unionRect(rect, .{ .x = r.x - 1, .y = r.y - 1, .w = r.w + 2, .h = r.h + 2 });
+    }
+    const x1 = @max(rect.x, area.x);
+    const y1 = @max(rect.y, area.y);
+    const x2 = @min(rect.x + rect.w, area.x + area.w);
+    const y2 = @min(rect.y + rect.h, area.y + area.h);
+    if (x2 <= x1 or y2 <= y1) return;
+    self.addDamage(.{ .x = x1, .y = y1, .w = x2 - x1, .h = y2 - y1 });
+}
+
+pub fn unionRect(a: header.Rect, b: header.Rect) header.Rect {
+    if (a.w == 0 or a.h == 0) return b;
+    if (b.w == 0 or b.h == 0) return a;
+    const x = @min(a.x, b.x);
+    const y = @min(a.y, b.y);
+    return .{ .x = x, .y = y, .w = @max(a.x + a.w, b.x + b.w) - x, .h = @max(a.y + a.h, b.y + b.h) - y };
+}

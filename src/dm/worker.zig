@@ -261,6 +261,9 @@ fn execSession(
             if (tty_fd > 2) _ = c.close(tty_fd);
         }
         if (!acct.found) linux.exit_group(1);
+        if (!is_greeter) @import("appearance.zig").provision(acct.uid, acct.gid) catch |err| {
+            std.log.warn("cannot prepare login appearance: {s}", .{@errorName(err)});
+        };
         if (c.initgroups(user_z.ptr, acct.gid) != 0) linux.exit_group(1);
         if (c.setgid(acct.gid) != 0 or c.setuid(acct.uid) != 0) linux.exit_group(1);
         if (c.getuid() != acct.uid or c.geteuid() != acct.uid or c.getgid() != acct.gid or c.getegid() != acct.gid) linux.exit_group(1);

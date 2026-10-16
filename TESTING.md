@@ -17,7 +17,7 @@ debugging on the host, see AGENTS.md, "Rendering".
 | `zig build test-glass` | The glass registry and an effect's geometry in the graph at every zoom (no GPU). Glass pixels are gated in `test-scene-pass` (stage 5b) and by `tests/glass_reblur.py`. |
 | `zig build test-pass-spike` | The owned-pass spike of `docs/plans/scene-graph-stage1.md`: rounded clip, border, shadow, external-OES texture, backdrop blur, buffer-age damage and cost on headless GLES2 (needs a render node; `-Doptimize=ReleaseSafe` for cost). |
 | `zig build test-scene-pass` | Stage 3's owned GLES2 drawing backend against wlroots: transforms, crops, filters, premultiplied alpha, damage, external-OES (an RGB EGLImage and a linear NV12 dmabuf; needs gbm), GL/EGL state and acquire/release timelines. Needs a compatible render node (`WLR_RENDER_DRM_DEVICE` on multi-GPU machines); also run with `-Doptimize=ReleaseSafe`. The unavailable-acquire test intentionally logs `drmSyncobjTransfer failed`. Stage 4b's rounded-shape gates are in the same fixture: clip against a supersampled reference, piece joins, border/body, premultiplied edges, the opaque cover, shadow, and partial repaint across a clip edge; the 128 parity cases also run through the shaped programs. Stage 4d's shadow gate compares every pixel with the CPU chrome's shadow formula. The dim gates (`rediwm_scene_pass_set_dim`, inactive window dimming) compare a dimmed pass's rects, shapes, rings, translucent texels and glass composite with a C reference of the grade, and check that shadows are not graded, that a pass starts undimmed and that a bad fraction fails the pass. |
-| `zig build test-lock` | Lock/greeter painter, password editing, PAM transitions (PAM is replaced at link time in test binaries only), greeter↔rediwm-dm conversation. |
+| `zig build test-lock` | Lock/greeter painter, password editing, PAM transitions (PAM is replaced at link time in test binaries only), greeter↔rediwm-dm conversation, saved login appearance and account-switch fallback, bounded wallpaper rasters and hostile snapshot files. |
 | `zig build test-dm` | rediwm-dm relay state machine and framing. |
 | `zig build test-dbus`, `test-polkit`, `test-polkit-ui`, `test-notifications`, `test-settings-portal`, `test-power`, `test-power-profiles`, `test-tray`, `test-app-activation`, `test-rediwm-session`, `test-layout-autosave`, `test-files`, `test-images` | Subsystem suites; the D-Bus ones re-exec under `dbus-run-session`. |
 | `python3 tests/<name>.py` | Integration tests against the real `zig-out/bin/rediwm` on `WLR_BACKENDS=headless`. |
@@ -77,8 +77,8 @@ compiler, `wayland-scanner` and wayland-protocols; D-Bus suites need PyGObject,
 ## The IPC socket is the test harness
 
 `tests/ipc_client.py` (`IPCClient`, `spawn_compositor`, `stop_process`) and the
-helpers in `tests/xwayland.py` (`start_compositor`, `wayland_display_name`,
-`wait_for`) start compositors and talk to `$XDG_RUNTIME_DIR/rediwm-*.sock`.
+helpers in `tests/xwayland_support.py`, re-exported by `tests/xwayland.py`
+(`start_compositor`, `wayland_display_name`, `wait_for`) start compositors and talk to `$XDG_RUNTIME_DIR/rediwm-*.sock`.
 Importing `ipc_client` sets `REDIWM_IPC_AUTOMATION=1`; launchers that build
 their own environment must set it, or synthetic input and pixel reads return
 `AutomationDisabled` (`tests/ipc_automation.py` checks that gate). `spawn_compositor` also points `XDG_STATE_HOME` into the test
@@ -258,7 +258,8 @@ disabling through Settings, or `window_tabs.py` for tab groups in automatically
 tiled workspaces. `shortcuts_inhibit.py` also supports this flag for tiled/floating
 bindings, Alt+Tab, number/wheel navigation, Super-drag and Super+Escape revocation.
 
-**Xwayland**: `xwayland.py` (needs Xwayland, libxcb, `xdpyinfo`, PyGObject/GTK 3;
+**Xwayland**: `xwayland.py` (runs `xwayland_core.py`, `xwayland_gtk.py` and
+`xwayland_selection.py`; needs Xwayland, libxcb, `xdpyinfo`, PyGObject/GTK 3;
 never uses the host `DISPLAY`), `xwayland_fractional.py`,
 `xwayland_hardening.py` (extreme/invalid client size hints and recovery; needs
 Xwayland and libxcb).

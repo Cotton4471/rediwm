@@ -15,14 +15,10 @@ const wlr = @import("wlroots");
 const sn = @import("node.zig");
 const col = @import("color.zig");
 
-const c_time = @cImport({
-    @cInclude("locale.h");
-    @cInclude("time.h");
-});
+const c_time = @import("taskbar/c_time.zig").c;
 
 const gpa = @import("main.zig").gpa;
 const anim = @import("ui").anim;
-const chrome = @import("chrome.zig");
 const geometry = @import("geometry.zig");
 const icon_service = @import("icon_service.zig");
 const scene_data = @import("scene_data.zig");
@@ -31,16 +27,24 @@ const taskbar_items = @import("config").taskbar_items;
 const battery_highlight = @import("taskbar/battery_highlight.zig");
 const battery_badge = @import("ui").widgets.battery;
 const start_button = @import("taskbar/start_button.zig");
-const shape = @import("taskbar/shape.zig");
 const text = @import("ui").text;
 const ui_theme = @import("ui").theme;
-const stats = @import("ipc/stats.zig");
-const protocol = @import("ipc/protocol.zig");
 const Output = @import("Output.zig");
 const Server = @import("Server.zig");
 const Toplevel = @import("Toplevel.zig");
+const taskbar_metrics = @import("taskbar/metrics.zig");
+const taskbar_clock = @import("taskbar/clock.zig");
+const taskbar_layout = @import("taskbar/layout.zig");
+const taskbar_reconcile = @import("taskbar/reconcile.zig");
+const taskbar_tick = @import("taskbar/tick.zig");
+const taskbar_pointer = @import("taskbar/pointer.zig");
+const taskbar_classify = @import("taskbar/classify.zig");
+const taskbar_paint_util = @import("taskbar/paint_util.zig");
+const taskbar_paint = @import("taskbar/paint.zig");
+const taskbar_chip_text = @import("taskbar/chip_text.zig");
+const taskbar_app_tray = @import("taskbar/app_tray.zig");
 
-const Anim = anim.Anim;
+pub const Anim = anim.Anim;
 pub const nowMs = anim.nowMs;
 
 const Taskbar = @This();
@@ -49,23 +53,30 @@ const log = std.log.scoped(.taskbar);
 
 pub const default_bar_height: i32 = 54;
 pub const bar_height: i32 = default_bar_height;
-pub fn barHeight() i32 {
-    return @intFromFloat(@round(ui_theme.global.taskbar_size));
-}
+// taskbar/metrics.zig
+pub const barHeight = taskbar_metrics.barHeight;
+pub const edgeGap = taskbar_metrics.edgeGap;
+pub const reservedHeight = taskbar_metrics.reservedHeight;
+pub const barRadius = taskbar_metrics.barRadius;
+pub const chipGap = taskbar_metrics.chipGap;
+pub const chipVerticalMargin = taskbar_metrics.chipVerticalMargin;
+pub const chipSize = taskbar_metrics.chipSize;
+pub const tileSize = taskbar_metrics.tileSize;
+pub const chipPad = taskbar_metrics.chipPad;
+pub const trayHit = taskbar_metrics.trayHit;
+pub const buttonSize = taskbar_metrics.buttonSize;
+pub const startButtonGap = taskbar_metrics.startButtonGap;
+pub const startButtonLeft = taskbar_metrics.startButtonLeft;
+pub const endInset = taskbar_metrics.endInset;
+pub const rightPad = taskbar_metrics.rightPad;
+pub const startButtonBox = taskbar_metrics.startButtonBox;
+pub const startIconSize = taskbar_metrics.startIconSize;
+pub const firstChipX = taskbar_metrics.firstChipX;
+
 /// Logical px between the bar and the output edge it sits on, kept small
 /// enough that a bad theme can't push the bar off the screen.
-const max_edge_gap: f32 = 64;
-fn edgeGap() i32 {
-    return @intFromFloat(@round(std.math.clamp(ui_theme.global.taskbar_edge_gap, 0, max_edge_gap)));
-}
-/// What the bar claims from its output edge: its height and its gap.
-pub fn reservedHeight() i32 {
-    return barHeight() + edgeGap();
-}
-fn barRadius() f32 {
-    return shape.effectiveRadius(ui_theme.global.taskbar_radius, barHeight());
-}
-const edge_pad: i32 = 20;
+pub const max_edge_gap: f32 = 64;
+pub const edge_pad: i32 = 20;
 // Anchor sizes at the original 54px bar / 8px item gap (a
 // 42px-tall chip with a 23px icon tile). Every other taskbar-item size below
 // is a function of the live bar height and item gap, scaled from these two
@@ -73,89 +84,29 @@ const edge_pad: i32 = 20;
 // `chip_gap` shrinks the pills/tiles/tray targets together instead of
 // clipping or leaving them floating in oversized empty space.
 pub const min_bar_height: i32 = 36;
-const base_chip_size: i32 = 42;
-const icon_scale: f32 = 0.8 * 1.1;
-const base_tile_size: f32 = 26 * icon_scale;
-const tile_radius: f32 = 4;
-
-fn chipGap() i32 {
-    return @intFromFloat(@round(ui_theme.global.chip_gap));
-}
+pub const base_chip_size: i32 = 42;
+pub const icon_scale: f32 = 0.8 * 1.1;
+pub const base_tile_size: f32 = 26 * icon_scale;
+pub const tile_radius: f32 = 4;
 
 // Top/bottom breathing room around each chip pill. Tied to the same
 // "Window item gap" slider that spaces pills horizontally (chipGap above),
 // so one control changes both at once; capped so a large gap can't collapse
 // the pill down to nothing.
-const default_chip_vertical_margin: f32 = (@as(f32, @floatFromInt(default_bar_height)) - @as(f32, @floatFromInt(base_chip_size))) / 2;
-const max_chip_vertical_margin: f32 = 16.0;
-fn chipVerticalMargin() f32 {
-    const margin_per_gap_px = default_chip_vertical_margin / 8.0; // original 8px gap anchor
-    return @min(ui_theme.global.chip_gap * margin_per_gap_px, max_chip_vertical_margin);
-}
+pub const default_chip_vertical_margin: f32 = (@as(f32, @floatFromInt(default_bar_height)) - @as(f32, @floatFromInt(base_chip_size))) / 2;
+pub const max_chip_vertical_margin: f32 = 16.0;
+pub const min_chip_size: i32 = 18;
+pub const min_tile_size: i32 = 10;
+pub const icon_text_gap: i32 = 9;
+pub const title_pad_right: i32 = 16;
 
-const min_chip_size: i32 = 18;
-pub fn chipSize() i32 {
-    const raw = @as(f32, @floatFromInt(barHeight())) - 2 * chipVerticalMargin();
-    return @max(min_chip_size, @as(i32, @intFromFloat(@round(raw))));
-}
+pub const base_tray_hit: i32 = 34;
+pub const min_tray_hit: i32 = 20;
+pub const tray_radius: f32 = 5;
+pub const tray_gap: i32 = 6;
 
-const min_tile_size: i32 = 10;
-fn tileSize() i32 {
-    const ratio = base_tile_size / @as(f32, @floatFromInt(base_chip_size));
-    return @max(min_tile_size, @as(i32, @intFromFloat(@round(@as(f32, @floatFromInt(chipSize())) * ratio))));
-}
-
-fn chipPad() i32 {
-    return @divTrunc(chipSize() - tileSize(), 2);
-}
-const icon_text_gap: i32 = 9;
-const title_pad_right: i32 = 16;
-
-const base_tray_hit: i32 = 34;
-const min_tray_hit: i32 = 20;
-fn trayHit() i32 {
-    const ratio = @as(f32, @floatFromInt(base_tray_hit)) / @as(f32, @floatFromInt(base_chip_size));
-    return @max(min_tray_hit, @as(i32, @intFromFloat(@round(@as(f32, @floatFromInt(chipSize())) * ratio))));
-}
-const tray_radius: f32 = 5;
-const tray_gap: i32 = 6;
-
-// Same height as the chip row so the whole strip lines up.
-pub fn buttonSize() i32 {
-    return chipSize();
-}
-pub fn startButtonGap() i32 {
-    return @intFromFloat(@round(ui_theme.global.start_button_gap));
-}
-pub fn startButtonLeft() i32 {
-    return startButtonGap() + endInset();
-}
-// Items keep clear of the curve at either end of a rounded bar.
-fn endInset() i32 {
-    return shape.cornerInset(barRadius(), chipVerticalMargin());
-}
-fn rightPad() i32 {
-    return @max(edge_pad, endInset() + startButtonGap());
-}
-pub fn startButtonBox(bar: *Taskbar) wlr.Box {
-    const size = buttonSize();
-    return .{
-        .x = bar.box.x + bar.startX(),
-        .y = bar.box.y + @divTrunc(bar.box.height - size, 2),
-        .width = size,
-        .height = size,
-    };
-}
-/// Logical size the start button logo is drawn at.
-pub fn startIconSize() i32 {
-    const configured: i32 = @intFromFloat(@round(ui_theme.global.start_button_icon_size));
-    return @max(8, @min(configured, buttonSize()));
-}
-fn firstChipX() i32 {
-    return startButtonLeft() + buttonSize() + startButtonGap();
-}
-const clock_gap: i32 = 16;
-const chip_clock_gap: i32 = 16;
+pub const clock_gap: i32 = 16;
+pub const chip_clock_gap: i32 = 16;
 pub const paint_start: u8 = 1 << 0;
 pub const paint_chips: u8 = 1 << 1;
 pub const paint_tray: u8 = 1 << 2;
@@ -166,8 +117,8 @@ pub const paint_audio: u8 = 1 << 6;
 pub const paint_capture: u8 = 1 << 7;
 pub const capture_label = "Stop sharing";
 
-const press_scale: f32 = 0.92;
-const volume_scroll_step: f32 = 0.05;
+pub const press_scale: f32 = 0.92;
+pub const volume_scroll_step: f32 = 0.05;
 
 server: *Server,
 wlr_output: *wlr.Output,
@@ -210,7 +161,7 @@ capture_sessions: usize = 0,
 start: start_button.State = .{},
 start_logo: ?icon_service.Entry = null,
 chips: std.ArrayList(ChipState) = .empty,
-tray: [tray_count]TrayState = .{ .{ .kind = .volume }, .{ .kind = .wifi }, .{ .kind = .power } },
+tray: [tray_count]TrayState = .{ .{ .kind = .volume }, .{ .kind = .wifi }, .{ .kind = .power }, .{ .kind = .wired } },
 capture_hover: Anim = .{},
 capture_press: Anim = .{ .to = 1 },
 hover_target: Target = .none,
@@ -226,6 +177,9 @@ audio_muted: bool = false,
 // NetworkManager reports no connection: the wifi icon is drawn in the danger
 // colour, like a muted speaker. Pushed by `network.Manager`, never polled.
 network_offline: bool = false,
+// Whether a wireless adapter exists and a cable is connected: decides the
+// automatic Wi-Fi and Ethernet items. Pushed by `network.Manager`.
+network_presence: taskbar_items.Presence = .{},
 // While offline the wifi icon also blinks (one cycle a second) so a dropped
 // connection stands out. A real deadline only while offline: the timer is
 // created on first need, disarmed on reconnect, and each tick repaints just
@@ -245,29 +199,30 @@ clock_digit: MeasuredWidth = .{},
 clock_style: u8 = 0,
 capture_width: MeasuredWidth = .{},
 
-const MeasuredWidth = struct {
+pub const MeasuredWidth = struct {
     width: f32 = 0,
     scale: f32 = 0,
     font_generation: u32 = 0,
     valid: bool = false,
 
-    fn get(self: *const MeasuredWidth, scale: f32) ?f32 {
+    pub fn get(self: *const MeasuredWidth, scale: f32) ?f32 {
         if (!self.valid or self.scale != scale or self.font_generation != text.font_generation) return null;
         return self.width;
     }
 
-    fn put(self: *MeasuredWidth, scale: f32, width: f32) f32 {
+    pub fn put(self: *MeasuredWidth, scale: f32, width: f32) f32 {
         self.* = .{ .width = width, .scale = scale, .font_generation = text.font_generation, .valid = true };
         return width;
     }
 };
 
-const TrayKind = enum { volume, wifi, power };
-const tray_count = std.meta.fields(TrayKind).len;
+// `wired` comes last so the IPC tray indices of the other icons stay put.
+pub const TrayKind = enum { volume, wifi, power, wired };
+pub const tray_count = std.meta.fields(TrayKind).len;
 
 pub const AppKind = enum { file_explorer, notes, terminal, settings, text_doc, browser, other };
 
-const ChipState = struct {
+pub const ChipState = struct {
     toplevel: *Toplevel,
     buffer_node: ?*sn.Buffer = null,
     dirty: bool = true,
@@ -300,7 +255,7 @@ const ChipState = struct {
 // press curves mark chips dirty from `tick`, and `relayout` repaints
 // everything. The theme fields are snapshotted because colour-only reskins
 // arrive through here, like chrome.TitlebarMemo.
-const ChipMemo = struct {
+pub const ChipMemo = struct {
     x: f32,
     width: f32,
     active: bool,
@@ -318,7 +273,7 @@ const ChipMemo = struct {
     font: []const u8,
     colors: [6][4]f32,
 
-    fn capture(bar: *Taskbar, chip: *const ChipState, now_ms: i64) ChipMemo {
+    pub fn capture(bar: *Taskbar, chip: *const ChipState, now_ms: i64) ChipMemo {
         const t = ui_theme.global;
         return .{
             .x = chip.renderX(now_ms),
@@ -345,7 +300,7 @@ const ChipMemo = struct {
 // Chip raster inputs that `ChipMemo` leaves to the hover/press curves and
 // FLIP offset, sampled as `ChipPaint` does, plus the buffer placement. Chips
 // without an icon draw a monogram taken from the title into their tile.
-const ChipRasterKey = struct {
+pub const ChipRasterKey = struct {
     left: i32,
     width: i32,
     scale: f32,
@@ -355,7 +310,7 @@ const ChipRasterKey = struct {
     monogram: [4]u8 = @splat(0),
     monogram_len: usize = 0,
 
-    fn capture(bar: *Taskbar, now_ms: i64, chip: *const ChipState, left: i32, width: i32) ChipRasterKey {
+    pub fn capture(bar: *Taskbar, now_ms: i64, chip: *const ChipState, left: i32, width: i32) ChipRasterKey {
         const paint = ChipPaint.init(bar, now_ms, chip);
         var key: ChipRasterKey = .{
             .left = left,
@@ -375,7 +330,7 @@ const ChipRasterKey = struct {
     }
 };
 
-const TrayState = struct {
+pub const TrayState = struct {
     kind: TrayKind,
     hover: Anim = .{},
     press: Anim = .{ .to = 1 },
@@ -383,7 +338,7 @@ const TrayState = struct {
 
 pub const Target = union(enum) { none, clock, battery, start_button, chip: *Toplevel, tray: usize, capture_indicator };
 
-fn targetEql(a: Target, b: Target) bool {
+pub fn targetEql(a: Target, b: Target) bool {
     return switch (a) {
         .none => b == .none,
         .clock => b == .clock,
@@ -434,6 +389,7 @@ pub fn create(server: *Server, wlr_output: *wlr.Output) !*Taskbar {
         .glass_effect = glass_effect,
         .battery_state = battery.read(server.io, gpa),
         .network_offline = if (server.network) |network| network.offline() else false,
+        .network_presence = if (server.network) |network| network.presence() else .{},
         .clock_minute = @divFloor(c_time.time(null), 60),
         .timer = undefined,
     };
@@ -496,22 +452,36 @@ pub fn applyBattery(bar: *Taskbar, next: battery.State) void {
     bar.wlr_output.scheduleFrame();
 }
 
-/// A flip of `network.Manager.offline` recolours the wifi icon; nothing else
-/// about the tray changes, so only that icon repaints.
+/// A flip of `network.Manager.offline` recolours the network icons; nothing
+/// else about the tray changes, so only those icons repaint.
 pub fn applyNetwork(bar: *Taskbar, offline: bool) void {
     if (offline == bar.network_offline) return;
     bar.network_offline = offline;
     bar.blink_dim = false;
     bar.syncBlink();
     bar.tray_dirty[@intFromEnum(TrayKind.wifi)] = true;
+    bar.tray_dirty[@intFromEnum(TrayKind.wired)] = true;
     bar.markDirty(paint_tray);
     bar.wlr_output.scheduleFrame();
 }
 
-const blink_half_ms = 500;
+/// An adapter or a cable appearing or going shows or hides the automatic
+/// items, which moves their neighbours like a battery coming or going.
+pub fn applyNetworkPresence(bar: *Taskbar, next: taskbar_items.Presence) void {
+    if (std.meta.eql(next, bar.network_presence)) return;
+    bar.network_presence = next;
+    _ = bar.reconcile(nowMs());
+    bar.tray_dirty = @splat(true);
+    bar.clock_dirty = true;
+    bar.capture_dirty = true;
+    bar.markDirty(paint_tray | paint_clock | paint_capture);
+    bar.wlr_output.scheduleFrame();
+}
+
+pub const blink_half_ms = 500;
 
 /// Arm the blink timer while offline, disarm it otherwise.
-fn syncBlink(bar: *Taskbar) void {
+pub fn syncBlink(bar: *Taskbar) void {
     if (bar.network_offline and !anim.reducedMotion()) {
         if (bar.blink_timer == null) {
             bar.blink_timer = bar.server.wl_server.getEventLoop().addTimer(*Taskbar, onBlink, bar) catch |err| {
@@ -525,7 +495,7 @@ fn syncBlink(bar: *Taskbar) void {
     }
 }
 
-fn onBlink(bar: *Taskbar) c_int {
+pub fn onBlink(bar: *Taskbar) c_int {
     if (!bar.network_offline or anim.reducedMotion()) {
         // Settle on a solid icon; the timer stays disarmed.
         if (bar.blink_dim) bar.repaintWifi();
@@ -538,14 +508,15 @@ fn onBlink(bar: *Taskbar) c_int {
     return 0;
 }
 
-fn repaintWifi(bar: *Taskbar) void {
-    if (!bar.itemShown(.network)) return;
+pub fn repaintWifi(bar: *Taskbar) void {
+    if (!bar.itemShown(.wifi) and !bar.itemShown(.wired)) return;
     bar.tray_dirty[@intFromEnum(TrayKind.wifi)] = true;
+    bar.tray_dirty[@intFromEnum(TrayKind.wired)] = true;
     bar.markDirty(paint_tray);
     bar.wlr_output.scheduleFrame();
 }
 
-fn onTick(bar: *Taskbar) c_int {
+pub fn onTick(bar: *Taskbar) c_int {
     // Seconds only repaint the clock. Keep expensive sysfs reads and the
     // calendar on their minute cadence; plug events have their own uevent.
     const minute = @divFloor(c_time.time(null), 60);
@@ -561,7 +532,7 @@ fn onTick(bar: *Taskbar) c_int {
     return 0;
 }
 
-fn markPaintCauseFromTarget(target: Target) u8 {
+pub fn markPaintCauseFromTarget(target: Target) u8 {
     return switch (target) {
         .none => 0,
         .clock => paint_clock,
@@ -578,932 +549,132 @@ pub fn markDirty(bar: *Taskbar, cause: u8) void {
     bar.paint_causes |= cause;
 }
 
-fn scheduleClockTick(bar: *Taskbar) void {
-    var now: c_time.struct_timespec = undefined;
-    if (c_time.clock_gettime(c_time.CLOCK_REALTIME, &now) != 0) {
-        bar.timer.timerUpdate(1000) catch |err| {
-            log.err("scheduleClockTick: clock_gettime failed: {}", .{err});
-        };
-        return;
-    }
-    // Wake just after the next displayed boundary, without accumulating drift.
-    // A hidden clock only needs the shared minute wake for battery/calendar.
-    const interval: c_time.time_t = if (bar.server.config.region.clock_show_seconds and bar.itemShown(.clock)) 1 else 60;
-    const delay_ms: c_int = @intCast((interval - @mod(now.tv_sec, interval)) * 1000 - @divTrunc(now.tv_nsec, 1_000_000) + 25);
-    bar.timer.timerUpdate(delay_ms) catch |err| {
-        log.err("scheduleClockTick: could not reschedule clock timer: {}", .{err});
-    };
-}
+// taskbar/clock.zig
+pub const scheduleClockTick = taskbar_clock.scheduleClockTick;
+pub const updateClockLocale = taskbar_clock.updateClockLocale;
+pub const refreshClockSettings = taskbar_clock.refreshClockSettings;
+pub const refreshClock = taskbar_clock.refreshClock;
+pub const updateClockStrings = taskbar_clock.updateClockStrings;
 
-fn updateClockLocale(bar: *Taskbar) void {
-    const name = gpa.dupeZ(u8, bar.server.config.region.formats) catch return;
-    defer gpa.free(name);
-    // Keep a private locale: changing the process locale would affect workers.
-    const locale = c_time.newlocale(c_time.LC_TIME_MASK, name, null);
-    if (bar.clock_locale) |old| c_time.freelocale(old);
-    bar.clock_locale = locale;
-}
-
-pub fn refreshClockSettings(bar: *Taskbar) void {
-    bar.updateClockLocale();
-    bar.refreshClock(true);
-    bar.scheduleClockTick();
-}
-
-/// `reset_width` forgets the widest the column has been (a new format, day
-/// line or locale may fit a narrower one).
-fn refreshClock(bar: *Taskbar, reset_width: bool) void {
-    const previous_width = bar.clockColumnWidth();
-    if (reset_width) bar.clock_width.valid = false;
-    const changed = bar.updateClockStrings();
-    const width_changed = previous_width != bar.clockColumnWidth();
-    if (!changed and !width_changed) return;
-    bar.clock_dirty = true;
-    var causes: u8 = paint_clock;
-    if (width_changed) {
-        // A wider/narrower clock moves every item to its left, including the tray.
-        bar.tray_dirty = @splat(true);
-        bar.capture_dirty = true;
-        const chips_changed = bar.reconcile(nowMs());
-        causes |= paint_tray | paint_capture | (if (chips_changed) paint_chips else @as(u8, 0));
-    }
-    bar.markDirty(causes);
-    bar.wlr_output.scheduleFrame();
-    stats.recordTaskbarClockFrameRequest();
-}
-
-fn updateClockStrings(bar: *Taskbar) bool {
-    var raw: c_time.time_t = c_time.time(null);
-    var tm_storage: c_time.struct_tm = undefined;
-    const tm = c_time.localtime_r(&raw, &tm_storage) orelse return false;
-
-    var next_time: [16]u8 = undefined;
-    var next_date: [128]u8 = @splat(0);
-    const prefs = bar.server.config.region;
-    if (c_time.strftime(&next_time, next_time.len, prefs.taskbarTimeFormat(), tm) == 0) return false;
-    if (prefs.clock_show_day) {
-        const len = if (bar.clock_locale) |locale|
-            c_time.strftime_l(&next_date, next_date.len, "%x", tm, locale)
-        else
-            c_time.strftime(&next_date, next_date.len, "%x", tm);
-        if (len == 0) return false;
-    }
-
-    const prev_time = std.mem.sliceTo(&bar.clock_time, 0);
-    const prev_date = std.mem.sliceTo(&bar.clock_date, 0);
-    const time = std.mem.sliceTo(&next_time, 0);
-    const date = std.mem.sliceTo(&next_date, 0);
-    if (std.mem.eql(u8, prev_time, time) and std.mem.eql(u8, prev_date, date)) return false;
-
-    bar.clock_time = next_time;
-    bar.clock_date = next_date;
-    // The column is as wide as the widest text it has shown (AM against PM,
-    // a longer date), never narrower, so only a real growth moves the items
-    // beside it. A settings change starts it over in `refreshClockSettings`.
-    const scale = bar.wlr_output.scale;
-    if (bar.clock_width.get(scale)) |current| {
-        const needed = bar.measureClockColumn() catch current;
-        if (needed > current) _ = bar.clock_width.put(scale, needed);
-    }
-    return true;
-}
-
-/// Where the bar belongs on `output_box` under the current theme and edge.
-pub fn placement(bar: *Taskbar, output_box: wlr.Box) shape.Placement {
-    return shape.place(output_box, .{
-        .height = barHeight(),
-        .edge_gap = edgeGap(),
-        .length = ui_theme.global.taskbar_length,
-        .radius = barRadius(),
-        .top = bar.server.config.compositor.taskbar_position == .top,
-    });
-}
+// taskbar/layout.zig
+pub const placement = taskbar_layout.placement;
+pub const bleedFor = taskbar_layout.bleedFor;
+pub const boxesOverlap = taskbar_layout.boxesOverlap;
+pub const isPlaced = taskbar_layout.isPlaced;
+pub const relayout = taskbar_layout.relayout;
+pub const notifyToplevelsChanged = taskbar_layout.notifyToplevelsChanged;
 
 /// Logical px the bar's background reaches past the far edges of its output.
 pub const Bleed = struct { x: i32 = 0, y: i32 = 0 };
 
-/// Fractional scale floors an output's logical size (2560 / 1.5 is 1706), so a
-/// flush bar that ends there stops a device pixel short of the panel and
-/// shows whatever is under it. It reaches one logical pixel further, where no
-/// other output starts just past that edge: the raster would draw on it.
-fn bleedFor(bar: *Taskbar, output_box: wlr.Box, placed: wlr.Box) Bleed {
-    if (!shape.flush(output_box, placed, barRadius())) return .{};
-    const out = bar.wlr_output;
-    const turned = @intFromEnum(out.transform) & 1 != 0;
-    const scale: f64 = out.scale;
-    const device_width: f64 = @floatFromInt(if (turned) out.height else out.width);
-    const device_height: f64 = @floatFromInt(if (turned) out.width else out.height);
-    var bleed: Bleed = .{};
-    if (device_width > @round(scale * @as(f64, @floatFromInt(output_box.width)))) bleed.x = 1;
-    if (placed.y + placed.height == output_box.y + output_box.height and
-        device_height > @round(scale * @as(f64, @floatFromInt(output_box.height)))) bleed.y = 1;
-    if (bleed.x == 0 and bleed.y == 0) return bleed;
-    const right: wlr.Box = .{ .x = output_box.x + output_box.width, .y = output_box.y, .width = 1, .height = output_box.height };
-    const below: wlr.Box = .{ .x = output_box.x, .y = output_box.y + output_box.height, .width = output_box.width, .height = 1 };
-    var outputs = bar.server.outputs.iterator(.forward);
-    while (outputs.next()) |other| {
-        if (other.wlr_output == out) continue;
-        var box: wlr.Box = undefined;
-        bar.server.output_layout.getBox(other.wlr_output, &box);
-        if (boxesOverlap(box, right)) bleed.x = 0;
-        if (boxesOverlap(box, below)) bleed.y = 0;
-    }
-    return bleed;
-}
-
-fn boxesOverlap(a: wlr.Box, b: wlr.Box) bool {
-    return a.x < b.x + b.width and b.x < a.x + a.width and a.y < b.y + b.height and b.y < a.y + a.height;
-}
-
-/// Whether the bar already sits where `placement` puts it.
-pub fn isPlaced(bar: *Taskbar, output_box: wlr.Box) bool {
-    const wanted = bar.placement(output_box);
-    return std.meta.eql(bar.box, wanted.box) and bar.reserved == wanted.reserved and
-        std.meta.eql(bar.bleed, bar.bleedFor(output_box, wanted.box));
-}
-
-// Repositions the strip along the configured output edge.
-pub fn relayout(bar: *Taskbar, output_box: wlr.Box) void {
-    if (bar.server.input.window_menu.bar == bar) bar.server.input.window_menu.close();
-    if (bar.server.tray) |tray_mgr| tray_mgr.closeMenu();
-    bar.refreshStartLogo();
-    const placed = bar.placement(output_box);
-    bar.box = placed.box;
-    bar.reserved = placed.reserved;
-    bar.flush = shape.flush(output_box, bar.box, barRadius());
-    bar.bleed = bar.bleedFor(output_box, bar.box);
-    glass.Effect.configure(bar.glass_effect, barRadius(), 1);
-    bar.tree.node.setPosition(bar.box.x, bar.box.y);
-    const now_ms = nowMs();
-    bar.pointerLeave();
-    _ = bar.reconcile(now_ms);
-    bar.app_tray_generation = 0;
-    bar.background_dirty = true;
-    bar.start_dirty = true;
-    bar.clock_dirty = true;
-    bar.tray_dirty = @splat(true);
-    bar.capture_dirty = true;
-    bar.battery_dirty = true;
-    for (bar.chips.items) |*chip| chip.dirty = true;
-    bar.render(now_ms, paint_start | paint_chips | paint_tray | paint_clock);
-    bar.scheduleClockTick();
-    bar.dirty = false;
-    bar.paint_causes = 0;
-    if (Output.fromWlr(bar.wlr_output)) |output| if (output.wifi_popup) |popup| {
-        if (bar.itemBox(.network) == null) output.closeWifi() else popup.refresh();
-    };
-    if (Output.fromWlr(bar.wlr_output)) |output| if (output.battery_popup) |popup| {
-        if (bar.itemBox(.battery) == null) output.closeBattery() else popup.refresh();
-    };
-    // The calendar follows the clock as the bar lays its items out again.
-    if (Output.fromWlr(bar.wlr_output)) |output| if (output.calendar) |calendar| calendar.refresh();
-}
-
-// Called whenever world.toplevels changes shape or order (map, unmap,
-// focus) or a window's identity changes. Rebuilds the chip list, starting
-// FLIP animations for chips whose on-screen position actually moved, and
-// repaints only chips whose pixels would differ.
-pub fn notifyToplevelsChanged(bar: *Taskbar) void {
-    bar.refreshStartLogo();
-    if (bar.server.tray) |tray_mgr| {
-        if (bar.app_tray_generation != tray_mgr.generation) bar.markDirty(paint_tray);
-    }
-    const chips_changed = bar.reconcile(nowMs());
-    if (chips_changed) bar.markDirty(paint_chips);
-    if (bar.dirty) bar.wlr_output.scheduleFrame();
-}
-
-const clock_time_size: f32 = 14;
-const clock_date_size: f32 = 11;
+pub const clock_time_size: f32 = 14;
+pub const clock_date_size: f32 = 11;
 
 /// One piece of the time line: a single digit in a fixed cell, or a run of
 /// everything between digits (":", " PM"). `x` is its offset from the line's
 /// start and `w` the width of its own text.
-const ClockPiece = struct { text: []const u8, x: i32, w: i32 };
-const clock_pieces_max = 16;
-const ClockLine = struct { pieces: [clock_pieces_max]ClockPiece = undefined, count: usize = 0, width: i32 = 0 };
+pub const ClockPiece = struct { text: []const u8, x: i32, w: i32 };
+pub const clock_pieces_max = 16;
+pub const ClockLine = struct { pieces: [clock_pieces_max]ClockPiece = undefined, count: usize = 0, width: i32 = 0 };
 
-fn clockFont() text.Font {
-    return if (ui_theme.taskbar(.clock_bold)) .manrope_heavy else .manrope;
-}
+// taskbar/clock.zig
+pub const clockFont = taskbar_clock.clockFont;
+pub const clockStyleChanged = taskbar_clock.clockStyleChanged;
+pub const clockDigitCell = taskbar_clock.clockDigitCell;
+pub const clockLine = taskbar_clock.clockLine;
+pub const measureClockColumn = taskbar_clock.measureClockColumn;
+pub const clockColumnWidth = taskbar_clock.clockColumnWidth;
 
-fn clockStyleChanged(bar: *Taskbar) void {
-    const style = @as(u8, @intFromBool(ui_theme.taskbar(.clock_bold))) | (@as(u8, @intFromBool(ui_theme.taskbar(.clock_italic))) << 1);
-    if (style == bar.clock_style) return;
-    bar.clock_style = style;
-    bar.clock_digit.valid = false;
-    bar.clock_width.valid = false;
-}
+// taskbar/layout.zig
+pub const rightLayout = taskbar_layout.rightLayout;
+pub const startX = taskbar_layout.startX;
+pub const calculateLayout = taskbar_layout.calculateLayout;
+pub const itemBox = taskbar_layout.itemBox;
+pub const batteryX = taskbar_layout.batteryX;
+pub const clockX = taskbar_layout.clockX;
+pub const trayItem = taskbar_layout.trayItem;
+pub const itemShown = taskbar_layout.itemShown;
+pub const capturing = taskbar_layout.capturing;
+pub const captureWidth = taskbar_layout.captureWidth;
+pub const captureLabelWidth = taskbar_layout.captureLabelWidth;
+pub const captureX = taskbar_layout.captureX;
+pub const captureIndicatorBox = taskbar_layout.captureIndicatorBox;
+pub const sharedChipWidth = taskbar_layout.sharedChipWidth;
 
-/// The widest digit's advance. Every digit of the time sits in a cell this
-/// wide, so the seconds ticking over change neither the line's width nor where
-/// its other glyphs are (Manrope's digits are proportional).
-fn clockDigitCell(bar: *Taskbar) !i32 {
-    const scale = bar.wlr_output.scale;
-    if (bar.clock_digit.get(scale)) |cell| return @intFromFloat(cell);
-    var widest: i32 = 0;
-    for ("0123456789") |*digit| widest = @max(widest, try text.measureWidth(digit[0..1], clockFont(), clock_time_size, scale));
-    return @intFromFloat(bar.clock_digit.put(scale, @floatFromInt(widest)));
-}
+pub const battery_width = battery_badge.width;
 
-fn clockLine(bar: *Taskbar, time: []const u8) !ClockLine {
-    const scale = bar.wlr_output.scale;
-    const cell = try bar.clockDigitCell();
-    var line: ClockLine = .{};
-    var i: usize = 0;
-    while (i < time.len and line.count < clock_pieces_max) {
-        const digit = std.ascii.isDigit(time[i]);
-        var end = i + 1;
-        if (!digit) {
-            while (end < time.len and !std.ascii.isDigit(time[end])) end += 1;
-        }
-        const piece = time[i..end];
-        const w = try text.measureWidth(piece, clockFont(), clock_time_size, scale);
-        line.pieces[line.count] = .{ .text = piece, .x = line.width + if (digit) @divTrunc(cell - w, 2) else 0, .w = w };
-        line.count += 1;
-        line.width += if (digit) cell else w;
-        i = end;
-    }
-    return line;
-}
+// taskbar/reconcile.zig
+pub const refreshStartLogo = taskbar_reconcile.refreshStartLogo;
+pub const updateIcon = taskbar_reconcile.updateIcon;
+pub const taskbarOrderLessThan = taskbar_reconcile.taskbarOrderLessThan;
+pub const reconcile = taskbar_reconcile.reconcile;
 
-/// Logical width the clock column needs for the current strings.
-fn measureClockColumn(bar: *Taskbar) !f32 {
-    const scale = bar.wlr_output.scale;
-    const raw = std.mem.sliceTo(&bar.clock_time, 0);
-    const time = std.mem.trimStart(u8, raw, " ");
-    var time_w = (try bar.clockLine(time)).width;
-    // "%l" pads the hours 1-9 with a blank: keep the room of the second digit
-    // so that 9:59 turning 10:00 does not resize the column.
-    if (time.len < raw.len) time_w += try bar.clockDigitCell();
-    const date_w = try text.measureWidth(std.mem.sliceTo(&bar.clock_date, 0), clockFont(), clock_date_size, scale);
-    // Fit the displayed lines so unused column space cannot widen the left gap.
-    const overhang: i32 = if (ui_theme.taskbar(.clock_italic)) @intFromFloat(@ceil(clock_time_size * 0.22) + 1) else 0;
-    return @floatFromInt(@max(time_w, date_w) + 1 + 2 * overhang);
-}
+// taskbar/tick.zig
+pub const tick = taskbar_tick.tick;
+pub const captureAnimations = taskbar_tick.captureAnimations;
+pub const appendAnimations = taskbar_tick.appendAnimations;
+pub const appendLive = taskbar_tick.appendLive;
+pub const trayPositions = taskbar_tick.trayPositions;
 
-fn clockColumnWidth(bar: *Taskbar) f32 {
-    bar.clockStyleChanged();
-    const scale = bar.wlr_output.scale;
-    if (bar.clock_width.get(scale)) |width| return width;
-    // A failed measurement is retried next time rather than remembered.
-    const width = bar.measureClockColumn() catch return bar.clock_width.width;
-    return bar.clock_width.put(scale, width);
-}
+// taskbar/pointer.zig
+pub const hitTest = taskbar_pointer.hitTest;
+pub const pointerMotion = taskbar_pointer.pointerMotion;
+pub const pointerLeave = taskbar_pointer.pointerLeave;
+pub const setHover = taskbar_pointer.setHover;
+pub const pointerPress = taskbar_pointer.pointerPress;
+pub const scrollVolume = taskbar_pointer.scrollVolume;
 
-fn rightLayout(bar: *Taskbar) taskbar_items.Layout {
-    return bar.item_layout;
-}
-
-fn startX(bar: *Taskbar) i32 {
-    return @intFromFloat(@round(bar.item_layout.x[@intFromEnum(taskbar_items.Item.start)] orelse @as(f32, @floatFromInt(startButtonLeft()))));
-}
-
-fn calculateLayout(bar: *Taskbar, window_count: usize) taskbar_items.Layout {
-    const items = bar.server.config.compositor.taskbar_items;
-    const app_count = bar.appTrayCount();
-    const app_width: f32 = @floatFromInt(app_count * @as(usize, @intCast(trayHit() + tray_gap)));
-    const capture_width: f32 = if (bar.capturing()) @floatFromInt(bar.captureWidth()) else 0;
-    const windows_width = if (window_count == 0) 0 else @as(f32, @floatFromInt(window_count)) * @max(@as(f32, @floatFromInt(chipSize())), ui_theme.global.chip_width) +
-        @as(f32, @floatFromInt(window_count - 1)) * @as(f32, @floatFromInt(chipGap()));
-    return taskbar_items.arrange(items, @floatFromInt(startButtonLeft()), @floatFromInt(bar.box.width - rightPad()), @as(f32, @floatFromInt(bar.box.width)) / 2, .{ if (bar.battery_state.percent != null) battery_width else 0, @floatFromInt(trayHit()), @floatFromInt(trayHit()), bar.clockColumnWidth(), @floatFromInt(buttonSize()), windows_width, app_width, @floatFromInt(trayHit()), capture_width }, tray_gap, clock_gap);
-}
-
-pub fn itemBox(bar: *Taskbar, item: taskbar_items.Item) ?wlr.Box {
-    const x = bar.rightLayout().x[@intFromEnum(item)] orelse return null;
-    const width: i32 = @intFromFloat(@ceil(bar.item_layout.widths[@intFromEnum(item)]));
-    return .{ .x = bar.box.x + @as(i32, @intFromFloat(@round(x))), .y = bar.box.y, .width = width, .height = bar.box.height };
-}
-
-const battery_width = battery_badge.width;
-
-fn batteryX(bar: *Taskbar) f32 {
-    return bar.rightLayout().x[@intFromEnum(taskbar_items.Item.battery)] orelse 0;
-}
-
-fn clockX(bar: *Taskbar) f32 {
-    return bar.rightLayout().x[@intFromEnum(taskbar_items.Item.clock)] orelse 0;
-}
-
-fn trayItem(index: usize) taskbar_items.Item {
-    return switch (@as(TrayKind, @enumFromInt(index))) {
-        .volume => .volume,
-        .wifi => .network,
-        .power => .power,
-    };
-}
-
-fn itemShown(bar: *Taskbar, item: taskbar_items.Item) bool {
-    return bar.server.config.compositor.taskbar_items.shown(item) and (item != .battery or bar.battery_state.percent != null);
-}
-
-fn capturing(bar: *Taskbar) bool {
-    if (!bar.itemShown(.capture)) return false;
-    const cm = bar.server.capture_mgr orelse return false;
-    return cm.activeCount() > 0;
-}
-
-fn captureWidth(bar: *Taskbar) i32 {
-    return @max(trayHit(), bar.captureLabelWidth() + 24);
-}
-
-fn captureLabelWidth(bar: *Taskbar) i32 {
-    const scale = bar.wlr_output.scale;
-    if (bar.capture_width.get(scale)) |width| return @intFromFloat(width);
-    const width = text.measureWidth(capture_label, .manrope, 12, scale) catch return 80;
-    return @intFromFloat(bar.capture_width.put(scale, @floatFromInt(width)));
-}
-
-fn captureX(bar: *Taskbar) f32 {
-    return bar.item_layout.x[@intFromEnum(taskbar_items.Item.capture)] orelse 0;
-}
-
-pub fn captureIndicatorBox(bar: *Taskbar) ?wlr.Box {
-    if (!bar.capturing()) return null;
-    const x = bar.captureX();
-    return .{
-        .x = bar.box.x + @as(i32, @intFromFloat(@round(x))),
-        .y = bar.box.y + @divTrunc(bar.box.height - trayHit(), 2),
-        .width = bar.captureWidth(),
-        .height = trayHit(),
-    };
-}
-
-fn sharedChipWidth(bar: *Taskbar, count: usize) f32 {
-    const min_w: f32 = @floatFromInt(chipSize());
-    const max_w = @max(min_w, ui_theme.global.chip_width);
-    if (count == 0) return max_w;
-    const available = bar.item_layout.widths[@intFromEnum(taskbar_items.Item.windows)];
-    const extra_gaps: usize = if (count > 1) count - 1 else 0;
-    const gap_total = @as(f32, @floatFromInt(chipGap())) * @as(f32, @floatFromInt(extra_gaps));
-    const each = (available - gap_total) / @as(f32, @floatFromInt(count));
-    return @max(1, @min(max_w, each));
-}
-
-fn refreshStartLogo(bar: *Taskbar) void {
-    const size_px = geometry.devicePixels(startIconSize(), bar.wlr_output.scale);
-    const custom = ui_theme.global.start_button_icon;
-    var lookup = bar.server.iconLookup(if (custom.len > 0) custom else start_button.builtin_logo, size_px);
-    if (lookup != .ready and custom.len > 0) {
-        lookup = bar.server.iconLookup(start_button.builtin_logo, size_px);
-    }
-    const old_id: ?u64 = if (bar.start_logo) |icon| icon.id else null;
-    updateIcon(bar.server, &bar.start_logo, lookup);
-    const new_id: ?u64 = if (bar.start_logo) |icon| icon.id else null;
-    if (old_id != new_id) {
-        bar.start_dirty = true;
-        bar.markDirty(paint_start);
-    }
-}
-
-// Keeps `IconService`'s refcount in sync with whichever icon `*held` last
-// pointed at, mirroring `Toplevel.updateHeldIcon`. `held` is either
-// `&bar.start_logo` or a chip's `&state.icon`.
-fn updateIcon(server: *Server, held: *?icon_service.Entry, lookup: icon_service.Lookup) void {
-    const new_icon: ?icon_service.Entry = switch (lookup) {
-        .ready => |e| e,
-        .pending, .missing => null,
-    };
-    const old_id: ?u64 = if (held.*) |e| e.id else null;
-    const new_id: ?u64 = if (new_icon) |e| e.id else null;
-    if (old_id != new_id) {
-        if (old_id) |id| server.iconRelease(id);
-        if (new_id) |id| server.iconAcquire(id);
-    }
-    held.* = new_icon;
-}
-
-// `world.toplevels` is the focus/raise stack (front = topmost), which
-// reorders on every click. Chips must not visually shuffle when a window is
-// merely focused or minimized, so we walk a copy sorted by each toplevel's
-// stable creation-order `id` instead — the on-screen chip order then only
-// changes when a window actually opens or closes.
-fn taskbarOrderLessThan(_: void, a: *Toplevel, b: *Toplevel) bool {
-    return (if (a.tab_group != 0) a.tab_group else a.id) < (if (b.tab_group != 0) b.tab_group else b.id);
-}
-
-// Returns whether any chip needs a frame: a new raster, a FLIP, or removal.
-fn reconcile(bar: *Taskbar, now_ms: i64) bool {
-    var changed = false;
-    var visible: std.ArrayList(*Toplevel) = .empty;
-    defer visible.deinit(gpa);
-    var it = bar.server.world.toplevels.iterator(.forward);
-    while (it.next()) |toplevel| {
-        if (!bar.itemShown(.windows) or !@import("workspaces.zig").visible(toplevel) or (bar.server.world.workspaces.active and toplevel.currentOutput() != Output.fromWlr(bar.wlr_output)) or toplevel.tab_hidden or (toplevel.live_rules.skip_taskbar orelse false)) continue;
-        visible.append(gpa, toplevel) catch break;
-    }
-    std.mem.sort(*Toplevel, visible.items, {}, taskbarOrderLessThan);
-
-    const layout = bar.calculateLayout(visible.items.len);
-    if (!std.meta.eql(layout, bar.item_layout)) {
-        bar.item_layout = layout;
-        bar.start_dirty = true;
-        bar.clock_dirty = true;
-        bar.tray_dirty = @splat(true);
-        bar.battery_dirty = true;
-        bar.capture_dirty = true;
-        bar.app_tray_generation = 0;
-        bar.markDirty(paint_start | paint_clock | paint_tray | paint_capture);
-        changed = true;
-    }
-    const chip_w = sharedChipWidth(bar, visible.items.len);
-    var next: std.ArrayList(ChipState) = .empty;
-    var x: f32 = bar.item_layout.x[@intFromEnum(taskbar_items.Item.windows)] orelse 0;
-    for (visible.items) |toplevel| {
-        const new_target = x;
-        var state: ChipState = found: {
-            for (bar.chips.items, 0..) |chip, i| {
-                if (chip.toplevel == toplevel) break :found bar.chips.orderedRemove(i);
-            }
-            break :found .{ .toplevel = toplevel, .target_x = new_target };
-        };
-        if (state.buffer_node == null) {
-            const node = bar.tree.createSceneBuffer(null) catch |err| {
-                log.err("reconcile: could not create chip buffer: {}", .{err});
-                break;
-            };
-            node.setFilterMode(.bilinear);
-            scene_data.SceneData.attach(&bar.node_data, &node.node);
-            // Chips are created after the fixed tray/clock nodes, but their
-            // original painter order was below those controls.
-            node.node.placeBelow(&bar.clock_node.node);
-            state.buffer_node = node;
-        }
-        const old_render = state.renderX(now_ms);
-        state.kind = classify(toplevel);
-        const app_id = toplevel.appId();
-        updateIcon(bar.server, &state.icon, bar.server.iconLookup(app_id, geometry.devicePixels(tileSize(), bar.wlr_output.scale)));
-        state.target_x = new_target;
-        // Fixed width shared by every chip: it must not change when the
-        // window's title changes, only when the width setting, available
-        // space or number of open windows changes `chip_w` itself.
-        state.width = chip_w;
-        const delta = old_render - new_target;
-        if (@abs(delta) >= 0.5) {
-            // FLIP: the chip already occupies `delta` px away from its new
-            // slot; ease that offset back to zero instead of jumping.
-            state.flip = .initCurve(delta, 0, now_ms, anim.curveFor(.taskbar_flip));
-            changed = true;
-        }
-        if (!state.dirty) {
-            if (state.painted) |painted| {
-                state.dirty = !std.meta.eql(painted, ChipMemo.capture(bar, &state, now_ms));
-            } else state.dirty = true;
-        }
-        if (state.dirty) changed = true;
-        next.append(gpa, state) catch break;
-        x += state.width + @as(f32, @floatFromInt(chipGap()));
-    }
-    // Whatever is left belongs to windows that closed or left the taskbar.
-    if (bar.chips.items.len > 0) changed = true;
-    for (bar.chips.items) |chip| {
-        if (chip.buffer_node) |node| node.node.destroy();
-        if (chip.raster) |raster| raster.base.drop();
-        if (chip.icon) |e| bar.server.iconRelease(e.id);
-    }
-    bar.chips.deinit(gpa);
-    bar.chips = next;
-
-    if (bar.hover_target == .chip) {
-        var still_present = false;
-        for (bar.chips.items) |chip| {
-            if (chip.toplevel == bar.hover_target.chip) {
-                still_present = true;
-                break;
-            }
-        }
-        if (!still_present) bar.hover_target = .none;
-    }
-    return changed;
-}
-
-// Runs once per output frame while anything is unsettled. Returns whether
-// the caller should schedule another frame to keep the animation going.
-pub fn tick(bar: *Taskbar, now_ms: i64) bool {
-    var causes = bar.paint_causes;
-    bar.paint_causes = 0;
-
-    if (bar.server.audio) |mgr| {
-        const gen = mgr.generation.load(.monotonic);
-        if (gen != bar.audio_generation_seen) {
-            bar.audio_generation_seen = gen;
-            bar.audio_volume = mgr.getMasterVolume();
-            bar.audio_muted = mgr.isMasterMuted();
-            bar.tray_dirty[@intFromEnum(TrayKind.volume)] = true;
-            causes |= paint_audio;
-            bar.dirty = true;
-        }
-    }
-
-    const sessions = if (bar.server.capture_mgr) |cm| cm.activeCount() else 0;
-    if (sessions != bar.capture_sessions) {
-        bar.capture_sessions = sessions;
-        bar.capture_dirty = true;
-        causes |= paint_capture | paint_chips;
-        bar.dirty = true;
-        _ = bar.reconcile(now_ms);
-    }
-
-    var animating = false;
-    if (bar.battery_shimmer.sweep.sampleChanged(now_ms, anim.rasterPixelQuantum(bar.wlr_output.scale) / (battery_width + 46))) {
-        if (bar.battery_state.percent != null) {
-            bar.battery_dirty = true;
-            causes |= paint_tray;
-        }
-    }
-    if (!bar.battery_shimmer.sweep.settled(now_ms)) animating = true;
-    // Press scales around the centre: convert the device-pixel step to the
-    // amount that moves the outer edge by that distance.
-    const press_quantum = 2 * anim.rasterPixelQuantum(bar.wlr_output.scale);
-    const start_hover = bar.start.hover.sampleChanged(now_ms, anim.rasterAlphaQuantum());
-    const start_open = bar.start.open_amt.sampleChanged(now_ms, anim.rasterAlphaQuantum());
-    if (start_hover or start_open) {
-        causes |= paint_start;
-        if (start_hover) causes |= paint_hover;
-        bar.start_dirty = true;
-    }
-    if (bar.start.animating(now_ms)) animating = true;
-
-    for (bar.chips.items) |*chip| {
-        const hover_moved = chip.hover.sampleChanged(now_ms, anim.rasterAlphaQuantum());
-        const press_moved = chip.press.sampleChanged(now_ms, press_quantum / @max(chip.width, @as(f32, @floatFromInt(chipSize()))));
-        if (hover_moved or press_moved) {
-            causes |= paint_chips;
-            if (hover_moved) causes |= paint_hover;
-            if (press_moved) causes |= paint_press;
-            chip.dirty = true;
-        }
-        // `flip` is the one chip curve with no `sampleChanged` above it (the
-        // node position is applied straight from `renderX`), so it has to
-        // record its own observation or it re-arms the output invisibly.
-        const flip_live = anim.observeUnsettled(chip.flip, now_ms);
-        if (flip_live or !chip.hover.settled(now_ms) or !chip.press.settled(now_ms)) {
-            animating = true;
-        }
-        if (chip.buffer_node) |node| {
-            node.node.setPosition(@as(i32, @intFromFloat(@round(chip.renderX(now_ms)))) - 2, 0);
-        }
-    }
-    for (&bar.tray, 0..) |*t, i| {
-        const hover_moved = t.hover.sampleChanged(now_ms, anim.rasterAlphaQuantum());
-        const press_moved = t.press.sampleChanged(now_ms, press_quantum / @as(f32, @floatFromInt(trayHit())));
-        if (hover_moved or press_moved) {
-            causes |= paint_tray;
-            if (hover_moved) causes |= paint_hover;
-            if (press_moved) causes |= paint_press;
-            bar.tray_dirty[i] = true;
-        }
-        if (!t.hover.settled(now_ms) or !t.press.settled(now_ms)) animating = true;
-    }
-    const cap_hover = bar.capture_hover.sampleChanged(now_ms, anim.rasterAlphaQuantum());
-    const cap_press = bar.capture_press.sampleChanged(now_ms, press_quantum / @as(f32, @floatFromInt(@max(bar.captureWidth(), trayHit()))));
-    if (cap_hover or cap_press) {
-        causes |= paint_capture;
-        if (cap_hover) causes |= paint_hover;
-        if (cap_press) causes |= paint_press;
-        bar.capture_dirty = true;
-    }
-    if (!bar.capture_hover.settled(now_ms) or !bar.capture_press.settled(now_ms)) animating = true;
-    // A final changed sample still needs painting after the spring settles;
-    // an unsettled sub-pixel tail alone does not need a raster pass.
-    if (bar.dirty or causes != 0) {
-        bar.render(now_ms, causes);
-        bar.dirty = false;
-        // An audio/capture event or `markDirty` repaints with no curve behind
-        // it; say the picture moved or the frame reads as a wasted wakeup.
-        anim.observeNoteChanged();
-    }
-    return animating;
-}
-
-pub fn captureAnimations(
-    bar: *Taskbar,
-    allocator: std.mem.Allocator,
-    list: *std.ArrayList(anim.LiveCapture),
-    now_ms: i64,
-) !void {
-    try anim.captureIfLive(allocator, list, &bar.start.hover, .taskbar_hover, now_ms);
-    try anim.captureIfLive(allocator, list, &bar.start.open_amt, .start_button, now_ms);
-    try anim.captureIfLive(allocator, list, &bar.capture_hover, .taskbar_hover, now_ms);
-    try anim.captureIfLive(allocator, list, &bar.capture_press, .taskbar_press, now_ms);
-    for (bar.chips.items) |*chip| {
-        try anim.captureIfLive(allocator, list, &chip.hover, .taskbar_hover, now_ms);
-        try anim.captureIfLive(allocator, list, &chip.press, .taskbar_press, now_ms);
-        try anim.captureIfLive(allocator, list, &chip.flip, .taskbar_flip, now_ms);
-    }
-    for (&bar.tray) |*t| {
-        try anim.captureIfLive(allocator, list, &t.hover, .taskbar_hover, now_ms);
-        try anim.captureIfLive(allocator, list, &t.press, .taskbar_press, now_ms);
-    }
-}
-
-pub fn appendAnimations(
-    bar: *const Taskbar,
-    allocator: std.mem.Allocator,
-    list: *std.ArrayList(protocol.AnimationData),
-    now_ms: i64,
-) !void {
-    try appendLive(allocator, list, "taskbar.battery.highlight", bar.battery_shimmer.sweep, now_ms);
-    try appendLive(allocator, list, "taskbar.start.hover", bar.start.hover, now_ms);
-    try appendLive(allocator, list, "taskbar.start.open", bar.start.open_amt, now_ms);
-    try appendLive(allocator, list, "taskbar.capture.hover", bar.capture_hover, now_ms);
-    try appendLive(allocator, list, "taskbar.capture.press", bar.capture_press, now_ms);
-    for (bar.chips.items) |chip| {
-        const id = chip.toplevel.id;
-        const hover_site = try std.fmt.allocPrint(allocator, "taskbar.chip.{d}.hover", .{id});
-        try appendLive(allocator, list, hover_site, chip.hover, now_ms);
-        const press_site = try std.fmt.allocPrint(allocator, "taskbar.chip.{d}.press", .{id});
-        try appendLive(allocator, list, press_site, chip.press, now_ms);
-        const flip_site = try std.fmt.allocPrint(allocator, "taskbar.chip.{d}.flip", .{id});
-        try appendLive(allocator, list, flip_site, chip.flip, now_ms);
-    }
-    for (&bar.tray) |t| {
-        const hover_site = try std.fmt.allocPrint(allocator, "taskbar.tray.{s}.hover", .{@tagName(t.kind)});
-        try appendLive(allocator, list, hover_site, t.hover, now_ms);
-        const press_site = try std.fmt.allocPrint(allocator, "taskbar.tray.{s}.press", .{@tagName(t.kind)});
-        try appendLive(allocator, list, press_site, t.press, now_ms);
-    }
-}
-
-fn appendLive(
-    allocator: std.mem.Allocator,
-    list: *std.ArrayList(protocol.AnimationData),
-    site: []const u8,
-    a: Anim,
-    now_ms: i64,
-) !void {
-    if (!a.active()) return;
-    try list.append(allocator, .{
-        .site = site,
-        .value = a.value(now_ms),
-        .velocity = a.velocity(now_ms),
-        .target = a.to,
-        .settled = a.settled(now_ms),
-        .curve = a.curveName(),
-    });
-}
-
-fn trayPositions(bar: *Taskbar) [tray_count]f32 {
-    const positions = bar.rightLayout().x;
-    return .{ positions[@intFromEnum(taskbar_items.Item.volume)] orelse 0, positions[@intFromEnum(taskbar_items.Item.network)] orelse 0, positions[@intFromEnum(taskbar_items.Item.power)] orelse 0 };
-}
-
-pub fn hitTest(bar: *Taskbar, sx: f64, sy: f64) Target {
-    const bh = bar.box.height;
-    if (sy < 0 or sy >= @as(f64, @floatFromInt(bh))) return .none;
-    if (bar.itemShown(.clock) and sx >= bar.clockX() and sx < bar.clockX() + bar.clockColumnWidth()) return .clock;
-    if (bar.itemShown(.battery) and sx >= bar.batteryX() and sx < bar.batteryX() + battery_width) return .battery;
-    if (bar.itemShown(.start) and start_button.hitTest(sx, sy, bh, bar.startX(), buttonSize())) return .start_button;
-    const now_ms = nowMs();
-    for (bar.chips.items) |chip| {
-        const x = chip.renderX(now_ms);
-        if (sx >= x and sx < x + @as(f64, chip.width)) return .{ .chip = chip.toplevel };
-    }
-    const positions = bar.trayPositions();
-    const ty: f64 = @floatFromInt(@divTrunc(bh - trayHit(), 2));
-    if (sy >= ty and sy < ty + @as(f64, @floatFromInt(trayHit()))) {
-        if (bar.capturing()) {
-            const cx = bar.captureX();
-            const cw: f64 = @floatFromInt(bar.captureWidth());
-            if (sx >= cx and sx < cx + cw) return .capture_indicator;
-        }
-        for (positions, 0..) |tx, i| {
-            if (!bar.itemShown(trayItem(i))) continue;
-            if (sx >= tx and sx < tx + @as(f64, @floatFromInt(trayHit()))) return .{ .tray = i };
-        }
-    }
-    return .none;
-}
-
-pub fn pointerMotion(bar: *Taskbar, sx: f64, sy: f64) void {
-    const target = bar.hitTest(sx, sy);
-    if (targetEql(target, bar.hover_target)) return;
-    const now_ms = nowMs();
-    const old = markPaintCauseFromTarget(bar.hover_target);
-    bar.setHover(bar.hover_target, 0, now_ms);
-    bar.setHover(target, 1, now_ms);
-    const next = markPaintCauseFromTarget(target);
-    bar.hover_target = target;
-    _ = bar.server.world.peekTarget();
-    bar.server.scheduleFrames();
-    bar.markDirty(old | next | paint_hover);
-    bar.wlr_output.scheduleFrame();
-}
-
-pub fn pointerLeave(bar: *Taskbar) void {
-    bar.pointerMotion(-1, -1);
-}
-
-fn setHover(bar: *Taskbar, target: Target, to: f32, now_ms: i64) void {
-    switch (target) {
-        .none, .clock, .battery => {},
-        .start_button => {
-            bar.start.hover.retargetTo(now_ms, to, anim.curveFor(.taskbar_hover));
-            bar.start_dirty = true;
-        },
-        .chip => |toplevel| {
-            for (bar.chips.items) |*chip| {
-                if (chip.toplevel == toplevel) {
-                    chip.hover.retargetTo(now_ms, to, anim.curveFor(.taskbar_hover));
-                    chip.dirty = true;
-                    break;
-                }
-            }
-        },
-        .tray => |i| {
-            bar.tray[i].hover.retargetTo(now_ms, to, anim.curveFor(.taskbar_hover));
-            bar.tray_dirty[i] = true;
-        },
-        .capture_indicator => {
-            bar.capture_hover.retargetTo(now_ms, to, anim.curveFor(.taskbar_hover));
-            bar.capture_dirty = true;
-        },
-    }
-}
-
-// Clicks act on press, matching Input.cursorButton's existing convention
-// (window chrome and focus both act on press; release is never routed
-// further than clearing the cursor mode).
-pub fn pointerPress(bar: *Taskbar, sx: f64, sy: f64) void {
-    const now_ms = nowMs();
-    var did_mutate = false;
-    switch (bar.hitTest(sx, sy)) {
-        .none => {},
-        .clock => if (Output.fromWlr(bar.wlr_output)) |output| output.toggleCalendar(),
-        .battery => if (Output.fromWlr(bar.wlr_output)) |output| output.toggleBattery(),
-        .start_button => {
-            bar.markDirty(paint_start | paint_press);
-            bar.start_dirty = true;
-            did_mutate = true;
-            if (Output.fromWlr(bar.wlr_output)) |output| output.toggleStartMenu();
-        },
-        .chip => |toplevel| {
-            bar.markDirty(paint_chips | paint_press);
-            did_mutate = true;
-            for (bar.chips.items) |*chip| {
-                if (chip.toplevel == toplevel) {
-                    chip.dirty = true;
-                    chip.press.pulseTo(now_ms, press_scale, 1, anim.curveFor(.taskbar_press));
-                    break;
-                }
-            }
-            if (Output.fromWlr(bar.wlr_output)) |output| {
-                const world = &bar.server.world;
-                const focused = @import("ipc/handlers.zig").findFocusedToplevel(bar.server) == toplevel;
-                if (!toplevel.minimized and focused and world.isWindowVisible(toplevel, output)) {
-                    toplevel.minimize();
-                } else {
-                    if (toplevel.minimized) toplevel.restore() else world.focus(toplevel);
-                    world.navigateTo(toplevel, output);
-                }
-            }
-        },
-        .tray => |i| {
-            bar.markDirty(paint_tray | paint_press);
-            bar.tray_dirty[i] = true;
-            did_mutate = true;
-            bar.tray[i].press.pulseTo(now_ms, press_scale, 1, anim.curveFor(.taskbar_press));
-            if (@as(TrayKind, @enumFromInt(i)) == .wifi) {
-                if (Output.fromWlr(bar.wlr_output)) |out| out.toggleWifi();
-            }
-            if (@as(TrayKind, @enumFromInt(i)) == .power) {
-                if (Output.fromWlr(bar.wlr_output)) |out| out.openPowerMenu();
-            }
-            if (@as(TrayKind, @enumFromInt(i)) == .volume) {
-                if (bar.server.audio) |mgr| {
-                    mgr.toggleMasterMute();
-                    bar.audio_muted = mgr.isMasterMuted();
-                }
-            }
-        },
-        .capture_indicator => {
-            bar.markDirty(paint_capture | paint_press);
-            bar.capture_dirty = true;
-            did_mutate = true;
-            bar.capture_press.pulseTo(now_ms, press_scale, 1, anim.curveFor(.taskbar_press));
-            if (bar.server.capture_mgr) |cm| cm.stopAll();
-        },
-    }
-    if (did_mutate) bar.wlr_output.scheduleFrame();
-}
-
-/// Scroll wheel over the volume tray icon: ±`volume_scroll_step` per tick.
-/// Called from Input.processAxis's scroll-hit switch — the taskbar itself
-/// has no other scrollable surface, so this is the only scroll case it needs.
-pub fn scrollVolume(bar: *Taskbar, sx: f64, sy: f64, delta_px: f32) void {
-    const idx = switch (bar.hitTest(sx, sy)) {
-        .tray => |i| i,
-        else => return,
-    };
-    if (@as(TrayKind, @enumFromInt(idx)) != .volume) return;
-    const mgr = bar.server.audio orelse return;
-    // Natural convention: scrolling up (negative delta) raises volume.
-    const direction: f32 = if (delta_px < 0) 1 else -1;
-    mgr.setMasterVolume(std.math.clamp(mgr.getMasterVolume() + direction * volume_scroll_step, 0, 1));
-    bar.tray_dirty[@intFromEnum(TrayKind.volume)] = true;
-    bar.markDirty(paint_tray);
-    bar.wlr_output.scheduleFrame();
-}
-
-fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
-    if (needle.len == 0 or needle.len > haystack.len) return false;
-    var i: usize = 0;
-    while (i + needle.len <= haystack.len) : (i += 1) {
-        if (std.ascii.eqlIgnoreCase(haystack[i..][0..needle.len], needle)) return true;
-    }
-    return false;
-}
-
-fn matchesAny(app_id: []const u8, title: []const u8, needles: []const []const u8) bool {
-    for (needles) |needle| {
-        if (containsIgnoreCase(app_id, needle) or containsIgnoreCase(title, needle)) return true;
-    }
-    return false;
-}
-
-// Fallback path for when icon_cache.get() finds no real XDG-theme icon for
-// the client's app_id (see reconcile()): classifies by app_id/title against
-// the demo suite this spec was drawn from, so there's still a themed tile
-// with a recognizable glyph rather than a bare monogram in the common case.
-fn classify(toplevel: *Toplevel) AppKind {
-    const app_id = toplevel.appId();
-    const title = toplevel.title();
-    if (matchesAny(app_id, title, &.{ "term", "foot", "alacritty", "kitty", "konsole", "xterm" })) return .terminal;
-    if (matchesAny(app_id, title, &.{ "file", "explorer", "nautilus", "files", "dolphin" })) return .file_explorer;
-    if (matchesAny(app_id, title, &.{"note"})) return .notes;
-    if (matchesAny(app_id, title, &.{ "setting", "config" })) return .settings;
-    if (matchesAny(app_id, title, &.{ "browser", "firefox", "chrom", "web" })) return .browser;
-    if (matchesAny(app_id, title, &.{ "text", "doc", "edit", "gedit", "vim", "emacs", "write" })) return .text_doc;
-    return .other;
-}
-
-fn chipTitle(toplevel: *Toplevel) []const u8 {
-    const window_title = toplevel.title();
-    if (window_title.len > 0) return window_title;
-    const app_id = toplevel.appId();
-    if (app_id.len > 0) return app_id;
-    return "";
-}
-
-fn monogramOf(toplevel: *Toplevel, storage: *[4]u8) []const u8 {
-    const title = toplevel.title();
-    const app_id = toplevel.appId();
-    const source = if (title.len > 0) title else if (app_id.len > 0) app_id else "?";
-    const first = source[0];
-    if (first < 0x80) {
-        storage[0] = std.ascii.toUpper(first);
-        return storage[0..1];
-    }
-    var end: usize = 1;
-    while (end < source.len and end < 4 and (source[end] & 0xc0) == 0x80) : (end += 1) {}
-    @memcpy(storage[0..end], source[0..end]);
-    return storage[0..end];
-}
+// taskbar/classify.zig
+pub const containsIgnoreCase = taskbar_classify.containsIgnoreCase;
+pub const matchesAny = taskbar_classify.matchesAny;
+pub const classify = taskbar_classify.classify;
+pub const chipTitle = taskbar_classify.chipTitle;
+pub const monogramOf = taskbar_classify.monogramOf;
 
 // ---- Colors (design-system tokens shared with chrome.zig where noted) ----
-const Color = struct {
+pub const Color = struct {
     r: f32,
     g: f32,
     b: f32,
     a: f32,
 
     // Exact CSS tints; glass.c supplies the filtered backdrop underneath.
-    fn bar_fill() Color {
+    pub fn bar_fill() Color {
         return fromRgba(ui_theme.taskbar(.taskbar_bg));
     }
-    fn hairline() Color {
+    pub fn hairline() Color {
         return fromRgba(ui_theme.taskbar(.border_soft));
     }
     // The bar's own outline; unset it is the hairline `border_soft` always drew.
-    fn outline() Color {
+    pub fn outline() Color {
         return fromRgba(ui_theme.taskbar(.taskbar_outline) orelse ui_theme.taskbar(.border_soft));
     }
-    fn chip_idle() Color {
+    pub fn chip_idle() Color {
         return fromRgba(ui_theme.taskbar(.taskbar_surface));
     }
-    fn hover_fill() Color {
+    pub fn hover_fill() Color {
         return fromRgba(ui_theme.taskbar(.surface_hover));
     }
-    fn active_fill() Color {
+    pub fn active_fill() Color {
         return fromRgba(ui_theme.taskbar(.taskbar_hover)).scaled(2.8);
     }
     pub fn fromRgba(c: [4]f32) Color {
         return .{ .r = c[0], .g = c[1], .b = c[2], .a = c[3] };
     }
-    fn chip_title_idle() text.Color {
+    pub fn chip_title_idle() text.Color {
         return textColor(fromRgba(ui_theme.taskbar(.window_fg)));
     }
-    fn tray_icon() Color {
+    pub fn tray_icon() Color {
         return fromRgba(ui_theme.taskbar(.window_fg));
     }
-    fn tray_icon_hover() Color {
+    pub fn tray_icon_hover() Color {
         return fromRgba(ui_theme.taskbar(.window_fg));
     }
-    const glyph = Color{ .r = 1, .g = 1, .b = 1, .a = 0.96 };
-    fn clock_time() text.Color {
+    pub const glyph = Color{ .r = 1, .g = 1, .b = 1, .a = 0.96 };
+    pub fn clock_time() text.Color {
         return textColor(fromRgba(ui_theme.taskbar(.window_fg)));
     }
-    fn clock_date() text.Color {
+    pub fn clock_date() text.Color {
         return textColor(fromRgba(ui_theme.taskbar(.window_dim)));
     }
 
@@ -1535,7 +706,7 @@ const Color = struct {
     // Unpacks a premultiplied 0xAARRGGBB sample (icon_cache.Entry.pixels'
     // format) back to this struct's straight alpha, so it can go through the
     // existing `.over()` blend unchanged.
-    fn fromPremultiplied(sample: u32) Color {
+    pub fn fromPremultiplied(sample: u32) Color {
         const a: f32 = @as(f32, @floatFromInt((sample >> 24) & 0xff)) / 255.0;
         if (a == 0) return .{ .r = 0, .g = 0, .b = 0, .a = 0 };
         const r: f32 = @as(f32, @floatFromInt((sample >> 16) & 0xff)) / 255.0;
@@ -1544,95 +715,29 @@ const Color = struct {
         return .{ .r = r / a, .g = g / a, .b = b / a, .a = a };
     }
 
-    fn argb(color: Color) u32 {
+    pub fn argb(color: Color) u32 {
         return (col.Straight{ .r = color.r, .g = color.g, .b = color.b, .a = color.a }).argb();
     }
 };
 
 // ---- Tile fills, straight from the App Fills table (135deg gradients) ----
-const Fill = union(enum) { solid: Color, gradient: struct { a: Color, b: Color } };
+pub const Fill = union(enum) { solid: Color, gradient: struct { a: Color, b: Color } };
 
-fn hex(r: u8, g: u8, b: u8) Color {
-    return .{ .r = @as(f32, @floatFromInt(r)) / 255.0, .g = @as(f32, @floatFromInt(g)) / 255.0, .b = @as(f32, @floatFromInt(b)) / 255.0, .a = 1 };
-}
+// taskbar/paint_util.zig
+pub const hex = taskbar_paint_util.hex;
+pub const tileStyle = taskbar_paint_util.tileStyle;
+pub const textColor = taskbar_paint_util.textColor;
+pub const gradientColor = taskbar_paint_util.gradientColor;
+pub const sdCircle = taskbar_paint_util.sdCircle;
+pub const glyphSd = taskbar_paint_util.glyphSd;
+pub const edgeCoverage = taskbar_paint_util.edgeCoverage;
+pub const clamp01 = taskbar_paint_util.clamp01;
 
-const TileStyle = struct { fill: Fill, hairline: bool };
-
-fn tileStyle(kind: AppKind) TileStyle {
-    return switch (kind) {
-        .file_explorer => .{ .fill = .{ .gradient = .{ .a = hex(0x22, 0xd3, 0xee), .b = hex(0x08, 0x91, 0xb2) } }, .hairline = false },
-        .notes => .{ .fill = .{ .gradient = .{ .a = hex(0xfb, 0xbf, 0x24), .b = hex(0xd9, 0x76, 0x06) } }, .hairline = false },
-        .terminal => .{ .fill = .{ .solid = hex(0x0d, 0x11, 0x17) }, .hairline = true },
-        .settings, .other => .{ .fill = .{ .solid = Color{ .r = 1, .g = 1, .b = 1, .a = 0.08 } }, .hairline = true },
-        .text_doc => .{ .fill = .{ .gradient = .{ .a = hex(0x60, 0xa5, 0xfa), .b = hex(0x25, 0x63, 0xeb) } }, .hairline = false },
-        .browser => .{ .fill = .{ .gradient = .{ .a = hex(0x38, 0xbd, 0xf8), .b = hex(0x63, 0x66, 0xf1) } }, .hairline = false },
-    };
-}
-
-fn textColor(color: Color) text.Color {
-    return .{ .r = color.r, .g = color.g, .b = color.b, .a = color.a };
-}
-
-fn gradientColor(a: Color, b: Color, px: f32, py: f32, x: f32, y: f32, w: f32, h: f32) Color {
-    // A 135deg (top-left to bottom-right) diagonal, which for a square tile
-    // is just the averaged normalized projection onto both axes.
-    const t = clamp01(((px - x) / w + (py - y) / h) / 2);
-    return Color.lerp(a, b, t);
-}
-
-// ---- SDF primitives and per-app glyphs (26x26 tile, coords tile-centered) ----
-fn sdCircle(px: f32, py: f32, cx: f32, cy: f32, r: f32) f32 {
-    return @sqrt((px - cx) * (px - cx) + (py - cy) * (py - cy)) - r;
-}
-
-// Terminal and the unrecognized-client fallback are stamped as text
-// afterward (">_" and a monogram) instead of hand-drawn vectors.
-fn glyphSd(kind: AppKind, gx: f32, gy: f32) ?f32 {
-    return switch (kind) {
-        .file_explorer => @min(
-            chrome.sdRoundedBox(gx, gy, -8, -3, 16, 9, 2),
-            chrome.sdRoundedBox(gx, gy, -8, -6, 7, 4, 1),
-        ),
-        .notes => @min(
-            @min(
-                chrome.sdRoundedBox(gx, gy, -7, -6, 14, 2, 1),
-                chrome.sdRoundedBox(gx, gy, -7, -1, 14, 2, 1),
-            ),
-            chrome.sdRoundedBox(gx, gy, -7, 4, 10, 2, 1),
-        ),
-        .settings => @min(
-            @abs(sdCircle(gx, gy, 0, 0, 7)) - 1.6,
-            sdCircle(gx, gy, 0, 0, 2),
-        ),
-        .text_doc => @min(
-            @min(
-                @abs(chrome.sdRoundedBox(gx, gy, -7, -9, 14, 18, 2)) - 1.4,
-                chrome.sdRoundedBox(gx, gy, -4, -3, 8, 1.6, 0.8),
-            ),
-            chrome.sdRoundedBox(gx, gy, -4, 1, 8, 1.6, 0.8),
-        ),
-        .browser => @min(
-            @min(
-                @abs(sdCircle(gx, gy, 0, 0, 9)) - 1.6,
-                chrome.sdRoundedBox(gx, gy, -9, -0.8, 18, 1.6, 0.8),
-            ),
-            chrome.sdRoundedBox(gx, gy, -0.8, -9, 1.6, 18, 0.8),
-        ),
-        .terminal, .other => null,
-    };
-}
-
-fn edgeCoverage(distance: f32, scale: f32) f32 {
-    return clamp01(0.5 - distance * scale);
-}
-
-fn clamp01(value: f32) f32 {
-    return @max(0, @min(1, value));
-}
+pub const TileStyle = struct { fill: Fill, hairline: bool };
 
 // ---- The buffer itself: same data-pointer wlr.Buffer technique as
 // chrome.ChromeBuffer, recreated wholesale on every repaint. ----
-const BarBuffer = struct {
+pub const BarBuffer = struct {
     base: wlr.Buffer,
     width: i32,
     height: i32,
@@ -1640,9 +745,9 @@ const BarBuffer = struct {
     scale: f32,
     pixels: []u32,
 
-    const drm_format_argb8888: u32 = 0x34325241;
+    pub const drm_format_argb8888: u32 = 0x34325241;
 
-    const impl = wlr.Buffer.Impl{
+    pub const impl = wlr.Buffer.Impl{
         .destroy = destroyBuffer,
         .get_dmabuf = null,
         .get_shm = null,
@@ -1650,7 +755,7 @@ const BarBuffer = struct {
         .end_data_ptr_access = endDataPtrAccess,
     };
 
-    fn create(logical_width: i32, logical_height: i32, scale: f32) !*BarBuffer {
+    pub fn create(logical_width: i32, logical_height: i32, scale: f32) !*BarBuffer {
         const buf = try gpa.create(BarBuffer);
         errdefer gpa.destroy(buf);
 
@@ -1665,13 +770,13 @@ const BarBuffer = struct {
         return buf;
     }
 
-    fn destroyBuffer(base: *wlr.Buffer) callconv(.c) void {
+    pub fn destroyBuffer(base: *wlr.Buffer) callconv(.c) void {
         const buf: *BarBuffer = @fieldParentPtr("base", base);
         gpa.free(buf.pixels);
         gpa.destroy(buf);
     }
 
-    fn beginDataPtrAccess(base: *wlr.Buffer, _: u32, data: **anyopaque, format: *u32, stride: *usize) callconv(.c) bool {
+    pub fn beginDataPtrAccess(base: *wlr.Buffer, _: u32, data: **anyopaque, format: *u32, stride: *usize) callconv(.c) bool {
         const buf: *BarBuffer = @fieldParentPtr("base", base);
         data.* = @ptrCast(buf.pixels.ptr);
         format.* = drm_format_argb8888;
@@ -1679,267 +784,23 @@ const BarBuffer = struct {
         return true;
     }
 
-    fn endDataPtrAccess(_: *wlr.Buffer) callconv(.c) void {}
+    pub fn endDataPtrAccess(_: *wlr.Buffer) callconv(.c) void {}
 };
 
-const Part = union(enum) { background, start, clock, chip: *const ChipState, tray: usize, capture, battery };
+pub const Part = union(enum) { background, start, clock, chip: *const ChipState, tray: usize, capture, battery };
 
-fn render(bar: *Taskbar, now_ms: i64, causes: u8) void {
-    if (bar.box.width <= 0) return;
-    bar.renderAppTray();
-    const bh = bar.box.height;
-    if (bar.background_dirty) {
-        renderPart(bar, now_ms, .background, 0, 0, bar.box.width + bar.bleed.x, bh + bar.bleed.y, bar.buffer_node, null);
-        bar.background_dirty = false;
-    }
-    bar.start_node.node.setEnabled(bar.itemShown(.start));
-    if (bar.itemShown(.start) and bar.start_dirty) {
-        renderPart(bar, now_ms, .start, bar.startX() - 2, 0, buttonSize() + 4, bh, bar.start_node, null);
-        bar.start_dirty = false;
-    }
-    const positions = bar.trayPositions();
-    for (positions, 0..) |x, i| {
-        bar.tray_nodes[i].node.setEnabled(bar.itemShown(trayItem(i)));
-        if (!bar.itemShown(trayItem(i)) or !bar.tray_dirty[i]) continue;
-        const left: i32 = @as(i32, @intFromFloat(@floor(x))) - 2;
-        renderPart(bar, now_ms, .{ .tray = i }, left, 0, trayHit() + 4, bh, bar.tray_nodes[i], null);
-        if (i == @intFromEnum(TrayKind.volume) and (causes & paint_audio) != 0) stats.recordTaskbarAudioPaint();
-        bar.tray_dirty[i] = false;
-    }
-    bar.clock_node.node.setEnabled(bar.itemShown(.clock));
-    if (bar.itemShown(.clock) and bar.clock_dirty) {
-        const left: i32 = @intFromFloat(@floor(bar.clockX()));
-        renderPart(bar, now_ms, .clock, left, 0, @intFromFloat(@ceil(clockColumnWidth(bar))), bh, bar.clock_node, null);
-        bar.clock_dirty = false;
-    }
-    if (bar.itemShown(.battery)) {
-        const left: i32 = @intFromFloat(@floor(bar.batteryX()));
-        // Keep the node aligned with the configured item order.
-        bar.battery_node.node.setPosition(left, 0);
-        if (bar.battery_dirty) {
-            renderPart(bar, now_ms, .battery, left, 0, battery_width, bh, bar.battery_node, null);
-            bar.battery_dirty = false;
-        }
-        bar.battery_node.node.setEnabled(true);
-    } else bar.battery_node.node.setEnabled(false);
-    if (bar.capturing()) {
-        if (bar.capture_dirty) {
-            const x = bar.captureX();
-            const left: i32 = @as(i32, @intFromFloat(@floor(x))) - 2;
-            renderPart(bar, now_ms, .capture, left, 0, bar.captureWidth() + 4, bh, bar.capture_node, null);
-            bar.capture_node.node.setEnabled(true);
-            bar.capture_dirty = false;
-        }
-    } else {
-        bar.capture_node.node.setEnabled(false);
-        bar.capture_dirty = false;
-    }
-    for (bar.chips.items) |*chip| if (chip.dirty) {
-        const left: i32 = @as(i32, @intFromFloat(@round(chip.renderX(now_ms)))) - 2;
-        const width: i32 = @as(i32, @intFromFloat(@ceil(chip.width))) + 4;
-        const memo = ChipMemo.capture(bar, chip, now_ms);
-        if (chip.buffer_node) |node| {
-            const key = ChipRasterKey.capture(bar, now_ms, chip, left, width);
-            if (!repaintChipTitle(bar, now_ms, chip, memo, key, bh, node))
-                renderPart(bar, now_ms, .{ .chip = chip }, left, 0, width, bh, node, &chip.raster);
-            chip.raster_key = key;
-        }
-        chip.painted = memo;
-        chip.dirty = false;
-    };
-    if ((causes & paint_hover) != 0) stats.recordTaskbarHoverPaint();
-    if ((causes & paint_press) != 0) stats.recordTaskbarPressPaint();
-}
+// taskbar/paint.zig
+pub const render = taskbar_paint.render;
+pub const renderPart = taskbar_paint.renderPart;
+pub const sampleIcon = taskbar_paint.sampleIcon;
+pub const paintPartPixel = taskbar_paint.paintPartPixel;
+pub const paintBatteryPixel = taskbar_paint.paintBatteryPixel;
+pub const paintCapturePixel = taskbar_paint.paintCapturePixel;
+pub const chipPixelArgb = taskbar_paint.chipPixelArgb;
+pub const paintChipPixel = taskbar_paint.paintChipPixel;
+pub const paintTrayPixel = taskbar_paint.paintTrayPixel;
 
-/// `retain`, when given, keeps a reference to the new raster there (replacing
-/// the one it held) instead of leaving the scene node as its only owner.
-fn renderPart(bar: *Taskbar, now_ms: i64, part: Part, origin_x: i32, origin_y: i32, logical_width: i32, logical_height: i32, node: *sn.Buffer, retain: ?*?*BarBuffer) void {
-    const started = stats.nowNs();
-    const scale = bar.wlr_output.scale;
-    const buf = BarBuffer.create(logical_width, logical_height, scale) catch |err| {
-        log.err("renderPart: could not create taskbar buffer: {}", .{err});
-        // What is retained no longer matches the screen.
-        if (retain) |slot| if (slot.*) |old| {
-            old.base.drop();
-            slot.* = null;
-        };
-        return;
-    };
-    const stride: usize = @intCast(buf.width);
-    // Animation easing and theme resolution are constant across this raster.
-    // In particular, renderX solves a Bezier curve during FLIP: doing that
-    // for every device pixel stalls the input loop on fractional-scale bars.
-    const chip_paint: ?ChipPaint = switch (part) {
-        .chip => |chip| ChipPaint.init(bar, now_ms, chip),
-        else => null,
-    };
-    const sampled_start: start_button.Paint = if (part == .start) .init(bar.start, now_ms) else .{ .hover = 0, .open_amt = 0 };
-    const hover = switch (part) {
-        .tray => |i| bar.tray[i].hover.value(now_ms),
-        .capture => bar.capture_hover.value(now_ms),
-        else => 0,
-    };
-    const press = switch (part) {
-        .tray => |i| bar.tray[i].press.value(now_ms),
-        .capture => bar.capture_press.value(now_ms),
-        else => 1,
-    };
-    // Layout measures the clock text. Never repeat it for each raster pixel.
-    const part_x: f32 = switch (part) {
-        .tray => |i| bar.trayPositions()[i],
-        .capture => bar.captureX(),
-        .battery => @floor(bar.batteryX()),
-        else => 0,
-    };
-    const battery_progress = if (part == .battery) bar.battery_shimmer.sweep.value(now_ms) else 1;
-    const part_width: f32 = if (part == .capture) @floatFromInt(bar.captureWidth()) else @floatFromInt(trayHit());
-    if (chip_paint) |*paint| fillChipColumns(paint, buf.pixels, buf.width, buf.height, origin_x, origin_y, 0, stride, scale) else for (0..@intCast(buf.height)) |dy| {
-        const py = @as(f32, @floatFromInt(origin_y)) + (@as(f32, @floatFromInt(dy)) + 0.5) / scale;
-        for (0..stride) |dx| {
-            const px = @as(f32, @floatFromInt(origin_x)) + (@as(f32, @floatFromInt(dx)) + 0.5) / scale;
-            buf.pixels[dy * stride + dx] = if (part == .battery)
-                paintBatteryPixel(bar, px - part_x, py, scale, battery_progress).argb()
-            else
-                paintPartPixel(bar, sampled_start, hover, press, part_x, part_width, part, px, py, scale).argb();
-        }
-    }
-    if (part == .tray) {
-        const i = part.tray;
-        const alert = switch (@as(TrayKind, @enumFromInt(i))) {
-            .volume => bar.audio_muted,
-            .wifi => bar.network_offline,
-            .power => false,
-        };
-        const color = if (alert) blk: {
-            var danger = Color.fromRgba(ui_theme.taskbar(.danger));
-            if (@as(TrayKind, @enumFromInt(i)) == .wifi and bar.blink_dim) danger.a *= 0.25;
-            break :blk danger;
-        } else Color.lerp(Color.tray_icon(), Color.tray_icon_hover(), hover);
-        const size = 20 * press;
-        var renderer = @import("ui").paint.Renderer.init(buf.pixels, buf.width, buf.height, scale);
-        renderer.drawIcon(bar.trayPositions()[i] + @as(f32, @floatFromInt(trayHit())) / 2 - size / 2 - @as(f32, @floatFromInt(origin_x)), @as(f32, @floatFromInt(bar.box.height)) / 2 - size / 2 - @as(f32, @floatFromInt(origin_y)), size, size, .{ .id = switch (@as(TrayKind, @enumFromInt(i))) {
-            .wifi => .wifi,
-            .volume => if (bar.audio_muted) .volume_muted else .volume,
-            .power => .power,
-        }, .color = .{ color.r, color.g, color.b, color.a } });
-    }
-    drawPartText(bar, now_ms, part, buf, origin_x, origin_y);
-    node.node.setPosition(origin_x, origin_y);
-    node.setBuffer(&buf.base);
-    node.setDestSize(logical_width, logical_height);
-    if (retain) |slot| {
-        if (slot.*) |old| old.base.drop();
-        slot.* = buf;
-    } else buf.base.drop();
-    stats.recordTaskbarPaint(stats.nowNs() -% started, @as(u64, @intCast(buf.width)) * @as(u64, @intCast(buf.height)), switch (part) {
-        .background => 0,
-        .start => paint_start,
-        .clock => paint_clock,
-        .chip => paint_chips,
-        .tray => paint_tray,
-        .capture => 0,
-        .battery => paint_tray,
-    });
-}
-
-/// Bilinear sample of an icon raster. `x`/`y` are logical offsets from the
-/// icon's top-left and `logical` its logical size, so a raster made at the
-/// output's device size lands exactly on its texels when the placement is
-/// aligned, and is filtered (not snapped) when fractional scales shift it.
-/// Texels outside the raster are transparent, which keeps the edge smooth.
-fn sampleIcon(icon: icon_service.Entry, x: f32, y: f32, logical: f32) Color {
-    const ratio = @as(f32, @floatFromInt(icon.size)) / logical;
-    const fx = x * ratio - 0.5;
-    const fy = y * ratio - 0.5;
-    const x0: i32 = @intFromFloat(@floor(fx));
-    const y0: i32 = @intFromFloat(@floor(fy));
-    const tx = fx - @as(f32, @floatFromInt(x0));
-    const ty = fy - @as(f32, @floatFromInt(y0));
-    var sum = [4]f32{ 0, 0, 0, 0 };
-    inline for (.{ .{ 0, 0 }, .{ 1, 0 }, .{ 0, 1 }, .{ 1, 1 } }) |corner| {
-        const cx = x0 + corner[0];
-        const cy = y0 + corner[1];
-        if (cx >= 0 and cx < icon.size and cy >= 0 and cy < icon.size) {
-            const weight = (if (corner[0] == 1) tx else 1 - tx) * (if (corner[1] == 1) ty else 1 - ty);
-            const texel = icon.pixels[@intCast(cy * icon.size + cx)];
-            sum[0] += weight * @as(f32, @floatFromInt((texel >> 16) & 0xff));
-            sum[1] += weight * @as(f32, @floatFromInt((texel >> 8) & 0xff));
-            sum[2] += weight * @as(f32, @floatFromInt(texel & 0xff));
-            sum[3] += weight * @as(f32, @floatFromInt((texel >> 24) & 0xff));
-        }
-    }
-    const a = sum[3] / 255.0;
-    if (a <= 0) return .{ .r = 0, .g = 0, .b = 0, .a = 0 };
-    return .{ .r = sum[0] / 255.0 / a, .g = sum[1] / 255.0 / a, .b = sum[2] / 255.0 / a, .a = a };
-}
-
-fn paintPartPixel(bar: *Taskbar, sampled_start: start_button.Paint, hover: f32, press: f32, part_x: f32, part_width: f32, part: Part, px: f32, py: f32, scale: f32) Color {
-    switch (part) {
-        .background => return shape.background(Color, .{
-            .width = @floatFromInt(bar.box.width),
-            .height = @floatFromInt(bar.box.height),
-            .radius = barRadius(),
-            .outline = ui_theme.global.taskbar_outline_width,
-            .flush = bar.flush,
-            .top = bar.server.config.compositor.taskbar_position == .top,
-        }, px, py, scale, Color.bar_fill(), Color.outline()),
-        .start => {
-            const btn_size = buttonSize();
-            var color = Color{ .r = 0, .g = 0, .b = 0, .a = 0 };
-            if (start_button.paintPixel(sampled_start, px, py, bar.box.height, scale, bar.startX(), btn_size)) |sb| color = (Color{ .r = sb.r, .g = sb.g, .b = sb.b, .a = sb.a }).over(color);
-            if (bar.start_logo) |icon| {
-                const mapped = start_button.mapPoint(sampled_start, px, py, bar.box.height, bar.startX(), btn_size);
-                const pad: f32 = @floatFromInt(@divTrunc(btn_size - startIconSize(), 2));
-                const logical: f32 = @floatFromInt(startIconSize());
-                const ix = mapped.x - (mapped.box_x + pad);
-                const iy = mapped.y - (mapped.box_y + pad);
-                if (ix > -1 and iy > -1 and ix < logical + 1 and iy < logical + 1) {
-                    var sample = sampleIcon(icon, ix, iy, logical);
-                    if (ui_theme.global.start_button_icon.len == 0) {
-                        if (ui_theme.taskbar(.start_button_logo_color)) |tint| sample = Color.fromRgba(tint).scaled(sample.a);
-                    }
-                    color = sample.over(color);
-                }
-            }
-            return color;
-        },
-        .battery => unreachable, // Animation sampled once per raster.
-        .clock => return .{ .r = 0, .g = 0, .b = 0, .a = 0 },
-        .chip => unreachable, // Prepared once by renderPart.
-        .tray => return paintTrayPixel(bar, hover, press, part_x, px, py, scale),
-        .capture => return paintCapturePixel(bar, hover, press, part_x, part_width, px, py, scale),
-    }
-}
-
-// The badge artwork is `ui.widgets.battery`'s; this only places it in the bar.
-// `x` is measured from the badge's left edge, `py` from the bar's top.
-fn paintBatteryPixel(bar: *Taskbar, x: f32, py: f32, scale: f32, progress: f32) Color {
-    const trh: f32 = @floatFromInt(trayHit());
-    const c = battery_badge.sample(x, py - @as(f32, @floatFromInt(bar.box.height - trayHit())) / 2, scale, .{
-        .percent = bar.battery_state.percent orelse 0,
-        .plugged = bar.battery_state.plugged,
-        .shimmer = progress,
-        .height = trh,
-    }, battery_badge.Colors.taskbar());
-    return .{ .r = c.r, .g = c.g, .b = c.b, .a = c.a };
-}
-
-fn paintCapturePixel(bar: *Taskbar, hover: f32, press: f32, tx: f32, tw: f32, px: f32, py: f32, scale: f32) Color {
-    const tray_y: f32 = @floatFromInt(@divTrunc(bar.box.height - trayHit(), 2));
-    const bcx = tx + tw / 2;
-    const bcy = tray_y + @as(f32, @floatFromInt(trayHit())) / 2;
-    const lx = (px - bcx) / press + bcx;
-    const ly = (py - bcy) / press + bcy;
-    var color = Color{ .r = 0, .g = 0, .b = 0, .a = 0 };
-    const cov = edgeCoverage(chrome.sdRoundedBox(lx, ly, tx, tray_y, tw, @floatFromInt(trayHit()), tray_radius), scale);
-    if (cov > 0) {
-        const fill = Color.lerp(Color.fromRgba(ui_theme.taskbar(.danger)), Color.fromRgba(ui_theme.taskbar(.window_close_hover)), hover);
-        color = fill.scaled(cov).over(color);
-    }
-    return color;
-}
-
-const ChipPaint = struct {
+pub const ChipPaint = struct {
     chip: *const ChipState,
     x: f32,
     fill: Color,
@@ -1947,7 +808,7 @@ const ChipPaint = struct {
     bar_height: i32,
     flat: ChipFlat = .{},
 
-    fn init(bar: *Taskbar, now_ms: i64, chip: *const ChipState) ChipPaint {
+    pub fn init(bar: *Taskbar, now_ms: i64, chip: *const ChipState) ChipPaint {
         const active = chip.toplevel == bar.server.world.toplevels.first();
         const hover = chip.hover.value(now_ms);
         const press_strength = std.math.clamp((1 - chip.press.value(now_ms)) / (1 - press_scale), 0, 1);
@@ -1968,7 +829,7 @@ const ChipPaint = struct {
 // from every edge and from the icon tile get exactly what `paintChipPixel`
 // computes there, without its three SDFs, which were most of the raster
 // time. One pixel of distance saturates coverage only from scale 0.75 up.
-const ChipFlat = struct {
+pub const ChipFlat = struct {
     enabled: bool = false,
     outer: Rect = undefined,
     // The inner rounded box, shrunk by the margin, minus its corners.
@@ -1977,18 +838,18 @@ const ChipFlat = struct {
     tile: Rect = undefined,
     fill: u32 = 0,
 
-    const Rect = struct {
+    pub const Rect = struct {
         x0: f32,
         y0: f32,
         x1: f32,
         y1: f32,
 
-        fn contains(r: Rect, x: f32, y: f32) bool {
+        pub fn contains(r: Rect, x: f32, y: f32) bool {
             return x >= r.x0 and x <= r.x1 and y >= r.y0 and y <= r.y1;
         }
     };
 
-    fn init(paint: *const ChipPaint, scale: f32) ChipFlat {
+    pub fn init(paint: *const ChipPaint, scale: f32) ChipFlat {
         const x = paint.x;
         const y: f32 = @floatFromInt(@divTrunc(paint.bar_height - chipSize(), 2));
         const w = paint.chip.width;
@@ -2013,536 +874,28 @@ const ChipFlat = struct {
     }
 };
 
-fn chipPixelArgb(paint: *const ChipPaint, px: f32, py: f32, scale: f32) u32 {
-    const flat = &paint.flat;
-    if (flat.enabled and !flat.tile.contains(px, py)) {
-        if (!flat.outer.contains(px, py)) return 0;
-        if (flat.band_h.contains(px, py) or flat.band_v.contains(px, py)) return flat.fill;
-    }
-    return paintChipPixel(paint, px, py, scale).argb();
-}
-
-fn paintChipPixel(paint: *const ChipPaint, px: f32, py: f32, scale: f32) Color {
-    const chip = paint.chip;
-    const cx = paint.x;
-    const chip_y: f32 = @floatFromInt(@divTrunc(paint.bar_height - chipSize(), 2));
-    const lx = px;
-    const ly = py;
-    var color = @import("taskbar/chip_style.zig").pixel(Color, lx, ly, cx, chip_y, chip.width, @floatFromInt(chipSize()), ui_theme.global.radius, scale, paint.fill, paint.border);
-    const tile_x = cx + @as(f32, @floatFromInt(chipPad()));
-    const tile_y = chip_y + @as(f32, @floatFromInt(chipPad()));
-    const tile_cov = edgeCoverage(chrome.sdRoundedBox(lx, ly, tile_x, tile_y, @floatFromInt(tileSize()), @floatFromInt(tileSize()), tile_radius), scale);
-    if (tile_cov == 0) return color;
-    if (chip.icon) |icon| {
-        const logical: f32 = @floatFromInt(tileSize());
-        color = sampleIcon(icon, lx - tile_x, ly - tile_y, logical).scaled(tile_cov).over(color);
-    } else {
-        const style = tileStyle(chip.kind);
-        const fill = switch (style.fill) {
-            .solid => |v| v,
-            .gradient => |g| gradientColor(g.a, g.b, lx, ly, tile_x, tile_y, @floatFromInt(tileSize()), @floatFromInt(tileSize())),
-        };
-        color = fill.scaled(tile_cov).over(color);
-        if (style.hairline) {
-            const stroke = edgeCoverage(@abs(chrome.sdRoundedBox(lx, ly, tile_x, tile_y, @floatFromInt(tileSize()), @floatFromInt(tileSize()), tile_radius)) - 0.6, scale);
-            if (stroke > 0) color = Color.hairline().scaled(stroke).over(color);
-        }
-        if (glyphSd(chip.kind, (lx - tile_x - @as(f32, @floatFromInt(tileSize())) / 2) / icon_scale, (ly - tile_y - @as(f32, @floatFromInt(tileSize())) / 2) / icon_scale)) |sd| {
-            const glyph_cov = edgeCoverage(sd * icon_scale, scale);
-            if (glyph_cov > 0) color = Color.glyph.scaled(glyph_cov).over(color);
-        }
-    }
-    return color;
-}
-
-fn paintTrayPixel(bar: *Taskbar, hover: f32, press: f32, tx: f32, px: f32, py: f32, scale: f32) Color {
-    const tray_y: f32 = @floatFromInt(@divTrunc(bar.box.height - trayHit(), 2));
-    const bcx = tx + @as(f32, @floatFromInt(trayHit())) / 2;
-    const bcy = tray_y + @as(f32, @floatFromInt(trayHit())) / 2;
-    const lx = (px - bcx) / press + bcx;
-    const ly = (py - bcy) / press + bcy;
-    var color = Color{ .r = 0, .g = 0, .b = 0, .a = 0 };
-    if (hover > 0) {
-        const cov = edgeCoverage(chrome.sdRoundedBox(lx, ly, tx, tray_y, @floatFromInt(trayHit()), @floatFromInt(trayHit()), tray_radius), scale);
-        if (cov > 0) color = Color.hover_fill().scaled(hover * cov).over(color);
-    }
-    // SVG glyphs are painted once after this background raster.
-    return color;
-}
-
-/// Chip pixels for device columns `x0..x1` of a raster whose logical origin
-/// is (`origin_x`, `origin_y`). Full and title-only chip repaints share it,
-/// so both evaluate exactly the same expressions.
-fn fillChipColumns(paint: *const ChipPaint, pixels: []u32, width: i32, height: i32, origin_x: i32, origin_y: i32, x0: usize, x1: usize, scale: f32) void {
-    const stride: usize = @intCast(width);
-    for (0..@intCast(height)) |dy| {
-        const py = @as(f32, @floatFromInt(origin_y)) + (@as(f32, @floatFromInt(dy)) + 0.5) / scale;
-        for (x0..x1) |dx| {
-            const px = @as(f32, @floatFromInt(origin_x)) + (@as(f32, @floatFromInt(dx)) + 0.5) / scale;
-            pixels[dy * stride + dx] = chipPixelArgb(paint, px, py, scale);
-        }
-    }
-}
-
-/// The chip title's box in raster-local logical pixels, or null when the chip
-/// is too narrow to show one. `cx` is the chip's rounded left edge.
-fn chipTitleRect(cx: i32, bar_h: i32, chip_width: f32, origin_x: i32, origin_y: i32) ?text.Rect {
-    const tw: i32 = @as(i32, @intFromFloat(@round(chip_width))) - chipPad() - tileSize() - icon_text_gap - title_pad_right;
-    if (tw < 16) return null;
-    const cy = @divTrunc(bar_h - chipSize(), 2);
-    return .{ .x = cx + chipPad() + tileSize() + icon_text_gap - origin_x, .y = cy - origin_y, .w = tw, .h = chipSize() };
-}
-
-fn chipTitleColor(bar: *Taskbar, chip: *const ChipState) text.Color {
-    return if (chip.toplevel == bar.server.world.toplevels.first()) Color.clock_time() else Color.chip_title_idle();
-}
-
-fn drawChipTitle(pixels: []u32, width: i32, height: i32, rect: text.Rect, title: []const u8, color: text.Color, scale: f32) void {
-    if (title.len == 0) return;
-    // Keep a font-metric baseline: animated title glyphs change their ink
-    // bounds, which must not shift the rest of the title up and down.
-    text.draw(pixels, width, height, rect, title, color, scale, .manrope, ui_theme.global.taskbar_title_size) catch {};
-}
-
-/// Text is clipped to `rect`, so repainting that rect's device columns first
-/// removes every pixel an earlier title touched.
-fn paintChipTitleColumns(paint: *const ChipPaint, pixels: []u32, width: i32, height: i32, origin_x: i32, rect: text.Rect, title: []const u8, color: text.Color, scale: f32) void {
-    // The same rounding text.drawOpts applies to its clip.
-    const x0: i32 = @intFromFloat(@round(@as(f32, @floatFromInt(rect.x)) * scale));
-    const x1: i32 = @intFromFloat(@round(@as(f32, @floatFromInt(rect.x + rect.w)) * scale));
-    fillChipColumns(paint, pixels, width, height, origin_x, 0, @intCast(std.math.clamp(x0, 0, width)), @intCast(std.math.clamp(x1, 0, width)), scale);
-    drawChipTitle(pixels, width, height, rect, title, color, scale);
-}
-
-/// Terminals animate their titles several times a second. When nothing but
-/// the title changed, copy the previous raster and repaint only the title
-/// box instead of the pill's edge and icon SDFs. False means a full raster
-/// is needed.
-fn repaintChipTitle(bar: *Taskbar, now_ms: i64, chip: *ChipState, memo: ChipMemo, key: ChipRasterKey, bar_h: i32, node: *sn.Buffer) bool {
-    const previous = chip.raster orelse return false;
-    const previous_key = chip.raster_key orelse return false;
-    var painted = chip.painted orelse return false;
-    if (!std.meta.eql(previous_key, key)) return false;
-    painted.title_hash = memo.title_hash;
-    if (!std.meta.eql(painted, memo)) return false;
-
-    const started = stats.nowNs();
-    const scale = bar.wlr_output.scale;
-    const buf = BarBuffer.create(key.width, bar_h, scale) catch return false;
-    if (buf.pixels.len != previous.pixels.len) {
-        buf.base.drop();
-        return false;
-    }
-    @memcpy(buf.pixels, previous.pixels);
-    const cx: i32 = @intFromFloat(@round(chip.renderX(now_ms)));
-    if (chipTitleRect(cx, bar.box.height, chip.width, key.left, 0)) |rect| {
-        const paint = ChipPaint.init(bar, now_ms, chip);
-        paintChipTitleColumns(&paint, buf.pixels, buf.width, buf.height, key.left, rect, chipTitle(chip.toplevel), chipTitleColor(bar, chip), scale);
-    }
-    node.node.setPosition(key.left, 0);
-    node.setBuffer(&buf.base);
-    node.setDestSize(key.width, bar_h);
-    previous.base.drop();
-    chip.raster = buf;
-    stats.recordTaskbarPaint(stats.nowNs() -% started, @as(u64, @intCast(buf.width)) * @as(u64, @intCast(buf.height)), paint_chips);
-    return true;
-}
-
-// Standalone status labels align their visible ink with adjacent icons.
-fn drawCenteredText(pixels: []u32, width: i32, height: i32, rect: text.Rect, label: []const u8, color: text.Color, scale: f32, font: text.Font, size: f32) !void {
-    try text.drawOpts(pixels, width, height, label, color, scale, font, size, .{ .rect = rect, .center_ink = true });
-}
-
-fn drawPartText(bar: *Taskbar, now_ms: i64, part: Part, buf: *BarBuffer, ox: i32, oy: i32) void {
-    const scale = bar.wlr_output.scale;
-    const local = struct {
-        fn box(x: i32, y: i32, w: i32, h: i32, origin_x: i32, origin_y: i32) text.Rect {
-            return .{ .x = x - origin_x, .y = y - origin_y, .w = w, .h = h };
-        }
-    }.box;
-    switch (part) {
-        .start => if (bar.start_logo == null) {
-            const btn_size = buttonSize();
-            const w = text.measureWidth("R", .mono_bold, start_button.glyph_size_px, scale) catch 0;
-            drawCenteredText(buf.pixels, buf.width, buf.height, local(bar.startX() + @divTrunc(btn_size - w, 2), @intFromFloat(@round(start_button.top(bar.box.height, btn_size))), btn_size, btn_size, ox, oy), "R", textColor(Color.fromRgba(ui_theme.taskbar(.start_button_logo_color) orelse .{ 1, 1, 1, 1 })), scale, .mono_bold, start_button.glyph_size_px) catch {};
-        },
-        .clock => {
-            const time = std.mem.trimStart(u8, std.mem.sliceTo(&bar.clock_time, 0), " ");
-            const date = std.mem.sliceTo(&bar.clock_date, 0);
-            const dw = text.measureWidth(date, clockFont(), clock_date_size, scale) catch 0;
-            const left: i32 = @intFromFloat(@round(bar.clockX()));
-            const width: i32 = @intFromFloat(bar.clockColumnWidth());
-            const clock_h: i32 = if (date.len == 0) 20 else 37;
-            const time_y = @divTrunc(bar.box.height - clock_h, 2);
-            const date_y = time_y + 21;
-            if (bar.clockLine(time)) |line| {
-                // Every piece shares the baseline the digits would centre on.
-                const row = text.inkBaseline("0123456789", clockFont(), clock_time_size, scale, local(0, time_y, 1, 20, ox, oy)) catch null;
-                const start = left + @divTrunc(width - line.width - 1, 2);
-                for (line.pieces[0..line.count]) |piece| {
-                    text.drawOpts(buf.pixels, buf.width, buf.height, piece.text, Color.clock_time(), scale, clockFont(), clock_time_size, .{
-                        .rect = local(start + piece.x, time_y, piece.w + 1, 20, ox, oy),
-                        .clip = local(left, time_y, width, 20, ox, oy),
-                        .italic = ui_theme.taskbar(.clock_italic),
-                        .center_ink = row == null,
-                        .baseline = row,
-                    }) catch {};
-                }
-            } else |_| {}
-            if (date.len != 0) text.drawOpts(buf.pixels, buf.width, buf.height, date, Color.clock_date(), scale, clockFont(), clock_date_size, .{
-                .rect = local(left + @divTrunc(width - dw - 1, 2), date_y, dw + 1, 16, ox, oy),
-                .clip = local(left, date_y, width, 16, ox, oy),
-                .italic = ui_theme.taskbar(.clock_italic),
-                .center_ink = true,
-            }) catch {};
-        },
-        .chip => |chip| {
-            const cx: i32 = @intFromFloat(@round(chip.renderX(now_ms)));
-            const cy = @divTrunc(bar.box.height - chipSize(), 2);
-            if (chip.icon == null and (chip.kind == .terminal or chip.kind == .other)) {
-                var storage: [4]u8 = undefined;
-                const label: []const u8 = if (chip.kind == .terminal) ">_" else monogramOf(chip.toplevel, &storage);
-                const w = text.measureWidth(label, .manrope, 14 * icon_scale, scale) catch 0;
-                if (w > 0) drawCenteredText(buf.pixels, buf.width, buf.height, local(cx + chipPad() + @divTrunc(tileSize() - w, 2), cy + chipPad(), tileSize(), tileSize(), ox, oy), label, textColor(Color.glyph), scale, .manrope, 14 * icon_scale) catch {};
-            }
-            if (chipTitleRect(cx, bar.box.height, chip.width, ox, oy)) |rect| drawChipTitle(buf.pixels, buf.width, buf.height, rect, chipTitle(chip.toplevel), chipTitleColor(bar, chip), scale);
-        },
-        .tray => {},
-        .capture => {
-            const tx: i32 = @intFromFloat(@round(bar.captureX()));
-            const tw = bar.captureWidth();
-            const label_w = text.measureWidth(capture_label, .manrope, 12, scale) catch 0;
-            drawCenteredText(
-                buf.pixels,
-                buf.width,
-                buf.height,
-                local(tx + @divTrunc(tw - label_w, 2), @divTrunc(bar.box.height - trayHit(), 2), tw, trayHit(), ox, oy),
-                capture_label,
-                .{ .r = 1, .g = 1, .b = 1, .a = 1 },
-                scale,
-                .manrope,
-                12,
-            ) catch {};
-        },
-        .battery => {
-            var label_buf: [8]u8 = undefined;
-            const label = std.fmt.bufPrint(&label_buf, "{d}%", .{bar.battery_state.percent orelse 0}) catch unreachable;
-            drawCenteredText(buf.pixels, buf.width, buf.height, .{ .x = @intFromFloat(battery_badge.label_x), .y = @divTrunc(bar.box.height - trayHit(), 2), .w = @intFromFloat(battery_badge.label_w), .h = trayHit() }, label, Color.clock_time(), scale, .manrope, battery_badge.label_size) catch {};
-        },
-        .background => {},
-    }
-}
+// taskbar/chip_text.zig
+pub const fillChipColumns = taskbar_chip_text.fillChipColumns;
+pub const chipTitleRect = taskbar_chip_text.chipTitleRect;
+pub const chipTitleColor = taskbar_chip_text.chipTitleColor;
+pub const drawChipTitle = taskbar_chip_text.drawChipTitle;
+pub const paintChipTitleColumns = taskbar_chip_text.paintChipTitleColumns;
+pub const repaintChipTitle = taskbar_chip_text.repaintChipTitle;
+pub const drawCenteredText = taskbar_chip_text.drawCenteredText;
+pub const drawPartText = taskbar_chip_text.drawPartText;
 
 // Theme-driven item sizing must reproduce the default 38/21/31px layout
 // at the defaults, then scale down as the bar shrinks or the item
 // gap grows, staying at or above the floors that keep pills/tiles/targets
 // legible and non-overlapping.
-test "chip/tile/tray sizing matches default theme" {
-    const saved = ui_theme.global;
-    defer ui_theme.global = saved;
-    ui_theme.global = .{};
 
-    try std.testing.expectEqual(@as(i32, 38), chipSize());
-    try std.testing.expectEqual(@as(i32, 21), tileSize());
-    try std.testing.expectEqual(@as(i32, 8), chipPad());
-    try std.testing.expectEqual(@as(i32, 31), trayHit());
-    try std.testing.expectEqual(chipSize(), buttonSize());
-}
+// taskbar/app_tray.zig
+pub const appTrayCount = taskbar_app_tray.appTrayCount;
+pub const appTrayLeft = taskbar_app_tray.appTrayLeft;
+pub const appTrayBox = taskbar_app_tray.appTrayBox;
+pub const appTrayAt = taskbar_app_tray.appTrayAt;
+pub const renderAppTray = taskbar_app_tray.renderAppTray;
 
-test "shrinking the bar to its floor shrinks items without collapsing them" {
-    const saved = ui_theme.global;
-    defer ui_theme.global = saved;
-    ui_theme.global = .{};
-    ui_theme.global.taskbar_size = @floatFromInt(min_bar_height);
-
-    try std.testing.expect(chipSize() < base_chip_size);
-    try std.testing.expect(chipSize() >= min_chip_size);
-    try std.testing.expect(tileSize() >= min_tile_size);
-    try std.testing.expect(trayHit() >= min_tray_hit);
-    try std.testing.expect(chipPad() >= 0);
-}
-
-test "a large item gap grows the pill's vertical margin up to the cap" {
-    const saved = ui_theme.global;
-    defer ui_theme.global = saved;
-    ui_theme.global = .{};
-    ui_theme.global.chip_gap = 1000;
-
-    try std.testing.expectEqual(max_chip_vertical_margin, chipVerticalMargin());
-    try std.testing.expect(chipSize() >= min_chip_size);
-}
-
-test "start button gap and icon size are theme-driven and icon is capped to the button" {
-    const saved = ui_theme.global;
-    defer ui_theme.global = saved;
-    ui_theme.global = .{};
-
-    try std.testing.expectEqual(@as(i32, 4), startButtonGap());
-    try std.testing.expectEqual(@as(i32, 4), startButtonLeft());
-    try std.testing.expectEqual(@as(i32, 4 + buttonSize() + 4), firstChipX());
-    try std.testing.expectEqual(@as(i32, 36), startIconSize());
-
-    ui_theme.global.start_button_gap = 24;
-    try std.testing.expectEqual(@as(i32, 24), startButtonLeft());
-    try std.testing.expectEqual(@as(i32, 24 + buttonSize() + 24), firstChipX());
-    ui_theme.global.start_button_gap = 16;
-
-    // A configured icon size larger than the (shrunk) button must not
-    // overflow the button it is centered in.
-    ui_theme.global.taskbar_size = @floatFromInt(min_bar_height);
-    ui_theme.global.start_button_icon_size = 42;
-    try std.testing.expect(startIconSize() <= buttonSize());
-}
-
-test "chip flat-fill fast path is bit-identical to the full SDF raster" {
-    const saved = ui_theme.global;
-    defer ui_theme.global = saved;
-    ui_theme.global = .{};
-
-    var icon_pixels: [64 * 64]u32 = undefined;
-    for (&icon_pixels, 0..) |*p, i| p.* = if (i % 7 == 0) 0x80402010 else 0xff3366cc;
-    const icon: icon_service.Entry = .{ .id = 1, .pixels = &icon_pixels, .size = 64 };
-
-    var fast: usize = 0;
-    var total: usize = 0;
-    for ([_]f32{ 0, 0.5, 1, 5, 12 }) |radius| {
-        ui_theme.global.radius = radius;
-        for ([_]f32{ 0.75, 1, 1.25, 1.5, 2, 3 }) |scale| {
-            for ([_]f32{ 78, 78.3, 366.5 }) |x| {
-                for ([_]?icon_service.Entry{ null, icon }) |chip_icon| {
-                    for ([_]AppKind{ .terminal, .browser }) |kind| {
-                        const chip: ChipState = .{ .toplevel = undefined, .kind = kind, .icon = chip_icon, .width = 280.25 };
-                        var paint: ChipPaint = .{
-                            .chip = &chip,
-                            .x = x,
-                            .fill = Color.fromRgba(ui_theme.global.taskbar_hover),
-                            .border = Color.fromRgba(ui_theme.global.taskbar_border).scaled(1.6),
-                            .bar_height = default_bar_height,
-                        };
-                        paint.flat = .init(&paint, scale);
-                        const origin_x = @round(x) - 2;
-                        const width = geometry.devicePixels(@as(i32, @intFromFloat(@ceil(chip.width))) + 4, scale);
-                        const height = geometry.devicePixels(default_bar_height, scale);
-                        for (0..@intCast(height)) |dy| {
-                            const py = (@as(f32, @floatFromInt(dy)) + 0.5) / scale;
-                            for (0..@intCast(width)) |dx| {
-                                const px = origin_x + (@as(f32, @floatFromInt(dx)) + 0.5) / scale;
-                                const want = paintChipPixel(&paint, px, py, scale).argb();
-                                try std.testing.expectEqual(want, chipPixelArgb(&paint, px, py, scale));
-                                total += 1;
-                                if (!paint.flat.tile.contains(px, py) and (!paint.flat.outer.contains(px, py) or
-                                    paint.flat.band_h.contains(px, py) or paint.flat.band_v.contains(px, py))) fast += 1;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    // Guards against the fast path silently switching itself off.
-    try std.testing.expect(fast * 10 > total * 8);
-}
-
-test "title-only chip repaints exactly match complete chip rasters" {
-    const saved = ui_theme.global;
-    defer ui_theme.global = saved;
-    ui_theme.global = .{};
-
-    var icon_pixels: [64 * 64]u32 = undefined;
-    for (&icon_pixels, 0..) |*p, i| p.* = if (i % 7 == 0) 0x80402010 else 0xff3366cc;
-    const icon: icon_service.Entry = .{ .id = 1, .pixels = &icon_pixels, .size = 64 };
-    const titles = [_][]const u8{
-        "Terminal",
-        "Working \u{2801}",
-        "Working \u{28c0}",
-        "Working \u{28ff}",
-        "\u{280b} Working on a task that is long enough to be ellipsized in the chip",
-        "",
-        "\u{2819} Working \u{2014} claude",
-        "A",
-    };
-    const color: text.Color = .{ .r = 0.9, .g = 0.92, .b = 0.95, .a = 1 };
-    for ([_]f32{ 1, 1.25, 1.5, 2 }) |scale| {
-        for ([_]f32{ 78, 78.3, 366.5 }) |x| {
-            for ([_]f32{ 152, 280.25 }) |chip_width| {
-                const chip: ChipState = .{ .toplevel = undefined, .kind = .browser, .icon = icon, .width = chip_width };
-                var paint: ChipPaint = .{
-                    .chip = &chip,
-                    .x = x,
-                    .fill = Color.fromRgba(ui_theme.global.taskbar_hover),
-                    .border = Color.fromRgba(ui_theme.global.taskbar_border).scaled(1.6),
-                    .bar_height = default_bar_height,
-                };
-                paint.flat = .init(&paint, scale);
-                const cx: i32 = @intFromFloat(@round(x));
-                const origin_x = cx - 2;
-                const width = geometry.devicePixels(@as(i32, @intFromFloat(@ceil(chip_width))) + 4, scale);
-                const height = geometry.devicePixels(default_bar_height, scale);
-                const len: usize = @intCast(width * height);
-                const rect = chipTitleRect(cx, default_bar_height, chip_width, origin_x, 0).?;
-                const previous = try std.testing.allocator.alloc(u32, len);
-                defer std.testing.allocator.free(previous);
-                const expected = try std.testing.allocator.alloc(u32, len);
-                defer std.testing.allocator.free(expected);
-                const updated = try std.testing.allocator.alloc(u32, len);
-                defer std.testing.allocator.free(updated);
-                for (titles, 0..) |before, i| {
-                    const after = titles[(i + 1) % titles.len];
-                    // Full rasters, as renderPart paints a chip with an icon.
-                    fillChipColumns(&paint, previous, width, height, origin_x, 0, 0, @intCast(width), scale);
-                    drawChipTitle(previous, width, height, rect, before, color, scale);
-                    fillChipColumns(&paint, expected, width, height, origin_x, 0, 0, @intCast(width), scale);
-                    drawChipTitle(expected, width, height, rect, after, color, scale);
-                    @memcpy(updated, previous);
-                    paintChipTitleColumns(&paint, updated, width, height, origin_x, rect, after, color, scale);
-                    try std.testing.expectEqualSlices(u32, expected, updated);
-                    if (std.mem.startsWith(u8, before, "Working ") and std.mem.startsWith(u8, after, "Working ")) {
-                        // Changing spinner bounds must not move the unchanged words.
-                        const left: usize = @intCast(geometry.devicePixels(rect.x, scale));
-                        const prefix_width = try text.measureWidthF("Working", .manrope, ui_theme.global.taskbar_title_size, scale);
-                        const right = left + @as(usize, @intFromFloat(@floor(prefix_width * scale)));
-                        const stride: usize = @intCast(width);
-                        for (0..@intCast(height)) |row| {
-                            try std.testing.expectEqualSlices(u32, previous[row * stride + left .. row * stride + right], updated[row * stride + left .. row * stride + right]);
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-test "battery artwork remains centered as taskbar height and item gap change" {
-    const saved = ui_theme.global;
-    defer ui_theme.global = saved;
-    for ([_]i32{ 36, 54, 84 }) |height| {
-        for ([_]f32{ 0, 8, 24 }) |gap| {
-            ui_theme.global = .{ .taskbar_size = @floatFromInt(height), .chip_gap = gap };
-            var bar: Taskbar = undefined;
-            bar.box.height = height;
-            bar.battery_state = .{ .percent = 100, .plugged = true };
-            for ([_]f32{ 1, 1.5, 2 }) |scale| {
-                const h = geometry.devicePixels(height, scale);
-                var top = h;
-                var bottom: i32 = -1;
-                for (0..@intCast(h)) |row| {
-                    const y = (@as(f32, @floatFromInt(row)) + 0.5) / scale;
-                    const pixel = paintBatteryPixel(&bar, 20, y, scale, 1);
-                    if (pixel.g > 0.5 and pixel.r < 0.2) {
-                        top = @min(top, @as(i32, @intCast(row)));
-                        bottom = @max(bottom, @as(i32, @intCast(row)));
-                    }
-                }
-                try std.testing.expect(bottom >= top);
-                try std.testing.expect(@abs(top + bottom + 1 - h) <= 1);
-            }
-        }
-    }
-}
-
-pub fn appTrayCount(bar: *Taskbar) usize {
-    if (!bar.itemShown(.tray)) return 0;
-    const mgr = bar.server.tray orelse return 0;
-    var fixed: f32 = @floatFromInt(rightPad() + startButtonLeft() + 80 + 5 * clock_gap);
-    if (bar.itemShown(.start)) fixed += @floatFromInt(buttonSize());
-    if (bar.itemShown(.battery)) fixed += battery_width;
-    if (bar.itemShown(.network)) fixed += @floatFromInt(trayHit());
-    if (bar.itemShown(.volume)) fixed += @floatFromInt(trayHit());
-    if (bar.itemShown(.clock)) fixed += bar.clockColumnWidth();
-    if (bar.itemShown(.power)) fixed += @floatFromInt(trayHit() + tray_gap);
-    if (bar.capturing()) fixed += @floatFromInt(bar.captureWidth());
-    const room = @max(0, @as(f32, @floatFromInt(bar.box.width)) - fixed);
-    return @min(mgr.visibleCount(), @as(usize, @intFromFloat(room / @as(f32, @floatFromInt(trayHit() + tray_gap)))));
-}
-
-fn appTrayLeft(bar: *Taskbar) f32 {
-    return bar.item_layout.x[@intFromEnum(taskbar_items.Item.tray)] orelse 0;
-}
-
-pub fn appTrayBox(bar: *Taskbar, index: usize) wlr.Box {
-    return .{ .x = bar.box.x + @as(i32, @intFromFloat(bar.appTrayLeft())) + @as(i32, @intCast(index)) * (trayHit() + tray_gap), .y = bar.box.y + @divTrunc(bar.box.height - trayHit(), 2), .width = trayHit(), .height = trayHit() };
-}
-
-pub fn appTrayAt(bar: *Taskbar, sx: f64, sy: f64) ?usize {
-    for (0..bar.appTrayCount()) |i| {
-        const b = bar.appTrayBox(i);
-        const x: f64 = @floatFromInt(b.x - bar.box.x);
-        const y: f64 = @floatFromInt(b.y - bar.box.y);
-        if (sx >= x and sx < x + @as(f64, @floatFromInt(b.width)) and sy >= y and sy < y + @as(f64, @floatFromInt(b.height))) return i;
-    }
-    return null;
-}
-
-fn renderAppTray(bar: *Taskbar) void {
-    const mgr = bar.server.tray orelse {
-        bar.app_tray_node.node.setEnabled(false);
-        return;
-    };
-    const count = bar.appTrayCount();
-    bar.app_tray_node.node.setEnabled(count > 0);
-    const left: i32 = @intFromFloat(bar.appTrayLeft());
-    bar.app_tray_node.node.setPosition(left, 0);
-    if (count == 0 or (bar.app_tray_generation == mgr.generation and !bar.background_dirty)) return;
-    const width: i32 = @as(i32, @intCast(count)) * (trayHit() + tray_gap);
-    const scale = bar.wlr_output.scale;
-    const buf = BarBuffer.create(width, bar.box.height, scale) catch return;
-    defer buf.base.drop();
-    @memset(buf.pixels, 0);
-    const size: i32 = @min(22, trayHit() - 4);
-    for (0..count) |i| {
-        const item = mgr.visibleItem(i) orelse continue;
-        var pixels: []const u32 = item.pixels;
-        var sw = item.width;
-        var sh = item.height;
-        if (item.attention and item.attention_pixels.len > 0) {
-            pixels = item.attention_pixels;
-            sw = item.attention_width;
-            sh = item.attention_height;
-        }
-        const icon_name = if (item.attention and item.attention_icon.len > 0) item.attention_icon else if (item.attention and item.attention_pixels.len > 0) "" else item.icon;
-        const icon_size: i32 = @intFromFloat(@ceil(@as(f32, @floatFromInt(size)) * scale));
-        var lookup: icon_service.Lookup = if (icon_name.len > 0) bar.server.iconLookup(icon_name, icon_size) else .missing;
-        if (icon_name.len > 0 and icon_name[0] != '/' and item.icon_theme_path.len > 0) {
-            // Resolve application-private indicator directories on the existing
-            // icon worker, never synchronously decode from the rendering loop.
-            var path_buf: [4096]u8 = undefined;
-            for ([_][]const u8{ "", ".png", ".svg" }) |extension| {
-                const full = std.fmt.bufPrint(&path_buf, "{s}/{s}{s}", .{ item.icon_theme_path, icon_name, extension }) catch continue;
-                const candidate = bar.server.iconLookup(full, icon_size);
-                if (candidate == .ready) {
-                    lookup = candidate;
-                    break;
-                }
-            }
-        }
-        if (icon_name.len > 0) switch (lookup) {
-            .ready => |entry| {
-                pixels = entry.pixels;
-                sw = entry.size;
-                sh = entry.size;
-            },
-            else => {},
-        };
-        const x = @as(i32, @intCast(i)) * (trayHit() + tray_gap) + @divTrunc(trayHit() - size, 2);
-        const y = @divTrunc(bar.box.height - size, 2);
-        if (pixels.len == 0 or sw <= 0 or sh <= 0) {
-            text.draw(buf.pixels, buf.width, buf.height, .{ .x = x, .y = y, .w = size, .h = size }, "●", Color.clock_time(), scale, .manrope, 16) catch {};
-            continue;
-        }
-        const dw: i32 = @intFromFloat(@round(@as(f32, @floatFromInt(size)) * scale));
-        const dx: i32 = @intFromFloat(@round(@as(f32, @floatFromInt(x)) * scale));
-        const dy: i32 = @intFromFloat(@round(@as(f32, @floatFromInt(y)) * scale));
-        var py: i32 = 0;
-        while (py < dw) : (py += 1) {
-            var px: i32 = 0;
-            while (px < dw) : (px += 1) {
-                const src: usize = @intCast(@divTrunc(py * sh, dw) * sw + @divTrunc(px * sw, dw));
-                const dest: usize = @intCast((dy + py) * buf.width + dx + px);
-                buf.pixels[dest] = pixels[src];
-            }
-        }
-    }
-    bar.app_tray_node.setBuffer(&buf.base);
-    bar.app_tray_node.setDestSize(width, bar.box.height);
-    bar.app_tray_generation = mgr.generation;
+test {
+    _ = @import("taskbar/tests.zig");
 }

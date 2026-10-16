@@ -4,6 +4,14 @@ id = "redi-blue"
 name = "Redi Blue"
 
 [theme]
+# Shared lock screen and login screen.
+lock_bg = "#070F1F"
+lock_fg = "#E6F1FF"
+lock_dim = "#A0B4D8"
+lock_divider = "#2A4B6F"
+lock_session_fg = "#8FB7E8"
+lock_wallpaper_opacity = 0.24
+
 # Window chrome
 window_bg = "rgba(14,19,28,0.46)"
 window_fg = "#E6F1FF"

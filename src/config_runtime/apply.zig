@@ -186,6 +186,7 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
     const theme_changed = pack_changed or !themeEql(old.theme, new.theme) or old.compositor.border_radius != new.compositor.border_radius;
     const taskbar_theme_changed = !theme_mod.taskbarOverrideEql(old.taskbar_theme, new.taskbar_theme);
     if (theme_changed) {
+        server.saveLoginTheme();
         if (server.notifications) |manager| manager.themeChanged();
         if (server.desktop) |desktop| desktop.app.themeChanged();
         if (server.locker) |lock| lock.themeChanged();

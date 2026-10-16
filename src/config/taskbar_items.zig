@@ -4,7 +4,7 @@ const std = @import("std");
 pub const Section = enum { left, center, right };
 pub const Item = enum {
     battery,
-    network,
+    wifi,
     volume,
     clock,
     start,
@@ -12,11 +12,12 @@ pub const Item = enum {
     tray,
     power,
     capture,
+    wired,
 
     pub fn label(item: Item) []const u8 {
         return switch (item) {
             .battery => "Battery",
-            .network => "Network",
+            .wifi => "Wi-Fi",
             .volume => "Volume",
             .clock => "Clock",
             .start => "Start button",
@@ -24,15 +25,31 @@ pub const Item = enum {
             .tray => "Application tray",
             .power => "Power",
             .capture => "Screen capture",
+            .wired => "Ethernet",
         };
+    }
+
+    /// Only the network items can be automatic: shown while their hardware
+    /// (a wireless adapter, a connected cable) is there.
+    pub fn canAutomate(item: Item) bool {
+        return item == .wifi or item == .wired;
     }
 };
 pub const count = std.meta.fields(Item).len;
 
+/// What the network hardware offers right now; decides automatic items.
+pub const Presence = struct {
+    wifi: bool = false,
+    wired: bool = false,
+};
+
 pub const Config = struct {
-    order: [count]Item = .{ .start, .windows, .capture, .tray, .battery, .network, .volume, .clock, .power },
-    visible: [count]bool = .{ true, true, true, true, true, true, true, false, true },
-    sections: [count]Section = .{ .right, .right, .right, .right, .left, .left, .right, .right, .right },
+    order: [count]Item = .{ .start, .windows, .capture, .tray, .battery, .wifi, .wired, .volume, .clock, .power },
+    visible: [count]bool = .{ true, true, true, true, true, true, true, false, true, true },
+    sections: [count]Section = .{ .right, .right, .right, .right, .left, .left, .right, .right, .right, .right },
+    /// An automatic item follows `Presence` instead of `visible`. An explicit
+    /// choice (a plain or `-` entry) clears it; it is written as `~`.
+    auto: [count]bool = .{ false, true, false, false, false, false, false, false, false, true },
 
     /// One keyboard step: swap with the neighbour in the same section, or at
     /// a section's end step into the next section over (an empty one too).
@@ -91,8 +108,36 @@ pub const Config = struct {
         return config.visible[@intFromEnum(item)];
     }
 
+    /// `shown`, with an automatic item following the hardware.
+    pub fn resolved(config: Config, item: Item, presence: Presence) bool {
+        const id = @intFromEnum(item);
+        if (!config.auto[id]) return config.visible[id];
+        return switch (item) {
+            .wifi => presence.wifi,
+            .wired => presence.wired,
+            else => config.visible[id],
+        };
+    }
+
+    /// A copy whose `visible` is what is really shown, so layout code that
+    /// reads `shown` needs no idea of automatic items.
+    pub fn effective(config: Config, presence: Presence) Config {
+        var result = config;
+        for (std.enums.values(Item)) |item| result.visible[@intFromEnum(item)] = config.resolved(item, presence);
+        result.auto = @splat(false);
+        return result;
+    }
+
+    /// An explicit on/off choice, which ends automatic behaviour for the item.
+    pub fn setVisible(config: *Config, item: Item, on: bool) void {
+        config.visible[@intFromEnum(item)] = on;
+        config.auto[@intFromEnum(item)] = false;
+    }
+
     /// New lists use section:item. The original four-item lists remain valid.
-    /// A minus prefix hides an item without forgetting its placement.
+    /// A minus prefix hides an item without forgetting its placement; a tilde
+    /// makes Wi-Fi or Ethernet follow the hardware. The old `network` entry
+    /// is the Wi-Fi item: shown becomes automatic, hidden stays hidden.
     pub fn parse(value: []const u8) !Config {
         const raw = std.mem.trim(u8, value, " \t\r");
         if (raw.len < 2 or raw[0] != '[' or raw[raw.len - 1] != ']') return error.InvalidValue;
@@ -107,33 +152,37 @@ pub const Config = struct {
             if (index >= count or entry.len < 3 or entry[0] != '"' or entry[entry.len - 1] != '"') return error.InvalidValue;
             var name = entry[1 .. entry.len - 1];
             const visible = name[0] != '-';
-            if (!visible) name = name[1..];
+            const automatic = name[0] == '~';
+            if (!visible or automatic) name = name[1..];
+            if (name.len == 0) return error.InvalidValue;
             var zone: ?Section = null;
             if (std.mem.indexOfScalar(u8, name, ':')) |colon| {
                 zone = std.meta.stringToEnum(Section, name[0..colon]) orelse return error.InvalidValue;
                 name = name[colon + 1 ..];
                 legacy = false;
             }
-            const item = std.meta.stringToEnum(Item, name) orelse return error.InvalidValue;
+            const renamed = std.mem.eql(u8, name, "network");
+            const item = if (renamed) Item.wifi else std.meta.stringToEnum(Item, name) orelse return error.InvalidValue;
             const id = @intFromEnum(item);
-            if (seen[id]) return error.InvalidValue;
+            if (seen[id] or (automatic and !item.canAutomate())) return error.InvalidValue;
             if (id >= 4) legacy = false;
             seen[id] = true;
             order[index] = item;
             result.visible[id] = visible;
+            if (item.canAutomate()) result.auto[id] = automatic or (renamed and visible);
             if (zone) |s| result.sections[id] = s;
             index += 1;
         }
         if (legacy and index == 4) {
-            result.order = .{ .start, .windows, .tray, order[0], order[1], order[2], order[3], .power, .capture };
+            result.order = .{ .start, .windows, .tray, order[0], order[1], order[2], order[3], .power, .capture, .wired };
         } else {
-            // Older lists can omit Power and Screen capture. Every other
-            // item remains required, so incomplete lists still fail closed.
+            // Older lists can omit Power, Screen capture and Ethernet. Every
+            // other item remains required, so incomplete lists still fail closed.
             for (std.enums.values(Item)) |item| {
-                if (item != .power and item != .capture and !seen[@intFromEnum(item)]) return error.InvalidValue;
+                if (item != .power and item != .capture and item != .wired and !seen[@intFromEnum(item)]) return error.InvalidValue;
             }
             @memcpy(result.order[0..index], order[0..index]);
-            for ([_]Item{ .power, .capture }) |item| {
+            for ([_]Item{ .power, .capture, .wired }) |item| {
                 if (seen[@intFromEnum(item)]) continue;
                 result.order[index] = item;
                 index += 1;
@@ -150,6 +199,22 @@ pub const Config = struct {
                 }
             }
         }
+        if (!seen[@intFromEnum(Item.wired)]) {
+            // Ethernet joins right after Wi-Fi, in its section, automatic.
+            const zone = result.section(.wifi);
+            var slot: usize = 0;
+            for (result.order) |item| {
+                if (item == .wired) continue;
+                if (result.section(item) == zone) slot += 1;
+                if (item == .wifi) break;
+            }
+            for (result.order, 0..) |item, i| {
+                if (item == .wired) {
+                    _ = result.place(i, zone, slot);
+                    break;
+                }
+            }
+        }
         return result;
     }
 
@@ -159,7 +224,7 @@ pub const Config = struct {
         try buffer.writer.writeByte('[');
         for (config.order, 0..) |item, i| {
             if (i > 0) try buffer.writer.writeAll(", ");
-            try buffer.writer.print("\"{s}{s}:{s}\"", .{ if (config.shown(item)) "" else "-", @tagName(config.section(item)), @tagName(item) });
+            try buffer.writer.print("\"{s}{s}:{s}\"", .{ if (config.auto[@intFromEnum(item)]) "~" else if (config.shown(item)) "" else "-", @tagName(config.section(item)), @tagName(item) });
         }
         try buffer.writer.writeByte(']');
         return buffer.toOwnedSlice();
@@ -227,12 +292,14 @@ test "taskbar sections and hidden state round trip, migrate old lists and reject
     try std.testing.expectEqualDeep(config, previous);
     const previous_eight = try Config.parse("[\"left:start\", \"left:windows\", \"right:tray\", \"right:battery\", \"right:network\", \"right:volume\", \"right:clock\", \"-right:power\"]");
     try std.testing.expectEqualDeep(config, previous_eight);
+    try std.testing.expectEqual(Item.wired, config.order[6]);
     config.visible[@intFromEnum(Item.power)] = true;
     config.visible[@intFromEnum(Item.capture)] = false;
     config.setSection(.capture, .center);
     config.setSection(.volume, .left);
     config.move(1, false);
-    config.visible[@intFromEnum(Item.volume)] = false;
+    config.setVisible(.volume, false);
+    config.setVisible(.wired, false);
     const encoded = try config.serialize(std.testing.allocator);
     defer std.testing.allocator.free(encoded);
     try std.testing.expectEqualDeep(config, try Config.parse(encoded));
@@ -242,37 +309,66 @@ test "taskbar sections and hidden state round trip, migrate old lists and reject
     try std.testing.expectEqual(Item.clock, legacy.order[4]);
     try std.testing.expect(legacy.shown(.capture));
     try std.testing.expectEqual(Item.capture, legacy.order[2]);
-    try std.testing.expect(!legacy.shown(.network));
+    try std.testing.expect(!legacy.shown(.wifi));
+    try std.testing.expect(!legacy.auto[@intFromEnum(Item.wifi)]);
+    try std.testing.expect(legacy.auto[@intFromEnum(Item.wired)]);
     try std.testing.expect(!legacy.shown(.power));
     // Drops land anywhere; keyboard steps cross into the next section at an edge.
     var moved: Config = .{};
-    try std.testing.expectEqual(@as(usize, 1), moved.place(7, .left, 1));
-    try std.testing.expectEqualSlices(Item, &.{ .start, .clock, .windows, .capture, .tray, .battery, .network, .volume, .power }, &moved.order);
+    try std.testing.expectEqual(@as(usize, 1), moved.place(8, .left, 1));
+    try std.testing.expectEqualSlices(Item, &.{ .start, .clock, .windows, .capture, .tray, .battery, .wifi, .wired, .volume, .power }, &moved.order);
     try std.testing.expectEqual(Section.left, moved.section(.clock));
     moved.move(2, true);
     try std.testing.expectEqual(Section.center, moved.section(.windows));
-    try std.testing.expectEqual(@as(usize, 8), moved.place(2, .right, 9));
-    try std.testing.expectEqual(Item.windows, moved.order[8]);
-    for ([_][]const u8{ "[]", "[\"battery\", \"network\", \"volume\", \"volume\"]", "[\"battery\", \"network\", \"volume\", \"chevron\"]", "[\"left:battery\", \"network\", \"volume\", \"clock\"]" }) |bad| {
+    try std.testing.expectEqual(@as(usize, 9), moved.place(2, .right, 9));
+    try std.testing.expectEqual(Item.windows, moved.order[9]);
+    for ([_][]const u8{ "[]", "[\"battery\", \"network\", \"volume\", \"volume\"]", "[\"battery\", \"network\", \"volume\", \"chevron\"]", "[\"left:battery\", \"network\", \"volume\", \"clock\"]", "[\"~battery\", \"network\", \"volume\", \"clock\"]" }) |bad| {
         try std.testing.expectError(error.InvalidValue, Config.parse(bad));
     }
 }
 
+test "wifi and ethernet follow the hardware until the user decides" {
+    var config: Config = .{};
+    try std.testing.expect(!config.resolved(.wifi, .{}));
+    try std.testing.expect(config.resolved(.wifi, .{ .wifi = true }));
+    try std.testing.expect(config.resolved(.wired, .{ .wired = true }));
+    try std.testing.expect(!config.resolved(.wired, .{ .wifi = true }));
+    // Other items ignore the hardware.
+    try std.testing.expect(config.resolved(.volume, .{}));
+    try std.testing.expect(!config.resolved(.power, .{ .wifi = true, .wired = true }));
+    config.setVisible(.wifi, true);
+    try std.testing.expect(config.resolved(.wifi, .{}));
+    config.setVisible(.wired, false);
+    try std.testing.expect(!config.resolved(.wired, .{ .wired = true }));
+    // Automatic and explicit entries survive a round trip; the old name migrates.
+    const text = "[\"left:start\", \"left:windows\", \"right:tray\", \"right:battery\", \"~right:wifi\", \"-right:wired\", \"right:volume\", \"right:clock\"]";
+    const parsed = try Config.parse(text);
+    try std.testing.expect(parsed.auto[@intFromEnum(Item.wifi)] and !parsed.auto[@intFromEnum(Item.wired)] and !parsed.shown(.wired));
+    const encoded = try parsed.serialize(std.testing.allocator);
+    defer std.testing.allocator.free(encoded);
+    try std.testing.expectEqualDeep(parsed, try Config.parse(encoded));
+    const old = try Config.parse("[\"left:start\", \"left:windows\", \"right:tray\", \"right:battery\", \"center:network\", \"right:volume\", \"right:clock\"]");
+    try std.testing.expect(old.auto[@intFromEnum(Item.wifi)] and old.auto[@intFromEnum(Item.wired)]);
+    try std.testing.expectEqual(Section.center, old.section(.wired));
+    const wifi_at = std.mem.indexOfScalar(Item, &old.order, .wifi).?;
+    try std.testing.expectEqual(Item.wired, old.order[wifi_at + 1]);
+}
+
 test "taskbar defaults windows left, supports centering and shrinks windows before fixed items" {
     var config: Config = .{};
-    const widths = [count]f32{ 0, 34, 34, 96, 42, 200, 0, 34, 120 };
+    const widths = [count]f32{ 0, 34, 34, 96, 42, 200, 0, 34, 120, 0 };
     const defaults = arrange(config, 4, 980, 500, widths, 6, 16);
     try std.testing.expectEqual(@as(?f32, 52), defaults.x[@intFromEnum(Item.windows)]);
-    try std.testing.expect(defaults.x[@intFromEnum(Item.capture)].? + 120 <= defaults.x[@intFromEnum(Item.network)].?);
+    try std.testing.expect(defaults.x[@intFromEnum(Item.capture)].? + 120 <= defaults.x[@intFromEnum(Item.wifi)].?);
     config.setSection(.windows, .center);
     const full = arrange(config, 4, 980, 500, widths, 6, 16);
     try std.testing.expectEqual(@as(?f32, 400), full.x[@intFromEnum(Item.windows)]);
     try std.testing.expectEqual(@as(?f32, 884), full.x[@intFromEnum(Item.clock)]);
     config.setSection(.clock, .center);
-    config.setSection(.network, .left);
+    config.setSection(.wifi, .left);
     const moved = arrange(config, 4, 980, 500, widths, 6, 16);
-    try std.testing.expectEqual(@as(?f32, 52), moved.x[@intFromEnum(Item.network)]);
-    const crowded = arrange(config, 4, 400, 200, .{ 0, 34, 34, 96, 42, 1000, 0, 34, 120 }, 6, 16);
+    try std.testing.expectEqual(@as(?f32, 52), moved.x[@intFromEnum(Item.wifi)]);
+    const crowded = arrange(config, 4, 400, 200, .{ 0, 34, 34, 96, 42, 1000, 0, 34, 120, 0 }, 6, 16);
     try std.testing.expect(crowded.widths[@intFromEnum(Item.windows)] < 1000);
     try std.testing.expect(crowded.x[@intFromEnum(Item.clock)].? + 96 <= crowded.x[@intFromEnum(Item.volume)].? - 16);
     config.visible = @splat(false);
