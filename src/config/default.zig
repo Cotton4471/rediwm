@@ -87,6 +87,8 @@ pub const source =
     \\# smooth_scroll_exclude = ["brave", "chromium", "google-chrome", "microsoft-edge", "vivaldi",
     \\#                          "opera", "firefox", "librewolf", "floorp", "zen"]  # default: browsers,
     \\#                          # which smooth wheel scrolling themselves
+    \\wheel_debounce_ms = 60        # 0-200; ignore a wheel click against the run this soon after
+    \\                              # the last one (worn wheels bounce); 0 = off
     \\tap_to_click      = true
     \\tap_drag          = true
     \\disable_while_typing = true

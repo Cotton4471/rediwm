@@ -10,7 +10,8 @@
 # never leak in; --src DIR builds that directory instead. DIR (default
 # ./release) ends up holding rediwm-FAMILY-x86_64.tar.gz for each family built,
 # plus SHA256SUMS over every tarball in it. Each tarball is then installed by
-# the real install.sh in a fresh container (--no-verify skips that).
+# the real install.sh in a fresh container, and the Arch one also on Artix and
+# CachyOS, which install.sh points at it (--no-verify skips that).
 #
 # Upload the tarballs and SHA256SUMS to a GitHub release (a tag named v<version>
 # from build.zig.zon); install.sh reads releases/latest/download/. Tests are
@@ -49,6 +50,15 @@ image_for() {
         debian) echo docker.io/library/debian:13 ;;
         ubuntu) echo docker.io/library/ubuntu:24.04 ;;
         fedora) echo docker.io/library/fedora:latest ;;
+        artix) echo docker.io/artixlinux/artixlinux:latest ;;
+        cachyos) echo docker.io/cachyos/cachyos:latest ;;
+    esac
+}
+
+# Derivatives that install.sh gives a family's tarball, verified with it.
+derivatives_of() {
+    case "$1" in
+        arch) echo artix cachyos ;;
     esac
 }
 
@@ -76,8 +86,10 @@ fi
 # Each build writes into its tree (zig-out), so each family gets its own copy.
 # Rootless podman maps root in the container to this user, so what it writes to
 # a bind mount is already ours; docker's root-owned files are handed back.
-# run_args: extra engine options for the next run() (the verify step's render node).
+# run_args: extra engine options for the next run() (the verify step's render
+# node); run_image: the image to use instead of the family's own.
 run_args=""
+run_image=""
 run() { # family script args...
     family=$1; shift
     rc=0
@@ -88,7 +100,7 @@ run() { # family script args...
         -e REDIWM_ZIG_DIR=/cache/zig -e ZIG_GLOBAL_CACHE_DIR=/cache/zig-global \
         -e REDIWM_REVISION="$revision" -e ZIG_JOBS="${ZIG_JOBS:-}" \
         -e OWNER="$([ "$engine" = docker ] && echo "$(id -u):$(id -g)")" \
-        "$(image_for "$family")" sh -c '"$@"; rc=$?; [ -z "$OWNER" ] || chown -R "$OWNER" /work /out /cache; exit $rc' sh "$@" || rc=$?
+        "${run_image:-$(image_for "$family")}" sh -c '"$@"; rc=$?; [ -z "$OWNER" ] || chown -R "$OWNER" /work /out /cache; exit $rc' sh "$@" || rc=$?
     return $rc
 }
 
@@ -98,14 +110,18 @@ for family in $families; do
     cp -a "$src/." "$work/$family/"
     run "$family" sh /work/scripts/release-build.sh "$family" /out
     if [ "$verify" = yes ]; then
-        log "Verifying $family in a fresh container"
         # The compositor needs GLES2, which needs a DRM render node even for
         # llvmpipe, and a bare container has none: hand it the host's.
         node=${REDIWM_RENDER_NODE:-$(ls /dev/dri/renderD* 2>/dev/null | head -n 1)}
         [ -n "$node" ] || die "no /dev/dri/renderD* on this machine for the verify step (set REDIWM_RENDER_NODE, or use --no-verify)"
         run_args="--device $node"
-        run "$family" sh /work/scripts/release-verify.sh "$family" /out
+        for target in "$family" $(derivatives_of "$family"); do
+            log "Verifying $family in a fresh $target container"
+            run_image=$(image_for "$target")
+            run "$family" sh /work/scripts/release-verify.sh "$family" /out
+        done
         run_args=""
+        run_image=""
     fi
     rm -rf -- "$work/$family"
 done

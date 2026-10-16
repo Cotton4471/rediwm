@@ -81,6 +81,9 @@ pub const InputConfig = struct {
     // wheel scrolling are excluded, so it is not smoothed twice.
     smooth_scroll: bool = false,
     smooth_scroll_exclude: []const []const u8 = &default_smooth_scroll_exclude,
+    // A wheel click against the run this soon after its last click is held
+    // as a likely encoder bounce (`input/wheel_debounce.zig`). 0 disables.
+    wheel_debounce_ms: u32 = 60,
     tap_to_click: bool = true,
     tap_drag: bool = true,
     disable_while_typing: bool = true,
@@ -1044,6 +1047,7 @@ const input_rules: std.enums.EnumFieldStruct(std.meta.FieldEnum(InputConfig), Fi
     .wheel_acceleration_exclude = .string_list,
     .smooth_scroll = .boolean,
     .smooth_scroll_exclude = .string_list,
+    .wheel_debounce_ms = .{ .uint = .{ .min = 0, .max = 200 } },
     .tap_to_click = .boolean,
     .tap_drag = .boolean,
     .disable_while_typing = .boolean,

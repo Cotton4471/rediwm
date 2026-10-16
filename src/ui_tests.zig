@@ -8,6 +8,7 @@ test {
     _ = @import("desktop/grid.zig");
     _ = @import("config").keymap;
     _ = @import("input/repeat_keys.zig");
+    _ = @import("input/wheel_debounce.zig");
     _ = @import("ui").key_repeat;
     _ = @import("ui").hover_glide;
     _ = @import("input/ime_placement.zig");

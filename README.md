@@ -47,8 +47,8 @@ curl -fsSL https://rediwm.redios.org/install.sh | sh    # add `-s -- --dm` for r
 | <img width="100%" alt="Screenshot 1" src="https://github.com/user-attachments/assets/b4cbd48c-ccab-452e-8457-2d1b8c096def" /> | <img width="100%" alt="Screenshot 2" src="https://github.com/user-attachments/assets/10f9becc-bcd9-4089-872b-4a03d1dba818" /> |
 | <img width="100%" alt="Screenshot 3" src="https://github.com/user-attachments/assets/a0ccd5f3-7476-4171-80c5-5f74a751e6b7" /> | <img width="100%" alt="Screenshot 4" src="https://github.com/user-attachments/assets/dd0cdae7-4c4d-401c-9624-80895897d0de" /> |
 
-`scripts/install.sh` installs the prebuilt release for your distro (Arch,
-Debian, Ubuntu and Fedora).
+`scripts/install.sh` installs the prebuilt release for your distro (Arch
+and derivatives such as Artix and CachyOS, Debian, Ubuntu and Fedora).
 Installing never replaces your login manager
 
 ## Building and running

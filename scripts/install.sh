@@ -45,6 +45,7 @@ if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo"; fi
 # Our own flags are consumed here; everything else goes to install-session.sh.
 BUILD=no
 DEPS_ONLY=no
+DM=no
 n=$#
 while [ "$n" -gt 0 ]; do
     arg=$1; shift; n=$((n - 1))
@@ -52,6 +53,7 @@ while [ "$n" -gt 0 ]; do
         --build) BUILD=yes ;;
         # For scripts/release-build.sh: install what a release build needs.
         --build-deps-only) BUILD=yes; DEPS_ONLY=yes ;;
+        --dm) DM=yes; set -- "$@" "$arg" ;;
         *) set -- "$@" "$arg" ;;
     esac
 done
@@ -66,22 +68,29 @@ fi
 [ -r /etc/os-release ] || die "cannot detect distro: /etc/os-release is missing"
 . /etc/os-release
 
+# Artix leaves ID_LIKE unset; CachyOS sets it, but is named in case that changes.
 case " ${ID:-} ${ID_LIKE:-} " in
-    *' arch '*)                FAMILY=arch ;;
+    *' arch '*|*' artix '*|*' cachyos '*) FAMILY=arch ;;
     *' fedora '*)              FAMILY=fedora ;;
     *' debian '*|*' ubuntu '*) FAMILY=debian ;;
     *' opensuse'*|*' suse '*)  FAMILY=opensuse ;;
     *' gentoo '*)              FAMILY=gentoo ;;
-    *) die "unsupported distro '${PRETTY_NAME:-${ID:-unknown}}' (supported: Arch, Fedora, openSUSE, Gentoo, Debian, Ubuntu). Install the packages listed in README.md's Requirements section by hand, then run scripts/install-session.sh directly." ;;
+    *) die "unsupported distro '${PRETTY_NAME:-${ID:-unknown}}' (supported: Arch and derivatives such as Artix and CachyOS, Fedora, openSUSE, Gentoo, Debian, Ubuntu). Install the packages listed in README.md's Requirements section by hand, then run scripts/install-session.sh directly." ;;
 esac
 log "Detected ${PRETTY_NAME:-$ID} -> $FAMILY"
+if [ "$DM" = yes ] && [ ! -d /run/systemd/system ]; then
+    log "rediwm-dm is a systemd service and this system doesn't run systemd: it is installed but can't be enabled here"
+fi
 
 # Releases are built per distro because the libraries differ in ways one binary
 # can't span (libjpeg is libjpeg.so.8 on Arch and Ubuntu, .so.62 on Debian and
 # Fedora, with a different struct layout). A derivative uses its parent's.
 RELEASE_ID=""
 for id in ${ID:-} ${ID_LIKE:-}; do
-    case "$id" in arch|debian|ubuntu|fedora) RELEASE_ID=$id; break ;; esac
+    case "$id" in
+        arch|artix|cachyos) RELEASE_ID=arch; break ;;
+        debian|ubuntu|fedora) RELEASE_ID=$id; break ;;
+    esac
 done
 
 # Installs packages with the distro's package manager. Returns non-zero on
@@ -89,6 +98,14 @@ done
 pkg_install() {
     case "$FAMILY" in
         arch)
+            # Artix is Arch without systemd: libudev.so.1 comes from its
+            # `libudev`, and the name `systemd-libs` is provided only by
+            # artix-archlinux-support, which enables the Arch repositories
+            # instead of installing the library.
+            if [ "${ID:-}" = artix ]; then
+                # shellcheck disable=SC2046 # word-split the package list
+                set -- $(printf '%s\n' "$@" | sed 's/^systemd-libs$/libudev/')
+            fi
             # Install only what is missing and never refresh the sync databases:
             # `-Sy pkg` is a partial upgrade, which breaks exact-version split
             # packages (e.g. a newer pipewire vs installed pipewire-pulse).

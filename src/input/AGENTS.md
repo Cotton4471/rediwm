@@ -25,5 +25,9 @@
   `directInputReachesClients()`; otherwise they emulate the pointer (send your
   own `pointerNotifyFrame`). Touchscreens map to `output_name` or the built-in
   panel.
+* **Wheel debounce** (`wheel_debounce.zig`) runs in `cursorAxis`, before
+  `processAxis`, on detented `.wheel` events only. IPC `scroll` and
+  automation sequences (`virtual.zig`) enter `processAxis` as `.continuous`
+  and never reach it, so cover it with unit tests.
 * **Lid:** a closed lid hides built-in panels only while another display is
   on; undocked, logind owns the lid.

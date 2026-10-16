@@ -4,9 +4,11 @@
 Runs on a private dbus-run-session, pointed at by DBUS_SYSTEM_BUS_ADDRESS so
 the compositor's power manager never reaches the host's real system bus
 (plan-power-session.md stages 1 and 2). Every test prepends a fake systemctl
-to PATH so no test can invoke host reboot/poweroff. Covers:
+and loginctl to PATH so no test can invoke host reboot/poweroff. Covers:
 - Poweroff/reboot command arguments, completion, refusal, missing executable,
   duplicate rejection, and retries without logging out.
+- loginctl instead of systemctl when systemd isn't init (elogind), with
+  /run/systemd hidden in a user namespace.
 - Explicit suspend requests invoking SuspendWithFlags with
   SD_LOGIND_ROOT_CHECK_INHIBITORS and interactive authorization allowed.
 - Fallback to legacy Suspend when WithFlags is unsupported or
@@ -179,12 +181,14 @@ Gio.bus_own_name_on_connection(conn, "org.freedesktop.login1", Gio.BusNameOwnerF
 GLib.MainLoop().run()
 '''
 
-FAKE_SYSTEMCTL = r'''import json, os, sys, time
+# Installed as both systemctl and loginctl; files are named after the command.
+FAKE_POWER_TOOL = r'''import json, os, sys, time
 from pathlib import Path
-tmp = Path(os.environ["FAKE_SYSTEMCTL_DIR"])
-config = tmp / "systemctl-config.json"
+tmp = Path(os.environ["FAKE_POWER_TOOL_DIR"])
+name = Path(sys.argv[0]).name
+config = tmp / f"{name}-config.json"
 options = json.loads(config.read_text()) if config.exists() else {}
-with (tmp / "systemctl-calls.jsonl").open("a") as calls:
+with (tmp / f"{name}-calls.jsonl").open("a") as calls:
     calls.write(json.dumps(sys.argv[1:]) + "\n")
 time.sleep(options.get("delay", 0))
 if options.get("error"):
@@ -320,17 +324,27 @@ def is_pid_running(pid):
         return True
 
 
+def without_systemd(argv):
+    """argv run as this user with /run/systemd hidden, as on an elogind system:
+    the outer user namespace mounts over it, the inner one maps back."""
+    script = 'uid=$1 gid=$2; shift 2; mount -t tmpfs none /run/systemd && exec unshare --user --map-user="$uid" --map-group="$gid" "$@"'
+    return ["unshare", "--user", "--map-root-user", "--mount", "sh", "-c", script, "sh",
+            str(os.getuid()), str(os.getgid()), *argv]
+
+
 def spawn(tmp, system_bus_address, config=CONFIG, env_extra=None):
-    # Every compositor in this suite gets a harmless systemctl, even in tests
-    # intended to exercise only D-Bus. Never fall through to the host command.
+    # Every compositor in this suite gets a harmless systemctl and loginctl,
+    # even in tests intended to exercise only D-Bus. Never fall through to the
+    # host command.
     bin_dir = tmp / "bin"
     bin_dir.mkdir(exist_ok=True)
-    command = bin_dir / "systemctl"
-    command.write_text("#!/usr/bin/python3\n" + FAKE_SYSTEMCTL)
-    command.chmod(0o755)
+    for name in ("systemctl", "loginctl"):
+        command = bin_dir / name
+        command.write_text("#!/usr/bin/python3\n" + FAKE_POWER_TOOL)
+        command.chmod(0o755)
     return spawn_compositor(tmp, config_content=config, env_extra={
         "PATH": str(bin_dir) + os.pathsep + os.environ.get("PATH", ""),
-        "FAKE_SYSTEMCTL_DIR": str(tmp),
+        "FAKE_POWER_TOOL_DIR": str(tmp),
         "DBUS_SESSION_BUS_ADDRESS": "",
         "DBUS_SYSTEM_BUS_ADDRESS": system_bus_address,
         **(env_extra or {}),
@@ -376,35 +390,54 @@ def test_normal_request_calls_with_flags_and_checks_inhibitors(system_bus_addres
     print("power: explicit request calls WithFlags with SD_LOGIND_ROOT_CHECK_INHIBITORS and interactive auth allowed")
 
 
-def test_systemctl_power_commands():
-    # No logind connection is needed in the compositor to launch systemctl.
+def test_power_commands():
+    # No logind connection is needed in the compositor to launch the command.
     unavailable_bus = "unix:path=/nonexistent-rediwm-power-test-bus"
+    tool, other = ("systemctl", "loginctl") if Path("/run/systemd/system").is_dir() else ("loginctl", "systemctl")
     for action in ("poweroff", "reboot", "poweroff_auto", "reboot_auto"):
-        with tempfile.TemporaryDirectory(prefix="rediwm-systemctl-") as directory:
+        with tempfile.TemporaryDirectory(prefix=f"rediwm-{tool}-") as directory:
             tmp = Path(directory)
-            (tmp / "systemctl-config.json").write_text(json.dumps({"delay": 0.4}))
+            (tmp / f"{tool}-config.json").write_text(json.dumps({"delay": 0.4}))
             process, log = spawn(tmp, unavailable_bus)
             try:
                 with IPCClient(tmp, timeout=15) as ipc:
                     ipc.wait_for("wallpaper_presented", timeout_ms=10000)
                     press(ipc, action)
-                    calls = tmp / "systemctl-calls.jsonl"
-                    wait_for(lambda: calls.exists() and calls.stat().st_size > 0, "systemctl invoked")
+                    calls = tmp / f"{tool}-calls.jsonl"
+                    wait_for(lambda: calls.exists() and calls.stat().st_size > 0, f"{tool} invoked")
                     expected = [action.removesuffix("_auto")]
                     if action.endswith("_auto"):
                         expected.append("--no-ask-password")
                     assert json.loads(calls.read_text()) == expected
                     press(ipc, "suspend")
                     wait_for(lambda: "is already pending" in log_text(tmp), "duplicate rejected")
-                    wait_for(lambda: "requested via systemctl" in log_text(tmp), "command reaped by SIGCHLD")
+                    wait_for(lambda: f"requested via {tool}" in log_text(tmp), "command reaped by SIGCHLD")
                     assert len(calls.read_text().splitlines()) == 1
+                    assert not (tmp / f"{other}-calls.jsonl").exists()
                     assert process.poll() is None, log_text(tmp)
                     assert "terminating compositor session" not in log_text(tmp)
                     assert "requested via logind" not in log_text(tmp)
             finally:
                 stop_process(process)
                 log.close()
-    print("power: poweroff/reboot use systemctl directly, without force flags or early logout")
+    print(f"power: poweroff/reboot use {tool} directly, without force flags or early logout")
+
+
+def test_power_commands_without_systemd():
+    """Reruns test_power_commands with /run/systemd hidden, where it must use
+    loginctl. The test client shares the compositor's user namespace: the IPC
+    server treats a peer whose /proc it can't read as sandboxed."""
+    if not Path("/run/systemd/system").is_dir():
+        return  # test_power_commands already used loginctl
+    try:
+        usable = subprocess.run(without_systemd(["true"]), stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL).returncode == 0
+    except FileNotFoundError:
+        usable = False
+    if not usable:
+        print("power: SKIP loginctl commands (cannot hide /run/systemd in a user namespace)")
+        return
+    subprocess.run(without_systemd([sys.executable, __file__, "--power-commands"]), check=True)
 
 
 def test_systemctl_failure_and_retry():
@@ -1172,6 +1205,9 @@ def test_logind_lock_and_locked_hint(system_bus_address):
 
 
 def main():
+    if sys.argv[1:] == ["--power-commands"]:
+        test_power_commands()
+        return
     if "--private" not in sys.argv:
         sys.exit(subprocess.call(["dbus-run-session", "--", sys.executable, __file__, "--private"]))
     system_bus_address = os.environ["DBUS_SESSION_BUS_ADDRESS"]
@@ -1179,7 +1215,8 @@ def main():
     test_lid_inhibitor_late_reply_and_denial(system_bus_address)
     test_lock_on_suspend(system_bus_address)
     test_logind_lock_and_locked_hint(system_bus_address)
-    test_systemctl_power_commands()
+    test_power_commands()
+    test_power_commands_without_systemd()
     test_systemctl_failure_and_retry()
     test_systemctl_missing()
     test_normal_request_calls_with_flags_and_checks_inhibitors(system_bus_address)

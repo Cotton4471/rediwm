@@ -21,6 +21,7 @@ const anim = @import("ui").anim;
 const greeter_mod = @import("greeter.zig");
 const ClientLock = @import("client_lock.zig").ClientLock;
 const lock_controls = @import("lock_controls.zig");
+const power_cmd = @import("power.zig");
 const Controls = lock_controls.Controls;
 const CaretOverlay = @import("../caret_overlay.zig").CaretOverlay;
 const Greeter = greeter_mod.Greeter;
@@ -644,10 +645,11 @@ pub const Lock = struct {
                     return;
                 }
                 self.confirm = null;
-                // systemctl delegates to logind/polkit; no privileged syscall or
-                // shell interpolation. Never request an interactive auth agent
-                // behind the locked screen.
-                var child = std.process.spawn(self.server.io, .{ .argv = &.{ "systemctl", if (reboot) "reboot" else "poweroff", "--no-ask-password", "--no-block" } }) catch {
+                // systemctl/loginctl delegate to logind/polkit; no privileged
+                // syscall or shell interpolation. Never request an interactive
+                // auth agent behind the locked screen.
+                var argv: [4][]const u8 = undefined;
+                var child = std.process.spawn(self.server.io, .{ .argv = power_cmd.commandArgv(&argv, if (reboot) .reboot else .poweroff, false, true) }) catch {
                     self.status = "Power service unavailable";
                     return;
                 };

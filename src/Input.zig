@@ -27,6 +27,7 @@ const snap = @import("snap.zig");
 const scene_data = @import("scene_data.zig");
 const CursorSerial = @import("input/cursor_serial.zig");
 const ClientWheel = @import("input/client_wheel.zig");
+const WheelDebounce = @import("input/wheel_debounce.zig");
 const PointerConstraints = @import("input/pointer_constraints.zig");
 const ShortcutsInhibit = @import("input/shortcuts_inhibit.zig");
 const Touch = @import("input/touch.zig");
@@ -149,6 +150,9 @@ cursor_button: wl.Listener(*wlr.Pointer.event.Button) = .init(cursorButton),
 cursor_axis: wl.Listener(*wlr.Pointer.event.Axis) = .init(cursorAxis),
 /// Acceleration and optional smoothing for wheel notches sent to clients.
 client_wheel: ClientWheel = .{},
+/// Drops stray clicks from bouncing wheel encoders, per axis, before anything
+/// sees them.
+wheel_debounce: [2]WheelDebounce = .{ .{}, .{} },
 cursor_frame: wl.Listener(*wlr.Cursor) = .init(cursorFrame),
 
 cursor_swipe_begin: wl.Listener(*wlr.Pointer.event.SwipeBegin) = .init(cursorSwipeBegin),
@@ -2336,9 +2340,20 @@ fn cursorAxis(
 ) void {
     const input: *Input = @fieldParentPtr("cursor_axis", listener);
     if (input.blockedVirtual(event.device)) return;
-    if (input.zoom_device != event.device) input.zoom_scroll.reset();
+    if (input.zoom_device != event.device) {
+        input.zoom_scroll.reset();
+        input.wheel_debounce = .{ .{}, .{} };
+    }
     input.zoom_device = event.device;
-    input.processAxis(event.time_msec, event.orientation, event.delta, event.delta_discrete, event.source);
+    var delta = event.delta;
+    var delta_discrete = event.delta_discrete;
+    if (event.source == .wheel and delta_discrete != 0) {
+        const debounce = &input.wheel_debounce[@intCast(@intFromEnum(event.orientation))];
+        const notch = debounce.feed(event.time_msec, delta, delta_discrete, input.server.config.input.wheel_debounce_ms) orelse return;
+        delta = notch.delta;
+        delta_discrete = notch.discrete;
+    }
+    input.processAxis(event.time_msec, event.orientation, delta, delta_discrete, event.source);
 }
 
 pub fn processAxis(

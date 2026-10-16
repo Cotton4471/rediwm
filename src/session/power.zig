@@ -1,4 +1,5 @@
-//! Poweroff/reboot through systemctl (like DMS); suspend through logind.
+//! Poweroff/reboot through systemctl (like DMS), or loginctl where systemd is
+//! not init (elogind, e.g. Artix); suspend through logind.
 //! Capability probes and preparation signals still use the system bus.
 //! Requests run as the logged-in user, with normal authorization and inhibitor
 //! checks. Automatic power commands use --no-ask-password. Suspend uses
@@ -100,6 +101,27 @@ pub const Request = struct {
     interactive: bool,
 };
 
+/// The poweroff/reboot command line, written into `buf`. systemctl needs
+/// systemd as init (sd_booted's `/run/systemd/system` test); elogind systems
+/// have these verbs in loginctl, which only asks logind and never waits for
+/// the job, so it has no --no-block.
+pub fn commandArgv(buf: *[4][]const u8, kind: Kind, ask_password: bool, no_block: bool) []const []const u8 {
+    std.debug.assert(kind != .@"suspend");
+    const systemd = std.posix.system.access("/run/systemd/system", std.posix.F_OK) == 0;
+    buf[0] = if (systemd) "systemctl" else "loginctl";
+    buf[1] = @tagName(kind);
+    var len: usize = 2;
+    if (!ask_password) {
+        buf[len] = "--no-ask-password";
+        len += 1;
+    }
+    if (no_block and systemd) {
+        buf[len] = "--no-block";
+        len += 1;
+    }
+    return buf[0..len];
+}
+
 /// Only one request may be in flight; a second action while one is
 /// pending is reported and dropped rather than queued. There is no automatic
 /// retry after a lost connection — the next explicit user action reconnects.
@@ -120,6 +142,8 @@ pub const Manager = struct {
     want_probe: bool = false,
     pending: ?Request = null,
     command_child: ?*Child = null,
+    /// argv[0] of `command_child`, for its log lines.
+    command_tool: []const u8 = "",
     closing: bool = false,
     lid_fd: ?std.posix.fd_t = null,
     lid_pending: bool = false,
@@ -575,22 +599,20 @@ pub const Manager = struct {
     }
 
     fn startCommand(self: *Manager, req: Request) void {
-        const action = if (req.kind == .reboot) "reboot" else "poweroff";
-        const argv: []const []const u8 = if (req.interactive)
-            &.{ "systemctl", action }
-        else
-            &.{ "systemctl", action, "--no-ask-password" };
+        var buf: [4][]const u8 = undefined;
+        const argv = commandArgv(&buf, req.kind, req.interactive, false);
         var child = std.process.spawn(self.server.io, .{
             .argv = argv,
             .stdin = .ignore,
             .stdout = .ignore,
-            // Preserve systemctl's detailed refusal/inhibitor reason in the
+            // Preserve the tool's detailed refusal/inhibitor reason in the
             // session log. Completion is delivered by the pidfd watcher.
         }) catch |err| {
             self.pending = null;
             self.failed(req.kind, "Could not start the power command.", err);
             return;
         };
+        self.command_tool = argv[0];
         self.command_child = Child.watch(self.allocator, self.server.wl_server.getEventLoop(), child.id.?, self, commandExited) catch |err| {
             child.kill(self.server.io);
             self.pending = null;
@@ -605,9 +627,9 @@ pub const Manager = struct {
         const req = self.pending orelse return;
         self.pending = null;
         if (status != null and status.? == 0) {
-            log.info("{s} requested via systemctl", .{req.kind.label()});
+            log.info("{s} requested via {s}", .{ req.kind.label(), self.command_tool });
         } else {
-            log.warn("{s}: systemctl failed (wait status {?d})", .{ req.kind.label(), status });
+            log.warn("{s}: {s} failed (wait status {?d})", .{ req.kind.label(), self.command_tool, status });
             self.report(req.kind, "Power request failed. Check permissions and applications blocking shutdown.");
         }
     }

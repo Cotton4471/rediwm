@@ -12,6 +12,13 @@
   libraries don't match, `unresolved_libs` (missing libs or too-new glibc
   symbol versions) or a failed package install falls back to a source build.
   A checksum mismatch never falls back: it dies.
+* **Derivatives are matched by name when `os-release` doesn't say:** Artix has
+  no `ID_LIKE`. Artix also has no systemd, so `pkg_install` maps the
+  release's `systemd-libs` to `libudev`; otherwise pacman satisfies it with
+  `artix-archlinux-support`, a dummy that enables the Arch repositories.
+  `make-release.sh` verifies the Arch tarball on Artix and CachyOS too
+  (`derivatives_of`); their pacman hooks print errors under rootless podman
+  (no network sandbox, no systemd), which are harmless.
 * **`DEPENDS` is generated from the built binaries' `NEEDED` libraries**
   (`release-build.sh`), never hand-kept; only the extras (Xwayland, portals,
   Python, Mesa drivers) are listed by hand. Libraries bundled in `lib/rediwm`
