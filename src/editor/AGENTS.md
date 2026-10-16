@@ -3,8 +3,9 @@
 * **Never give Pango more than a few lines.** One layout of 1 MiB took 46 s
   (cost grows faster than the line count). `view.zig` lays out one *segment*
   at a time (`lines.zig`: a logical line, or a piece of one folded at `fold` =
-  16 KiB, cut after a nearby space) in a content-keyed cache (`Layouts`), so
-  edits need no invalidation. Pieces are a function of the line start alone,
+  2 KiB, cut after a nearby space) in a content-keyed cache (`Layouts`), so
+  edits need no invalidation. A scrollbar drag lays out a new piece per motion:
+  16 KiB pieces stuttered at 16–38 ms, 2 KiB take about 5 ms. Pieces are a function of the line start alone,
   so walking up or down finds the same ones; keep `lines.zig`'s property test
   green when touching it.
 * **Scroll is `Document.top` (a byte offset) plus `Tab.dy` pixels into that

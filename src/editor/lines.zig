@@ -8,8 +8,9 @@
 const std = @import("std");
 
 /// Longest piece of one line, in bytes, before it is folded onto another row.
-/// Laying out one paragraph this long costs a few milliseconds.
-pub const fold: usize = 16 * 1024;
+/// A scrollbar drag lands on unseen text at every motion, so each step lays out
+/// a new piece: 16 KiB cost 16 ms median (38 ms worst), 2 KiB about 5 ms.
+pub const fold: usize = 2 * 1024;
 /// How far before the nominal cut a space may be looked for.
 const soft_limit: usize = 256;
 
