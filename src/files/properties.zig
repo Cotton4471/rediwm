@@ -1,6 +1,7 @@
 //! A snapshot of one file, owned independently of directory refreshes.
 const std = @import("std");
 const c = @import("c.zig").api;
+const mime_db = @import("../mime_db.zig");
 const ui = @import("ui").cairo;
 const theme = @import("ui").theme;
 const scrollbar = @import("ui").widgets.scrollbar;
@@ -12,10 +13,6 @@ const icons = @import("../icon_cache.zig");
 const icon_theme = @import("../icon_theme.zig");
 const Rect = ui.Rect;
 const centeredTextX = @import("ui").paint.centeredTextX;
-
-extern fn g_content_type_guess(filename: [*:0]const u8, data: ?[*]const u8, size: usize, uncertain: ?*c_int) ?[*:0]u8;
-extern fn g_content_type_get_description(content_type: [*:0]const u8) ?[*:0]u8;
-extern fn g_free(memory: ?*anyopaque) void;
 
 pub const Action = enum { none, close, open };
 fn contentShift() f32 {
@@ -275,11 +272,7 @@ fn describe(a: std.mem.Allocator, path: [:0]const u8, mode: c.mode_t) ![]const u
         else => null,
     };
     if (simple) |label| return a.dupe(u8, label);
-    const kind = g_content_type_guess(path, null, 0, null) orelse return a.dupe(u8, "File");
-    defer g_free(kind);
-    const description = g_content_type_get_description(kind) orelse return a.dupe(u8, "File");
-    defer g_free(description);
-    return a.dupe(u8, std.mem.span(description));
+    return mime_db.description(a, mime_db.guess(path));
 }
 
 fn contains(rect: Rect, x: f32, y: f32) bool {

@@ -14,7 +14,8 @@ store of its own.
 Both ends of the system already speak GIO and `~/.config/mimeapps.list`:
 
 * **Files** resolves a double-click with `associations.launchDefault`
-  (`g_app_info_get_default_for_type`), shows icons from the same lookup, and
+  (`g_app_info_get_default_for_type`, the content type itself comes from
+  `src/mime_db.zig` since 2026-10-16), shows icons from the same lookup, and
   its Open With dialog (`open_with.zig`) lists `g_app_info_get_all_for_type`
   first, then every other app that takes files or URLs. Ticking "remember"
   calls `g_app_info_set_as_default_for_type`.

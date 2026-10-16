@@ -19,6 +19,23 @@ records are in `app_model.zig`, drawing helpers in `app_draw.zig`, tests in
 `app_tests.zig`. A new method goes in its group file plus an alias line in
 `App`; a file that calls a sibling's non-method helper imports it directly.
 
+## File types and associations
+
+* **Types come from `src/mime_db.zig`, not GIO.** It reads shared-mime-info
+  (`globs2`, `aliases`, `subclasses`, `icons`, `generic-icons`, the per-type XML
+  comments) from `$XDG_DATA_HOME` and `$XDG_DATA_DIRS`, by file name only.
+  Files, Properties, the chooser filters, Recent and the Editor share it. It
+  was checked against `g_content_type_*` over every glob of the installed
+  database: literal names beat suffix globs, which beat wildcard patterns
+  regardless of weight, and a `cs` glob repeated without the flag stays
+  case sensitive. Re-run that comparison before changing the matching order.
+  Returned strings live for the process (a changed `globs2` is picked up at
+  most every 5 s by swapping in a new copy; the old one is retired, not freed).
+* **Applications and defaults stay on GIO** (`associations.zig`: default app,
+  Open With, `mimeapps.list`, launching), so `xdg-open`, browsers and portals
+  agree with Files. Only the content type is ours; GIO calls take it as a
+  C string through `TypeZ`.
+
 ## Git
 
 `git.zig` never runs a repository's own programs: a folder's `.git` arrives

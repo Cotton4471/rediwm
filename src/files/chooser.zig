@@ -1,11 +1,9 @@
 //! Shared contract between the portal backend and Files' chooser mode.
 const std = @import("std");
+const mime_db = @import("../mime_db.zig");
 const c = @cImport({
     @cInclude("fnmatch.h");
 });
-extern fn g_content_type_guess([*:0]const u8, ?[*]const u8, usize, ?*c_int) ?[*:0]u8;
-extern fn g_content_type_is_a([*:0]const u8, [*:0]const u8) c_int;
-extern fn g_free(?*anyopaque) void;
 
 pub const Mode = enum { open, save, folder };
 pub const Rule = struct { kind: u32, value: []const u8 };
@@ -40,9 +38,7 @@ pub fn matches(filter: Filter, name: []const u8) bool {
         if (rule.kind == 0) {
             if (c.fnmatch(pattern, zname, 0) == 0) return true;
         } else if (rule.kind == 1) {
-            const mime = g_content_type_guess(zname, null, 0, null) orelse continue;
-            defer g_free(mime);
-            if (g_content_type_is_a(mime, pattern) != 0) return true;
+            if (mime_db.isA(mime_db.guess(name), rule.value)) return true;
         }
     }
     return false;

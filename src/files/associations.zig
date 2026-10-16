@@ -1,12 +1,13 @@
-//! MIME icons and application associations through the system GIO database.
+//! MIME icons and application associations. File types and their icons come
+//! from `mime_db` (shared-mime-info read directly); applications and defaults
+//! go through the system GIO database so every other program agrees.
 //! Icon candidates run on the directory worker; application snapshots belong
 //! to the Open With dialog. Neither owns the UI icon cache.
 const std = @import("std");
+const mime_db = @import("../mime_db.zig");
 const Allocator = std.mem.Allocator;
 
 // GLib headers cannot be translated by Zig; declare the stable GIO ABI only.
-extern fn g_content_type_guess(filename: [*:0]const u8, data: ?[*]const u8, size: usize, uncertain: ?*c_int) ?[*:0]u8;
-extern fn g_content_type_get_icon(content_type: [*:0]const u8) ?*anyopaque;
 extern fn g_app_info_get_default_for_type(content_type: [*:0]const u8, must_support_uris: c_int) ?*anyopaque;
 extern fn g_app_info_get_icon(app: *anyopaque) ?*anyopaque;
 extern fn g_themed_icon_get_type() usize;
@@ -26,26 +27,53 @@ pub const Resolver = struct {
     pub fn candidates(self: *Resolver, filename: [:0]const u8) ![]const []const u8 {
         // Filename globs come from shared-mime-info, including app-installed
         // types such as OpenSCAD. Never read arbitrary file contents here.
-        const content_type = g_content_type_guess(filename, null, 0, null) orelse return &.{};
-        defer g_free(content_type);
-        const key = std.mem.span(content_type);
+        const key = mime_db.guess(filename);
         if (self.by_type.get(key)) |cached| return cached;
         var names: std.ArrayList([]const u8) = .empty;
-        const mime_icon = g_content_type_get_icon(content_type);
-        defer if (mime_icon) |icon| g_object_unref(icon);
+        var buffer: mime_db.IconBuffer = .{};
+        const mime_icons = mime_db.iconNames(key, &buffer);
         // A specific file icon wins. A plain document fallback must not hide
         // the icon of the user's associated application.
-        if (mime_icon) |icon| try appendIcon(self.allocator, &names, icon, true);
-        if (g_app_info_get_default_for_type(content_type, 0)) |app| {
+        try appendMimeIcons(self.allocator, &names, mime_icons, true);
+        var type_z: TypeZ = undefined;
+        if (type_z.set(key)) |content_type| if (g_app_info_get_default_for_type(content_type, 0)) |app| {
             defer g_object_unref(app);
             if (g_app_info_get_icon(app)) |icon| try appendIcon(self.allocator, &names, icon, false);
-        }
-        if (mime_icon) |icon| try appendIcon(self.allocator, &names, icon, false);
+        };
+        try appendMimeIcons(self.allocator, &names, mime_icons, false);
         const result = try names.toOwnedSlice(self.allocator);
         try self.by_type.put(self.allocator, try self.allocator.dupe(u8, key), result);
         return result;
     }
 };
+
+/// A MIME type as a C string for GIO calls; types longer than the buffer
+/// cannot be real and simply have no application lookup.
+const TypeZ = struct {
+    buf: [256]u8,
+
+    fn set(self: *TypeZ, mime: []const u8) ?[*:0]const u8 {
+        if (mime.len >= self.buf.len) return null;
+        @memcpy(self.buf[0..mime.len], mime);
+        self.buf[mime.len] = 0;
+        return @ptrCast(&self.buf);
+    }
+};
+
+/// The names a themed GIO icon for the type would carry: each name, then each
+/// again with a "-symbolic" suffix as a last resort.
+fn appendMimeIcons(a: Allocator, names: *std.ArrayList([]const u8), mime_icons: []const []const u8, specific_only: bool) !void {
+    for (mime_icons) |name| {
+        if (specific_only and genericDocument(name)) continue;
+        try appendName(a, names, name);
+    }
+    for (mime_icons) |name| {
+        if (specific_only and genericDocument(name)) continue;
+        const symbolic = try std.fmt.allocPrint(a, "{s}-symbolic", .{name});
+        defer a.free(symbolic);
+        try appendName(a, names, symbolic);
+    }
+}
 
 fn appendIcon(a: Allocator, names: *std.ArrayList([]const u8), icon: *anyopaque, specific_only: bool) !void {
     if (g_type_check_instance_is_a(icon, g_themed_icon_get_type()) != 0) {
@@ -94,7 +122,6 @@ extern fn g_app_info_get_display_name(app: *anyopaque) [*:0]const u8;
 extern fn g_app_info_supports_files(app: *anyopaque) c_int;
 extern fn g_app_info_supports_uris(app: *anyopaque) c_int;
 extern fn g_app_info_set_as_default_for_type(app: *anyopaque, content_type: [*:0]const u8, err: ?*?*anyopaque) c_int;
-extern fn g_content_type_equals(a: [*:0]const u8, b: [*:0]const u8) c_int;
 extern fn g_get_user_config_dir() [*:0]const u8;
 extern fn g_key_file_new() *anyopaque;
 extern fn g_key_file_unref(key_file: *anyopaque) void;
@@ -127,9 +154,8 @@ pub const Applications = struct {
         const owned = try a.alloc([:0]const u8, paths.len);
         for (paths, 0..) |path, i| {
             owned[i] = try a.dupeZ(u8, path);
-            const kind = g_content_type_guess(owned[i], null, 0, null) orelse return error.UnknownContentType;
-            defer g_free(kind);
-            if (i == 0) self.content_type = try a.dupeZ(u8, std.mem.span(kind)) else if (!std.mem.eql(u8, self.content_type, std.mem.span(kind))) self.same_type = false;
+            const kind = mime_db.guess(owned[i]);
+            if (i == 0) self.content_type = try a.dupeZ(u8, kind) else if (!std.mem.eql(u8, self.content_type, kind)) self.same_type = false;
         }
         self.paths = owned;
         const default = if (self.same_type) g_app_info_get_default_for_type(self.content_type, 0) else null;
@@ -192,7 +218,7 @@ pub const Applications = struct {
                 var i: usize = 0;
                 while (keys[i]) |key| : (i += 1) {
                     if (std.mem.eql(u8, std.mem.span(key), self.content_type)) continue;
-                    if (g_content_type_equals(key, self.content_type) == 0) continue;
+                    if (!mime_db.equals(std.mem.span(key), self.content_type)) continue;
                     if (g_app_info_set_as_default_for_type(app, key, null) == 0) return error.DefaultFailed;
                 }
             }
@@ -223,9 +249,9 @@ extern fn g_app_info_get_id(app: *anyopaque) ?[*:0]const u8;
 pub fn launchDefault(path: []const u8) !void {
     const filename = try std.heap.c_allocator.dupeZ(u8, path);
     defer std.heap.c_allocator.free(filename);
-    const kind = g_content_type_guess(filename, null, 0, null) orelse return error.UnknownContentType;
-    defer g_free(kind);
-    const app = g_app_info_get_default_for_type(kind, 0) orelse return error.NoDefaultApplication;
+    var kind: TypeZ = undefined;
+    const content_type = kind.set(mime_db.guess(filename)) orelse return error.NoDefaultApplication;
+    const app = g_app_info_get_default_for_type(content_type, 0) orelse return error.NoDefaultApplication;
     defer g_object_unref(app);
     const file = g_file_new_for_path(filename);
     defer g_object_unref(file);
@@ -237,9 +263,9 @@ pub fn launchDefault(path: []const u8) !void {
 pub fn hasAlternativeDefault(path: []const u8, bundled_id: []const u8) bool {
     const filename = std.heap.c_allocator.dupeZ(u8, path) catch return false;
     defer std.heap.c_allocator.free(filename);
-    const kind = g_content_type_guess(filename, null, 0, null) orelse return false;
-    defer g_free(kind);
-    const app = g_app_info_get_default_for_type(kind, 0) orelse return false;
+    var kind: TypeZ = undefined;
+    const content_type = kind.set(mime_db.guess(filename)) orelse return false;
+    const app = g_app_info_get_default_for_type(content_type, 0) orelse return false;
     defer g_object_unref(app);
     const id = g_app_info_get_id(app) orelse return true;
     return !std.mem.eql(u8, std.mem.span(id), bundled_id);

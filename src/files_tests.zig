@@ -1088,6 +1088,7 @@ test "App clicking dash starts calculation without changing selection" {
 }
 
 test {
+    _ = @import("mime_db.zig");
     _ = @import("files/chooser.zig");
     _ = @import("config").portals;
     _ = @import("files/thumb_decode.zig");

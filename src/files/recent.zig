@@ -1,6 +1,7 @@
 //! The shared freedesktop recent-file history. All disk work runs on Files' worker.
 const std = @import("std");
 const clipboard = @import("clipboard.zig");
+const mime_db = @import("../mime_db.zig");
 const Allocator = std.mem.Allocator;
 
 pub const location = "recent:///";
@@ -24,8 +25,6 @@ extern fn g_bookmark_file_set_mime_type(bookmark: *anyopaque, uri: [*:0]const u8
 extern fn g_bookmark_file_add_application(bookmark: *anyopaque, uri: [*:0]const u8, name: [*:0]const u8, exec: [*:0]const u8) void;
 extern fn g_bookmark_file_to_data(bookmark: *anyopaque, length: *usize, err: ?*?*anyopaque) ?[*:0]u8;
 extern fn g_file_set_contents_full(filename: [*:0]const u8, data: [*]const u8, length: isize, flags: c_int, mode: c_int, err: ?*?*anyopaque) c_int;
-extern fn g_content_type_guess(filename: [*:0]const u8, data: ?[*]const u8, size: usize, uncertain: ?*c_int) ?[*:0]u8;
-extern fn g_content_type_get_mime_type(content_type: [*:0]const u8) ?[*:0]u8;
 extern fn g_strfreev(strings: [*:null]?[*:0]u8) void;
 extern fn g_free(memory: ?*anyopaque) void;
 
@@ -91,13 +90,9 @@ pub fn record(a: Allocator, io: std.Io, env: std.process.Environ, opened: []cons
     defer a.free(raw_uri);
     const uri = try a.dupeZ(u8, raw_uri);
     defer a.free(uri);
-    const zpath = try a.dupeZ(u8, opened);
-    defer a.free(zpath);
-    const content_type = g_content_type_guess(zpath, null, 0, null);
-    defer g_free(content_type);
-    const mime = if (content_type) |t| g_content_type_get_mime_type(t) else null;
-    defer g_free(mime);
-    g_bookmark_file_set_mime_type(bookmark, uri, mime orelse "application/octet-stream");
+    const mime = try a.dupeZ(u8, mime_db.guess(opened));
+    defer a.free(mime);
+    g_bookmark_file_set_mime_type(bookmark, uri, mime);
     g_bookmark_file_add_application(bookmark, uri, "RediWM Files", "rediwm-files %f");
     const now = g_date_time_new_now_utc();
     defer g_date_time_unref(now);

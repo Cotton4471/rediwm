@@ -243,7 +243,7 @@ pub fn build(b: *std.Build) void {
         .use_lld = use_llvm,
     });
     editor.root_module.addImport("wayland", wayland);
-    inline for (.{ "wayland-client", "wayland-cursor", "xkbcommon", "pangocairo", "gio-2.0" }) |lib| editor.root_module.linkSystemLibrary(lib, .{});
+    inline for (.{ "wayland-client", "wayland-cursor", "xkbcommon", "pangocairo" }) |lib| editor.root_module.linkSystemLibrary(lib, .{});
     const install_editor = b.addInstallArtifact(editor, .{});
     const editor_entry = b.addInstallFileWithDir(b.path("data/rediwm-editor.desktop"), .prefix, "share/applications/rediwm-editor.desktop");
     b.getInstallStep().dependOn(&install_editor.step);
@@ -646,7 +646,7 @@ pub fn build(b: *std.Build) void {
     lock_step.dependOn(&run_auth_tests.step);
     test_step.dependOn(&run_auth_tests.step);
     const editor_tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("src/editor_tests.zig"), .target = target, .optimize = optimize, .link_libc = true }) });
-    inline for (.{ "pangocairo", "gio-2.0", "xkbcommon" }) |lib| editor_tests.root_module.linkSystemLibrary(lib, .{});
+    inline for (.{ "pangocairo", "xkbcommon" }) |lib| editor_tests.root_module.linkSystemLibrary(lib, .{});
     const run_editor_tests = b.addRunArtifact(editor_tests);
     test_step.dependOn(&run_editor_tests.step);
     b.step("test-editor", "Test text document editing and saving").dependOn(&run_editor_tests.step);
