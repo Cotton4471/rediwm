@@ -39,6 +39,82 @@ def reset_theme(ipc):
     ipc.action("close_panel", {"panel": "control_center"})
 
 
+def cursor_bytes(images, file_extra=b"", image_extra=b""):
+    """Build Xcursor fixtures: nominal size, dimensions, hotspot, raw pixels."""
+    header_size = 16 + len(file_extra)
+    image_header_size = 36 + len(image_extra)
+    data = bytearray(struct.pack("<4I", 0x72756358, header_size, 0x10000, len(images)) + file_extra)
+    position = header_size + 12 * len(images)
+    for size, width, height, xhot, yhot, pixels in images:
+        data.extend(struct.pack("<3I", 0xfffd0002, size, position))
+        position += image_header_size + len(pixels)
+    for size, width, height, xhot, yhot, pixels in images:
+        data.extend(struct.pack("<9I", image_header_size, 0xfffd0002, size, 1,
+                                width, height, xhot, yhot, 20) + image_extra + pixels)
+    return bytes(data)
+
+
+CURSOR_FRAME = (256, 1, 1, 0, 0, b"\xff" * 4)
+CURSOR_OVERSIZED = (512, 513, 1, 0, 0, b"\xff" * (513 * 4))
+CURSOR_TRUNCATED = (512, 512, 512, 0, 0, b"")
+
+
+def cursor_validation(tmp, env):
+    pack = tmp / "cursor-validation"
+    shutil.copytree(FIXTURE, pack)
+    path = pack / "cursors/cursors/default"
+    path.parent.mkdir(parents=True)
+    valid = cursor_bytes([CURSOR_FRAME])
+
+    def changed(offset, value):
+        data = bytearray(valid)
+        struct.pack_into("<I", data, offset, value)
+        return bytes(data)
+
+    cases = {
+        "single": (valid, True),
+        "extensions": (cursor_bytes([CURSOR_FRAME], b"file", b"image header"), True),
+        # More than 256 images overall is valid: frames are counted per size.
+        "animations": (cursor_bytes([CURSOR_FRAME] * 256 + [(512, *CURSOR_FRAME[1:])] * 256), True),
+        "empty": (b"", False),
+        "no-images": (cursor_bytes([]), False),
+        "magic": (changed(0, 0), False),
+        "file-version": (changed(8, 0x20000), False),
+        "short-header": (changed(4, 15), False),
+        "long-header": (changed(4, 0xffffffff), False),
+        "toc-overflow": (changed(12, 0xffffffff), False),
+        "truncated-toc": (valid[:27], False),
+        "offset-in-toc": (changed(24, 16), False),
+        "offset-outside": (changed(24, 0xffffffff), False),
+        "short-chunk": (changed(28, 35), False),
+        "long-chunk": (changed(28, 0xffffffff), False),
+        "type-mismatch": (changed(32, 0), False),
+        "size-mismatch": (changed(36, 32), False),
+        "image-version": (changed(40, 0), False),
+        "zero-width": (changed(44, 0), False),
+        "zero-height": (changed(48, 0), False),
+        "huge-width": (changed(44, 0xffffffff), False),
+        "huge-height": (changed(48, 0xffffffff), False),
+        "hotspot-x": (changed(52, 1), False),
+        "hotspot-y": (changed(56, 1), False),
+        "truncated-pixels": (valid[:-1], False),
+        "oversized-unselected": (cursor_bytes([CURSOR_FRAME, CURSOR_OVERSIZED]), False),
+        "truncated-unselected": (cursor_bytes([CURSOR_FRAME, CURSOR_TRUNCATED]), False),
+        "too-many-unselected-frames": (cursor_bytes([CURSOR_FRAME] + [(512, *CURSOR_FRAME[1:])] * 257), False),
+    }
+    # A comment chunk is optional metadata and must not count as an image.
+    comment = struct.pack("<6I", 20, 0xfffe0001, 1, 1, 4, 0x74736574)
+    cases["comment"] = (struct.pack("<4I", 0x72756358, 16, 0x10000, 2)
+                        + struct.pack("<6I", 0xfffe0001, 1, 40, 0xfffd0002, 256, 64)
+                        + comment + valid[28:], True)
+    for name, (data, accepted) in cases.items():
+        path.write_bytes(data)
+        result = helper(env, "validate", pack, ok=accepted)
+        if not accepted:
+            assert "Xcursor" in result.stderr, (name, result.stderr)
+    shutil.rmtree(pack)
+
+
 def hostile_archives(tmp, env):
     manifest = (FIXTURE / "theme.toml").read_bytes()
     cases = {
@@ -53,6 +129,8 @@ def hostile_archives(tmp, env):
         "glyph-size": [("glyphs/wifi.svg", b"x" * (64 * 1024 + 1), None)],
         "format": [("theme.toml", b"[meta]\nformat = 2\n", None)],
         "cursor-alias": [("cursors/cursors/default", b"../outside", stat.S_IFLNK | 0o777)],
+        "cursor-oversized": [("cursors/cursors/default", cursor_bytes([CURSOR_FRAME, CURSOR_OVERSIZED]), None)],
+        "cursor-truncated": [("cursors/cursors/default", cursor_bytes([CURSOR_FRAME, CURSOR_TRUNCATED]), None)],
     }
     def chunk(tag, data):
         return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data))
@@ -95,6 +173,7 @@ def run():
         env.pop("REDIWM_THEME", None)
         env.pop("REDIWM_CONFIG", None)
         env.pop("REDIWM_SOCKET", None)
+        cursor_validation(tmp, env)
         hostile_archives(tmp, env)
         pack = tmp / "source"
         shutil.copytree(FIXTURE, pack)

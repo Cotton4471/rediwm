@@ -114,7 +114,6 @@ pub fn build(b: *std.Build) void {
     inline for (.{ "libarchive", "librsvg-2.0", "gdk-pixbuf-2.0" }) |lib| theme_helper.root_module.linkSystemLibrary(lib, .{});
     addThumbCodec(b, theme_helper.root_module);
     theme_helper.root_module.linkSystemLibrary("libwebp", .{});
-    theme_helper.root_module.linkSystemLibrary("xcursor", .{});
     b.installArtifact(theme_helper);
     b.getInstallStep().dependOn(&b.addInstallFileWithDir(b.path("data/rediwm-theme.desktop"), .prefix, "share/applications/rediwm-theme.desktop").step);
     b.getInstallStep().dependOn(&b.addInstallFileWithDir(b.path("data/rediwm-theme.xml"), .prefix, "share/mime/packages/rediwm-theme.xml").step);

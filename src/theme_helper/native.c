@@ -23,7 +23,6 @@
 #include <sys/syscall.h>
 #include <sys/wait.h>
 #include <sys/resource.h>
-#include <X11/Xcursor/Xcursor.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -172,17 +171,75 @@ static int png_stream_validate(const char *file,int *width,int *height) {
     for(int pass=0;pass<passes;pass++)for(int y=0;y<*height;y++)png_read_row(png,(png_bytep)row,NULL);
     png_read_end(png,NULL);free((void*)row);png_destroy_read_struct(&png,&info,NULL);fclose(input);return 1;
 }
+// Xcursor is little-endian: a file header, a TOC, then typed chunks.
+// Only metadata is needed here; validate every size, without loading pixels.
+static int cursor_words(FILE *input, uint64_t offset, uint32_t *words, size_t count) {
+    unsigned char bytes[36]; // Largest read: the nine-word image header.
+    if (count > sizeof(bytes)/4 || fseeko(input, (off_t)offset, SEEK_SET) != 0 ||
+        fread(bytes, 4, count, input) != count) return 0;
+    for (size_t i=0; i<count; i++) {
+        const unsigned char *p=bytes+4*i;
+        words[i]=(uint32_t)p[0] | (uint32_t)p[1]<<8 | (uint32_t)p[2]<<16 | (uint32_t)p[3]<<24;
+    }
+    return 1;
+}
+static int cursor_size_compare(const void *a, const void *b) {
+    uint32_t x=*(const uint32_t *)a, y=*(const uint32_t *)b;
+    return (x>y)-(x<y);
+}
+static int cursor_validate(const char *file) {
+    const uint32_t image_type=0xfffd0002;
+    FILE *input=fopen(file,"rb");
+    if (!input) return 0;
+    int valid=0;
+    uint32_t *sizes=NULL;
+    struct stat st;
+    uint32_t header[4];
+    if (fstat(fileno(input),&st)<0 || !S_ISREG(st.st_mode) || st.st_size<16 ||
+        (uint64_t)st.st_size>MAX_FILE || !cursor_words(input,0,header,4)) goto done;
+    uint64_t length=(uint64_t)st.st_size;
+    // Keep the format's extension headers, but reject incompatible major versions.
+    if (header[0]!=0x72756358 || header[1]<16 || header[1]>length ||
+        header[2]>>16!=1 || header[3]==0 || header[3]>65536 ||
+        header[3]>(length-header[1])/12) goto done;
+    uint64_t toc_end=header[1]+(uint64_t)header[3]*12;
+    sizes=malloc((size_t)header[3]*sizeof(*sizes));
+    if (!sizes) goto done;
+    size_t images=0;
+    for (uint32_t i=0; i<header[3]; i++) {
+        uint32_t toc[3], chunk[9];
+        if (!cursor_words(input,header[1]+(uint64_t)i*12,toc,3)) goto done;
+        uint64_t position=toc[2];
+        if (position<toc_end || position>length || length-position<16 ||
+            !cursor_words(input,position,chunk,4) || chunk[0]<16 ||
+            chunk[0]>length-position || chunk[1]!=toc[0] || chunk[2]!=toc[1]) goto done;
+        // Unknown chunk types (including comments) do not affect cursor images.
+        if (toc[0]!=image_type) continue;
+        if (chunk[0]<36 || chunk[2]==0 || chunk[3]==0 ||
+            !cursor_words(input,position,chunk,9)) goto done;
+        uint32_t width=chunk[4], height=chunk[5];
+        if (width==0 || height==0 || width>512 || height>512 ||
+            chunk[6]>=width || chunk[7]>=height ||
+            (uint64_t)width*height*4>length-position-chunk[0]) goto done;
+        sizes[images++]=toc[1];
+    }
+    if (images==0) goto done;
+    // The 256-frame limit applies independently to each nominal size.
+    qsort(sizes,images,sizeof(*sizes),cursor_size_compare);
+    size_t frames=1;
+    for (size_t i=1; i<images; i++) {
+        frames=sizes[i]==sizes[i-1]?frames+1:1;
+        if (frames>256) goto done;
+    }
+    valid=1;
+done:
+    free(sizes);
+    fclose(input);
+    return valid;
+}
 static int validate_file(const char *file,const char *rel,off_t bytes) {
     if(!strncmp(rel,"cursors/cursors/",16)) {
-        XcursorImages *images=XcursorFilenameLoadImages(file,256);
-        if(!images)return fail(rel,"invalid Xcursor file");
-        int valid=images->nimage>0&&images->nimage<=256;
-        for(int i=0;i<images->nimage&&valid;i++) {
-            XcursorImage *image=images->images[i];
-            valid=image&&image->width>0&&image->height>0&&image->width<=512&&image->height<=512&&image->xhot<image->width&&image->yhot<image->height;
-        }
-        XcursorImagesDestroy(images);
-        return valid?0:fail(rel,"invalid or oversized cursor images");
+        return cursor_validate(file)?0:fail(rel,"invalid or oversized Xcursor file");
     }
     if(suffix(rel,".svg")) {
         size_t limit=!strncmp(rel,"glyphs/",7)?65536:512*1024;

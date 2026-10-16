@@ -56,7 +56,7 @@ Installing never replaces your login manager
 Requirements: Zig 0.16, wlroots 0.20, and the development files for Wayland,
 wayland-protocols, xkbcommon, pixman, FreeType, HarfBuzz, Fontconfig,
 librsvg/GdkPixbuf, PangoCairo, libinput, PAM, libpulse, libpipewire-0.3, Poppler GLib,
-libseccomp, libarchive, libjpeg, libpng, libwebp and libXcursor. Optional:
+libseccomp, libarchive, libjpeg, libpng and libwebp. Optional:
 Xwayland, `foot`, `brightnessctl`, `gio`/`xdg-open`, `git` (optional).
 
 Run from a checkout, `scripts/install.sh` builds that checkout (dependencies,
