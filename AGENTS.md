@@ -4,7 +4,7 @@ Details that are easy to get wrong; read the section for what you touch.
 Tests: `TESTING.md`. Area notes are in an `AGENTS.md` beside the code; read
 the one for the directory you work in: `src/files`, `src/editor`,
 `src/desktop`, `src/input`, `src/control_center`, `src/ui`, `src/session`,
-`src/dm`, `src/accounts_helper`, `scripts`.
+`src/dm`, `src/accounts_helper`, `src/printing`, `scripts`.
 
 ## Working rules
 

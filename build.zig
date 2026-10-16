@@ -464,6 +464,23 @@ pub fn build(b: *std.Build) void {
     const run_ipc_tests = b.addRunArtifact(ipc_tests);
 
     const test_step = b.step("test", "Run the project unit tests");
+    const printing_tests = b.addTest(.{ .root_module = b.createModule(.{
+        .root_source_file = b.path("src/printing/tests.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    }) });
+    printing_tests.root_module.addImport("dbus", dbus_mod);
+    printing_tests.root_module.addImport("wayland", wayland);
+    printing_tests.root_module.linkSystemLibrary("wayland-server", .{});
+    const run_printing_tests = b.addRunArtifact(printing_tests);
+    test_step.dependOn(&run_printing_tests.step);
+    const printers_integration = b.addSystemCommand(&.{"python3"});
+    printers_integration.addFileArg(b.path("tests/printers.py"));
+    printers_integration.step.dependOn(b.getInstallStep());
+    const printers_step = b.step("test-printers", "Test printer diagnostics and private CUPS page lifecycle");
+    printers_step.dependOn(&run_printing_tests.step);
+    printers_step.dependOn(&printers_integration.step);
     // Dependency-module tests are not collected by the executable's test root.
     const shared_ui_tests = b.addTest(.{ .root_module = ui_mod });
     const shared_config_tests = b.addTest(.{ .root_module = config_mod });

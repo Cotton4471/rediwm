@@ -168,7 +168,12 @@ fn alignBoundary(bytes: []const u8, pos: usize) usize {
 pub fn deleteSelection(allocator: Allocator, widget: *Widget) !bool {
     switch (widget.kind) {
         .text_input => |*data| {
-            const range = data.selection() orelse return false;
+            const range = data.selection() orelse {
+                // Select All on an empty field leaves a collapsed anchor. It
+                // must not become a selection of the next inserted character.
+                data.selection_anchor = null;
+                return false;
+            };
             try removeRange(allocator, widget, range.start, range.end);
             widget.kind.text_input.cursor_pos = range.start;
             widget.kind.text_input.selection_anchor = null;
@@ -374,6 +379,13 @@ test "typing and deleting replace the selection" {
     // With nothing selected it is an ordinary backspace again.
     try backspace(allocator, w);
     try std.testing.expectEqualStrings("goodby", field.data().value);
+
+    try clear(allocator, w);
+    selectAll(w);
+    try insertText(allocator, w, "7");
+    try insertText(allocator, w, "5");
+    try std.testing.expectEqualStrings("75", field.data().value);
+    try std.testing.expect(field.data().selection_anchor == null);
 }
 
 test "double click selects the word under the point, or everything in a gap" {

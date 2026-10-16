@@ -31,6 +31,7 @@ const portal_section = @import("sections/portals.zig");
 const desktop_section = @import("sections/desktop.zig");
 const input_section = @import("sections/input.zig");
 const services_section = @import("sections/services.zig");
+const printers_section = @import("sections/printers.zig");
 const systemd = @import("../systemd.zig");
 const users_section = @import("sections/users.zig");
 const bluetooth_section = @import("sections/bluetooth.zig");
@@ -47,18 +48,19 @@ const default_height = 640;
 // .glass-strong uses shared CSS palette and --r-lg.
 const theme = @import("ui").theme;
 
-pub const Page = enum { general, input, displays, audio, network, appearance, shortcuts, desktop, bluetooth, region, users, services };
-const page_labels = [_][]const u8{ "General", "Input", "Displays", "Audio", "Network", "Appearance", "Keyboard Shortcuts", "Desktop", "Bluetooth", "Region & Language", "Users", "Services" };
-const page_names = [_][]const u8{ "general", "input", "displays", "audio", "network", "appearance", "shortcuts", "desktop", "bluetooth", "region", "users", "services" };
+pub const Page = enum { general, input, displays, audio, network, appearance, shortcuts, desktop, bluetooth, region, users, printers, services };
+const page_labels = [_][]const u8{ "General", "Input", "Displays", "Audio", "Network", "Appearance", "Keyboard Shortcuts", "Desktop", "Bluetooth", "Region & Language", "Users", "Printers", "Services" };
+const page_names = [_][]const u8{ "general", "input", "displays", "audio", "network", "appearance", "shortcuts", "desktop", "bluetooth", "region", "users", "printers", "services" };
 const page_descriptions = [_][]const u8{
     "Everyday controls, all in one place.",                "Make your mouse and keyboard feel right.",
     "Arrangement, resolution, refresh rate and scaling.",  "Volume, microphones and output devices.",
     "Wired and wireless connections.",                     "Make your desktop your own.",
     "Choose the keys for your everyday actions.",          "Configure your desktop canvas and panning area.",
     "Connect and manage your Bluetooth devices.",          "Your language, regional formats and calendar preferences.",
-    "Review login accounts and automatic-login settings.", "Manage and analyze systemd services.",
+    "Review login accounts and automatic-login settings.", "Printer status, jobs and connection diagnostics.",
+    "Manage and analyze systemd services.",
 };
-const page_icons = [_]layout.IconId{ .settings, .mouse, .display, .music, .wifi, .settings, .keyboard, .squares, .bluetooth, .globe, .users, .settings };
+const page_icons = [_]layout.IconId{ .settings, .mouse, .display, .music, .wifi, .settings, .keyboard, .squares, .bluetooth, .globe, .users, .print, .settings };
 const max_devices = 16;
 
 pub fn palette() theme.Theme {
@@ -218,6 +220,7 @@ pub const ControlCenter = struct {
     network: network_section.Section = .{},
     bluetooth: bluetooth_section.Section = .{},
     services: services_section.Section = .{},
+    printers: printers_section.Section = .{},
     systemd_client: ?*systemd.Client = null,
 
     pub const min_width = 420;
@@ -311,6 +314,7 @@ pub const ControlCenter = struct {
         if (cc.systemd_client) |client| client.detachSettings();
         cc.welcome.deinit();
         cc.services.deinit();
+        cc.printers.deinit();
         cc.network.deinit();
         if (cc.page == .bluetooth) if (cc.server.bluetooth) |m| m.closed();
         cc.bluetooth.deinit();
@@ -434,6 +438,7 @@ pub const ControlCenter = struct {
         cc.services.capture();
         if (cc.page == .bluetooth and cc.built_page == .bluetooth) cc.bluetooth.capture();
         if (cc.page == .network and cc.built_page == .network) cc.network.captureFocus();
+        if (cc.page == .printers and cc.built_page == .printers) cc.printers.capture();
         if (cc.page == .appearance) appearance_section.captureItemFocus(&cc.appearance);
         ui.input.reset();
         const has_services = if (cc.systemd_client) |client| client.available() else false;
@@ -507,6 +512,10 @@ pub const ControlCenter = struct {
             .services => {
                 services_section.build(&cc.services, cc);
                 cc.append(cc.services.root);
+            },
+            .printers => {
+                printers_section.build(&cc.printers, cc);
+                cc.append(cc.printers.root);
             },
             .shortcuts => {
                 shortcut_section.build(&cc.shortcuts, cc);
@@ -694,6 +703,7 @@ pub const ControlCenter = struct {
         cc.shortcuts.cancel();
         // The service list is only kept live while its page is on screen.
         if (cc.page == .services and page != .services) if (cc.systemd_client) |client| client.hide();
+        if (cc.page == .printers and page != .printers) cc.printers.hide();
         if (cc.page == .network and page != .network) cc.network.clearForm();
         if (cc.page == .bluetooth and page != .bluetooth) {
             if (cc.server.bluetooth) |m| m.closed();
@@ -705,11 +715,11 @@ pub const ControlCenter = struct {
             if (cc.panel_box.width == default_width) _ = cc.toplevel.requestSize(1120, cc.panel_box.height);
             if (cc.server.bluetooth) |m| m.opened() else cc.server.bluetooth = @import("../bluetooth.zig").Manager.create(cc.server) catch null;
         }
-        if (page == .network) {
+        if (page == .network or page == .printers) {
             // Start wide enough for the two columns; narrower resized windows
             // stack them and keep the same controls accessible.
             if (cc.panel_box.width == default_width) _ = cc.toplevel.requestSize(1120, cc.panel_box.height);
-            if (cc.server.network) |manager| manager.opened();
+            if (page == .network) if (cc.server.network) |manager| manager.opened();
         }
         if (cc.panel_box.width < cc.minimumWidth() or cc.panel_box.height < cc.minimumHeight()) {
             _ = cc.toplevel.requestSize(@max(cc.panel_box.width, cc.minimumWidth()), @max(cc.panel_box.height, cc.minimumHeight()));
@@ -739,7 +749,7 @@ pub const ControlCenter = struct {
 
     /// Route select keys before panel-level Escape. Tab cycles display fields.
     pub fn selectKey(cc: *ControlCenter, key: ui.input.Key, shift: bool) bool {
-        if (cc.page != .displays and cc.page != .appearance and cc.page != .desktop and cc.page != .general and cc.page != .users and cc.page != .services and cc.page != .network and cc.page != .bluetooth and cc.page != .region) return false;
+        if (cc.page != .displays and cc.page != .appearance and cc.page != .desktop and cc.page != .general and cc.page != .users and cc.page != .services and cc.page != .printers and cc.page != .network and cc.page != .bluetooth and cc.page != .region) return false;
         const dispatcher = &ui.input.current;
         if (cc.page == .appearance) {
             if (appearance_section.itemKey(&cc.appearance, key)) return true;
@@ -756,7 +766,7 @@ pub const ControlCenter = struct {
                 }
             }
         }
-        if (cc.is_welcome or cc.page == .users or cc.page == .services or cc.page == .network or cc.page == .bluetooth or cc.page == .region) {
+        if (cc.is_welcome or cc.page == .users or cc.page == .services or cc.page == .printers or cc.page == .network or cc.page == .bluetooth or cc.page == .region) {
             const focused = dispatcher.focused;
             if (cc.page == .bluetooth and bluetooth_section.key(cc, key)) return true;
             if (cc.page == .network and (focused == null or focused.?.kind != .select or !focused.?.kind.select.open)) {
@@ -992,6 +1002,7 @@ pub const ControlCenter = struct {
         if (cc.page == .appearance) appearance_section.restoreItemFocus(&cc.appearance);
         if (cc.page == .network) network_section.restoreFocus(&cc.network, cc);
         if (cc.page == .bluetooth) bluetooth_section.restoreFocus(&cc.bluetooth, cc);
+        if (cc.page == .printers) cc.printers.restoreFocus(cc);
         cc.dirty = true;
     }
 
@@ -1006,6 +1017,7 @@ pub const ControlCenter = struct {
             .desktop => &.{760},
             .bluetooth => &.{ 900, 1000 },
             .network => &.{1000},
+            .printers => &.{1050},
             .region => &.{900},
             .services => &.{ 660, 752, 928, 1040 },
             else => &.{},

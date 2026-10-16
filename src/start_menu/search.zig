@@ -30,7 +30,7 @@ pub const settings_description = "System preferences, display, appearance and in
 pub const loading_id = "rediwm.loading";
 pub const loading_name = "Loading applications…";
 pub const loading_description = "Scanning installed apps";
-const settings_keywords = "settings;control;panel;preferences;display;appearance;mouse;keyboard";
+const settings_keywords = "settings;control;panel;preferences;display;appearance;mouse;keyboard;printer;printers;printing";
 
 pub fn search(
     allocator: Allocator,

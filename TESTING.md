@@ -30,6 +30,47 @@ Build first (`zig build`). Integration tests need Python 3 with Pillow, a C
 compiler, `wayland-scanner` and wayland-protocols; D-Bus suites need PyGObject,
 `dbus-run-session` and `busctl`. Some need extra tools, listed below.
 
+`zig build test-printers` runs the printing unit suite and
+`tests/printers.py` against the real headless Settings page. It needs the regular
+integration dependencies above, `wl-paste` (`wl-clipboard`), PyGObject/Gio/GLib,
+`dbus-daemon`, and a C compiler capable of a small shared `LD_PRELOAD` fixture.
+It does not require installed CUPS, cups-pk-helper or a printer.
+
+```sh
+zig build test-printers
+REDIWM_TEST_SCALE=1.5 zig build test-printers
+zig build test-printers -Doptimize=ReleaseSafe
+```
+
+The unit suite covers bounded IPP/HTTP, full identities, URI validation and
+matching, sysfs/node evidence, ladder/report privacy, PPD options/dimensions,
+PDFs and language samples, resolution suggestions, preserving defaults/private
+observations, socket-directory watches, notifier credentials and active DNS
+cancellation. Temporary loopback sockets and fixture trees never use a host
+scheduler or USB node.
+
+The integration uses private Unix/TCP schedulers, a private D-Bus helper/service
+manager, and temporary home/XDG directories. For administrative tests a
+noninstalled connect shim redirects only `/run/cups/cups.sock` and its `/var/run`
+alias to the private scheduler; this exercises the production canonical-server
+gate without a compositor test hook. All confirmed PDF/raw/ruler documents end
+in fixture memory. Coverage includes listing/jobs and denial, stopped/empty
+queues, malformed replies and deadlines, responsive IPC/cancel-on-hide, reports,
+remote-read/local-admin isolation, forged notifier rejection, setup/driver
+choices, options/defaults, named rename/removal confirmations, collision/job
+guards, preference migration and idle/hidden/closed lifetime.
+
+The independent [CUPS qualification matrix](docs/plans/printers-qualification.md)
+records actual helper ABI, subscription leases/cancellation and raw bytes through
+synthetic PPD queues in four disposable distro containers. It also records real
+helper rename and option semantics, including IPP/PPD discrepancies that the
+synthetic UI fixture cannot establish. Those commands are separate from the
+normal test target. Real USB/backend printing, physical ruler measurements,
+stock desktop polkit/notifier behavior, application/portal visibility and
+openSUSE qualification remain acceptance gates in the
+[Printers plan](docs/plans/printers.md). No automated test may contact the host
+scheduler, change a host queue/service or print to real hardware.
+
 ### Common knobs
 
 - Run from a shell with `umask 077`: suites that create their own runtime

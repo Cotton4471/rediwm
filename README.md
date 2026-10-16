@@ -59,6 +59,12 @@ librsvg/GdkPixbuf, PangoCairo, libinput, PAM, libpulse, libpipewire-0.3, Poppler
 libseccomp, libarchive, libjpeg, libpng and libwebp. Optional:
 Xwayland, `foot`, `brightnessctl`, `gio`/`xdg-open`, `git` (optional).
 
+Printer support uses an existing CUPS server (`cups`). Installing the optional
+`cups-pk-helper` package enables authorized setup and configuration from
+Settings → Printers; viewing status and submitting ordinary user jobs do not
+require that helper. These are optional runtime packages, not compositor build
+dependencies. RediWM does not install printer drivers or change USB rules.
+
 Run from a checkout, `scripts/install.sh` builds that checkout (dependencies,
 then `install-session.sh` with the arguments you give it).
 

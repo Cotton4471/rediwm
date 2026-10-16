@@ -38,3 +38,17 @@ Settings is an ordinary window with a compositor-drawn body (`Backend.shell`).
   their state (audio: General and Audio), and wallpaper thumbnails go straight
   into their tile (`stripWake`). The nav highlights damage the rows they cross,
   not the list.
+* **Printers owns its worker only while the page is selected.** `printers.build`
+  starts it lazily; `selectPage` and destruction call `hide`. Socket requests
+  have an absolute deadline and are interrupted through the worker eventfd
+  before joining. USB uevents coalesce into a rescan; no idle timer queries
+  CUPS. State snapshots cross under a mutex; widget strings must be copied
+  into the section arena before the next snapshot replaces them. An older
+  automatic refresh must not clear a newer user action's busy state.
+  Only own jobs are cancellable, rechecked outside the callback; CUPS remains
+  the authority. Reports omit identities and arbitrary status messages.
+  USB libusb queues do not require a usblp node. Read `docs/plans/printers.md`
+  for the unqualified hardware and distribution-policy acceptance gates.
+  Discovered backend URIs must match the current helper catalog exactly;
+  arbitrary typed vendor/file backends are not allowed. PPD settings use
+  `PrinterAddOption` after clearing stale IPP defaults, followed by readback.
