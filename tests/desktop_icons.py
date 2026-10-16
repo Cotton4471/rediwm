@@ -347,11 +347,27 @@ def run():
             click(1200,280);time.sleep(.05);click(1200,280)
             wait_for(files_marker.exists,'folder did not open rediwm-files')
             assert files_marker.read_text()==str(desktop/'Folder')
-            # New Folder is a real operation; its editor must retain keyboard focus.
+            # Create first, then select the entire name in the inline editor.
             click(600,300,273);click(640,315)
-            action('key',{'keycode':29,'pressed':True});key(30);action('key',{'keycode':29,'pressed':False})
+            wait_for(lambda: (desktop/'New Folder').is_dir(), 'New Folder was not created before renaming')
+            time.sleep(.3) # Let the worker snapshot reach the inline editor.
             action('type_text',{'text':'Created Folder'});key(28)
-            wait_for(lambda: (desktop/'Created Folder').is_dir(),'New Folder editor lost focus')
+            wait_for(lambda: (desktop/'Created Folder').is_dir(),'New Folder name was not selected or editor lost focus')
+            assert not (desktop/'New Folder').exists()
+            # Cancelling keeps the folder; collisions create a separate folder.
+            click(600,300,273);click(640,315)
+            wait_for(lambda: (desktop/'New Folder').is_dir(), 'second New Folder was not created')
+            time.sleep(.3);key(1)
+            assert (desktop/'New Folder').is_dir(), 'Escape removed the created folder'
+            (desktop/'New Folder (2)').write_text('existing file')
+            click(600,300,273);click(640,315)
+            wait_for(lambda: (desktop/'New Folder (3)').is_dir(), 'New Folder did not skip existing names')
+            time.sleep(.3)
+            action('type_text',{'text':'Another Folder'});key(28)
+            wait_for(lambda: (desktop/'Another Folder').is_dir(), 'numbered folder name was not selected')
+            assert (desktop/'New Folder').is_dir()
+            assert (desktop/'New Folder (2)').read_text() == 'existing file'
+            assert not (desktop/'New Folder (3)').exists()
             # Installed desktop entries populate the Add Application chooser.
             click(600,300,273);click(640,375)
             action('type_text',{'text':'RediWM Test Fixture'})

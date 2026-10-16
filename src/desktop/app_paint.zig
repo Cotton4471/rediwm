@@ -160,7 +160,7 @@ pub fn promptRect(self: *App) ?grid.Rect {
         return .{ .x = @intFromFloat(@floor(g.x)), .y = @intFromFloat(@floor(g.y)), .w = @intFromFloat(@ceil(g.width)), .h = @intFromFloat(@ceil(g.height)) };
     }
     if (self.edit == .add_app or self.edit == .open_with) return .{ .x = @divTrunc(self.geometry.w - 480, 2), .y = @divTrunc(self.geometry.h - 360, 2), .w = 480, .h = 360 };
-    if (self.edit != .none) return .{ .x = @divTrunc(self.geometry.w - 420, 2), .y = @divTrunc(self.geometry.h - 120, 2), .w = 420, .h = 120 };
+    if (self.edit != .none and self.edit != .folder) return .{ .x = @divTrunc(self.geometry.w - 420, 2), .y = @divTrunc(self.geometry.h - 120, 2), .w = 420, .h = 120 };
     if (self.menu) return .{ .x = self.menu_x, .y = self.menu_y, .w = context_menu.width, .h = Menu.height(self.menuLabels().len, self.menu_icon != null) };
     return null;
 }
@@ -239,7 +239,7 @@ pub fn paintOverlay(self: *App, cr: *c.cairo_t, now: i64) void {
             self.deletion.drawWindow(cr, self.geometry.w, self.geometry.h - self.geometry.bottom, self.x, self.y, null)
         else
             self.deletion.draw(cr, self.geometry.w, self.geometry.h - self.geometry.bottom, self.x, self.y, null);
-    } else if (self.edit != .none and self.edit != .rename) {
+    } else if (self.edit != .none and self.edit != .rename and self.edit != .folder) {
         const x = @divTrunc(self.geometry.w - 420, 2);
         const y = @divTrunc(self.geometry.h - 120, 2);
         rounded(cr, x, y, 420, 120, 10);
@@ -249,7 +249,6 @@ pub fn paintOverlay(self: *App, cr: *c.cairo_t, now: i64) void {
             .properties => "Properties — Escape closes",
             .add_file => "Add File — enter an absolute path, then Enter",
             .rename => "Rename — Enter saves, Escape cancels",
-            .folder => "New Folder — Enter creates",
             .file => "New File — Enter creates",
             else => "",
         };

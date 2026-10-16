@@ -24,7 +24,7 @@ pub fn keyboardLeft(self: *App, refocusing: bool) void {
 /// menu, list and icon navigation otherwise. The delete dialog, Return,
 /// Escape and Ctrl shortcuts fire once.
 pub fn keyRepeats(self: *const App, sym: u32, utf8: []const u8) bool {
-    if (self.edit == .trash or self.ctrl) return false;
+    if (self.edit == .trash or self.edit == .folder or self.ctrl) return false;
     const vertical = sym == c.XKB_KEY_Up or sym == c.XKB_KEY_Down;
     if (self.menu) return vertical;
     const typing = switch (sym) {
@@ -51,6 +51,7 @@ pub fn key(self: *App, sym: u32, utf8: []const u8) void {
         self.host.keyboard(false);
         return;
     }
+    if (self.edit == .folder) return;
     if (self.menu) {
         const count = self.menuLabels().len;
         if (sym == c.XKB_KEY_Down) self.menu_selected = (self.menu_selected + 1) % count else if (sym == c.XKB_KEY_Up) self.menu_selected = (self.menu_selected + count - 1) % count else if (sym == c.XKB_KEY_Return) {

@@ -113,6 +113,16 @@ pub fn menuAction(self: *App, row: usize) void {
 pub fn beginEdit(self: *App, kind: @FieldType(App, "edit")) void {
     self.deletion.deinit();
     self.edit = kind;
+    if (kind == .folder) {
+        const path = std.fmt.allocPrint(a, "{s}/New Folder", .{self.worker.dir}) catch {
+            self.edit = .none;
+            return;
+        };
+        defer a.free(path);
+        self.folder_token +%= 1;
+        self.worker.enqueue(.{ .kind = .folder, .path = path, .token = self.folder_token });
+        return;
+    }
     if (kind == .trash) {
         for (self.icons.items) |ic| {
             if (!ic.selected or ic.removed != null or ic.item.builtin != .none) continue;
@@ -144,7 +154,7 @@ pub fn beginEdit(self: *App, kind: @FieldType(App, "edit")) void {
         };
         self.edit = .none;
     }
-    if (kind == .folder or kind == .file) self.edit_text.appendSlice(a, if (kind == .folder) "New Folder" else "New File") catch {};
+    if (kind == .file) self.edit_text.appendSlice(a, "New File") catch {};
 }
 
 pub fn deleteAction(self: *App, action: deletion.Action) void {
@@ -165,6 +175,7 @@ pub fn deleteAction(self: *App, action: deletion.Action) void {
 }
 
 pub fn finishEdit(self: *App) void {
+    if (self.edit == .folder) return;
     if (self.edit == .rename) {
         if (self.renameGeometry() == null) {
             self.edit = .none;
@@ -175,7 +186,7 @@ pub fn finishEdit(self: *App) void {
     }
     if ((self.edit == .add_app or self.edit == .open_with) and self.choiceEntry(self.choice) == null) return;
     if (self.edit == .add_file and !std.fs.path.isAbsolute(self.edit_text.items)) return;
-    if (self.edit == .file or self.edit == .folder or self.edit == .rename) {
+    if (self.edit == .file or self.edit == .rename) {
         const name = self.edit_text.items;
         if (name.len == 0 or std.mem.indexOfScalar(u8, name, '/') != null or std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, "..")) return;
     }
@@ -224,7 +235,7 @@ pub fn finishEdit(self: *App) void {
             break;
         };
     } else {
-        self.worker.enqueue(.{ .kind = if (self.edit == .folder) .folder else .file, .path = dest });
+        self.worker.enqueue(.{ .kind = .file, .path = dest });
     }
 }
 

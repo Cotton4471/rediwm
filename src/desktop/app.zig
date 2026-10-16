@@ -79,6 +79,7 @@ pub const App = struct {
     menu_x: i32 = 0,
     menu_y: i32 = 0,
     edit: enum { none, rename, folder, file, trash, properties, add_file, add_app, open_with } = .none,
+    folder_token: u64 = 0,
     deletion: deletion.State = .{},
     catalog: []const @import("dotdesktop.zig").parser.AppEntry = &.{},
     choice: usize = 0,
@@ -212,6 +213,19 @@ pub const App = struct {
             };
             layout_changed = true;
         }
+        if (snap.created_folder) |created| {
+            if (self.edit == .folder and created.token == self.folder_token) {
+                self.edit = .none;
+                for (self.icons.items, 0..) |ic, i| {
+                    if (ic.removed == null and std.mem.eql(u8, ic.item.path, created.path)) {
+                        self.deselect();
+                        self.icons.items[i].selected = true;
+                        self.beginEdit(.rename);
+                        break;
+                    }
+                }
+            }
+        }
         self.invalidate();
         if (layout_changed) self.persist();
     }
@@ -300,6 +314,7 @@ pub const App = struct {
         const now = nowMs();
         const error_len = self.worker.takeError(&self.notice);
         if (error_len > 0) {
+            if (self.edit == .folder) self.edit = .none;
             self.notice_len = error_len;
             self.notice_until = now + 5000;
             self.invalidate();

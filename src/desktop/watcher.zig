@@ -13,6 +13,7 @@ pub const Item = struct { inode: u64 = 0, device: u64 = 0, bytes: i64 = 0, path:
 /// Icons the desktop always shows: they are not files in the desktop folder,
 /// so they cannot be renamed, moved to the Trash or dropped onto.
 pub const Builtin = enum { none, home, trash };
+pub const CreatedFolder = struct { path: []const u8, token: u64 };
 pub const Snapshot = struct {
     arena: std.heap.ArenaAllocator,
     items: []Item,
@@ -21,7 +22,9 @@ pub const Snapshot = struct {
     /// `bottom_exclusion` from the desktop config; null defers to the host.
     bottom: ?i32 = null,
     icon_only: bool = false,
+    created_folder: ?CreatedFolder = null,
     pub fn destroy(self: *Snapshot) void {
+        if (self.created_folder) |created| a.free(created.path);
         self.arena.deinit();
         a.destroy(self);
     }
@@ -99,6 +102,8 @@ pub const Worker = struct {
     catalog: []const desktop.parser.AppEntry = &.{},
     icon_size: std.atomic.Value(i32) = .init(56),
     launched: ?Launched = null,
+    /// Worker-owned until published with the matching directory snapshot.
+    created_folder: ?CreatedFolder = null,
     /// Every spawned launch, for the host to give its own systemd scope.
     /// Launches beyond its length between two drains keep the host's cgroup.
     started: [8]Launched = undefined,
@@ -138,6 +143,7 @@ pub const Worker = struct {
         if (self.wake_worker >= 0) _ = c.close(self.wake_worker);
         if (self.wake_main >= 0) _ = c.close(self.wake_main);
         if (self.pending) |s| s.destroy();
+        if (self.created_folder) |created| a.free(created.path);
         for (self.commands.items) |cmd| {
             a.free(cmd.path);
             a.free(cmd.value);
@@ -438,6 +444,15 @@ pub const Worker = struct {
                 if (self.scan()) |snap| {
                     _ = c.pthread_mutex_lock(&self.mutex);
                     const old = self.pending;
+                    // Preserve an unconsumed result when inotify replaces a snapshot.
+                    snap.created_folder = self.created_folder;
+                    self.created_folder = null;
+                    if (old) |previous| {
+                        if (snap.created_folder == null) {
+                            snap.created_folder = previous.created_folder;
+                            previous.created_folder = null;
+                        }
+                    }
                     self.pending = snap;
                     _ = c.pthread_mutex_unlock(&self.mutex);
                     signal(self.wake_main);
@@ -601,9 +616,19 @@ pub const Worker = struct {
                 signal(self.wake_main);
             },
             .folder => {
-                const p = try a.dupeZ(u8, cmd.path);
-                defer a.free(p);
-                if (c.mkdir(p, 0o755) != 0) return error.CreateFailed;
+                var suffix: usize = 1;
+                while (true) : (suffix += 1) {
+                    const path = if (suffix == 1) try a.dupeZ(u8, cmd.path) else try std.fmt.allocPrintSentinel(a, "{s} ({d})", .{ cmd.path, suffix }, 0);
+                    const result = c.mkdir(path, 0o755);
+                    if (result == 0) {
+                        if (self.created_folder) |previous| a.free(previous.path);
+                        self.created_folder = .{ .path = path, .token = cmd.token };
+                        break;
+                    }
+                    const err = std.posix.errno(result);
+                    a.free(path);
+                    if (err != .EXIST) return error.CreateFailed;
+                }
             },
             .trust => { // Allow Launching: the user's own `chmod u+x`.
                 const p = try a.dupeZ(u8, cmd.path);
