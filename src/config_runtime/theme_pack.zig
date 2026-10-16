@@ -5,21 +5,20 @@ const config = @import("config");
 const main = @import("../main.zig");
 
 pub fn apply(server: *Server, id: []const u8) !void {
+    try select(server, id, false);
+}
+
+pub fn reset(server: *Server, id: []const u8) !void {
+    try select(server, id, true);
+}
+
+fn select(server: *Server, id: []const u8, reset_overrides: bool) !void {
     if (server.greeter_mode or server.locker != null) return error.SessionLocked;
     var arena = std.heap.ArenaAllocator.init(main.gpa);
     defer arena.deinit();
-    const p = (try config.theme_pack.find(arena.allocator(), server.io, server.environ, server.config.path, id)) orelse return error.ThemeNotFound;
+    _ = (try config.theme_pack.find(arena.allocator(), server.io, server.environ, server.config.path, id)) orelse return error.ThemeNotFound;
     if (server.config.path.len == 0) return error.NoConfigPath;
-    try config.setting_save.resetThemeLayout(main.gpa, server.io, server.config.path);
-    config.loader.replaceThemeOverrides(main.gpa, server.io, server.config.path, p.tokens, p.tokens, id);
-    config.loader.replaceTaskbarThemeSection(main.gpa, server.io, server.config.path, p.taskbar);
-    // Empty wallpaper means the pack default. Explicit later choices pin it.
-    config.setting_save.saveCompositor(main.gpa, server.io, server.config.path, "wallpaper", "") catch return error.SaveFailed;
-    if (p.color_scheme) |dark| config.setting_save.saveCompositor(main.gpa, server.io, server.config.path, "dark_mode", dark) catch return error.SaveFailed;
-    {
-        const name = if (p.cursor_theme.len == 0) "default" else if (std.mem.eql(u8, p.cursor_theme, "pack")) try std.fmt.allocPrint(arena.allocator(), "rediwm-{s}-cursors", .{p.id}) else p.cursor_theme;
-        config.setting_save.saveInput(main.gpa, server.io, server.config.path, "cursor_theme", name) catch return error.SaveFailed;
-    }
+    try config.setting_save.selectTheme(main.gpa, server.io, server.config.path, id, reset_overrides);
     const loaded = try config.loader.load(server.config.path, main.gpa, server.io, server.environ);
     if (!std.mem.eql(u8, loaded.theme_base, id)) {
         var failed = loaded;

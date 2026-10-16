@@ -31,6 +31,14 @@ def helper(env, *args, ok=True):
     return result
 
 
+def reset_theme(ipc):
+    ipc.action("open_appearance")
+    ipc.wait_for_panel_settled("control_center")
+    ui = UIDriver(ipc)
+    ui.click(ui.scroll_into_view("theme_reset"))
+    ipc.action("close_panel", {"panel": "control_center"})
+
+
 def hostile_archives(tmp, env):
     manifest = (FIXTURE / "theme.toml").read_bytes()
     cases = {
@@ -154,7 +162,13 @@ def run():
                 config_path.write_text(config_path.read_text().replace("[compositor]", '[compositor]\ndock_enabled = false\ndock_position = "left"\ntaskbar_position = "bottom"\ndock_height = 48\ndock_hover_zoom = 1.5', 1))
                 wait_for(lambda: not UIDriver(ipc).widgets("dock"), "explicit dock override did not win")
                 assert ipc.get_shell_state()["taskbars"][0]["box"]["y"] > 0
-                ipc.action("theme.apply", {"id": "gold"})
+                saved_layout = tomllib.loads(config_path.read_text())["compositor"]
+                for theme_id in ("rediwm-light", "gold"):
+                    ipc.action("theme.apply", {"id": theme_id})
+                    assert tomllib.loads(config_path.read_text())["compositor"] == saved_layout
+                    assert not UIDriver(ipc).widgets("dock"), "switch lost explicit dock preference"
+                    assert ipc.get_shell_state()["taskbars"][0]["box"]["y"] > 0
+                reset_theme(ipc)
                 wait_for(lambda: UIDriver(ipc).widgets("dock"), "reset did not restore Gold layout")
                 assert not {"dock_enabled", "dock_position", "dock_height", "dock_hover_zoom", "taskbar_position"} & tomllib.loads(config_path.read_text())["compositor"].keys()
                 # Every other bundled theme restores the standard bar and no dock.
@@ -179,7 +193,7 @@ def run():
                 assert ipc.query("theme.list")["active"] == "test-pack"
                 cfg = tomllib.loads((tmp / "rediwm-config.toml").read_text())
                 assert cfg["theme"] == {"base": "test-pack"}, cfg["theme"]
-                # A pack arranges the taskbar's items; an explicit list wins until a theme is chosen again.
+                # A pack arranges the taskbar's items; an explicit list survives theme switches until Reset.
                 def clock_x():
                     items = ipc.get_shell_state()["taskbars"][0]["right_items"]
                     return next(i for i in items if i["name"] == "clock")["box"]["x"]
@@ -189,13 +203,18 @@ def run():
                 config_file.write_text(config_file.read_text().replace("[compositor]", f"[compositor]\ntaskbar_items = {default_items}", 1))
                 ipc.reload_config()
                 wait_for(lambda: clock_x() > 900, "explicit taskbar_items did not win over the pack")
-                ipc.action("theme.apply", {"id": "test-pack"})
+                for theme_id in ("gold", "test-pack"):
+                    ipc.action("theme.apply", {"id": theme_id})
+                    assert tomllib.loads(config_file.read_text())["compositor"]["taskbar_items"] == json.loads(default_items)
+                    assert clock_x() > 900
+                reset_theme(ipc)
                 assert "taskbar_items" not in tomllib.loads(config_file.read_text())["compositor"]
-                wait_for(lambda: clock_x() < 300, "choosing the pack did not restore its arrangement")
-                assert cfg["compositor"]["wallpaper"] == ""
-                assert cfg["compositor"]["dark_mode"]
+                wait_for(lambda: clock_x() < 300, "reset did not restore the pack arrangement")
+                assert "wallpaper" not in cfg["compositor"]
+                assert "dark_mode" not in cfg["compositor"]
+                assert ipc.action("get_theme")["dark_mode"]
                 assert cfg["input"]["pointer_speed"] == .4
-                assert cfg["input"]["cursor_theme"] == "rediwm-test-pack-cursors"
+                assert "cursor_theme" not in cfg["input"]
                 cursor_link = tmp / "data/icons/rediwm-test-pack-cursors"
                 assert cursor_link.is_symlink()
                 wait_for(lambda: ipc.query("get_wallpaper")["displayed_path"] == str(tmp / "data/rediwm/themes/test-pack/wallpapers/test.png"), "pack wallpaper was not presented")
@@ -280,8 +299,23 @@ def run():
                 assert (tmp / "data/rediwm/themes/exported/icons/folder.svg").read_bytes() == (pack / "icons/folder.svg").read_bytes()
                 assert (tmp / "data/rediwm/themes/exported/glyphs/wifi.svg").read_bytes() == (pack / "glyphs/wifi.svg").read_bytes()
                 helper(env, "remove", "exported")
-                ipc.action("theme.apply", {"id": "test-pack"})
-                assert tomllib.loads((tmp / "rediwm-config.toml").read_text())["theme"] == {"base": "test-pack"}
+                # Personal preferences survive a different pack, reapplying it,
+                # and reload. Unset tokens still come from the selected pack.
+                config_file.write_text(config_file.read_text()
+                    .replace("[compositor]", '[compositor]\nwallpaper = "wallpaper-gold.png"\ndark_mode = false', 1)
+                    .replace("[input]", '[input]\ncursor_theme = "default"', 1)
+                    + '\n[taskbar_theme]\nclock_bold = true\n')
+                ipc.reload_config()
+                saved = tomllib.loads(config_file.read_text())
+                for theme_id in ("gold", "test-pack", "test-pack"):
+                    ipc.action("theme.apply", {"id": theme_id})
+                    ipc.reload_config()
+                    expected = dict(saved, theme=dict(saved["theme"], base=theme_id))
+                    assert tomllib.loads(config_file.read_text()) == expected
+                    look = ipc.action("get_theme")
+                    assert not look["dark_mode"]
+                    assert all(abs(a - b) < .001 for a, b in zip(look["tokens"]["accent"], [17/255, 34/255, 51/255, 1]))
+                    wait_for(lambda: (ipc.query("get_wallpaper")["displayed_path"] or "").endswith("/wallpaper-gold.png"), "switch lost wallpaper override")
                 ipc.action("open_appearance")
                 ui = UIDriver(ipc)
                 ui.wait_present("theme_reset")
@@ -298,17 +332,29 @@ def run():
                 fg = tuple(round(c*255) for c in ipc.action("get_theme")["tokens"]["window_fg"][:3])
                 assert sum(color == fg for color in glyph.getdata()) > 350, "shell glyph override missing"
                 ui.click("theme_reset")
+                reset_config = tomllib.loads(config_file.read_text())
+                assert reset_config["theme"] == {"base": "test-pack"}
+                assert "taskbar_theme" not in reset_config
+                assert "wallpaper" not in reset_config["compositor"]
+                assert "dark_mode" not in reset_config["compositor"]
+                assert "cursor_theme" not in reset_config["input"]
+                assert reset_config["input"]["pointer_speed"] == .4
+                assert ipc.action("get_theme")["dark_mode"]
+                wait_for(lambda: (ipc.query("get_wallpaper")["displayed_path"] or "").endswith("/test.png"), "reset did not restore pack wallpaper")
                 assert ipc.query("theme.list")["active"] == "test-pack"
                 ipc.action("close_panel", {"panel": "control_center"})
                 ipc.action("theme.apply", {"id": "rediwm-light"})
                 assert not ipc.action("get_theme")["dark_mode"]
                 wait_for(lambda: "test-pack" not in (ipc.query("get_wallpaper")["displayed_path"] or ""), "wallpaper did not restore")
                 ipc.action("theme.apply", {"id": "test-pack"})
+                ipc.action("set_accent_color", {"color": "#112233"})
+                before_remove = tomllib.loads(config_file.read_text())
                 ipc.action("open_appearance")
                 ui.click(ui.scroll_into_view("theme_remove"))
                 wait_for(lambda: all(p["id"] != "test-pack" for p in ipc.query("theme.list")["packs"]), "active pack was not removed")
                 assert ipc.query("theme.list")["active"] == "rediwm-dark"
                 ipc.action("close_panel", {"panel": "control_center"})
+                assert tomllib.loads(config_file.read_text()) == dict(before_remove, theme=dict(before_remove["theme"], base="rediwm-dark"))
                 assert not cursor_link.exists()
                 assert all(p["id"] != "test-pack" for p in ipc.query("theme.list")["packs"])
                 # A user pack can shadow a built-in ID; removal restores embedded art.
@@ -318,12 +364,12 @@ def run():
                 manifest_path.write_text(manifest_path.read_text().replace('id = "test-pack"', 'id = "rediwm-dark"'))
                 ipc.action("theme.install", {"path": str(shadow)})
                 ipc.action("theme.apply", {"id": "rediwm-dark"})
-                ipc.action("open_appearance")
-                ui.click(ui.scroll_into_view("theme_remove"))
+                before_remove = tomllib.loads(config_file.read_text())
+                helper(dict(env, REDIWM_CONFIG=str(config_file)), "remove", "rediwm-dark")
+                assert tomllib.loads(config_file.read_text()) == before_remove
                 wait_for(lambda: not next(p for p in ipc.query("theme.list")["packs"] if p["id"] == "rediwm-dark")["user_installed"] and ipc.action("get_theme")["tokens"]["start_button_icon"] == "", "embedded pack was not restored")
                 tokens = ipc.action("get_theme")["tokens"]
                 assert tokens["start_button_icon"] == "", tokens["start_button_icon"]
-                ipc.action("close_panel", {"panel": "control_center"})
                 # Missing pack falls back; the config remains usable.
                 config = tmp / "rediwm-config.toml"
                 config.write_text(config.read_text().replace('base = "rediwm-dark"', 'base = "missing-pack"'))

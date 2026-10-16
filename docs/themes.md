@@ -2,10 +2,10 @@
 
 Choose a pack in **Settings → Appearance → Theme**. Changes to colours,
 fonts and geometry are stored as overrides of that pack. **Reset to theme**
-clears those overrides; choosing a different pack also resets its wallpaper
-and cursor. Picking a wallpaper afterward pins that choice until the next
-pack switch. **Icon theme** chooses the installed icon theme behind a pack's
-own icons (the pack's `icon_theme`, when specified, takes precedence).
+clears those overrides. Switching packs preserves personal settings, including
+wallpaper, cursor, dark mode and the separate taskbar theme; settings without
+an override follow the new pack. **Icon theme** chooses the installed icon
+theme behind a pack's own icons (the pack's `icon_theme`, when specified, takes precedence).
 
 **Install theme…** accepts a `.rediwm-theme` or `.zip` file. **Remove** is
 available for user-installed packs and switches an active pack to RediWM Dark.
@@ -121,10 +121,11 @@ dock_hover_zoom = 1.05    # 1.0–1.5; 1.0 disables hover enlargement
 ```
 
 Only these appearance settings are accepted here. Resolution is compositor
-defaults → pack layout → explicit `[compositor]` settings. Choosing a theme
-or **Reset to theme** clears these personal overrides (including a taskbar
-item arrangement made in Appearance); a pack without layout values returns to
-the ordinary bottom taskbar, its usual item sections and a disabled dock.
+defaults → pack layout → explicit `[compositor]` settings. Switching themes
+preserves these personal overrides (including a taskbar item arrangement made
+in Appearance). **Reset to theme** clears them; without personal overrides, a
+pack without layout values uses the ordinary bottom taskbar, its usual item
+sections and a disabled dock.
 Hidden dock entries and application preferences are preserved. **Save look…**
 includes the current layout.
 

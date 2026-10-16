@@ -371,14 +371,26 @@ def test_appearance_settings():
                 _ = ui.scroll_into_view("inactive_opacity")
                 assert any(w.get("label") == "100%" for w in widgets())
 
-                # Bundled themes replace the palette live and persist their
-                # optional overrides; returning to Dark clears those overrides.
+                # Picking a theme preserves personal edits, including the
+                # opacity set above. Only Reset discards those overrides.
+                theme_indices = {pack["id"]: i for i, pack in enumerate(ipc.query("theme.list")["packs"])}
+                light_index = theme_indices["rediwm-light"]
+                dark_index = theme_indices["rediwm-dark"]
+                before_switch = read_config()
+                previous_tokens = ipc.action("get_theme")["tokens"]
                 click_widget(ui.scroll_into_view("theme"))
                 ipc.key_press("Home")
-                ipc.key_press("Down")
+                for _ in range(light_index):
+                    ipc.key_press("Down")
                 ipc.key_press("Return")
                 ipc.wait_for_panel_settled("control_center")
-                assert ui.scroll_into_view("theme")["selected_index"] == 1
+                assert ui.scroll_into_view("theme")["selected_index"] == light_index
+                expected_config = dict(before_switch, theme=dict(before_switch["theme"], base="rediwm-light"))
+                actual_config = read_config()
+                assert actual_config == expected_config, (actual_config, expected_config)
+                assert ipc.action("get_theme")["tokens"]["window_bg"] == previous_tokens["window_bg"]
+                click_widget(ui.scroll_into_view("theme_reset"))
+                ipc.wait_for_panel_settled("control_center")
                 tokens = ipc.action("get_theme")["tokens"]
                 for name, expected in {
                     "window_bg": [246 / 255, 247 / 255, 249 / 255, 0.75],
@@ -440,15 +452,16 @@ def test_appearance_settings():
                 assert ui.scroll_into_view("taskbar_theme")["selected_index"] == 0
                 click_widget(ui.scroll_into_view("taskbar_theme"))
                 ipc.key_press("Home")
-                ipc.key_press("Down")
+                for _ in range(dark_index + 1):
+                    ipc.key_press("Down")
                 ipc.key_press("Return")
                 ipc.wait_for_panel_settled("control_center")
-                assert ui.scroll_into_view("taskbar_theme")["selected_index"] == 1
+                assert ui.scroll_into_view("taskbar_theme")["selected_index"] == dark_index + 1
                 assert max(taskbar_pixel("dark-taskbar.png")) < 90, "taskbar did not take the Dark taskbar theme"
                 tokens = ipc.action("get_theme")["tokens"]
                 assert all(abs(a - b) < 0.001 for a, b in zip(tokens["taskbar_bg"], [241 / 255, 244 / 255, 247 / 255, 0.94]))
                 assert all(abs(a - b) < 0.001 for a, b in zip(tokens["window_fg"], [31 / 255, 36 / 255, 48 / 255, 1]))
-                assert ui.scroll_into_view("theme")["selected_index"] == 1
+                assert ui.scroll_into_view("theme")["selected_index"] == light_index
                 assert read_config()["taskbar_theme"] == {}
                 assert read_config()["theme"] == {"base": "rediwm-light"}
                 ipc.reload_config()
@@ -456,7 +469,7 @@ def test_appearance_settings():
                 ipc.wait_for("control_center_closed", timeout_ms=5000)
                 ipc.action("open_appearance")
                 ipc.wait_for_panel_settled("control_center")
-                assert ui.scroll_into_view("taskbar_theme")["selected_index"] == 1
+                assert ui.scroll_into_view("taskbar_theme")["selected_index"] == dark_index + 1
                 assert max(taskbar_pixel("dark-taskbar-reloaded.png")) < 90
                 click_widget(ui.scroll_into_view("taskbar_theme"))
                 ipc.key_press("Home")
@@ -471,7 +484,7 @@ def test_appearance_settings():
                 ipc.wait_for("control_center_closed", timeout_ms=5000)
                 ipc.action("open_appearance")
                 ipc.wait_for_panel_settled("control_center")
-                assert ui.scroll_into_view("theme")["selected_index"] == 1
+                assert ui.scroll_into_view("theme")["selected_index"] == light_index
                 # Redi Blue applies every supplied token and survives reload.
                 blue_index = next(i for i, pack in enumerate(ipc.query("theme.list")["packs"])
                                   if pack["id"] == "redi-blue")
@@ -510,9 +523,11 @@ def test_appearance_settings():
                 check_blue()
                 click_widget(ui.scroll_into_view("theme"))
                 ipc.key_press("Home")
+                for _ in range(dark_index):
+                    ipc.key_press("Down")
                 ipc.key_press("Return")
                 ipc.wait_for_panel_settled("control_center")
-                assert ui.scroll_into_view("theme")["selected_index"] == 0
+                assert ui.scroll_into_view("theme")["selected_index"] == dark_index
                 assert "shell_accent" not in read_config()["theme"]
                 assert "scrollbar_thumb_active" not in read_config()["theme"]
                 assert "start_button_logo_color" not in read_config()["theme"]

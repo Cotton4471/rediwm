@@ -15,31 +15,45 @@ pub fn saveCompositor(allocator: std.mem.Allocator, io: Io, path: []const u8, co
     } else try save(allocator, io, path, "compositor", key, value);
 }
 
-/// A pack switch/reset clears only layout edits owned by themes. Keep user
-/// launchers, hidden dock entries and unrelated compositor preferences.
-pub fn resetThemeLayout(allocator: std.mem.Allocator, io: Io, path: []const u8) !void {
+/// Switching changes only the base: explicit preferences keep winning over
+/// the new pack. Reset drops appearance overrides so defaults remain inherited,
+/// rather than writing the current pack's defaults as personal preferences.
+pub fn selectTheme(allocator: std.mem.Allocator, io: Io, path: []const u8, id: []const u8, reset: bool) !void {
+    if (!@import("theme_pack.zig").validId(id)) return error.InvalidValue;
     const original = try Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(1 << 20));
     defer allocator.free(original);
+    var old = try loader.parse(allocator, original, path);
+    defer old.deinit();
+    const cleared = if (reset) try clearThemeOverrides(allocator, original) else original;
+    defer if (reset) allocator.free(cleared);
+    const result = try patch(allocator, cleared, "theme", "base", id);
+    defer allocator.free(result);
+    try writeValidated(allocator, io, path, result);
+}
+
+fn clearThemeOverrides(allocator: std.mem.Allocator, original: []const u8) ![]u8 {
     var result: std.ArrayList(u8) = .empty;
-    defer result.deinit(allocator);
-    var in_compositor = false;
+    errdefer result.deinit(allocator);
+    var section: []const u8 = "";
     var lines = std.mem.splitScalar(u8, original, '\n');
     var offset: usize = 0;
     while (lines.next()) |raw| {
         const end = @min(original.len, offset + raw.len + 1);
         const line = theme.stripComment(std.mem.trim(u8, raw, " \t\r"));
-        if (std.mem.startsWith(u8, line, "[")) in_compositor = std.mem.eql(u8, line, "[compositor]");
-        var remove = false;
-        if (in_compositor) if (std.mem.indexOfScalar(u8, line, '=')) |eq| {
+        if (std.mem.startsWith(u8, line, "[")) section = line;
+        var remove = std.mem.eql(u8, section, "[theme]") or std.mem.eql(u8, section, "[taskbar_theme]");
+        if (std.mem.indexOfScalar(u8, line, '=')) |eq| {
             const key = std.mem.trim(u8, line[0..eq], " \t\"");
-            inline for (@import("theme_pack.zig").Layout.keys) |layout_key| {
-                if (std.mem.eql(u8, key, layout_key)) remove = true;
-            }
-        };
+            if (std.mem.eql(u8, section, "[compositor]")) {
+                inline for (@import("theme_pack.zig").Layout.keys ++ .{ "wallpaper", "dark_mode" }) |appearance_key| {
+                    if (std.mem.eql(u8, key, appearance_key)) remove = true;
+                }
+            } else if (std.mem.eql(u8, section, "[input]") and std.mem.eql(u8, key, "cursor_theme")) remove = true;
+        }
         if (!remove) try result.appendSlice(allocator, original[offset..end]);
         offset = end;
     }
-    try writeValidated(allocator, io, path, result.items);
+    return result.toOwnedSlice(allocator);
 }
 
 pub fn saveRegion(allocator: std.mem.Allocator, io: Io, path: []const u8, comptime key: []const u8, value: @FieldType(loader.RegionConfig, key)) !void {

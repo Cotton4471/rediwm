@@ -165,13 +165,7 @@ fn run(init: std.process.Init) !void {
                 defer cfg.deinit();
                 if (std.mem.eql(u8, cfg.theme_base, input)) {
                     changed_config = config_path;
-                    try @import("config").setting_save.resetThemeLayout(a, io, config_path);
-                    const dark = try packs.parse(a, @import("ui").theme_presets.bundled[0].bytes, "rediwm-dark", "");
-                    @import("config").loader.replaceThemeOverrides(a, io, config_path, dark.tokens, dark.tokens, "rediwm-dark");
-                    @import("config").loader.replaceTaskbarThemeSection(a, io, config_path, null);
-                    try @import("config").setting_save.saveCompositor(a, io, config_path, "wallpaper", "");
-                    try @import("config").setting_save.saveInput(a, io, config_path, "cursor_theme", "default");
-                    try @import("config").setting_save.saveCompositor(a, io, config_path, "dark_mode", true);
+                    try @import("config").setting_save.selectTheme(a, io, config_path, "rediwm-dark", false);
                 }
             }
         } else |_| {}

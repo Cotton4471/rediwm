@@ -114,11 +114,7 @@ pub fn refreshTheme(server: *@import("../../Server.zig"), taskbar_geometry: bool
     if (server.input.open_control_center) |cc| cc.refresh();
 }
 
-/// Replaces every `[theme]` field at once from the picked preset. Reads the
-/// preset bytes before mutating anything, and parses with `main.gpa` rather
-/// than the panel's per-open arena: `theme.global`'s string fields must
-/// outlive this build, and `applyThemeChange` below may trigger a repaint
-/// that resets the arena.
+/// Explicitly discard personal appearance overrides of the current pack.
 pub fn onResetTheme(owner: ?*anyopaque, _: usize) void {
     const server = section(owner).cc.server;
     if (server.config.theme_base.len == 0) {
@@ -126,7 +122,7 @@ pub fn onResetTheme(owner: ?*anyopaque, _: usize) void {
         saveThemeChange(server, true);
         return;
     }
-    @import("../../config_runtime/theme_pack.zig").apply(server, server.config.theme_base) catch |err| themeFailure(server, err);
+    @import("../../config_runtime/theme_pack.zig").reset(server, server.config.theme_base) catch |err| themeFailure(server, err);
 }
 pub fn themeFailure(server: *Server, err: anyerror) void {
     if (server.input.open_control_center) |cc| {
