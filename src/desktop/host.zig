@@ -45,6 +45,7 @@ pub const Host = struct {
         /// error.Unsupported means the host has no Appearance settings, and
         /// the caller opens the desktop's own config file instead.
         openAppearance: *const fn (ctx: ?*anyopaque) anyerror!void,
+        openDesktopSettings: *const fn (ctx: ?*anyopaque) anyerror!void,
     };
 
     pub fn keyboard(self: Host, wanted: bool) void {
@@ -70,6 +71,10 @@ pub const Host = struct {
     }
     pub fn openAppearance(self: Host) anyerror!void {
         return self.vtable.openAppearance(self.ctx);
+    }
+
+    pub fn openDesktopSettings(self: Host) anyerror!void {
+        return self.vtable.openDesktopSettings(self.ctx);
     }
 
     /// Displays nothing and knows nothing: unit tests, and the app before a
@@ -105,6 +110,11 @@ const none_vtable: Host.VTable = .{
     .windowAppeared = struct {
         fn f(_: ?*anyopaque, _: i32, _: []const u8, _: u64) bool {
             return false;
+        }
+    }.f,
+    .openDesktopSettings = struct {
+        fn f(_: ?*anyopaque) anyerror!void {
+            return error.Unsupported;
         }
     }.f,
     .openAppearance = struct {

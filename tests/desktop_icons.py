@@ -368,12 +368,26 @@ def run():
             assert (desktop/'New Folder').is_dir()
             assert (desktop/'New Folder (2)').read_text() == 'existing file'
             assert not (desktop/'New Folder (3)').exists()
-            # Installed desktop entries populate the Add Application chooser.
+            # Add Application uses the shared Open With card: selecting a row
+            # needs confirmation, and Cancel must not create a shortcut.
             click(600,300,273);click(640,375)
             action('type_text',{'text':'RediWM Test Fixture'})
             time.sleep(.8)
+            assert not (desktop/'rediwm-test.desktop').exists()
+            key(15);key(28) # Tab from the list to Cancel.
+            assert not (desktop/'rediwm-test.desktop').exists(), 'Cancel added a launcher'
+            click(600,300,273);click(640,375)
+            action('type_text',{'text':'No such installed application'})
+            key(28)
+            assert not list(desktop.glob('*.desktop')), 'empty search added an application'
+            action('key', {'keycode':29,'pressed':True}) # Clear the search using Ctrl+A.
+            key(30)
+            action('key',{'keycode':29,'pressed':False})
+            action('type_text',{'text':'RediWM Test Fixture'})
+            time.sleep(.2)
             key(28)
             wait_for(lambda: (desktop/'rediwm-test.desktop').exists(),'application chooser did not add the launcher')
+            assert (desktop/'rediwm-test.desktop').read_bytes() == (applications/'rediwm-test.desktop').read_bytes()
             # Remove fixture icons before transfer checks.
             for path in desktop.iterdir():
                 if path.is_dir():path.rmdir()
@@ -411,7 +425,7 @@ def run():
             key(1)
             # Escape releases keyboard focus, so use menu Paste to reacquire it.
             click(1000,400,273)
-            click(1050,541) # Paste follows four 32px rows, 6px padding and a 7px separator in the clamped menu.
+            key(108);key(108);key(108);key(28) # Paste follows the three creation actions.
             wait_for(lambda: (desktop/original.name).is_file(),'clipboard paste failed')
             assert not (desktop/original.name).is_symlink()
             assert (desktop/original.name).read_text()=='transfer fixture'

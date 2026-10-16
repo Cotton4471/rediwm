@@ -146,6 +146,10 @@ pub fn processAxis(
     // Detented wheel clicks glide in shell panels; touchpads are already smooth.
     const notch = source == .wheel and delta_discrete != 0;
     switch (scroll_hit) {
+        .desktop => |hit| {
+            if (orientation == .vertical_scroll) hit.desktop.scroll(delta);
+            return;
+        },
         .wifi_popup => |hit| {
             if (orientation == .vertical_scroll) hit.popup.scrollWheel(ui_scroll.axisDeltaPx(delta, delta_discrete));
             return;

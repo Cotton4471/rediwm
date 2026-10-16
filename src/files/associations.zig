@@ -94,6 +94,13 @@ extern fn g_app_info_get_display_name(app: *anyopaque) [*:0]const u8;
 extern fn g_app_info_supports_files(app: *anyopaque) c_int;
 extern fn g_app_info_supports_uris(app: *anyopaque) c_int;
 extern fn g_app_info_set_as_default_for_type(app: *anyopaque, content_type: [*:0]const u8, err: ?*?*anyopaque) c_int;
+extern fn g_content_type_equals(a: [*:0]const u8, b: [*:0]const u8) c_int;
+extern fn g_get_user_config_dir() [*:0]const u8;
+extern fn g_key_file_new() *anyopaque;
+extern fn g_key_file_unref(key_file: *anyopaque) void;
+extern fn g_key_file_load_from_file(key_file: *anyopaque, filename: [*:0]const u8, flags: c_int, err: ?*?*anyopaque) c_int;
+extern fn g_key_file_get_keys(key_file: *anyopaque, group: [*:0]const u8, length: ?*usize, err: ?*?*anyopaque) ?[*:null]?[*:0]u8;
+extern fn g_strfreev(strings: ?[*:null]?[*:0]u8) void;
 extern fn g_file_new_for_path(path: [*:0]const u8) *anyopaque;
 extern fn g_app_info_launch(app: *anyopaque, files: ?*List, context: ?*anyopaque, err: ?*?*anyopaque) c_int;
 
@@ -170,6 +177,29 @@ pub const Applications = struct {
         self.arena.deinit();
     }
 
+    fn saveDefault(self: *Applications, app: *anyopaque) !void {
+        // GIO merges aliases in file order when reading defaults, but its
+        // setter updates only the exact key. An older video/x-matroska entry
+        // can therefore override a newly saved video/matroska preference.
+        const a = self.arena.child_allocator;
+        const filename = try std.fmt.allocPrintSentinel(a, "{s}/mimeapps.list", .{g_get_user_config_dir()}, 0);
+        defer a.free(filename);
+        const key_file = g_key_file_new();
+        defer g_key_file_unref(key_file);
+        if (g_key_file_load_from_file(key_file, filename, 0, null) != 0) {
+            if (g_key_file_get_keys(key_file, "Default Applications", null, null)) |keys| {
+                defer g_strfreev(keys);
+                var i: usize = 0;
+                while (keys[i]) |key| : (i += 1) {
+                    if (std.mem.eql(u8, std.mem.span(key), self.content_type)) continue;
+                    if (g_content_type_equals(key, self.content_type) == 0) continue;
+                    if (g_app_info_set_as_default_for_type(app, key, null) == 0) return error.DefaultFailed;
+                }
+            }
+        }
+        if (g_app_info_set_as_default_for_type(app, self.content_type, null) == 0) return error.DefaultFailed;
+    }
+
     pub fn launch(self: *Applications, index: usize, remember: bool) !void {
         const app = self.entries.items[index].app;
         const a = self.arena.child_allocator;
@@ -182,7 +212,7 @@ pub const Applications = struct {
         };
         defer for (files) |file| g_object_unref(file.data);
         if (g_app_info_launch(app, if (files.len > 0) &files[0] else null, null, null) == 0) return error.LaunchFailed;
-        if (remember and self.same_type and g_app_info_set_as_default_for_type(app, self.content_type, null) == 0) return error.DefaultFailed;
+        if (remember and self.same_type) self.saveDefault(app) catch return error.DefaultFailed;
     }
 };
 

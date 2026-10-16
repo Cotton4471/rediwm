@@ -6,7 +6,7 @@ pub const Menu = struct {
     rows: [8]ui.Widget = undefined,
     count: usize = 0,
     pub fn separatorBefore(icon: bool, row: usize) bool {
-        return if (icon) row == 2 or row == 6 else row == 4 or row == 6;
+        return if (icon) row == 2 or row == 6 else row == 3 or row == 5;
     }
     pub fn height(count: usize, icon: bool) i32 {
         var result: i32 = @intCast(count * appearance.row_height + 2 * appearance.padding);

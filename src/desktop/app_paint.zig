@@ -159,7 +159,13 @@ pub fn promptRect(self: *App) ?grid.Rect {
         const g = self.deletion.geometry(self.geometry.w, self.geometry.h - self.geometry.bottom);
         return .{ .x = @intFromFloat(@floor(g.x)), .y = @intFromFloat(@floor(g.y)), .w = @intFromFloat(@ceil(g.width)), .h = @intFromFloat(@ceil(g.height)) };
     }
-    if (self.edit == .add_app or self.edit == .open_with) return .{ .x = @divTrunc(self.geometry.w - 480, 2), .y = @divTrunc(self.geometry.h - 360, 2), .w = 480, .h = 360 };
+    if (self.edit == .add_app) {
+        if (self.applications) |*picker| {
+            const r = picker.geometry(self.geometry.w, self.geometry.h - self.geometry.bottom).box;
+            return .{ .x = @intFromFloat(@floor(r.x)), .y = @intFromFloat(@floor(r.y)), .w = @intFromFloat(@ceil(r.x + r.w) - @floor(r.x)), .h = @intFromFloat(@ceil(r.y + r.h) - @floor(r.y)) };
+        }
+    }
+    if (self.edit == .open_with) return .{ .x = @divTrunc(self.geometry.w - 480, 2), .y = @divTrunc(self.geometry.h - 360, 2), .w = 480, .h = 360 };
     if (self.edit != .none and self.edit != .folder) return .{ .x = @divTrunc(self.geometry.w - 420, 2), .y = @divTrunc(self.geometry.h - 120, 2), .w = 420, .h = 120 };
     if (self.menu) return .{ .x = self.menu_x, .y = self.menu_y, .w = context_menu.width, .h = Menu.height(self.menuLabels().len, self.menu_icon != null) };
     return null;
@@ -215,7 +221,9 @@ pub fn paintOverlay(self: *App, cr: *c.cairo_t, now: i64) void {
             }, true);
         }
     }
-    if (self.edit == .add_app or self.edit == .open_with) {
+    if (self.edit == .add_app) {
+        if (self.applications) |*picker| picker.drawWindow(@ptrCast(cr), self.geometry.w, self.geometry.h - self.geometry.bottom, self.x, self.y, self.picker_theme, self.worker.io);
+    } else if (self.edit == .open_with) {
         const px = @divTrunc(self.geometry.w - 480, 2);
         const py = @divTrunc(self.geometry.h - 360, 2);
         rounded(cr, px, py, 480, 360, 10);
@@ -247,7 +255,6 @@ pub fn paintOverlay(self: *App, cr: *c.cairo_t, now: i64) void {
         c.cairo_fill(cr);
         const title: []const u8 = switch (self.edit) {
             .properties => "Properties — Escape closes",
-            .add_file => "Add File — enter an absolute path, then Enter",
             .rename => "Rename — Enter saves, Escape cancels",
             .file => "New File — Enter creates",
             else => "",

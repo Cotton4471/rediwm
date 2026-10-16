@@ -499,7 +499,15 @@ pub const Worker = struct {
                 }
             },
             .catalog => {
-                if (self.catalog.len == 0) self.catalog = (try desktop.parser.scanAll(self.catalog_arena.allocator(), self.io, self.environ)).entries;
+                if (self.catalog.len == 0) {
+                    const entries = (try desktop.parser.scanAll(self.catalog_arena.allocator(), self.io, self.environ)).entries;
+                    std.mem.sort(desktop.parser.AppEntry, entries, {}, struct {
+                        fn less(_: void, lhs: desktop.parser.AppEntry, rhs: desktop.parser.AppEntry) bool {
+                            return std.ascii.lessThanIgnoreCase(lhs.name, rhs.name);
+                        }
+                    }.less);
+                    self.catalog = entries;
+                }
             },
             .settings => {
                 const path = try std.fmt.allocPrint(a, "{s}/config.toml", .{std.fs.path.dirname(self.layout).?});

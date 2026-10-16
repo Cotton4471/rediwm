@@ -43,7 +43,7 @@ pub fn menuLabels(self: *App) []const []const u8 {
     }
     const icon_labels = [_][]const u8{ "Open", "Open With…", "Cut", "Copy", "Rename", "Move to Trash", "Properties", "Allow Launching" };
     if (self.menu_icon) |index| return if (self.untrustedLauncher(index)) &icon_labels else icon_labels[0 .. icon_labels.len - 1];
-    return &.{ "New Folder", "New File", "Add Application…", "Add File…", "Paste", "Refresh", "Change Wallpaper", "Desktop Settings" };
+    return &.{ "New Folder", "New File", "Add Application…", "Paste", "Refresh", "Change Wallpaper", "Desktop Settings" };
 }
 
 pub fn menuIcon(self: *App, row: usize) @import("ui").layout.IconId {
@@ -52,14 +52,14 @@ pub fn menuIcon(self: *App, row: usize) @import("ui").layout.IconId {
     return if (self.menu_icon != null)
         ([_]IconId{ .chevron_right, .grid, .cut, .copy, .edit, .trash, .view_list, .checkmark })[row]
     else
-        ([_]IconId{ .plus, .edit, .grid, .open, .paste, .refresh, .display, .settings })[row];
+        ([_]IconId{ .plus, .edit, .grid, .paste, .refresh, .display, .settings })[row];
 }
 
 pub fn menuHint(self: *App, row: usize) ?[]const u8 {
     if (self.menuBuiltin() != .none) return if (row == 0) "ENTER" else null;
     return if (self.menu_icon != null)
         ([_]?[]const u8{ "ENTER", null, "CTRL+X", "CTRL+C", "F2", "DELETE", null, null })[row]
-    else if (row == 4) "CTRL+V" else null;
+    else if (row == 3) "CTRL+V" else null;
 }
 
 pub fn untrustedLauncher(self: *const App, index: usize) bool {
@@ -97,21 +97,41 @@ pub fn menuAction(self: *App, row: usize) void {
             0 => self.beginEdit(.folder),
             1 => self.beginEdit(.file),
             2 => self.beginEdit(.add_app),
-            3 => self.beginEdit(.add_file),
-            4 => self.paste(),
-            5 => self.worker.requestRefresh(),
-            6 => self.host.openAppearance() catch |err| switch (err) {
+            3 => self.paste(),
+            4 => self.worker.requestRefresh(),
+            5 => self.host.openAppearance() catch |err| switch (err) {
                 error.Unsupported => self.worker.enqueue(.{ .kind = .settings, .path = "" }),
                 else => self.notify("Could not open Appearance: {s}", .{@errorName(err)}),
             },
-            7 => self.worker.enqueue(.{ .kind = .settings, .path = "" }),
+            6 => self.host.openDesktopSettings() catch |err| switch (err) {
+                error.Unsupported => self.worker.enqueue(.{ .kind = .settings, .path = "" }),
+                else => self.notify("Could not open Desktop Settings: {s}", .{@errorName(err)}),
+            },
             else => {},
         }
     }
 }
 
+pub fn closePicker(self: *App) void {
+    if (self.applications) |*picker| picker.deinit();
+    self.applications = null;
+}
+
+pub fn pickerAction(self: *App, action: @import("../files/open_with.zig").Action) void {
+    switch (action) {
+        .cancel => {
+            self.closePicker();
+            self.edit = .none;
+        },
+        .open => self.finishEdit(),
+        .none => {},
+    }
+    self.invalidate();
+}
+
 pub fn beginEdit(self: *App, kind: @FieldType(App, "edit")) void {
     self.deletion.deinit();
+    self.closePicker();
     self.edit = kind;
     if (kind == .folder) {
         const path = std.fmt.allocPrint(a, "{s}/New Folder", .{self.worker.dir}) catch {
@@ -135,6 +155,7 @@ pub fn beginEdit(self: *App, kind: @FieldType(App, "edit")) void {
         if (self.deletion.paths.items.len == 0) self.edit = .none;
         return;
     }
+    if (kind == .add_app) self.applications = @import("../files/open_with.zig").State.initShortcuts(a, self.catalog);
     self.choice = 0;
     if (kind == .add_app or kind == .open_with) self.worker.enqueue(.{ .kind = .catalog, .path = "" });
     self.edit_text.clearRetainingCapacity();
@@ -184,8 +205,16 @@ pub fn finishEdit(self: *App) void {
         self.edit_text.clearRetainingCapacity();
         self.edit_text.appendSlice(a, self.rename_editor.value()) catch return;
     }
-    if ((self.edit == .add_app or self.edit == .open_with) and self.choiceEntry(self.choice) == null) return;
-    if (self.edit == .add_file and !std.fs.path.isAbsolute(self.edit_text.items)) return;
+    if (self.edit == .add_app) {
+        const entry = if (self.applications) |*picker| picker.shortcut() orelse return else return;
+        const dest = std.fmt.allocPrint(a, "{s}/{s}", .{ self.worker.dir, std.fs.path.basename(entry.desktop_file_path) }) catch return;
+        defer a.free(dest);
+        self.worker.enqueue(.{ .kind = .copy, .path = entry.desktop_file_path, .value = dest });
+        self.closePicker();
+        self.edit = .none;
+        return;
+    }
+    if (self.edit == .open_with and self.choiceEntry(self.choice) == null) return;
     if (self.edit == .file or self.edit == .rename) {
         const name = self.edit_text.items;
         if (name.len == 0 or std.mem.indexOfScalar(u8, name, '/') != null or std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, "..")) return;
@@ -202,25 +231,11 @@ pub fn finishEdit(self: *App) void {
         self.deletion.deinit();
         return;
     }
-    if (self.edit == .add_app or self.edit == .open_with) {
+    if (self.edit == .open_with) {
         const entry = self.choiceEntry(self.choice) orelse return;
-        if (self.edit == .add_app) {
-            const dest = std.fmt.allocPrint(a, "{s}/{s}", .{ self.worker.dir, std.fs.path.basename(entry.desktop_file_path) }) catch return;
-            defer a.free(dest);
-            self.worker.enqueue(.{ .kind = .copy, .path = entry.desktop_file_path, .value = dest });
-        } else {
-            for (self.icons.items) |ic| {
-                if (ic.selected) self.worker.enqueue(.{ .kind = .launch, .path = ic.item.path, .value = entry.exec, .terminal = entry.terminal, .launch_file = true });
-            }
+        for (self.icons.items) |ic| {
+            if (ic.selected) self.worker.enqueue(.{ .kind = .launch, .path = ic.item.path, .value = entry.exec, .terminal = entry.terminal, .launch_file = true });
         }
-        return;
-    }
-    if (self.edit == .add_file) {
-        const path = self.edit_text.items;
-        if (!std.fs.path.isAbsolute(path)) return;
-        const dest = std.fmt.allocPrint(a, "{s}/{s}", .{ self.worker.dir, std.fs.path.basename(path) }) catch return;
-        defer a.free(dest);
-        self.worker.enqueue(.{ .kind = .link, .path = path, .value = dest });
         return;
     }
     if (self.edit == .properties) return;

@@ -1,4 +1,4 @@
-//! Files' modal application picker. Geometry is shared by painting and input.
+//! Shared modal application picker for Open With and desktop shortcuts. Geometry is shared by painting and input.
 const std = @import("std");
 const associations = @import("associations.zig");
 const c = @import("c.zig").api;
@@ -12,6 +12,7 @@ const checkbox = @import("ui").widgets.checkbox;
 const icons = @import("../icon_cache.zig");
 const icon_theme = @import("../icon_theme.zig");
 const Rect = ui.Rect;
+const AppEntry = @import("../start_menu/applications.zig").AppEntry;
 
 pub const Action = enum { none, cancel, open };
 const Focus = enum { list, more, remember, cancel, open };
@@ -30,12 +31,16 @@ pub const Geometry = struct {
     rows: usize,
 
     pub fn init(w: i32, h: i32, count: usize) Geometry {
+        return initMode(w, h, count, false);
+    }
+
+    fn initMode(w: i32, h: i32, count: usize, shortcut: bool) Geometry {
         const width: f32 = @min(480, @as(f32, @floatFromInt(w)) - 24);
         const header: f32 = @floatFromInt((chrome.Metrics{}).titlebarHeight());
-        const height: f32 = @min(@min(500, header + 236 + @as(f32, @floatFromInt(@max(1, count))) * row_height), @as(f32, @floatFromInt(h)) - 16);
+        const height: f32 = @min(@min(500, header + @as(f32, if (shortcut) 140 else 236) + @as(f32, @floatFromInt(@max(1, count))) * row_height), @as(f32, @floatFromInt(h)) - 16);
         const compact = height < header + 290;
         const list_y = header + @as(f32, if (compact) 34 else 64);
-        const rows: usize = @intFromFloat(@max(1, @floor((height - @as(f32, if (compact) 112 else 172) - list_y) / row_height)));
+        const rows: usize = @intFromFloat(@max(1, @floor((height - @as(f32, if (shortcut) 70 else if (compact) 112 else 172) - list_y) / row_height)));
         const more_y = height - @as(f32, if (compact) 100 else 140);
         const small: f32 = if (compact) 26 else 30;
         const button_y = height - @as(f32, if (compact) 42 else 58);
@@ -45,8 +50,8 @@ pub const Geometry = struct {
             .list = .{ .x = 16, .y = list_y, .w = width - 32, .h = @as(f32, @floatFromInt(rows)) * row_height },
             .more = .{ .x = 16, .y = more_y, .w = width - 32, .h = small },
             .remember = .{ .x = 16, .y = height - @as(f32, if (compact) 72 else 102), .w = width - 32, .h = small },
-            .cancel = .{ .x = width - 188, .y = button_y, .w = 80, .h = button_h },
-            .open = .{ .x = width - 100, .y = button_y, .w = 84, .h = button_h },
+            .cancel = .{ .x = width - @as(f32, if (shortcut) 228 else 188), .y = button_y, .w = 80, .h = button_h },
+            .open = .{ .x = width - @as(f32, if (shortcut) 140 else 100), .y = button_y, .w = if (shortcut) 124 else 84, .h = button_h },
             .close = frame.closeBox(width),
             .divider = more_y - @as(f32, if (compact) 8 else 18),
             .rows = rows,
@@ -57,6 +62,9 @@ pub const Geometry = struct {
 pub const State = struct {
     placement: frame.Placement = .{},
     apps: associations.Applications,
+    /// Borrowed from the desktop worker, whose catalogue outlives the picker.
+    shortcut_catalog: ?[]const AppEntry = null,
+    query: []const u8 = "",
     selected: usize = 0,
     offset: usize = 0,
     all: bool = false,
@@ -64,18 +72,51 @@ pub const State = struct {
     focus: Focus = .list,
     message: []const u8 = "",
 
+    fn baseGeometry(self: *const State, w: i32, h: i32) Geometry {
+        // Filtering keeps the card still while the user types.
+        const layout_count = if (self.shortcut_catalog) |catalog| catalog.len else self.count();
+        return Geometry.initMode(w, h, layout_count, self.shortcut_catalog != null);
+    }
+
+    pub fn initShortcuts(allocator: std.mem.Allocator, catalog: []const AppEntry) State {
+        return .{ .apps = .{ .arena = std.heap.ArenaAllocator.init(allocator) }, .shortcut_catalog = catalog, .all = true };
+    }
+
+    pub fn shortcut(self: *const State) ?AppEntry {
+        return self.shortcutAt(self.selected);
+    }
+
+    fn shortcutAt(self: *const State, index: usize) ?AppEntry {
+        const catalog = self.shortcut_catalog orelse return null;
+        var n: usize = 0;
+        for (catalog) |entry| {
+            if (std.ascii.indexOfIgnoreCase(entry.name, self.query) == null) continue;
+            if (n == index) return entry;
+            n += 1;
+        }
+        return null;
+    }
+
+    /// The query borrows the desktop editor's storage until the next update.
+    pub fn search(self: *State, query: []const u8) void {
+        self.query = query;
+        self.selected = 0;
+        self.offset = 0;
+        self.focus = .list;
+    }
+
     pub fn geometry(self: *const State, w: i32, h: i32) Geometry {
-        var g = Geometry.init(w, h, self.count());
+        var g = self.baseGeometry(w, h);
         g.box = self.placement.box(g.box, w, h);
         return g;
     }
 
     pub fn pointerButton(self: *State, w: i32, h: i32, x: f64, y: f64, pressed: bool) bool {
-        return self.placement.button(Geometry.init(w, h, self.count()).box, w, h, x, y, pressed);
+        return self.placement.button(self.baseGeometry(w, h).box, w, h, x, y, pressed);
     }
 
     pub fn motion(self: *State, w: i32, h: i32, x: f64, y: f64) bool {
-        return self.placement.motion(Geometry.init(w, h, self.count()).box, w, h, x, y);
+        return self.placement.motion(self.baseGeometry(w, h).box, w, h, x, y);
     }
 
     pub fn init(a: std.mem.Allocator, paths: []const []const u8) !State {
@@ -88,6 +129,13 @@ pub const State = struct {
     }
 
     fn count(self: *const State) usize {
+        if (self.shortcut_catalog) |catalog| {
+            var n: usize = 0;
+            for (catalog) |entry| {
+                if (std.ascii.indexOfIgnoreCase(entry.name, self.query) != null) n += 1;
+            }
+            return n;
+        }
         return if (self.all) self.apps.entries.items.len else self.apps.recommended;
     }
 
@@ -110,8 +158,9 @@ pub const State = struct {
         const rows = self.geometry(w, h).rows;
         if (sym == c.XKB_KEY_Escape) return .cancel;
         if (sym == c.XKB_KEY_Tab or sym == c.XKB_KEY_ISO_Left_Tab) {
-            const n = @typeInfo(Focus).@"enum".fields.len;
-            self.focus = @enumFromInt((@intFromEnum(self.focus) + @as(usize, if (shift or sym == c.XKB_KEY_ISO_Left_Tab) n - 1 else 1)) % n);
+            const focuses: []const Focus = if (self.shortcut_catalog != null) &.{ .list, .cancel, .open } else &.{ .list, .more, .remember, .cancel, .open };
+            const index = std.mem.indexOfScalar(Focus, focuses, self.focus) orelse 0;
+            self.focus = focuses[(index + (if (shift or sym == c.XKB_KEY_ISO_Left_Tab) focuses.len - 1 else @as(usize, 1))) % focuses.len];
         } else if (sym == c.XKB_KEY_Up or sym == c.XKB_KEY_Down or sym == c.XKB_KEY_Home or sym == c.XKB_KEY_End or sym == c.XKB_KEY_Page_Up or sym == c.XKB_KEY_Page_Down) {
             self.focus = .list;
             if (sym == c.XKB_KEY_Up) self.selected -|= 1;
@@ -121,7 +170,7 @@ pub const State = struct {
             if (sym == c.XKB_KEY_Page_Up) self.selected -|= rows;
             if (sym == c.XKB_KEY_Page_Down) self.selected = @min(self.selected + rows, self.count() -| 1);
             self.reveal(rows);
-        } else if (sym == c.XKB_KEY_Return or sym == c.XKB_KEY_space) {
+        } else if (sym == c.XKB_KEY_Return or sym == c.XKB_KEY_KP_Enter or sym == c.XKB_KEY_space) {
             switch (self.focus) {
                 .list, .open => if (self.count() > 0) return .open,
                 .cancel => return .cancel,
@@ -141,8 +190,8 @@ pub const State = struct {
         if (contains(g.close, px, py)) return 1;
         if (contains(g.cancel, px, py)) return 2;
         if (contains(g.open, px, py)) return 3;
-        if (contains(g.more, px, py)) return 4;
-        if (contains(g.remember, px, py)) return 5;
+        if (self.shortcut_catalog == null and contains(g.more, px, py)) return 4;
+        if (self.shortcut_catalog == null and contains(g.remember, px, py)) return 5;
         if (contains(g.list, px, py)) {
             const row = @as(usize, @intFromFloat((py - g.list.y) / row_height)) + self.offset;
             if (row < self.count()) return 10 + row;
@@ -174,6 +223,7 @@ pub const State = struct {
     }
 
     pub fn open(self: *State) bool {
+        if (self.shortcut_catalog != null) return false;
         if (self.selected >= self.count()) return false;
         self.apps.launch(self.selected, self.remember) catch |err| {
             self.message = if (err == error.DefaultFailed) "Opened, but could not save the default app" else "Could not open with this app. Choose another.";
@@ -183,10 +233,20 @@ pub const State = struct {
     }
 
     pub fn draw(self: *State, cr: *c.cairo_t, w: i32, h: i32, mx: f64, my: f64, cfg: icon_theme.Config, io: std.Io) void {
+        self.drawImpl(cr, w, h, mx, my, cfg, io, true);
+    }
+
+    pub fn drawWindow(self: *State, cr: *c.cairo_t, w: i32, h: i32, mx: f64, my: f64, cfg: icon_theme.Config, io: std.Io) void {
+        self.drawImpl(cr, w, h, mx, my, cfg, io, false);
+    }
+
+    fn drawImpl(self: *State, cr: *c.cairo_t, w: i32, h: i32, mx: f64, my: f64, cfg: icon_theme.Config, io: std.Io, backdrop: bool) void {
         const g = self.geometry(w, h);
         self.offset = @min(self.offset, self.count() -| g.rows);
-        @import("ui").cairo.setSource(cr, frame.backdropColor());
-        c.cairo_paint(cr);
+        if (backdrop) {
+            ui.setSource(cr, frame.backdropColor());
+            c.cairo_paint(cr);
+        }
         var layer = ui.Layer.begin(cr, g.box) orelse return;
         defer layer.finish();
         const r = &layer.renderer;
@@ -197,16 +257,24 @@ pub const State = struct {
         palette.button_font_size = ui.textSize();
         r.palette = palette;
         frame.paintWindowFrame(r, layer.local(), theme.global.app_toolbar);
-        frame.paintWindowTitle(r, layer.local(), "Open With", .grid, null);
+        frame.paintWindowTitle(r, layer.local(), if (self.shortcut_catalog != null) "Add Application Shortcut" else "Open With", .grid, null);
         var buffer: [256]u8 = undefined;
-        const subtitle = if (self.message.len > 0) self.message else if (self.apps.paths.len == 1) std.fs.path.basename(self.apps.paths[0]) else std.fmt.bufPrint(&buffer, "{d} selected files", .{self.apps.paths.len}) catch "Selected files";
+        const subtitle = if (self.message.len > 0) self.message else if (self.shortcut_catalog != null) (if (self.query.len > 0) std.fmt.bufPrint(&buffer, "Search: {s}", .{self.query}) catch self.query else "Choose an application to add to the desktop") else if (self.apps.paths.len == 1) std.fs.path.basename(self.apps.paths[0]) else std.fmt.bufPrint(&buffer, "{d} selected files", .{self.apps.paths.len}) catch "Selected files";
         if (g.list.y - @as(f32, @floatFromInt((chrome.Metrics{}).titlebarHeight())) > 50) r.drawText(16, g.list.y - 50, g.box.w - 32, 20, .{ .content = subtitle, .font_size = ui.textSize(), .color = palette.fg });
         r.drawText(16, g.list.y - 26, g.box.w - 32, 20, .{ .content = if (self.all) "All Applications" else "Recommended Apps", .font_size = ui.headingSize(), .weight = 600, .color = palette.fg });
         const hovered = self.hit(w, h, mx, my);
         if (self.count() == 0) r.drawText(24, g.list.y, g.list.w - 16, row_height, .{ .content = "No applications available", .font_size = ui.textSize(), .color = palette.fg });
         const end = @min(self.count(), self.offset + g.rows);
         for (self.offset..end) |i| {
-            const entry = self.apps.entries.items[i];
+            var shortcut_icons: [1][]const u8 = undefined;
+            const entry: struct { name: []const u8, icons: []const []const u8, is_default: bool } = if (self.shortcut_catalog != null) blk: {
+                const app = self.shortcutAt(i) orelse continue;
+                if (app.icon) |name| shortcut_icons[0] = name;
+                break :blk .{ .name = app.name, .icons = if (app.icon != null) &shortcut_icons else &.{}, .is_default = false };
+            } else blk: {
+                const app = self.apps.entries.items[i];
+                break :blk .{ .name = app.name, .icons = app.icons, .is_default = app.is_default };
+            };
             const y = g.list.y + @as(f32, @floatFromInt(i - self.offset)) * row_height;
             if (i == self.selected or hovered == 10 + i) r.fillRect(g.list.x, y, g.list.w, row_height - 2, .{
                 .color = if (i == self.selected) theme.global.app_nav_selected else theme.global.app_item_hover,
@@ -226,16 +294,18 @@ pub const State = struct {
         const strip = scrollbar.gutter(theme.global.scrollbar_width);
         if (scrollbar.Geometry.compute(.vertical, .{ .x = g.box.w - strip, .y = g.list.y, .w = strip, .h = g.list.h }, @floatFromInt(g.rows), @floatFromInt(self.count()), @floatFromInt(self.offset))) |bar|
             scrollbar.paint(r, scrollbar.look(bar, .{}, theme.global.scrollbar_width, palette));
-        r.fillRect(16, g.divider, g.box.w - 32, 1, .{ .color = theme.global.app_divider });
-        button.paint(r, g.more, .{ .size = .sm, .variant = .ghost, .alignment = .left, .leading_icon = .plus, .label = if (self.all) "Back to recommended apps" else "Choose another app…" }, .{ .focused = self.focus == .more, .pointer = if (hovered == 4) .hover else .idle });
-        const extension = std.fs.path.extension(self.apps.paths[0]);
-        const remember_label = if (extension.len > 0 and self.apps.paths.len == 1)
-            std.fmt.bufPrint(&buffer, "Always use this app for {s} files", .{extension}) catch "Always use this app for this file type"
-        else
-            "Always use this app for this file type";
-        checkbox.paint(r, g.remember, remember_label, .{ .checked = self.remember, .focused = self.focus == .remember, .disabled = !self.apps.same_type or self.count() == 0 });
+        if (self.shortcut_catalog == null) {
+            r.fillRect(16, g.divider, g.box.w - 32, 1, .{ .color = theme.global.app_divider });
+            button.paint(r, g.more, .{ .size = .sm, .variant = .ghost, .alignment = .left, .leading_icon = .plus, .label = if (self.all) "Back to recommended apps" else "Choose another app…" }, .{ .focused = self.focus == .more, .pointer = if (hovered == 4) .hover else .idle });
+            const extension = std.fs.path.extension(self.apps.paths[0]);
+            const remember_label = if (extension.len > 0 and self.apps.paths.len == 1)
+                std.fmt.bufPrint(&buffer, "Always use this app for {s} files", .{extension}) catch "Always use this app for this file type"
+            else
+                "Always use this app for this file type";
+            checkbox.paint(r, g.remember, remember_label, .{ .checked = self.remember, .focused = self.focus == .remember, .disabled = !self.apps.same_type or self.count() == 0 });
+        }
         button.paint(r, g.cancel, .{ .size = .sm, .label = "Cancel" }, .{ .focused = self.focus == .cancel, .pointer = if (hovered == 2) .hover else .idle });
-        button.paint(r, g.open, .{ .size = .sm, .label = "Open", .variant = .primary }, .{ .focused = self.focus == .open, .pointer = if (self.count() == 0) .disabled else if (hovered == 3) .hover else .idle });
+        button.paint(r, g.open, .{ .size = .sm, .label = if (self.shortcut_catalog != null) "Add Shortcut" else "Open", .variant = .primary }, .{ .focused = self.focus == .open, .pointer = if (self.count() == 0) .disabled else if (hovered == 3) .hover else .idle });
         button.paint(r, g.close, .{ .icon = .close, .variant = .chrome, .label = "Close" }, .{ .pointer = if (hovered == 1) .hover else .idle });
     }
 };

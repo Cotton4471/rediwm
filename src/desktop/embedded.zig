@@ -402,6 +402,7 @@ pub const Desktop = struct {
         if (c.cairo_status(cr) != c.CAIRO_STATUS_SUCCESS) return error.CairoFailed;
         c.cairo_scale(cr, self.scale, self.scale);
         c.cairo_translate(cr, -@as(f64, @floatFromInt(rect.x)), -@as(f64, @floatFromInt(rect.y)));
+        self.app.picker_theme = self.server.icon_theme_cfg;
         self.app.paintOverlay(cr, app_mod.nowMs());
         c.cairo_surface_flush(surface);
         const opening = self.overlay_rect == null;
@@ -525,6 +526,15 @@ pub const Desktop = struct {
         self.syncModifiers();
         self.app.button(button, pressed);
         self.schedule();
+    }
+
+    pub fn scroll(self: *Desktop, delta: f64) void {
+        if (self.app.edit != .add_app) return;
+        if (self.app.applications) |*picker| {
+            picker.wheel(delta, self.app.geometry.w, self.app.geometry.h - self.app.geometry.bottom);
+            self.app.invalidate();
+            self.schedule();
+        }
     }
 
     /// Whether `Keyboard` repeats a held key into the desktop.
@@ -722,6 +732,14 @@ pub const Desktop = struct {
                     if (app_id.len > 0 and std.ascii.eqlIgnoreCase(toplevel.appId(), app_id)) return true;
                 }
                 return false;
+            }
+        }.f,
+        .openDesktopSettings = struct {
+            fn f(ctx: ?*anyopaque) anyerror!void {
+                const server = from(ctx).server;
+                const output = server.getDefaultOutput() orelse return;
+                output.toggleControlCenter();
+                if (server.input.open_control_center) |cc| cc.selectPage(.desktop);
             }
         }.f,
         .openAppearance = struct {

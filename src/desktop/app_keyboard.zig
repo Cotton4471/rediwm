@@ -15,6 +15,7 @@ pub fn keyboardLeft(self: *App, refocusing: bool) void {
     if (!refocusing) {
         self.menu = false;
         self.deletion.deinit();
+        self.closePicker();
         self.edit = .none;
     }
     self.invalidate();
@@ -41,6 +42,29 @@ pub fn key(self: *App, sym: u32, utf8: []const u8) void {
     self.invalidate();
     if (self.edit == .trash) {
         self.deleteAction(self.deletion.key(sym));
+        return;
+    }
+    if (self.edit == .add_app) {
+        if (self.applications) |*picker| {
+            // Preserve application search from the desktop's original chooser.
+            if (self.ctrl and (sym == c.XKB_KEY_a or sym == c.XKB_KEY_A)) {
+                self.edit_text.clearRetainingCapacity();
+                picker.search("");
+            } else if (sym == c.XKB_KEY_BackSpace) {
+                if (self.edit_text.items.len > 0) {
+                    var n = self.edit_text.items.len - 1;
+                    while (n > 0 and self.edit_text.items[n] & 0xc0 == 0x80) n -= 1;
+                    self.edit_text.shrinkRetainingCapacity(n);
+                }
+                picker.search(self.edit_text.items);
+            } else if (!self.ctrl and utf8.len > 0 and utf8[0] >= 32 and (sym != c.XKB_KEY_space or self.edit_text.items.len > 0) and self.edit_text.items.len + utf8.len < 255) {
+                self.edit_text.appendSlice(a, utf8) catch {};
+                picker.search(self.edit_text.items);
+            } else {
+                const action = picker.key(sym, self.shift, self.geometry.w, self.geometry.h - self.geometry.bottom);
+                self.pickerAction(action);
+            }
+        }
         return;
     }
     if (sym == c.XKB_KEY_Escape) {
@@ -70,7 +94,7 @@ pub fn key(self: *App, sym: u32, utf8: []const u8) void {
             self.choice = 0;
             return;
         }
-        if (self.edit == .add_app or self.edit == .open_with) {
+        if (self.edit == .open_with) {
             if (sym == c.XKB_KEY_Down) {
                 if (self.choiceEntry(self.choice + 1) != null) self.choice += 1;
                 return;

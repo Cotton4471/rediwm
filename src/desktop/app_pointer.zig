@@ -18,6 +18,17 @@ pub fn motion(self: *App, x: f64, y: f64) void {
 }
 
 pub fn pointerMotion(self: *App, x: f64, y: f64) void {
+    if (self.edit == .add_app) {
+        if (self.applications) |*picker| {
+            const w = self.geometry.w;
+            const h = self.geometry.h - self.geometry.bottom;
+            const old_hit = picker.hit(w, h, self.x, self.y);
+            if (picker.motion(w, h, x, y) or old_hit != picker.hit(w, h, x, y)) self.invalidate();
+        }
+        self.x = x;
+        self.y = y;
+        return;
+    }
     if (self.edit == .trash) {
         if (self.deletion.motion(self.geometry.w, self.geometry.h - self.geometry.bottom, x, y)) self.invalidate();
         const g = self.deletion.geometry(self.geometry.w, self.geometry.h - self.geometry.bottom);
@@ -71,6 +82,7 @@ pub fn pointerMotion(self: *App, x: f64, y: f64) void {
 
 pub fn leave(self: *App) void {
     self.deletion.placement.grab = null;
+    if (self.applications) |*picker| picker.placement.grab = null;
     if (self.hover != null) {
         self.damageIcon(self.hover.?);
         self.hover = null;
@@ -101,6 +113,20 @@ pub fn button(self: *App, button_code: u32, pressed: bool) void {
 
 pub fn pointerButton(self: *App, button_code: u32, pressed: bool) void {
     self.invalidate();
+    if (self.edit == .add_app) {
+        if (button_code == 272) {
+            if (self.applications) |*picker| {
+                const w = self.geometry.w;
+                const h = self.geometry.h - self.geometry.bottom;
+                if (picker.pointerButton(w, h, self.x, self.y, pressed)) return;
+                if (pressed) {
+                    const action = picker.click(w, h, self.x, self.y);
+                    self.pickerAction(action);
+                }
+            }
+        }
+        return;
+    }
     if (self.edit == .trash and button_code == 272 and self.deletion.pointerButton(self.geometry.w, self.geometry.h - self.geometry.bottom, self.x, self.y, pressed)) return;
     if (self.renameGeometry()) |g| {
         if (button_code != 272) return;
@@ -144,7 +170,7 @@ pub fn pointerButton(self: *App, button_code: u32, pressed: bool) void {
         return;
     }
     if (self.edit != .none) {
-        if (button_code == 272 and (self.edit == .add_app or self.edit == .open_with)) {
+        if (button_code == 272 and self.edit == .open_with) {
             const px = @divTrunc(self.geometry.w - 480, 2);
             const py = @divTrunc(self.geometry.h - 360, 2);
             if (self.x >= @as(f64, @floatFromInt(px)) and self.x < @as(f64, @floatFromInt(px + 480)) and self.y >= @as(f64, @floatFromInt(py + 64))) {

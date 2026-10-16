@@ -24,6 +24,40 @@ test "button release does not cancel the launch triggered by its press" {
     try std.testing.expectEqual(@as(i64, 30000), app.launching_until);
 }
 
+test "desktop shortcut picker searches, confirms separately and cancels without work" {
+    const picker = @import("../files/open_with.zig");
+    const entries = [_]@import("dotdesktop.zig").parser.AppEntry{
+        .{ .id = "first.desktop", .desktop_file_path = "/apps/first.desktop", .name = "First App", .exec = "true" },
+        .{ .id = "second.desktop", .desktop_file_path = "/apps/second.desktop", .name = "Second App", .exec = "true" },
+    };
+    var app = App{ .worker = undefined, .edit = .add_app, .applications = picker.State.initShortcuts(a, &entries) };
+    defer app.deinit();
+    try std.testing.expectEqual(@as(usize, 7), app.menuLabels().len);
+    try std.testing.expectEqualStrings("Paste", app.menuLabels()[3]);
+    try std.testing.expectEqualStrings("CTRL+V", app.menuHint(3).?);
+    app.key(c.XKB_KEY_s, "S");
+    app.key(c.XKB_KEY_e, "e");
+    try std.testing.expectEqualStrings("second.desktop", app.applications.?.shortcut().?.id);
+    app.key(c.XKB_KEY_space, " ");
+    try std.testing.expect(app.applications.?.shortcut() == null);
+    // An empty result cannot enqueue work, even on confirmation.
+    app.key(c.XKB_KEY_Return, "");
+    try std.testing.expectEqual(.add_app, app.edit);
+    app.ctrl = true;
+    app.key(c.XKB_KEY_a, "");
+    app.ctrl = false;
+    const g = app.applications.?.geometry(app.geometry.w, app.geometry.h - app.geometry.bottom);
+    app.motion(g.box.x + g.list.x + 20, g.box.y + g.list.y + 40);
+    app.button(272, true);
+    app.button(272, false);
+    try std.testing.expectEqualStrings("second.desktop", app.applications.?.shortcut().?.id);
+    try std.testing.expectEqual(.add_app, app.edit);
+    app.key(c.XKB_KEY_Tab, "");
+    app.key(c.XKB_KEY_Return, "");
+    try std.testing.expectEqual(.none, app.edit);
+    try std.testing.expect(app.applications == null);
+}
+
 test "desktop pointer motion repaints only when visible state changes" {
     var icons = [_]Icon{.{ .item = .{ .path = "", .name = "", .icon = null }, .cell = .{}, .born = 0 }};
     var app = App{ .worker = undefined, .icons = .{ .items = &icons, .capacity = icons.len }, .dirty = false };

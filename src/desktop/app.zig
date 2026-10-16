@@ -78,10 +78,12 @@ pub const App = struct {
     menu_icon: ?usize = null,
     menu_x: i32 = 0,
     menu_y: i32 = 0,
-    edit: enum { none, rename, folder, file, trash, properties, add_file, add_app, open_with } = .none,
+    edit: enum { none, rename, folder, file, trash, properties, add_app, open_with } = .none,
     folder_token: u64 = 0,
     deletion: deletion.State = .{},
     catalog: []const @import("dotdesktop.zig").parser.AppEntry = &.{},
+    applications: ?@import("../files/open_with.zig").State = null,
+    picker_theme: @import("../icon_theme.zig").Config = .{ .theme_name = "", .base_dirs = &.{} },
     choice: usize = 0,
     last_tick: i64 = 0,
     last_tick_active: bool = false,
@@ -148,6 +150,7 @@ pub const App = struct {
         self.damageRect(damage_mod.expand(self.geometry.rect(self.geometry.snap(self.x, self.y)), 1));
     }
     pub fn deinit(self: *App) void {
+        self.closePicker();
         self.deletion.deinit();
         self.rename_editor.deinit();
         if (self.wallpaper) |im| a.free(im.pixels);
@@ -181,6 +184,7 @@ pub const App = struct {
         self.refreshBottom();
         self.icon_only = snap.icon_only;
         self.catalog = snap.catalog;
+        if (self.applications) |*picker| picker.shortcut_catalog = self.catalog;
         for (self.icons.items) |*ic| {
             var found = false;
             for (snap.items) |item| if (std.mem.eql(u8, item.path, ic.item.path)) {
@@ -284,6 +288,8 @@ pub const App = struct {
     pub const menuHint = app_actions.menuHint;
     pub const untrustedLauncher = app_actions.untrustedLauncher;
     pub const menuAction = app_actions.menuAction;
+    pub const closePicker = app_actions.closePicker;
+    pub const pickerAction = app_actions.pickerAction;
     pub const beginEdit = app_actions.beginEdit;
     pub const deleteAction = app_actions.deleteAction;
     pub const finishEdit = app_actions.finishEdit;
