@@ -256,6 +256,7 @@ pub fn openConflictDialog(self: *App, conflict_name: []const u8) void {
 pub fn confirmDialog(self: *App) void {
     const dlg = self.dialog orelse return;
     switch (dlg.kind) {
+        .terminal_close => self.terminalConfirmClose(),
         .open_with => self.openWithAction(.open),
         .properties => {},
         .new_folder => {
@@ -376,5 +377,5 @@ pub fn handleDialogKey(self: *App, sym: u32, utf8: []const u8) void {
         return;
     }
 
-    self.editKey(&dlg.edit, sym, utf8);
+    if (dlg.kind != .terminal_close) self.editKey(&dlg.edit, sym, utf8);
 }

@@ -18,6 +18,7 @@ pub const ThemeUpdate = struct {
     icon_theme: []const u8 = "",
     io: std.Io,
     single_click_open: bool = true,
+    terminal_opacity: ?f32 = null,
 
     fn init(a: std.mem.Allocator, t: theme.Theme, prefs: config.RegionConfig, root: []const u8, icon_name: []const u8, io: std.Io) !ThemeUpdate {
         var value = t;
@@ -127,6 +128,7 @@ pub const Settings = struct {
         var root: []const u8 = "";
         var prefs: config.RegionConfig = .{};
         var single_click_open = true;
+        var terminal_opacity: ?f32 = null;
         self.animations = .{};
         self.region = .{};
         for (paths, 0..) |path, i| {
@@ -144,6 +146,7 @@ pub const Settings = struct {
                     icon_name = arena.allocator().dupe(u8, icon_name) catch return null;
                     t = value.theme;
                     single_click_open = value.compositor.files_single_click_open;
+                    terminal_opacity = value.compositor.terminal_opacity;
                     if (value.theme_pack) |pack| root = arena.allocator().dupe(u8, pack.root) catch return null;
                     inline for (.{ "font", "mono_font", "start_button_icon" }) |field| @field(t, field) = arena.allocator().dupe(u8, @field(t, field)) catch return null;
                     prefs = value.region;
@@ -161,6 +164,7 @@ pub const Settings = struct {
         self.region.first_day_of_week = prefs.first_day_of_week;
         var update = ThemeUpdate.init(a, t, prefs, root, icon_name, io) catch return null;
         update.single_click_open = single_click_open;
+        update.terminal_opacity = terminal_opacity;
         return update;
     }
 };
@@ -170,6 +174,10 @@ pub fn loadTheme(a: std.mem.Allocator, io: std.Io, env: std.process.Environ) voi
     var settings = Settings.init(a, env) catch return;
     defer settings.deinit(a);
     if (settings.poll(a, io)) |t| t.apply();
+}
+
+pub fn terminalOpacity() ?f32 {
+    return if (applied_theme) |t| t.terminal_opacity else null;
 }
 
 /// File timestamps use the same clock preference as the shell.

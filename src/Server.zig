@@ -713,6 +713,7 @@ pub fn applyChildEnvWithToken(server: *Server, map: *child_env.Map, token: ?[]co
         .qt_app_colors = !server.greeter_mode and server.qt_app_colors,
         .region = server.config.region,
         .input_method = server.config.input_method.env,
+        .app_scopes = server.app_scopes != null,
         .wayland_display = server.wl_server_socket_name,
         .ipc_socket = server.ipc_socket_path,
         .x11_display = if (server.xwayland) |xw| xw.displayName() else null,

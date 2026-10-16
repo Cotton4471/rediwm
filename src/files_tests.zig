@@ -599,11 +599,15 @@ test "view preferences survive restart and reject malformed state" {
     defer ops_mod.deleteRecursive(a, tmp) catch {};
     const path = try std.fmt.allocPrint(a, "{s}/state/files", .{tmp});
     defer a.free(path);
-    const pref: Preferences = .{ .list = true, .sort = 7, .unpinned_places = 0b0101010 };
+    const pref: Preferences = .{ .list = true, .sort = 7, .unpinned_places = 0b0101010, .terminal_height = 286 };
     try pref.save(a, std.testing.io, path);
     try std.testing.expectEqual(pref, Preferences.load(a, std.testing.io, path));
     try writeTestFile(path, &.{ '1', 1, 7, '\n' });
     try std.testing.expectEqual(Preferences{ .list = true, .sort = 7 }, Preferences.load(a, std.testing.io, path));
+    try writeTestFile(path, &.{ '3', 1, 2, 3, 0, '\n' });
+    try std.testing.expectEqual(Preferences{ .list = true, .sort = 2, .unpinned_places = 3, .git_view = false }, Preferences.load(a, std.testing.io, path));
+    try writeTestFile(path, &.{ '4', 0, 0, 0, 1, 0xff, 0xff, 0xff, 0xff, '\n' });
+    try std.testing.expectEqual(Preferences{}, Preferences.load(a, std.testing.io, path));
     try writeTestFile(path, &.{ '2', 1, 7, 0x80, '\n' });
     try std.testing.expectEqual(Preferences{}, Preferences.load(a, std.testing.io, path));
     try writeTestFile(path, "invalid");
@@ -1095,6 +1099,7 @@ test {
     _ = @import("files/thumbs.zig");
     _ = @import("files/volumes.zig");
     _ = @import("files/pins.zig");
+    _ = @import("files/terminal/tests.zig");
 }
 
 test {

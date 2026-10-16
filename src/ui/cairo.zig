@@ -178,10 +178,19 @@ pub fn drawScrollbar(cr_any: *anyopaque, look: scrollbar.Look) void {
 /// Draws `str` with its pen at `x` and baseline at `y`, like
 /// `cairo_show_text`, in the context's current (solid) source colour.
 pub fn drawText(cr_any: *anyopaque, str: []const u8, x: f64, y: f64, size: f64, bold: bool) void {
+    drawTextFont(cr_any, str, x, y, size, fontOf(bold));
+}
+
+/// Explicit face for terminal cells; uses the same shaping/fallback and
+/// device-pixel placement as ordinary client text.
+pub fn drawTextFont(cr_any: *anyopaque, str: []const u8, x: f64, y: f64, size: f64, font: text.Font) void {
+    drawStyledText(cr_any, str, x, y, size, font, false);
+}
+
+pub fn drawStyledText(cr_any: *anyopaque, str: []const u8, x: f64, y: f64, size: f64, font: text.Font, italic: bool) void {
     if (str.len == 0) return;
     const cr: *c.cairo_t = @ptrCast(cr_any);
     const s = scaleOf(cr);
-    const font = fontOf(bold);
     const size_f: f32 = @floatCast(size);
     const m = text.verticalMetrics(font, size_f, s) catch return;
     const advance = text.measureWidthF(str, font, size_f, s) catch return;
@@ -208,6 +217,7 @@ pub fn drawText(cr_any: *anyopaque, str: []const u8, x: f64, y: f64, size: f64, 
         .clip = .{ .x = 0, .y = 0, .w = w_logical, .h = h_logical },
         .ellipsize = false,
         .baseline = baseline,
+        .italic = italic,
     }) catch return;
 
     // Pen and baseline onto whole device pixels, so the raster lands 1:1.

@@ -56,7 +56,8 @@ Installing never replaces your login manager
 Requirements: Zig 0.16, wlroots 0.20, and the development files for Wayland,
 wayland-protocols, xkbcommon, pixman, FreeType, HarfBuzz, Fontconfig,
 librsvg/GdkPixbuf, PangoCairo, libinput, PAM, libpulse, libpipewire-0.3, Poppler GLib,
-libseccomp, libarchive, libjpeg, libpng and libwebp. Optional:
+libseccomp, libarchive, libjpeg, libpng, libwebp and GNU Readline. Files embeds
+the pinned libvterm 0.3.3 source (downloaded by Zig; no system libvterm needed). Optional:
 Xwayland, `foot`, `brightnessctl`, `gio`/`xdg-open`, `git` (optional).
 
 Printer support uses an existing CUPS server (`cups`). Installing the optional
@@ -218,6 +219,7 @@ older canvas save while in workspace mode updates the saved return-to-canvas sta
 - **Desktop icons:** a `.desktop` launcher only runs if it's installed, root-owned, executable, or an exact copy of an installed entry. Otherwise, choose **Allow Launching** from its menu.
 - **`rediwm-dm`:** disable your current display manager, run `sudo systemctl enable rediwm-dm`, and reboot. Options are in `/etc/rediwm/dm.conf`.
 - **Text editor:** `rediwm-editor [FILE ...]` opens UTF-8 files in tabs, from tiny notes to logs of hundreds of megabytes (up to 4 GiB, if they fit in free memory). Ctrl+N new, Ctrl+O open, Ctrl+S save, Ctrl+Shift+S save as, Ctrl+W close tab, Ctrl+PgUp/PgDn switch tabs, Ctrl+F or F3 find. In `rediwm-files`, Space previews images, PDFs and text.
+- **Files terminal:** F4 or the terminal button opens a resizable drawer below the file list. Hiding it keeps commands running; each Files window owns its own session. Bash follows folder navigation at an empty prompt and defers it while editing or running a command. Ctrl+Shift+C/V copies and pastes; Shift overrides application mouse reporting for selection. The header also opens your configured external terminal. See [terminal support](docs/files-terminal.md) for shell support and limits.
 - **Games and VMs:** games get pointer lock and relative motion. If a VM or remote desktop grabs your shortcuts, Super+Escape takes them back.
 - **Known issues (wlroots 0.20):** X11→Wayland drag-and-drop doesn't start, and X11 pointer input on a second output doesn't arrive.
 

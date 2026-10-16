@@ -23,7 +23,7 @@ pub fn horizontalOffset(self: *App) f64 {
 }
 
 pub fn contentBottom(self: *App) i32 {
-    return self.h - self.footerHeight() - (if (self.maxHorizontalScroll() > 0) self.scrollbarGutter() else @as(i32, 0));
+    return self.h - self.footerHeight() - self.terminalHeight() - (if (self.maxHorizontalScroll() > 0) self.scrollbarGutter() else @as(i32, 0));
 }
 
 pub fn horizontalScrollbar(self: *App) ?scrollbar.Geometry {
@@ -77,6 +77,7 @@ pub fn wheelMax(self: *App) i32 {
 }
 
 pub fn handleWheel(self: *App, delta_px: f64, now: i64) void {
+    if (delta_px != 0 and self.terminalWheel(delta_px)) return;
     if (self.shift and self.dialog == null and self.mouse_x >= @as(f64, @floatFromInt(self.sidebarWidth()))) {
         self.handleHorizontalScroll(delta_px);
         return;
@@ -123,6 +124,7 @@ pub fn stepWheel(self: *App, now: i64) void {
 }
 
 pub fn handleScroll(self: *App, delta_px: f64) void {
+    if (delta_px != 0 and self.terminalWheel(delta_px)) return;
     if (self.shift and self.dialog == null and self.mouse_x >= @as(f64, @floatFromInt(self.sidebarWidth()))) {
         self.handleHorizontalScroll(delta_px);
         return;
@@ -146,6 +148,7 @@ pub fn handleScroll(self: *App, delta_px: f64) void {
 }
 
 pub fn handleHorizontalScroll(self: *App, delta_px: f64) void {
+    if (self.terminalHeight() > 0 and self.terminalRect().contains(self.mouse_x, self.mouse_y)) return;
     if (delta_px == 0 or self.dialog != null or self.mouse_x < @as(f64, @floatFromInt(self.sidebarWidth()))) return;
     self.cancelWheel();
     self.menu = null;

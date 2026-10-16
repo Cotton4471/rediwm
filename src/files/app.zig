@@ -37,6 +37,7 @@ const app_paint = @import("app_paint.zig");
 const app_items = @import("app_items.zig");
 const app_model = @import("app_model.zig");
 const app_draw = @import("app_draw.zig");
+const app_terminal = @import("app_terminal.zig");
 const DeviceOp = app_model.DeviceOp;
 const MenuKind = app_model.MenuKind;
 const Sort = app_model.Sort;
@@ -60,6 +61,8 @@ pub const FontMetrics = app_draw.FontMetrics;
 pub const fontMetrics = app_draw.fontMetrics;
 pub const measureText = app_draw.measureText;
 pub const App = struct {
+    terminal: app_terminal.Drawer = .{},
+    closed: bool = false,
     children: @import("../child_set.zig") = .{},
     chooser: ?chooser_mod.Options = null,
     filename: Editor = .{},
@@ -306,6 +309,7 @@ pub const App = struct {
             self.list_view = prefs.list;
             self.unpinned_places = prefs.unpinned_places;
             self.git_view = prefs.git_view;
+            self.terminal.requested_height = @intCast(prefs.terminal_height);
             self.sort_mode = @enumFromInt(prefs.sort);
         }
         self.pins_path = pins_mod.statePath(allocator, environ) catch null;
@@ -316,6 +320,7 @@ pub const App = struct {
     }
 
     pub fn deinit(self: *App) void {
+        self.terminal.deinit(self.allocator);
         self.children.deinit(self.allocator);
         self.closeExtractPicker();
         self.extract_picker_bytes.deinit(self.allocator);
@@ -448,7 +453,7 @@ pub const App = struct {
 
     pub fn savePreferences(self: *App) void {
         const path = self.preferences_path orelse return;
-        (Preferences{ .list = self.non_git_list_view orelse self.list_view, .sort = @intFromEnum(self.sort_mode), .unpinned_places = self.unpinned_places, .git_view = self.git_view }).save(self.allocator, self.io, path) catch {
+        (Preferences{ .list = self.non_git_list_view orelse self.list_view, .sort = @intFromEnum(self.sort_mode), .unpinned_places = self.unpinned_places, .git_view = self.git_view, .terminal_height = @intCast(self.terminal.requested_height) }).save(self.allocator, self.io, path) catch {
             self.setStatusNotice("Could not save view preferences", true);
         };
     }
@@ -774,6 +779,36 @@ pub const App = struct {
 
     // app_pointer.zig
     pub const handleButton = app_pointer.handleButton;
+
+    // app_terminal.zig
+    pub const terminalHeight = app_terminal.terminalHeight;
+    pub const terminalMaximum = app_terminal.terminalMaximum;
+    pub const terminalRect = app_terminal.terminalRect;
+    pub const terminalBody = app_terminal.terminalBody;
+    pub const terminalControl = app_terminal.terminalControl;
+    pub const terminalHit = app_terminal.terminalHit;
+    pub const terminalRestartable = app_terminal.terminalRestartable;
+    pub const terminalDivider = app_terminal.terminalDivider;
+    pub const overTerminalDivider = app_terminal.overTerminalDivider;
+    pub const terminalScopes = app_terminal.terminalScopes;
+    pub const terminalHelper = app_terminal.terminalHelper;
+    pub const terminalStart = app_terminal.terminalStart;
+    pub const terminalToggle = app_terminal.terminalToggle;
+    pub const terminalStep = app_terminal.terminalStep;
+    pub const terminalDamage = app_terminal.terminalDamage;
+    pub const terminalScrollbar = app_terminal.terminalScrollbar;
+    pub const terminalKey = app_terminal.terminalKey;
+    pub const terminalModifiers = app_terminal.terminalModifiers;
+    pub const terminalCopy = app_terminal.terminalCopy;
+    pub const terminalMotion = app_terminal.terminalMotion;
+    pub const terminalButton = app_terminal.terminalButton;
+    pub const terminalCancelPointer = app_terminal.terminalCancelPointer;
+    pub const terminalWheel = app_terminal.terminalWheel;
+    pub const terminalRequestClose = app_terminal.terminalRequestClose;
+    pub const terminalConfirmClose = app_terminal.terminalConfirmClose;
+    pub const terminalFinishClose = app_terminal.terminalFinishClose;
+    pub const terminalExternal = app_terminal.terminalExternal;
+    pub const renderTerminal = app_terminal.renderTerminal;
 
     // app_keyboard.zig
     pub const keyRepeats = app_keyboard.keyRepeats;

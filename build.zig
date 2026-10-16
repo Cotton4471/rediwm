@@ -194,6 +194,9 @@ pub fn build(b: *std.Build) void {
     files.root_module.linkSystemLibrary("libarchive", .{});
     addThumbCodec(b, files.root_module);
     addVolumes(b, files.root_module);
+    addFilesTerminal(b, files.root_module, false);
+    const terminal_license = b.addInstallFileWithDir(b.dependency("vterm", .{}).path("LICENSE"), .prefix, "share/licenses/rediwm/libvterm-LICENSE");
+    b.getInstallStep().dependOn(&terminal_license.step);
     const install_files = b.addInstallArtifact(files, .{});
     // Advertises rediwm-files to the start menu's applications scanner
     // (src/start_menu/applications.zig) and to any other XDG-aware
@@ -217,6 +220,26 @@ pub fn build(b: *std.Build) void {
     const files_step = b.step("files", "Build the standalone Files and image viewer clients");
     files_step.dependOn(&install_files.step);
     files_step.dependOn(&install_files_desktop_entry.step);
+    files_step.dependOn(&terminal_license.step);
+    const terminal_child = b.addExecutable(.{
+        .name = "rediwm-files-terminal",
+        .root_module = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true }),
+    });
+    terminal_child.root_module.addCSourceFile(.{ .file = b.path("src/files/terminal/child.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    terminal_child.root_module.linkSystemLibrary("gio-2.0", .{});
+    const install_terminal = b.addInstallArtifact(terminal_child, .{});
+    b.getInstallStep().dependOn(&install_terminal.step);
+    files_step.dependOn(&install_terminal.step);
+    const bash_hook = b.addLibrary(.{
+        .name = "rediwm-files-bash",
+        .linkage = .dynamic,
+        .root_module = b.createModule(.{ .target = target, .optimize = .ReleaseFast, .link_libc = true, .sanitize_c = .off }),
+    });
+    bash_hook.root_module.addCSourceFile(.{ .file = b.path("src/files/terminal/bash.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    bash_hook.root_module.linkSystemLibrary("readline", .{});
+    const install_bash = b.addInstallArtifact(bash_hook, .{ .dest_dir = .{ .override = .lib }, .dest_sub_path = "rediwm/files-bash.so", .dylib_symlinks = false });
+    b.getInstallStep().dependOn(&install_bash.step);
+    files_step.dependOn(&install_bash.step);
 
     const images = b.addExecutable(.{
         .name = "rediwm-images",
@@ -672,9 +695,17 @@ pub fn build(b: *std.Build) void {
     files_tests.root_module.linkSystemLibrary("libarchive", .{});
     addThumbCodec(b, files_tests.root_module);
     addVolumes(b, files_tests.root_module);
+    addFilesTerminal(b, files_tests.root_module, true);
     const run_files_tests = b.addRunArtifact(files_tests);
     test_step.dependOn(&run_files_tests.step);
     b.step("test-files", "Test Files editing, navigation, transfers and layout").dependOn(&run_files_tests.step);
+    const terminal_integration = b.addSystemCommand(&.{"python3"});
+    terminal_integration.addFileArg(b.path("tests/files_terminal.py"));
+    terminal_integration.setEnvironmentVariable("REDIWM_TEST_BIN", b.getInstallPath(.bin, ""));
+    terminal_integration.step.dependOn(b.getInstallStep());
+    const terminal_tests = b.step("test-files-terminal", "Test the Files terminal against isolated PTYs and a headless compositor");
+    terminal_tests.dependOn(&run_files_tests.step);
+    terminal_tests.dependOn(&terminal_integration.step);
     const share_picker_tests = b.addTest(.{ .root_module = b.createModule(.{
         .root_source_file = b.path("src/share_picker_tests.zig"),
         .target = target,
@@ -855,7 +886,18 @@ fn addThumbCodec(b: *std.Build, module: *std.Build.Module) void {
     inline for (.{ "libjpeg", "libpng16" }) |lib| module.linkSystemLibrary(lib, .{});
 }
 
-// Files' device list: a GLib thread speaking to UDisks2 (src/files/volumes.c).
+// Pinned, Files-only emulator. No dependency on the compositor or distro ABI.
+fn addFilesTerminal(b: *std.Build, module: *std.Build.Module, for_tests: bool) void {
+    const vterm = b.dependency("vterm", .{});
+    module.addIncludePath(vterm.path("include"));
+    module.addIncludePath(vterm.path("src"));
+    module.addCSourceFiles(.{ .root = vterm.path("src"), .files = &.{ "encoding.c", "keyboard.c", "mouse.c", "parser.c", "pen.c", "screen.c", "state.c", "unicode.c", "vterm.c" }, .flags = &.{ "-std=c99", "-DNDEBUG" } });
+    module.addIncludePath(b.path("src/files/terminal"));
+    const flags: []const []const u8 = if (for_tests) &.{ "-std=c11", "-Wall", "-Wextra", "-Werror", "-DFT_TEST" } else &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" };
+    module.addCSourceFile(.{ .file = b.path("src/files/terminal/engine.c"), .flags = flags });
+    module.linkSystemLibrary("util", .{});
+}
+
 fn addVolumes(b: *std.Build, module: *std.Build.Module) void {
     module.addIncludePath(b.path("src/files"));
     module.addCSourceFile(.{ .file = b.path("src/files/volumes.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
@@ -874,7 +916,7 @@ fn addShellUi(b: *std.Build, module: *std.Build.Module) void {
 fn addShellIcons(b: *std.Build, module: *std.Build.Module) void {
     module.addAnonymousImport("redi-logo", .{ .root_source_file = b.path("assets/redi-logo.svg") });
     module.addAnonymousImport("rediwm-settings-icon", .{ .root_source_file = b.path("assets/icons/rediwm-settings.png") });
-    inline for (.{ "git-branch", "home", "folder", "settings", "keyboard", "edit", "mouse", "display", "music", "headphones", "wifi", "ethernet", "globe", "bluetooth", "battery", "notification-bell", "speaker", "speaker-xmark", "power-button", "clock", "lock", "logout", "restart", "eye", "eye-off", "refresh", "cut", "copy", "paste", "trash-outline", "trash", "view-grid", "view-list", "sort", "filter", "zoom-in", "zoom-out", "rotate", "crop", "undo", "save", "fit", "print", "open", "usb-stick", "drive", "eject", "users", "squares" }) |name| {
+    inline for (.{ "git-branch", "home", "folder", "terminal", "settings", "keyboard", "edit", "mouse", "display", "music", "headphones", "wifi", "ethernet", "globe", "bluetooth", "battery", "notification-bell", "speaker", "speaker-xmark", "power-button", "clock", "lock", "logout", "restart", "eye", "eye-off", "refresh", "cut", "copy", "paste", "trash-outline", "trash", "view-grid", "view-list", "sort", "filter", "zoom-in", "zoom-out", "rotate", "crop", "undo", "save", "fit", "print", "open", "usb-stick", "drive", "eject", "users", "squares" }) |name| {
         module.addAnonymousImport("shell-icon-" ++ name, .{ .root_source_file = b.path("assets/icons/" ++ name ++ ".svg") });
     }
 }

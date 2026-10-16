@@ -40,6 +40,7 @@ pub fn hoverKey(self: *App) usize {
         return 0;
     }
     if (self.menu != null) return 100 + (self.menuHit(x, y) orelse 99);
+    if (self.terminalHit(x, y)) |index| return 900 + index;
     if (self.sidebar_resize != null or self.overSidebarDivider(x, y)) return 0;
     if (self.chooser) |opts| {
         if (y >= @as(f64, @floatFromInt(self.h - self.footerHeight()))) {
@@ -86,6 +87,12 @@ pub fn hoverKey(self: *App) usize {
 }
 
 pub fn handleMotion(self: *App, x: f64, y: f64) void {
+    if (self.terminalMotion(x, y)) {
+        self.mouse_x = x;
+        self.mouse_y = y;
+        return;
+    }
+    if (self.overTerminalDivider(self.mouse_x, self.mouse_y) != self.overTerminalDivider(x, y)) self.terminalDamage();
     if (self.sidebar_resize) |drag| {
         self.mouse_x = x;
         self.mouse_y = y;
@@ -163,6 +170,10 @@ pub fn handleMotion(self: *App, x: f64, y: f64) void {
 }
 
 pub fn cancelDrag(self: *App) void {
+    self.terminalCancelPointer();
+    self.terminal.resize = null;
+    self.terminal.selecting = false;
+    self.terminal.scroll_drag.end();
     if (self.dialog) |*dlg| {
         dlg.deletion.placement.grab = null;
         if (dlg.properties) |*props| props.placement.grab = null;
@@ -209,7 +220,7 @@ pub fn bandScrollDirection(self: *App) i32 {
     const band = self.selection_band orelse return 0;
     if (!band.active) return 0;
     if (self.mouse_y < @as(f64, @floatFromInt(self.viewTop() + 20)) and self.scroll_y > 0) return -1;
-    if (self.mouse_y > @as(f64, @floatFromInt(self.h - 46)) and self.scroll_y < self.maxScroll()) return 1;
+    if (self.mouse_y > @as(f64, @floatFromInt(self.contentBottom() - 20)) and self.scroll_y < self.maxScroll()) return 1;
     return 0;
 }
 
@@ -241,6 +252,11 @@ pub fn renderSelectionBand(self: *App, cr: *c.cairo_t) void {
 }
 
 pub fn handleButton(self: *App, button: u32, pressed: bool) void {
+    if (self.terminalButton(button, pressed)) return;
+    if (pressed and self.dialog == null and self.menu == null and self.focus == .terminal) {
+        self.focus = .file_view;
+        self.terminalDamage();
+    }
     // Mice report side buttons either as SIDE/EXTRA or BACK/FORWARD.
     if (button == 0x113 or button == 0x116 or button == 0x114 or button == 0x115) {
         if (!pressed or self.dialog != null) return;

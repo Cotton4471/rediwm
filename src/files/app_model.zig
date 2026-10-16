@@ -178,6 +178,7 @@ pub const ThumbRequest = struct {
 };
 
 pub const Focus = enum {
+    terminal,
     file_view,
     location_bar,
     search,
@@ -189,6 +190,7 @@ pub const Focus = enum {
 };
 
 pub const DialogKind = enum {
+    terminal_close,
     new_folder,
     new_file,
     new_branch,

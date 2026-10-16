@@ -12,6 +12,7 @@ const places = App.places;
 const pin_base = App.pin_base;
 
 pub fn hoverBounds(self: *App, key: usize) ?header.Rect {
+    if (key >= 900 and key < 904) return .{ .x = 0, .y = 0, .w = @floatFromInt(self.w), .h = @floatFromInt(self.h) };
     if (key == 0) return .{ .x = 0, .y = 0, .w = 0, .h = 0 };
     if (key >= 2_000_000) {
         const index = key - 2_000_000;

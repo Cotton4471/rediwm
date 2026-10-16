@@ -12,12 +12,13 @@ umask 022
 install -d /usr/local/bin
 stage=$(mktemp -d /usr/local/bin/.rediwm-install.XXXXXX)
 trap 'rm -rf -- "$stage"' EXIT HUP INT TERM
-for binary in rediwm rediwm-msg rediwm-theme rediwm-files rediwm-images rediwm-editor rediwm-pdf rediwm-share-picker rediwm-session rediwm-dm rediwm-accounts-helper; do
+for binary in rediwm rediwm-msg rediwm-theme rediwm-files rediwm-files-terminal rediwm-images rediwm-editor rediwm-pdf rediwm-share-picker rediwm-session rediwm-dm rediwm-accounts-helper; do
     install -m755 "$release_dir/bin/$binary" "$stage/$binary"
 done
 install -Dm644 "$repo_dir/data/rediwm-theme.desktop" /usr/local/share/applications/rediwm-theme.desktop
 install -Dm644 "$repo_dir/data/rediwm-theme.xml" /usr/local/share/mime/packages/rediwm-theme.xml
 install -Dm644 "$repo_dir/data/rediwm-files.desktop" /usr/local/share/applications/rediwm-files.desktop
+install -Dm644 "$release_dir/share/licenses/rediwm/libvterm-LICENSE" /usr/local/share/licenses/rediwm/libvterm-LICENSE
 install -Dm644 "$release_dir/share/icons/hicolor/256x256/apps/redi-fm-icon.png" /usr/local/share/icons/hicolor/256x256/apps/redi-fm-icon.png
 install -Dm644 "$repo_dir/data/rediwm-images.desktop" /usr/local/share/applications/rediwm-images.desktop
 install -Dm644 "$repo_dir/data/rediwm-editor.desktop" /usr/local/share/applications/rediwm-editor.desktop
@@ -70,7 +71,7 @@ for pack in "$release_dir"/share/rediwm/themes/*/; do
     rm -rf "/usr/local/share/rediwm/themes/$name"
     mv -T "/usr/local/share/rediwm/themes/.$name-new" "/usr/local/share/rediwm/themes/$name"
 done
-for binary in rediwm rediwm-msg rediwm-theme rediwm-files rediwm-images rediwm-editor rediwm-pdf rediwm-share-picker rediwm-session rediwm-dm rediwm-accounts-helper; do
+for binary in rediwm rediwm-msg rediwm-theme rediwm-files rediwm-files-terminal rediwm-images rediwm-editor rediwm-pdf rediwm-share-picker rediwm-session rediwm-dm rediwm-accounts-helper; do
     mv -fT "$stage/$binary" "/usr/local/bin/$binary"
 done
 # The compositor draws the desktop itself; the old client is retired.

@@ -14,6 +14,7 @@ const clipboard_mod = @import("clipboard.zig");
 const theme = @import("../icon_theme.zig");
 const Allocator = std.mem.Allocator;
 const a = std.heap.c_allocator;
+const terminal_c = @import("terminal/model.zig").c;
 
 const Offer = struct {
     proxy: *wl.DataOffer,
@@ -122,6 +123,7 @@ pub const Client = struct {
     xkb_state: ?*c.xkb_state = null,
     key_repeat: key_repeat.KeyRepeat = .{},
     compose: @import("ui").compose.Compose = .{},
+    ime: @import("terminal/ime.zig").Ime = undefined,
     /// LC_CTYPE of the session; picks the Compose table (´+c is ç in pt_BR).
     locale: []const u8 = "",
     app: app_mod.App,
@@ -131,6 +133,7 @@ pub const Client = struct {
             .global => |g| {
                 const iface = std.mem.span(g.interface);
                 self.cursor_shape.bind(registry, g.name, iface, g.version);
+                if (std.mem.eql(u8, iface, "zwp_text_input_manager_v3")) self.ime.manager = registry.bind(g.name, @import("wayland").client.zwp.TextInputManagerV3, 1) catch null;
                 if (std.mem.eql(u8, iface, "wl_compositor")) {
                     self.compositor = registry.bind(g.name, wl.Compositor, @min(g.version, 5)) catch null;
                 } else if (std.mem.eql(u8, iface, "wl_shm")) {
@@ -182,10 +185,14 @@ pub const Client = struct {
     /// the poll, including file-operation state changes. Only animation and
     /// known deadlines need a timeout; an idle window sleeps.
     fn pollTimeout(self: *Client) c_int {
-        if (self.app.wheel_glide.active() or self.app.selectionNeedsScroll() or self.app.hover_active or self.app.layout_active or self.app.scroll_appearance.active or self.app.sidebar_scroll_appearance.active or self.app.horizontal_appearance.active) return 16;
+        if (self.app.wheel_glide.active() or self.app.selectionNeedsScroll() or self.app.hover_active or self.app.layout_active or self.app.scroll_appearance.active or self.app.sidebar_scroll_appearance.active or self.app.horizontal_appearance.active or self.app.terminal.active or self.app.terminal.bar.active) return 16;
         if (self.app.hasRunningFolderSize()) return 33;
         var deadline: ?i64 = null;
-        if (self.app.status_notice != null) deadline = self.app.status_notice_until;
+        if (self.app.terminal.close_at) |at| deadline = earlier(deadline, at);
+        if (self.app.terminal.visible) if (self.app.terminal.bar.deadline) |at| {
+            deadline = earlier(deadline, at);
+        };
+        if (self.app.status_notice != null) deadline = earlier(deadline, self.app.status_notice_until);
         if (self.app.scanNoticeDeadline()) |at| deadline = earlier(deadline, at);
         if (self.app.scroll_appearance.deadline) |at| deadline = earlier(deadline, at);
         if (self.app.horizontal_appearance.deadline) |at| deadline = earlier(deadline, at);
@@ -382,7 +389,7 @@ pub const Client = struct {
                 self.app.invalidate();
             },
             .close => {
-                self.running = false;
+                self.app.terminalRequestClose();
             },
         }
     }
@@ -536,7 +543,7 @@ pub const Client = struct {
     fn handleTitlebarClick(self: *Client, w_f: f64, tbh_f: f64) void {
         const close_w: f64 = @min(tbh_f, 32);
         if (self.pointer_x >= w_f - close_w) {
-            self.running = false;
+            self.app.terminalRequestClose();
             return;
         }
         if (self.seat) |seat| self.xdg_toplevel.move(seat, self.input_serial);
@@ -578,8 +585,12 @@ pub const Client = struct {
 
     fn keyboardEvent(_: *wl.Keyboard, event: wl.Keyboard.Event, self: *Client) void {
         switch (event) {
-            .enter => self.app.refreshPins(),
+            .enter => {
+                self.app.terminal.window_focused = true;
+                self.app.refreshPins();
+            },
             .leave => {
+                self.app.terminal.window_focused = false;
                 self.key_repeat.stop();
                 self.compose.reset();
                 self.app.menu = null;
@@ -1282,6 +1293,8 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
         .app = app,
         .locale = @import("ui").compose.localeFromEnviron(init.minimal.environ),
     };
+    self.ime = .{ .app = &self.app };
+    defer self.ime.deinit();
     defer self.compose.deinit();
     defer self.app.deinit();
     if (chooser) |options| try self.app.configureChooser(options);
@@ -1303,6 +1316,7 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
     registry.setListener(*Client, Client.registryEvent, &self);
 
     if (display.roundtrip() != .SUCCESS) return error.DisplayFailed;
+    if (self.seat) |seat| try self.ime.setup(seat);
     if (self.compositor == null or self.shm == null or self.wm_base == null) {
         return error.MissingWaylandGlobals;
     }
@@ -1357,7 +1371,7 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
     // Initial commit to start xdg configuration sequence
     self.surface.commit();
 
-    while (self.running and !self.app.chooser_done) {
+    while (self.running and !self.app.closed and !self.app.chooser_done) {
         self.openEditor();
         try self.handleClipboard();
         self.app.sync();
@@ -1365,6 +1379,9 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
         self.app.stepWheel(app_mod.nowMs());
         self.app.stepSelection(app_mod.nowMs());
         self.app.stepLayout(app_mod.nowMs());
+        self.app.terminalStep(app_mod.nowMs());
+        self.app.terminalFinishClose(app_mod.nowMs());
+        self.ime.sync(self.titlebarHeight());
         self.app.stepHover(app_mod.nowMs());
         self.app.stepScrollbar(app_mod.nowMs());
         self.app.stepScanNotice(app_mod.nowMs());
@@ -1381,7 +1398,7 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
             if (display.dispatchPending() != .SUCCESS) return error.DisplayFailed;
         }
 
-        if (self.app.chooser_done) {
+        if (self.app.chooser_done or self.app.closed) {
             display.cancelRead();
             break;
         }
@@ -1391,7 +1408,7 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
             return error.DisplayFailed;
         }
 
-        var fds: [19]c.struct_pollfd = @splat(.{ .fd = -1, .events = c.POLLIN, .revents = 0 });
+        var fds: [22]c.struct_pollfd = @splat(.{ .fd = -1, .events = c.POLLIN, .revents = 0 });
         fds[0] = .{ .fd = display.getFd(), .events = @intCast(c.POLLIN | @as(c_int, if (flushed == .AGAIN) c.POLLOUT else 0)), .revents = 0 };
         fds[1].fd = self.app.preview_return_fd orelse -1;
         fds[2].fd = if (self.receiving) |receive| receive.fd else -1;
@@ -1404,6 +1421,11 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
         fds[16].fd = self.app.children.fd;
         fds[17].fd = self.app.extract_picker_fd orelse -1;
         fds[18].fd = if (self.app.job_runner) |runner| runner.wake_fd else -1;
+        if (self.app.terminal.session) |session| {
+            fds[19] = .{ .fd = terminal_c.ft_pty(session), .events = @intCast(c.POLLIN | @as(c_int, if (terminal_c.ft_wants_write(session)) c.POLLOUT else 0)), .revents = 0 };
+            fds[20] = .{ .fd = terminal_c.ft_channel(session), .events = @intCast(c.POLLIN | @as(c_int, if (terminal_c.ft_wants_request(session)) c.POLLOUT else 0)), .revents = 0 };
+            fds[21].fd = terminal_c.ft_pidfd(session);
+        }
         const send_count = self.sends.items.len;
         for (self.sends.items, 0..) |send, i| fds[i + 6] = .{ .fd = send.fd, .events = c.POLLOUT, .revents = 0 };
 
@@ -1415,6 +1437,7 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
         }
 
         if ((fds[0].revents & (c.POLLERR | c.POLLHUP)) != 0) return error.DisplayFailed;
+        if (self.app.terminal.session) |session| terminal_c.ft_io(session, fds[19].revents & (c.POLLIN | c.POLLHUP | c.POLLERR) != 0, fds[19].revents & c.POLLOUT != 0, fds[20].revents != 0, fds[21].revents != 0);
         if (fds[3].revents & c.POLLIN != 0) self.app.worker.drainMain();
         if (fds[4].revents & c.POLLIN != 0) {
             if (self.app.dirsize_pool) |p| p.drainDone();

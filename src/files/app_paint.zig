@@ -158,6 +158,7 @@ pub fn render(self: *App, cr: *c.cairo_t) void {
 
     // 5. Status Bar
     if (self.chooser != null) self.renderChooser(cr) else self.renderStatusBar(cr, h_f);
+    self.renderTerminal(cr);
 
     if (self.menu == null and self.dialog == null and self.selection_band == null) self.renderFilenameTip(cr);
     if (self.menu != null) self.renderMenu(cr);
@@ -210,6 +211,11 @@ pub fn editorTextArea(self: *App) header.Rect {
 }
 
 pub fn pointerCursor(self: *App, x: f64, y: f64) [*:0]const u8 {
+    if (self.terminal.resize != null or self.overTerminalDivider(x, y)) return "row-resize";
+    if (self.dialog == null and self.menu == null) {
+        if (self.terminalHit(x, y) != null) return "pointer";
+        if (self.terminalHeight() > 0 and self.terminalBody().contains(x, y)) return "text";
+    }
     if (self.sidebar_resize != null) return "col-resize";
     if (self.text_dragging) return "text";
     if (self.menu != null or self.selection_band != null or self.drag_origin != null or self.scroll_drag.active or self.sidebar_scroll_drag.active or self.horizontal_drag.active) return "default";
@@ -443,7 +449,7 @@ pub fn renderStatusBar(self: *App, cr: *c.cairo_t, h_f: f64) void {
         }
     }
 
-    drawText(cr, status_text, x0 + 14, y + 17, shell_ui.statusSize(), false);
+    drawEllipsis(cr, status_text, x0 + 14, y + 17, @max(0, w_f - x0 - 52), shell_ui.statusSize(), false);
 }
 
 pub fn renderDialog(self: *App, cr: *c.cairo_t) void {
@@ -491,7 +497,11 @@ pub fn renderDialog(self: *App, cr: *c.cairo_t) void {
 
     var buf: [256]u8 = undefined;
 
-    if (dlg.kind == .conflict) {
+    if (dlg.kind == .terminal_close) {
+        drawEllipsis(cr, "Closing ends this shell and its running jobs.", dx + 16, dy + 56, dw - 32, shell_ui.textSize(), false);
+        self.renderButton(cr, dx + dw - 184, dy + 84, 80, 28, "Close", true);
+        self.renderButton(cr, dx + dw - 96, dy + 84, 80, 28, "Cancel", true);
+    } else if (dlg.kind == .conflict) {
         const conflict_str = dlg.conflict_name orelse "";
         const conflict_msg = std.fmt.bufPrint(&buf, "File '{s}' already exists in destination.", .{conflict_str}) catch "Conflict";
         setSource(cr, t.fg);

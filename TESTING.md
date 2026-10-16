@@ -318,6 +318,8 @@ also be launched with `rediwm-files --open`, `--save` or `--folder`; it returns
 a JSON result on stdout.
 
 **Desktop, Files, Images**: `desktop_icons.py`, `desktop_damage.py`,
+`zig build test-files-terminal` (Files units plus isolated Bash/PTY and real drawer tests;
+also `python3 tests/files_terminal.py` after building; supports `REDIWM_TEST_SCALE=1.5`),
 `files_browser.py` (file-path selection; with `REDIWM_FORCE_DBUS=1` on a private
 `dbus-run-session` bus, also checks `FileManager1.ShowItems`), `files_controls.py`, `files_decoration.py`,
 `files_controls.py --places-only` isolates navigation, Recent history and sidebar

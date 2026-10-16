@@ -1,4 +1,4 @@
-//! A vertical pane divider with a wider pointer target than its painted line.
+//! Pane dividers with a wider pointer target than their painted line.
 const theme = @import("../theme.zig");
 pub const Rect = @import("field.zig").Rect;
 
@@ -6,13 +6,19 @@ pub const Geometry = struct {
     x: f64,
     y: f64,
     h: f64,
+    w: f64 = 0,
+    axis: enum { vertical, horizontal } = .vertical,
 
     pub fn contains(self: Geometry, x: f64, y: f64) bool {
-        return @abs(x - self.x) <= 4 and y >= self.y and y < self.y + self.h;
+        return if (self.axis == .horizontal)
+            @abs(y - self.y) <= 4 and x >= self.x and x < self.x + self.w
+        else
+            @abs(x - self.x) <= 4 and y >= self.y and y < self.y + self.h;
     }
 
     pub fn line(self: Geometry, engaged: bool) Rect {
         const width: f32 = if (engaged) 2 else 1;
+        if (self.axis == .horizontal) return .{ .x = @floatCast(self.x), .y = @as(f32, @floatCast(self.y)) - width, .w = @floatCast(self.w), .h = width };
         return .{ .x = @as(f32, @floatCast(self.x)) - width, .y = @floatCast(self.y), .w = width, .h = @floatCast(self.h) };
     }
 };
@@ -28,5 +34,10 @@ pub const Drag = struct {
     pub fn widthAt(self: Drag, x: f64, minimum: i32, maximum: i32) i32 {
         const value = @as(f64, @floatFromInt(self.width)) + x - self.origin;
         return @intFromFloat(@round(@min(@max(value, @as(f64, @floatFromInt(minimum))), @as(f64, @floatFromInt(maximum)))));
+    }
+
+    /// A bottom pane grows as its top edge moves upward.
+    pub fn heightAt(self: Drag, y: f64, minimum: i32, maximum: i32) i32 {
+        return self.widthAt(2 * self.origin - y, minimum, maximum);
     }
 };

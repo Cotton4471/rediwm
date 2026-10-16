@@ -1,6 +1,7 @@
 # Files terminal drawer plan
 
-Status: draft, 2026-10-16. Implementation starts with Phase 0 below.
+Status: implemented, 2026-10-17. Automated qualification and remaining manual
+checks are recorded below; see [support and limits](../files-terminal.md).
 
 Add a terminal drawer beneath the file list, opened with F4 or a small
 terminal icon at the bottom right. Embed libvterm in the Files process and
@@ -243,52 +244,52 @@ application and its shell session.
 
 ### Phase 0 Prove libvterm and shell coordination
 
-- [ ] Pin the library version and dependency delivery, compile a Files-only
+- [x] Pin the library version and dependency delivery, compile a Files-only
   prototype, and record the tested shell and terminfo configuration.
-- [ ] Prove safe PTY launch, app-scope placement, Cairo rendering, keyboard
+- [x] Prove safe PTY launch, app-scope placement, Cairo rendering, keyboard
   input, grid resize, alternate screen, Unicode, and shell exit.
-- [ ] Establish scrollback and reflow behaviour; measure continuous-output
+- [x] Establish scrollback and reflow behaviour; measure continuous-output
   responsiveness and memory limits before choosing the final loop budgets.
-- [ ] Prove folder following with an empty prompt, partial input, a running
+- [x] Prove folder following with an empty prompt, partial input, a running
   command, and rapid navigation. Qualify the shell integration transport.
-- [ ] Record capability limits and lifecycle decisions before UI polish.
+- [x] Record capability limits and lifecycle decisions before UI polish.
 
 ### Phase 1 Add terminal engine and process lifetime
 
-- [ ] Implement the libvterm wrapper, PTY session, bounded input/output work,
+- [x] Implement the libvterm wrapper, PTY session, bounded input/output work,
   child tracking, app scopes, and cleanup.
-- [ ] Implement cell rendering, scrollback, selection, cursor, colours, and
+- [x] Implement cell rendering, scrollback, selection, cursor, colours, and
   damage through the Files buffer pipeline.
-- [ ] Add terminal input encoding, compose/IME, clipboard, bracketed paste,
+- [x] Add terminal input encoding, compose/IME, clipboard, bracketed paste,
   mouse reporting, and the supported escape-sequence policy.
 
 ### Phase 2 Build the Files drawer
 
-- [ ] Add controller state, F4, the status icon, header, and launch/exit/error
+- [x] Add controller state, F4, the status icon, header, and launch/exit/error
   states using shared UI controls.
-- [ ] Extend the splitter, viewport geometry, scrollbars, hit testing, and
+- [x] Extend the splitter, viewport geometry, scrollbars, hit testing, and
   height preference migration.
-- [ ] Add slide animation, reversal, reduced motion, compact layouts, and
+- [x] Add slide animation, reversal, reduced motion, compact layouts, and
   correct focus restoration.
 
 ### Phase 3 Add directory following and lifecycle polish
 
-- [ ] Add the qualified shell integration and coalesced desired-directory
+- [x] Add the qualified shell integration and coalesced desired-directory
   requests, acknowledgements, and actual-directory display.
-- [ ] Handle virtual locations, inaccessible paths, unsupported shells,
+- [x] Handle virtual locations, inaccessible paths, unsupported shells,
   nested shells, remote sessions, and multiplexer behaviour explicitly.
-- [ ] Complete close-with-command/job, PTY hangup, shell exit/restart,
+- [x] Complete close-with-command/job, PTY hangup, shell exit/restart,
   launch failure, and hidden-session behaviour.
-- [ ] Add Open external terminal with existing default-app resolution and
+- [x] Add Open external terminal with existing default-app resolution and
   explicit independent-session behaviour.
 
 ### Phase 4 Validate and document support
 
-- [ ] Extend existing unit suites for geometry, preference migration,
+- [x] Extend existing unit suites for geometry, preference migration,
   lifecycle, focus routing, and directory-request state where appropriate.
   Add terminal fixtures for chunked escape sequences, Unicode cells,
   scrollback bounds, partial writes, resize, and allocation failures.
-- [ ] Add a focused Files terminal headless suite with an isolated shell and
+- [x] Add a focused Files terminal headless suite with an isolated shell and
   deterministic PTY fixtures. Test two Files windows for independent state.
 - [ ] Exercise supported shells, copy/paste, dead keys, IME, selection,
   scrolling, mouse modes, and full-screen tools such as `vim` and `top`.
@@ -298,7 +299,7 @@ application and its shell session.
 - [ ] Check launch/close/crash races, shell jobs, capture, idle wakeups,
   hidden-session continuity, and memory bounds under sustained output.
   Verify Files navigation and normal compositor interactions remain responsive.
-- [ ] Build Debug and `-Doptimize=ReleaseSafe`; run `zig build test`,
+- [x] Build Debug and `-Doptimize=ReleaseSafe`; run `zig build test`,
   `zig build test-files`, the terminal integration suite, and relevant Files
   controls/decoration/browser and dead-key suites. Exercise normal focus,
   workspace, and minimize behaviour with the drawer open. Review shared UI
@@ -311,3 +312,46 @@ directories, set `REDIWM_FILES_DEVICES=0`, and keep shell commands and test
 files inside scratch directories. Document the supported libvterm version,
 terminal capabilities, shell-integration matrix, and external-terminal action
 with the completed feature.
+
+
+## Implementation and qualification record (2026-10-17)
+
+The complete drawer, terminal engine, Bash coordination, independent external
+terminal action and packaging are implemented. libvterm 0.3.3 is compiled from
+the source URL/content hash in `build.zig.zon`, so distro ABI/version differences
+do not affect Files. The session helper and Bash builtin install alongside the
+application. Shell support, terminal capabilities, physical-row resize behavior,
+scrollback/input bounds and lifecycle choices are in [the support document](../files-terminal.md).
+
+The Files unit suite now has 127 tests. New coverage includes chunked escape
+sequences and UTF-8, wide/combining cells, truecolour and reverse video, alternate
+screen, key/mouse/paste encoding, ignored OSC 52, history limits, allocator
+failures, preference migrations, viewport geometry, modifier/copy routing, modal
+priority and chooser isolation. Existing vertical splitters keep their default
+axis and the existing shared text API keeps its original defaults.
+
+`zig build test-files-terminal` exercises real PTYs and Bash 5.3.20/Readline
+8.3, including paths with spaces, quotes, newlines and Unicode; empty, partial
+and busy prompts; coalescing; removed directories; nested shells; background
+jobs; queued/partial writes; 200 kB pastes to a raw reader and Bash; vim/top;
+launch failure; shell exit; and Fish's initial-folder-only fallback. A private
+D-Bus service verifies scope placement, the exact owned PID and app.slice before
+exec. Its headless Files checks cover F4/repeat, hidden continuity, clipboard
+copy/paste and selection, configured external-terminal arguments/cwd, divider
+persistence, idle wakeups, independent windows and close/cancel. Fractional scale
+is exercised with `REDIWM_TEST_SCALE=1.5`. Workspace slides, tiled/canvas resize
+transitions and minimize/restore run with the drawer open. The complete terminal
+suite also runs against the ReleaseSafe installation.
+
+Debug and ReleaseSafe builds, `zig build test`, `zig build test-files`, the Files
+browser and decoration suites, the controls `--places-only` suite and dead-key
+suites pass. The full Files controls suite reaches its existing Git M/D/A badge
+timeout at `tests/files_controls.py:628`; the identical failure was reproduced
+in an isolated worktree of unchanged HEAD `3e68db4`. Its preference-version
+assertion was deliberately updated for the new v4 height format. App activation
+and session readiness checks cover the shared pure launch policy and child
+environment propagation.
+
+The remaining unchecked Phase 4 matrix is manual qualification, especially
+real fcitx5/IBus candidate UI, physical output moves and forced delayed-buffer
+release/crash races. No session survival across a Files crash is promised.

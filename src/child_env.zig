@@ -16,6 +16,10 @@ pub const Spec = struct {
     qt_app_colors: bool = false,
     region: @import("config").loader.RegionConfig = .{},
     input_method: InputMethod = .none,
+    /// Resolved by the compositor before private supervisor fields are
+    /// stripped. App clients can scope their own children without guessing
+    /// whether their Wayland display belongs to a nested session.
+    app_scopes: ?bool = null,
     wayland_display: ?[]const u8 = null,
     ipc_socket: ?[]const u8 = null,
     /// Owned Xwayland `DISPLAY` value (`:N`). Null means Xwayland is disabled
@@ -39,6 +43,7 @@ pub fn apply(map: *Map, spec: Spec) !void {
     }
     // Private supervisor authority must never escape to descendant launches.
     inline for (.{ "REDIWM_SESSION_FD", "REDIWM_LOGIN_SESSION", "REDIWM_SESSION_PRIMARY", "REDIWM_LOGIN_STARTED_NS" }) |key| _ = map.swapRemove(key);
+    if (spec.app_scopes) |enabled| try map.put("REDIWM_APP_SCOPES", if (enabled) "1" else "0");
     switch (spec.input_method) {
         .none => {},
         inline .fcitx, .ibus => |im| {
@@ -223,6 +228,11 @@ test "private session authority and stale activation tokens never reach children
     inline for (.{ "REDIWM_SESSION_FD", "REDIWM_LOGIN_SESSION", "REDIWM_SESSION_PRIMARY", "REDIWM_LOGIN_STARTED_NS", "XDG_ACTIVATION_TOKEN", "DESKTOP_STARTUP_ID" }) |key| try map.put(key, "inherited");
     try apply(&map, .{});
     inline for (.{ "REDIWM_SESSION_FD", "REDIWM_LOGIN_SESSION", "REDIWM_SESSION_PRIMARY", "REDIWM_LOGIN_STARTED_NS", "XDG_ACTIVATION_TOKEN", "DESKTOP_STARTUP_ID" }) |key| try std.testing.expect(map.get(key) == null);
+    try map.put("REDIWM_APP_SCOPES", "1");
+    try apply(&map, .{ .app_scopes = false });
+    try std.testing.expectEqualStrings("0", map.get("REDIWM_APP_SCOPES").?);
+    try apply(&map, .{ .app_scopes = true });
+    try std.testing.expectEqualStrings("1", map.get("REDIWM_APP_SCOPES").?);
 }
 
 test "Qt app colors override inherited theming only after explicit opt in" {

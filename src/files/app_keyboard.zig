@@ -14,13 +14,15 @@ const Editor = @import("editor.zig").Editor;
 /// and the file list. Delete, Return, Space and every shortcut fire once:
 /// a held Delete must not trash file after file.
 pub fn keyRepeats(self: *const App, sym: u32, utf8: []const u8) bool {
+    if (sym == c.XKB_KEY_F4 and !self.ctrl and !self.alt and !self.shift) return false;
+    if (self.dialog == null and self.menu == null and self.focus == .terminal) return !(self.ctrl and self.shift and (sym == c.XKB_KEY_c or sym == c.XKB_KEY_C or sym == c.XKB_KEY_v or sym == c.XKB_KEY_V));
     if (self.ctrl or self.alt) return false;
     const vertical = sym == c.XKB_KEY_Up or sym == c.XKB_KEY_Down;
     const typing = shell_key_repeat.editingKey(switch (sym) {
         c.XKB_KEY_BackSpace, c.XKB_KEY_Delete, c.XKB_KEY_Left, c.XKB_KEY_Right => true,
         else => false,
     }, utf8);
-    if (self.dialog) |dlg| return if (dlg.kind == .open_with) vertical else dlg.kind != .properties and dlg.kind != .trash_confirm and dlg.kind != .conflict and typing;
+    if (self.dialog) |dlg| return if (dlg.kind == .open_with) vertical else dlg.kind != .properties and dlg.kind != .trash_confirm and dlg.kind != .conflict and dlg.kind != .terminal_close and typing;
     if (self.menu != null) return vertical;
     if (self.focus == .search or self.focus == .location_bar or self.focus == .filename) return typing;
     return vertical or sym == c.XKB_KEY_Left or sym == c.XKB_KEY_Right or
@@ -40,6 +42,10 @@ pub fn handleKey(self: *App, sym: u32, utf8: []const u8) void {
         self.handleDialogKey(sym, utf8);
         return;
     }
+    if (sym == c.XKB_KEY_F4 and !self.ctrl and !self.alt and !self.shift and self.chooser == null) {
+        self.terminalToggle();
+        return;
+    }
 
     if (self.menu != null) {
         const count = self.menuLabels().len;
@@ -48,6 +54,10 @@ pub fn handleKey(self: *App, sym: u32, utf8: []const u8) void {
         return;
     }
     if (self.chooser != null and self.chooserKey(sym, utf8)) return;
+    if (self.focus == .terminal) {
+        self.terminalKey(sym, utf8);
+        return;
+    }
     if (self.ctrl and (sym == c.XKB_KEY_f or sym == c.XKB_KEY_F)) {
         self.search_visible = true;
         self.focus = .search;
@@ -290,6 +300,14 @@ pub fn editKey(self: *App, edit: *Editor, sym: u32, utf8: []const u8) void {
 }
 
 pub fn pasteText(self: *App, bytes: []const u8) void {
+    if (self.dialog == null and self.focus == .terminal and self.terminal.visible) {
+        if (self.terminal.session) |session| {
+            if (!@import("terminal/model.zig").c.ft_paste(session, bytes.ptr, bytes.len)) self.setStatusNotice("Terminal paste exceeds the available input queue", true);
+            self.terminal.selection = null;
+            self.terminalDamage();
+        }
+        return;
+    }
     const edit = self.activeEditor() orelse return;
     if (self.focus == .filename) self.overwrite_pending = false;
     edit.insert(self.allocator, bytes) catch {

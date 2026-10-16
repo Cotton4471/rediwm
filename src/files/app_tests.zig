@@ -165,6 +165,69 @@ fn testItems(app: *App, count: usize) !void {
     }
 }
 
+test "terminal drawer shares viewport geometry and preserves its preferred height" {
+    var app = try testApp();
+    defer app.deinit();
+    try testItems(&app, 60);
+    app.terminal.visible = true;
+    app.terminal.requested_height = 220;
+    app.terminal.pixels = 220;
+    const bottom = app.contentBottom();
+    try std.testing.expectEqual(app.h - app.footerHeight() - 220, bottom);
+    try std.testing.expectEqual(@as(?usize, null), app.itemAt(260, @floatFromInt(bottom + 1)));
+    try std.testing.expect(app.overTerminalDivider(300, @floatFromInt(bottom)));
+    try std.testing.expectEqualStrings("row-resize", std.mem.span(app.pointerCursor(300, @floatFromInt(bottom))));
+    app.list_view = true;
+    app.column_widths = .{ 1000, 120, 120, 160, 180 };
+    try std.testing.expectEqual(bottom - app.scrollbarGutter(), app.contentBottom());
+    try std.testing.expectEqual(@as(f32, @floatFromInt(app.contentBottom())), app.horizontalScrollbar().?.track.y);
+    app.resize(360, 240);
+    try std.testing.expectEqual(@as(i32, 220), app.terminal.requested_height);
+    try std.testing.expect(app.terminalHeight() <= app.terminalMaximum());
+    try std.testing.expectEqual(@as(i32, 0), app.terminalHeight());
+    try std.testing.expectEqual(app.h - app.footerHeight() - app.scrollbarGutter(), app.contentBottom());
+    app.resize(960, 540);
+    try std.testing.expectEqual(@as(i32, 220), app.terminalHeight());
+}
+
+test "terminal keys, modal priority and chooser isolation" {
+    const tc = @import("terminal/model.zig").c;
+    var app = try testApp();
+    defer app.deinit();
+    app.terminal.session = tc.ft_new(4, 20) orelse return error.OutOfMemory;
+    app.terminal.visible = true;
+    app.focus = .terminal;
+    app.ctrl = true;
+    app.handleKey(c.XKB_KEY_c, "\x03");
+    var bytes: [128]u8 = undefined;
+    try std.testing.expectEqualStrings("\x03", bytes[0..tc.ft_take_output(app.terminal.session.?, &bytes, bytes.len)]);
+    app.handleKey(c.XKB_KEY_l, "\x0c");
+    try std.testing.expect(app.focus == .terminal);
+    const sample = "copy";
+    tc.ft_feed(app.terminal.session.?, sample, sample.len);
+    app.terminal.selection = .{ .anchor = .{ .line = 0, .col = 0 }, .end = .{ .line = 0, .col = 4 } };
+    app.handleKey(c.XKB_KEY_Control_L, "");
+    app.shift = true;
+    app.handleKey(c.XKB_KEY_Shift_L, "");
+    app.handleKey(c.XKB_KEY_C, "\x03");
+    try std.testing.expectEqualStrings("copy", app.clipboard_text.items);
+    app.ctrl = false;
+    app.shift = false;
+    try std.testing.expect(!app.keyRepeats(c.XKB_KEY_F4, ""));
+    app.dialog = .{ .kind = .terminal_close, .title = "Close terminal?" };
+    app.handleKey(c.XKB_KEY_F4, "");
+    try std.testing.expect(app.terminal.visible);
+    app.handleKey(c.XKB_KEY_Escape, "");
+    try std.testing.expect(app.focus == .terminal);
+    app.handleKey(c.XKB_KEY_F4, "");
+    try std.testing.expect(!app.terminal.visible);
+    try std.testing.expect(app.focus == .file_view);
+    app.chooser = .{ .mode = .open };
+    app.handleKey(c.XKB_KEY_F4, "");
+    try std.testing.expect(!app.terminal.visible);
+    try std.testing.expectEqual(@as(?usize, null), app.terminalHit(940, 525));
+}
+
 test "address search and dialog share selection editing without file shortcuts" {
     var app = try testApp();
     defer app.deinit();

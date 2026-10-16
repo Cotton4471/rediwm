@@ -19,6 +19,29 @@ records are in `app_model.zig`, drawing helpers in `app_draw.zig`, tests in
 `app_tests.zig`. A new method goes in its group file plus an alias line in
 `App`; a file that calls a sibling's non-method helper imports it directly.
 
+## Terminal drawer
+
+`app_terminal.zig` owns the per-window controller; `terminal/` owns libvterm,
+the PTY, shell integration, cells and text-input-v3. Support and limits are in
+`docs/files-terminal.md`; `zig build test-files-terminal` runs isolated PTY
+and headless fixtures. The pinned library is compiled only into Files/tests.
+
+* Poll slots 19–21 are PTY, integration socket and pidfd. Parsing/writes have a
+  64 KiB budget per loop; POLLOUT is enabled only with queued work. Hidden
+  sessions drain without terminal damage or blink timers.
+* Following is a Bash Readline editing safepoint, never text sent through the
+  PTY. Keep its inherited socket private/CLOEXEC, check kernel credentials,
+  bound packets and coalesce requests/status under backpressure. A prompt,
+  title, foreground PID or quiet output alone never authorizes a directory
+  change. Unsupported and nested shells keep pending following suspended.
+* Spawn the fresh helper with `posix_spawn`, so PTY setup and scope placement
+  never run in a forked multithreaded Files child. Confirm every live session
+  on close; bound asynchronous cleanup and retain the session leader until
+  session members have been signaled through pidfds and it can be reaped.
+* Cell metrics use the exact shared mono advance. Paint non-ASCII/wide cells
+  separately so fallback shaping cannot move later cells. Preserve the
+  caller's Cairo damage clip. The test encoder drain exists only with FT_TEST.
+
 ## File types and associations
 
 * **Types come from `src/mime_db.zig`, not GIO.** It reads shared-mime-info
