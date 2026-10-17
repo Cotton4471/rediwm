@@ -60,7 +60,11 @@ libseccomp, libarchive, libjpeg, libpng, libwebp and GNU Readline. Files embeds
 the pinned libvterm 0.3.3 source (downloaded by Zig; no system libvterm needed). Optional:
 Xwayland, `foot`, `brightnessctl`, `gio`/`xdg-open`, `git` (optional).
 
-Printer support uses an existing CUPS server (`cups`).
+Printer support links against `libcups` (CUPS development headers are needed to
+build). Settings → Printers uses `cups-pk-helper` when installed, or talks directly
+to the local CUPS server and prompts for a CUPS administrator account when needed.
+The CUPS server and helper are optional runtime packages. RediWM does not install
+printer drivers or change USB rules.
 
 Run from a checkout, `scripts/install.sh` builds that checkout (dependencies,
 then `install-session.sh` with the arguments you give it).

@@ -89,20 +89,7 @@ pub const SizeState = union(enum) {
     },
 };
 
-pub const SelectionFade = struct {
-    animation: anim.Anim = .{ .property = .opacity },
-    alpha: f32 = 0,
-
-    pub fn step(self: *SelectionFade, now: i64, visible: bool) bool {
-        const target: f32 = if (visible) 1 else 0;
-        if (self.animation.to != target) self.animation.retargetTo(now, target, anim.curveFor(.start_glide_fade));
-        const value = self.animation.value(now);
-        const next = if (self.animation.settled(now)) value else @round(value / anim.rasterAlphaQuantum()) * anim.rasterAlphaQuantum();
-        const changed = next != self.alpha;
-        self.alpha = next;
-        return changed;
-    }
-};
+pub const SelectionFade = @import("ui").hover_glide.Fade;
 
 // Titlebar timing, with a rectangle that also fits labelled toolbar buttons.
 pub const ToolbarHover = struct {

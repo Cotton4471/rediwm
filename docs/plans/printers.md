@@ -14,7 +14,8 @@ Implemented scope:
   cleartext TCP CUPS endpoints. System/user `client.conf`, `CUPS_SERVER` and
   encryption preferences are checked without falling back to a different
   server. TLS, authentication and escaped configuration syntax are unsupported.
-* Local-default-server administration uses `cups-pk-helper`: discovery, queue
+* Local-default-server administration uses `cups-pk-helper` when available,
+  or a direct libcups worker with CUPS authentication: discovery, queue
   creation, enabling/disabling, accepting/rejecting jobs, descriptions, queue
   rename/removal, connection changes and the system default. Custom Unix and
   remote schedulers remain read-only for these actions. CUPS service start uses
@@ -25,13 +26,13 @@ Implemented scope:
   and raw queues/third-party driver guidance are explicit. Vendor backends must
   come from the current CUPS discovery result, never arbitrary typed input.
 * Queue-name collisions are checked before administration. Removal and queue
-  rename require separate named confirmations. Rename is the helper's
+  rename require separate named confirmations. Rename is a
   non-atomic clone/delete operation, with known-job guards, refreshed queue
   checks and migration of personal defaults/private observations after success.
 * Supported IPP values and bounded PPD UI declarations provide media,
   resolution, colour, duplex, quality and exposed label controls. Driver choices
-  use the PPD-aware helper API and are refreshed for verification. CUPS can
-  report conflicting IPP/PPD defaults; an accepted request is not presented as
+  use the PPD-aware helper API or direct PPD editing and are refreshed for
+  verification. CUPS can report conflicting IPP/PPD defaults; an accepted request is not presented as
   a verified setting when the resulting value cannot be established.
 * Per-user defaults preserve existing `~/.cups/lpoptions` options, destinations,
   instances and comments through atomic replacement. `LPDEST`/`PRINTER` overrides

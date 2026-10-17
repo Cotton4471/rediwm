@@ -739,13 +739,13 @@ pub fn parse(allocator: Allocator, bytes: []const u8, path: []const u8) !Config 
     }
 
     if (seen_keybinds) {
-        // Keep laptop controls, nested-session switching and the way out of
-        // an inhibiting client available in existing configs too. Explicit
-        // bindings (including noop) always take precedence over these defaults.
+        // Keep laptop controls, System Monitor, nested-session switching and
+        // the way out of an inhibiting client available in existing configs too.
+        // Explicit bindings (including noop) always take precedence.
         const defaults = try parseKeybindsOnly(cfg.arena.allocator(), default_file.source);
         for (defaults) |bind| {
             const nested_switcher = bind.modifiers.ctrl and (bind.action == .focus_next or bind.action == .focus_prev);
-            if (!keybinds.isHardwareAction(bind.action) and !nested_switcher and bind.action != .restore_shortcuts) continue;
+            if (!keybinds.isHardwareAction(bind.action) and !nested_switcher and bind.action != .restore_shortcuts and bind.action != .open_system_monitor) continue;
             const key = keybinds.pack(bind.modifiers, bind.sym);
             var overridden = false;
             for (bind_list.items) |custom| {

@@ -145,6 +145,8 @@ pub fn build(b: *std.Build) void {
     compositor.root_module.addImport("wlroots", wlroots);
     compositor.root_module.addImport("pixman", pixman);
     compositor.root_module.linkSystemLibrary("wayland-server", .{});
+    compositor.root_module.linkSystemLibrary("cups", .{});
+    compositor.root_module.addCSourceFile(.{ .file = b.path("src/printing/direct.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-deprecated-declarations" } });
     compositor.root_module.linkSystemLibrary("xkbcommon", .{});
     compositor.root_module.linkSystemLibrary("pixman-1", .{});
     compositor.root_module.linkSystemLibrary("freetype2", .{});
@@ -477,6 +479,8 @@ pub fn build(b: *std.Build) void {
     ui_tests_module.addImport("wlroots", wlroots);
     ui_tests_module.addImport("pixman", pixman);
     ui_tests_module.linkSystemLibrary("wayland-server", .{});
+    ui_tests_module.linkSystemLibrary("cups", .{});
+    ui_tests_module.addCSourceFile(.{ .file = b.path("src/printing/direct.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-deprecated-declarations" } });
     ui_tests_module.linkSystemLibrary("xkbcommon", .{});
     ui_tests_module.linkSystemLibrary("pixman-1", .{});
     ui_tests_module.linkSystemLibrary("freetype2", .{});
@@ -527,6 +531,8 @@ pub fn build(b: *std.Build) void {
     printing_tests.root_module.addImport("dbus", dbus_mod);
     printing_tests.root_module.addImport("wayland", wayland);
     printing_tests.root_module.linkSystemLibrary("wayland-server", .{});
+    printing_tests.root_module.linkSystemLibrary("cups", .{});
+    printing_tests.root_module.addCSourceFile(.{ .file = b.path("src/printing/direct.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-deprecated-declarations" } });
     const run_printing_tests = b.addRunArtifact(printing_tests);
     test_step.dependOn(&run_printing_tests.step);
     const printers_integration = b.addSystemCommand(&.{"python3"});
@@ -535,6 +541,10 @@ pub fn build(b: *std.Build) void {
     const printers_step = b.step("test-printers", "Test printer diagnostics and private CUPS page lifecycle");
     printers_step.dependOn(&run_printing_tests.step);
     printers_step.dependOn(&printers_integration.step);
+    const printers_direct = b.addSystemCommand(&.{"python3"});
+    printers_direct.addFileArg(b.path("tests/printers_direct.py"));
+    printers_direct.step.dependOn(&printers_integration.step);
+    printers_step.dependOn(&printers_direct.step);
     // Dependency-module tests are not collected by the executable's test root.
     const shared_ui_tests = b.addTest(.{ .root_module = ui_mod });
     const shared_config_tests = b.addTest(.{ .root_module = config_mod });

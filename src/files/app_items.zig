@@ -36,12 +36,7 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
     const glide = self.item_hover.frame;
     if (glide.alpha > 0) {
         const box = self.itemHighlight(glide);
-        roundedRect(cr, box.x, box.y, box.w, box.h, 6);
-        setSource(cr, withAlpha(ui_theme.global.app_item_hover, glide.alpha));
-        c.cairo_fill_preserve(cr);
-        setSource(cr, withAlpha(ui_theme.global.app_item_border, glide.alpha));
-        c.cairo_set_line_width(cr, 1);
-        c.cairo_stroke(cr);
+        shell_ui.drawItemHighlight(cr, .{ .x = box.x, .y = box.y, .w = box.w, .h = box.h }, false, glide.alpha, glide.alpha);
     }
     var index = first;
     while (index < last) : (index += 1) {
@@ -54,14 +49,7 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
         // Items sit on the list itself; only selection and keyboard focus
         // draw a card here (hover is the glide above).
         if (item.selection_fill.alpha > 0 or item.selection_border.alpha > 0) {
-            roundedRect(cr, x, y, width, @floatFromInt(self.cardHeight()), 6);
-            if (item.selection_fill.alpha > 0) {
-                setSource(cr, withAlpha(ui_theme.global.app_item_selected, item.selection_fill.alpha));
-                c.cairo_fill_preserve(cr);
-            }
-            setSource(cr, withAlpha(accent, item.selection_border.alpha));
-            c.cairo_set_line_width(cr, 1);
-            c.cairo_stroke(cr);
+            shell_ui.drawItemHighlight(cr, .{ .x = x, .y = y, .w = width, .h = @floatFromInt(self.cardHeight()) }, true, item.selection_fill.alpha, item.selection_border.alpha);
         }
         if (self.folder_drop == idx) {
             roundedRect(cr, x, y, width, @floatFromInt(self.cardHeight()), 6);

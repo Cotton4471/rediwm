@@ -42,6 +42,8 @@ def run():
 
                 click("Keyboard Shortcuts")
                 assert has("Window Management") and has("Launcher")
+                assert has("Open System Monitor"), "existing shortcuts omitted System Monitor"
+                assert has("Ctrl+Alt+Delete")
                 click("Super+q")
                 chord("f")
                 time.sleep(.15)

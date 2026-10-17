@@ -93,12 +93,25 @@ test "empty config keeps built-in zoom steps and default keybinds" {
 }
 
 test "System Monitor defaults preserve explicit canvas and workspace shortcut overrides" {
+    const binding = try keybinds.parseKeybind("Ctrl+Alt+Delete");
+    for ([_][]const u8{
+        "[keybinds]\n",
+        "[keybinds]\n\"Super+q\" = \"close_window\"\n\"Ctrl+Alt+Shift+Delete\" = \"poweroff\"\n",
+    }) |source| {
+        var existing = try parse(std.testing.allocator, source, "mem");
+        defer existing.deinit();
+        try std.testing.expectEqual(Action.open_system_monitor, existing.lookupKeybind(binding.modifiers, binding.sym).?);
+        existing.compositor.desktop_mode = .workspaces;
+        try std.testing.expectEqual(Action.open_system_monitor, existing.lookupKeybind(binding.modifiers, binding.sym).?);
+    }
     var cfg = try parse(std.testing.allocator, "[keybinds]\n\"Ctrl+Alt+Delete\" = \"poweroff\"\n[keybinds.workspace]\n\"Ctrl+Alt+Delete\" = \"noop\"\n", "mem");
     defer cfg.deinit();
-    const binding = try keybinds.parseKeybind("Ctrl+Alt+Delete");
     try std.testing.expectEqual(Action.poweroff, cfg.lookupKeybind(binding.modifiers, binding.sym).?);
     cfg.compositor.desktop_mode = .workspaces;
     try std.testing.expectEqual(Action.noop, cfg.lookupKeybind(binding.modifiers, binding.sym).?);
+    var disabled_cfg = try parse(std.testing.allocator, "[keybinds]\n\"Ctrl+Alt+Delete\" = \"noop\"\n", "mem");
+    defer disabled_cfg.deinit();
+    try std.testing.expectEqual(Action.noop, disabled_cfg.lookupKeybind(binding.modifiers, binding.sym).?);
 }
 
 test "the desktop follows its section, then a legacy rediwm-desktop autostart" {

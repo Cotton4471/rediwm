@@ -49,9 +49,12 @@ Settings is an ordinary window with a compositor-drawn body (`Backend.shell`).
   the authority. Reports omit identities and arbitrary status messages.
   USB libusb queues do not require a usblp node. Read `docs/plans/printers.md`
   for the unqualified hardware and distribution-policy acceptance gates.
-  Discovered backend URIs must match the current helper catalog exactly;
+  Discovered backend URIs must match the current administration catalog exactly;
   arbitrary typed vendor/file backends are not allowed. PPD settings use
-  `PrinterAddOption` after clearing stale IPP defaults, followed by readback.
+  `PrinterAddOption` or direct PPD editing after clearing stale IPP defaults,
+  followed by readback. Direct CUPS authentication uses the shared secret widget
+  over locked storage, clears it on submit/cancel/hide, and never stores passwords
+  in the section arena. Hiding also cancels any native authentication wait.
 
 * Global search uses `search_index.zig` destinations (widget names or `@` plus
   visible label text), without building hidden sections. Add an index entry

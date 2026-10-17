@@ -60,6 +60,27 @@ pub fn setSource(cr_any: *anyopaque, color: [4]f32) void {
     c.cairo_set_source_rgba(@ptrCast(cr_any), color[0], color[1], color[2], color[3]);
 }
 
+/// File and process rows share the same rounded hover/selection card.
+/// Keep double-precision geometry for Cairo's fractional raster positions.
+pub const ItemBox = struct { x: f64, y: f64, w: f64, h: f64 };
+
+pub fn drawItemHighlight(cr_any: *anyopaque, box: ItemBox, selected: bool, fill_alpha: f32, border_alpha: f32) void {
+    if (box.w <= 0 or box.h <= 0 or (fill_alpha <= 0 and border_alpha <= 0)) return;
+    const cr: *c.cairo_t = @ptrCast(cr_any);
+    roundedPath(cr, box.x, box.y, box.w, box.h, @min(6, @min(box.w, box.h) / 2));
+    if (fill_alpha > 0) {
+        var fill = if (selected) theme.global.app_item_selected else theme.global.app_item_hover;
+        fill[3] *= fill_alpha;
+        setSource(cr, fill);
+        c.cairo_fill_preserve(cr);
+    }
+    var border = if (selected) theme.shellPalette().accent else theme.global.app_item_border;
+    border[3] *= border_alpha;
+    setSource(cr, border);
+    c.cairo_set_line_width(cr, 1);
+    c.cairo_stroke(cr);
+}
+
 /// Sidebar hover: a plain rounded fill at `alpha`.
 pub fn drawSidebarHover(cr_any: *anyopaque, box: Rect, alpha: f32) void {
     if (box.w <= 0 or box.h <= 0 or alpha <= 0) return;

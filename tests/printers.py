@@ -78,7 +78,13 @@ def request_attributes(body):
         offset += 2
         value = body[offset:offset + length]
         offset += length
-        fields[name] = struct.unpack('!i', value)[0] if tag in (0x21, 0x23) else bool(value[0]) if tag == 0x22 else value.decode()
+        if tag == 0x32:
+            x, y, units = struct.unpack('!iiB', value)
+            fields[name] = f'{x}x{y}' + ('dpi' if units == 3 else 'dpcm')
+        elif tag == 0x16:
+            fields[name] = None  # delete-attribute
+        else:
+            fields[name] = struct.unpack('!i', value)[0] if tag in (0x21, 0x23) else bool(value[0]) if tag == 0x22 else value.decode()
     return fields
 
 
@@ -1174,14 +1180,14 @@ def setup_and_tools(scale, queue_rename=True, preview=False):
                 click('printers_remove_confirm')
                 wait_for(lambda: called('PrinterDelete', lambda args: args == [remove_name]), 'confirmed queue removal')
                 wait_for(lambda: set(scheduler.state()['queues']) == before_remove - {remove_name}, 'confirmed queue removal commit')
-                # A missing helper is an explicit read-only state. Disappearance
-                # during the page's lifetime cannot fall back to direct admin.
+                # Helper disappearance during a request must not retry the
+                # mutation through another backend. Refresh selects anew.
                 helper.terminate()
                 helper.wait(timeout=5)
                 select_printer(ipc, ui, 0)
                 click('printers_disable')
-                wait_for(lambda: any('cups-pk-helper' in label and ('install' in label.lower() or 'unavailable' in label.lower()) for label in labels()), 'missing helper guidance')
-                assert named('printers_add')['is_disabled'] and named('printers_disable')['is_disabled'] and named('printers_connection')['is_disabled'], 'missing helper must disable privileged controls'
+                wait_for(lambda: 'printer authorization helper unavailable. refresh before trying again.' in ' '.join(labels()).lower(), 'lost helper requires explicit refresh')
+                assert named('printers_add')['is_disabled'] and named('printers_disable')['is_disabled'] and named('printers_connection')['is_disabled'], 'a failed helper request must disable administration until refresh'
                 assert scheduler.state()['queues']['Office_Test']['enabled'], scheduler.state()
                 click('shortcuts')
                 assert not printer_workers(process), 'setup page hide must release worker'

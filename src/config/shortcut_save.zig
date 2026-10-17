@@ -1,5 +1,5 @@
 //! Persist the effective bindings, including inherited defaults. A noop at the
-//! previous key prevents the loader from restoring an inherited hardware bind.
+//! previous key prevents the loader from restoring an inherited binding.
 const std = @import("std");
 const loader = @import("loader.zig");
 const keys = @import("keybinds.zig");
@@ -103,35 +103,37 @@ pub fn saveMode(a: std.mem.Allocator, io: std.Io, path: []const u8, binds: []con
     try std.Io.Dir.rename(.cwd(), tmp, .cwd(), path, io);
 }
 
-test "moving inherited hardware shortcuts persists and old keys can be reused" {
-    const a = std.testing.allocator;
-    const original = "# keep me\n[input]\npointer_speed = 0.4\n";
-    var cfg = try loader.parse(a, original, "test");
-    defer cfg.deinit();
-    var index: usize = 0;
-    for (cfg.keybinds, 0..) |bind, i| {
-        if (bind.action == .volume_up) {
-            index = i;
-            break;
+test "moving inherited shortcuts persists and old keys can be reused" {
+    for ([_]keys.Action{ .volume_up, .open_system_monitor }) |action| {
+        const a = std.testing.allocator;
+        const original = "# keep me\n[input]\npointer_speed = 0.4\n";
+        var cfg = try loader.parse(a, original, "test");
+        defer cfg.deinit();
+        var index: usize = 0;
+        for (cfg.keybinds, 0..) |bind, i| {
+            if (keys.actionEql(bind.action, action)) {
+                index = i;
+                break;
+            }
         }
+        const key = try keys.parseKeybind("Super+F12");
+        const replacement: keys.Keybind = .{ .sym = key.sym, .modifiers = key.modifiers, .action = action };
+        const updated = try patch(a, original, cfg.keybinds, index, replacement);
+        defer a.free(updated);
+        var parsed = try loader.parse(a, updated, "test");
+        defer parsed.deinit();
+        try std.testing.expectEqual(@as(f32, 0.4), parsed.input.pointer_speed);
+        try std.testing.expect(std.mem.indexOf(u8, updated, "# keep me") != null);
+        const old = cfg.keybinds[index];
+        try std.testing.expectEqual(keys.Action.noop, parsed.lookupKeybind(old.modifiers, old.sym).?);
+        try std.testing.expectEqual(action, parsed.lookupKeybind(key.modifiers, key.sym).?);
+        const restored = try patch(a, updated, parsed.keybinds, index, old);
+        defer a.free(restored);
+        var again = try loader.parse(a, restored, "test");
+        defer again.deinit();
+        try std.testing.expectEqual(action, again.lookupKeybind(old.modifiers, old.sym).?);
+        try std.testing.expectEqual(@as(?keys.Action, null), again.lookupKeybind(key.modifiers, key.sym));
     }
-    const key = try keys.parseKeybind("Super+F12");
-    const replacement: keys.Keybind = .{ .sym = key.sym, .modifiers = key.modifiers, .action = .volume_up };
-    const updated = try patch(a, original, cfg.keybinds, index, replacement);
-    defer a.free(updated);
-    var parsed = try loader.parse(a, updated, "test");
-    defer parsed.deinit();
-    try std.testing.expectEqual(@as(f32, 0.4), parsed.input.pointer_speed);
-    try std.testing.expect(std.mem.indexOf(u8, updated, "# keep me") != null);
-    const old = cfg.keybinds[index];
-    try std.testing.expectEqual(keys.Action.noop, parsed.lookupKeybind(old.modifiers, old.sym).?);
-    try std.testing.expectEqual(keys.Action.volume_up, parsed.lookupKeybind(key.modifiers, key.sym).?);
-    const restored = try patch(a, updated, parsed.keybinds, index, old);
-    defer a.free(restored);
-    var again = try loader.parse(a, restored, "test");
-    defer again.deinit();
-    try std.testing.expectEqual(keys.Action.volume_up, again.lookupKeybind(old.modifiers, old.sym).?);
-    try std.testing.expectEqual(@as(?keys.Action, null), again.lookupKeybind(key.modifiers, key.sym));
 }
 
 test "moving Files restores ordinary keys and removes obsolete non-inherited noops" {

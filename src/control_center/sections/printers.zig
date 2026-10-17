@@ -13,13 +13,14 @@ const preferences = @import("../../printing/preferences.zig");
 const known = @import("../../printing/known_devices.zig");
 const notifier = @import("../../printing/notifier.zig");
 const driver_options = @import("../../printing/options.zig");
+const secure = @import("../../network/secure_allocator.zig").allocator;
 const gpa = @import("../../main.zig").gpa;
 const W = ui.layout.Widget;
 const A = std.mem.Allocator;
 const Form = enum { none, add, connection, remove, test_confirm, test_result, queue_rename };
 const Disclosure = enum { history, more_options, manage, troubleshooting, label_tools, devices };
-const Field = enum { address, name, rename, loaded_width, loaded_height, measured_width, measured_height, raw_dpi, queue_name };
-const field_names = [_][]const u8{ "printers_address", "printers_name", "printers_rename", "printers_loaded_width", "printers_loaded_height", "printers_measured_width", "printers_measured_height", "printers_raw_dpi", "printers_queue_name" };
+const Field = enum { address, name, rename, loaded_width, loaded_height, measured_width, measured_height, raw_dpi, queue_name, auth_user };
+const field_names = [_][]const u8{ "printers_address", "printers_name", "printers_rename", "printers_loaded_width", "printers_loaded_height", "printers_measured_width", "printers_measured_height", "printers_raw_dpi", "printers_queue_name", "printers_auth_user" };
 const Input = struct { widget: ?*W = null, data: ?ui.layout.TextInputData = null };
 const RangeDraft = struct { name: [128]u8 = undefined, len: usize = 0, range: cups.ipp.Range = .{ .lower = 0, .upper = 0 }, value: f32 = 0 };
 const PendingAdd = struct {
@@ -38,6 +39,8 @@ pub const Section = struct {
     root: W = undefined,
     client: ?*printing.Client = null,
     administration: ?*admin.Manager = null,
+    password: ui.widgets.secret_input.Input = .{ .storage = @constCast(&[_]u8{}) },
+    password_focus: bool = false,
     listener: ?*notifier.Listener = null,
     listener_attempted: bool = false,
     admin_generation: u64 = 0,
@@ -78,7 +81,9 @@ pub const Section = struct {
     copied: bool = false,
     pub fn capture(self: *Section) void {
         self.focused_field = null;
+        self.password_focus = false;
         if (ui.input.current.focused) |focused| {
+            if (focused.name) |name| self.password_focus = std.mem.eql(u8, name, "printers_auth_password");
             for (self.fields, 0..) |field, i| if (field.widget == focused) {
                 self.focused_field = @enumFromInt(i);
             };
@@ -91,6 +96,7 @@ pub const Section = struct {
         }
     }
     pub fn restoreFocus(self: *Section, cc: *panel.ControlCenter) void {
+        if (self.password_focus) if (findNamed(&self.root, "printers_auth_password")) |widget| ui.input.current.focus(&cc.root, widget);
         if (self.focused_field) |id| if (self.fields[@intFromEnum(id)].widget) |widget| ui.input.current.focus(&cc.root, widget);
         if (self.reveal_target) |name| {
             if (findNamed(&self.root, name)) |widget| ui.widgets.scroll_container.ensureVisibleChild(&cc.body_children[1], widget);
@@ -98,6 +104,8 @@ pub const Section = struct {
         }
     }
     pub fn hide(self: *Section) void {
+        self.password.clear();
+        self.password_focus = false;
         self.saveFields();
         if (self.pending_add) |pending| pending.destroy();
         self.pending_add = null;
@@ -119,6 +127,7 @@ pub const Section = struct {
     pub fn deinit(self: *Section) void {
         self.hide();
         for (self.fields) |field| if (field.data) |data| gpa.free(data.value);
+        if (self.password.storage.len != 0) secure.free(self.password.storage);
         self.arena.deinit();
     }
 };
@@ -197,6 +206,29 @@ fn adminChanged(raw: *anyopaque) void {
         if (cc.printers.pending_option) |*pending| pending.after_admin = true;
         if (cc.printers.client) |client| client.act(.refresh) catch client.invalidate();
     };
+    if (cc.printers.administration) |manager| if (!manager.authentication) {
+        cc.printers.password.clear();
+    };
+    cc.refresh();
+}
+fn authenticateClicked(raw: ?*anyopaque, _: usize) void {
+    const cc = owner(raw);
+    const self = &cc.printers;
+    const manager = self.administration orelse return;
+    manager.authenticate(fieldValue(self, .auth_user), self.password.value()) catch {
+        self.message = "Enter a valid CUPS administrator username and password.";
+        self.password.clear();
+        cc.refresh();
+        return;
+    };
+    self.password.clear();
+    self.message = "";
+    cc.refresh();
+}
+fn cancelAuthenticationClicked(raw: ?*anyopaque, _: usize) void {
+    const cc = owner(raw);
+    cc.printers.password.clear();
+    if (cc.printers.administration) |manager| manager.cancelAuthentication();
     cc.refresh();
 }
 fn cupsChanged(raw: *anyopaque) void {
@@ -303,14 +335,31 @@ fn tree(self: *Section, cc: *panel.ControlCenter, a: A) !W {
     if (self.message.len > 0) try content.append(a, text(self.message, false));
     if (self.administration) |manager| {
         if (!std.mem.eql(u8, manager.status, "Printer administration is available; authorization may be required.")) try content.append(a, text(manager.status, true));
-    } else try content.append(a, text("Printer setup requires the local default CUPS server and cups-pk-helper.", true));
+        if (manager.authentication) {
+            if (self.password.storage.len == 0) {
+                self.password.storage = try secure.alloc(u8, 4095);
+                @memset(self.password.storage, 0);
+            }
+            const username = try cups.user(a);
+            try content.append(a, try card(a, &.{
+                text("Authorize printer administration", false),
+                text("Enter an account permitted to administer the local CUPS server.", true),
+                try entry(self, cc, a, .auth_user, "Username", username),
+                .{ .name = "printers_auth_password", .kind = .{ .secret_input = .{ .placeholder = "Password", .input = &self.password } }, .width = .{ .percent = 1 }, .height = .{ .fixed = 36 } },
+                try actionRow(a, cc, &.{
+                    button(cc, "printers_auth_submit", "Authenticate", 0, false, authenticateClicked),
+                    button(cc, "printers_auth_cancel", "Cancel", 0, false, cancelAuthenticationClicked),
+                }),
+            }));
+        }
+    } else try content.append(a, text("Printer setup requires the local default CUPS server.", true));
     if (state) |snapshot| {
         if (snapshot.action_error) |err| try content.append(a, text(cups.failure(err), false));
         if (snapshot.failure != null) {
             try content.append(a, text(snapshot.platform.missing_cups, true));
             try content.append(a, button(cc, "printers_start", "Start CUPS", 0, !snapshot.admin_local or busy(self) or self.administration == null, startClicked));
         }
-        if (self.administration) |manager| if (manager.availability == .missing) try content.append(a, text(snapshot.platform.missing_helper, true));
+
         if (self.form == .add or self.form == .connection) try content.append(a, try addForm(self, cc, a, snapshot));
         if (snapshot.cups) |data| {
             if (data.printers.len == 0) {

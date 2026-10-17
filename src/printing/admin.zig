@@ -1,9 +1,10 @@
-//! Page-owned asynchronous printer administration. The installed cups-pk-helper
-//! owns policy and privileged CUPS calls; RediWM never becomes root or runs a
-//! shell. Destruction closes outstanding requests before releasing their owner.
+//! Page-owned asynchronous printer administration. Use the installed helper
+//! for polkit authorization, or a local libcups worker for CUPS authentication.
+//! RediWM never becomes root or runs a shell. Destruction closes outstanding requests before releasing their owner.
 const std = @import("std");
 const dbus = @import("dbus");
 const wl = @import("wayland").server.wl;
+const direct = @import("direct.zig");
 const setup = @import("setup.zig");
 const cups = @import("cups.zig");
 const wire = dbus.wire;
@@ -58,6 +59,9 @@ pub const Manager = struct {
     owner: *anyopaque,
     changed: *const fn (*anyopaque) void,
     bus: ?*dbus.Connection = null,
+    loop: ?*wl.EventLoop = null,
+    worker: ?*direct.Worker = null,
+    authentication: bool = false,
     closing: bool = false,
     availability: Availability = .loading,
     busy: bool = true,
@@ -82,19 +86,15 @@ pub const Manager = struct {
     pub fn create(loop: *wl.EventLoop, env: std.process.Environ, owner: *anyopaque, changed: *const fn (*anyopaque) void) !*Manager {
         const self = try a.create(Manager);
         errdefer a.destroy(self);
-        self.* = .{ .owner = owner, .changed = changed };
+        self.* = .{ .owner = owner, .changed = changed, .loop = loop };
         self.bus = dbus.Connection.openSystem(a, loop, env) catch {
-            self.availability = .missing;
-            self.busy = false;
-            self.status = "System bus unavailable; printer administration is unavailable.";
+            self.useDirect();
             return self;
         };
         _ = self.bus.?.hello(self, hello) catch {
             self.bus.?.destroy();
             self.bus = null;
-            self.availability = .missing;
-            self.busy = false;
-            self.status = "Could not connect to the system bus.";
+            self.useDirect();
         };
         if (self.bus) |bus| bus.on_disconnect = .{ .owner = self, .callback = disconnected };
         return self;
@@ -102,6 +102,7 @@ pub const Manager = struct {
 
     pub fn destroy(self: *Manager) void {
         self.closing = true;
+        if (self.worker) |worker| worker.destroy();
         if (self.bus) |bus| bus.destroy();
         self.option_body.deinit();
         self.arena.deinit();
@@ -115,6 +116,7 @@ pub const Manager = struct {
     fn disconnected(owner: ?*anyopaque) void {
         const self: *Manager = @ptrCast(@alignCast(owner.?));
         if (self.closing) return;
+        if (self.worker != null) return;
         self.stage = .idle;
         self.unavailable("System bus connection lost. Reopen Printers to reconnect.");
     }
@@ -123,17 +125,17 @@ pub const Manager = struct {
         const self: *Manager = @ptrCast(@alignCast(owner.?));
         if (self.closing) return;
         const msg = result catch {
-            self.unavailable("Could not connect to the system bus.");
+            self.useDirect();
             return;
         };
         if (msg.kind != .method_return) {
-            self.unavailable("Could not connect to the system bus.");
+            self.useDirect();
             return;
         }
         var body: wire.Writer = .{ .allocator = a };
         defer body.deinit();
         _ = bus.call("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "ListActivatableNames", "", &body, self, activatable, 5000) catch {
-            self.unavailable("Could not check cups-pk-helper availability.");
+            self.useDirect();
         };
     }
 
@@ -141,7 +143,7 @@ pub const Manager = struct {
         const self: *Manager = @ptrCast(@alignCast(owner.?));
         if (self.closing) return;
         const msg = result catch {
-            self.unavailable("Could not check cups-pk-helper availability.");
+            self.useDirect();
             return;
         };
         if (msg.kind == .method_return and std.mem.eql(u8, msg.headers.signature, "as")) {
@@ -171,11 +173,11 @@ pub const Manager = struct {
         var body: wire.Writer = .{ .allocator = a };
         defer body.deinit();
         body.string(helper_name) catch {
-            self.unavailable("Could not check cups-pk-helper availability.");
+            self.useDirect();
             return;
         };
         _ = bus.call("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "NameHasOwner", "s", &body, self, hasOwner, 5000) catch {
-            self.unavailable("Could not check cups-pk-helper availability.");
+            self.useDirect();
         };
     }
 
@@ -183,7 +185,7 @@ pub const Manager = struct {
         const self: *Manager = @ptrCast(@alignCast(owner.?));
         if (self.closing) return;
         const msg = result catch {
-            self.unavailable("Could not check cups-pk-helper availability.");
+            self.useDirect();
             return;
         };
         if (msg.kind == .method_return and std.mem.eql(u8, msg.headers.signature, "b")) {
@@ -198,7 +200,84 @@ pub const Manager = struct {
                 return;
             }
         }
-        self.unavailable("Install cups-pk-helper to add or configure printers.");
+        self.useDirect();
+    }
+
+    fn useDirect(self: *Manager) void {
+        if (self.worker == null) {
+            const loop = self.loop orelse {
+                self.unavailable("Could not start CUPS administration.");
+                return;
+            };
+            self.worker = direct.Worker.create(loop, self, directReady) catch {
+                self.unavailable("Could not start CUPS administration.");
+                return;
+            };
+        }
+        self.available();
+    }
+
+    fn send(self: *Manager, method: Method, body: *wire.Writer, reset: bool) !void {
+        if (self.worker) |worker| return worker.submit(method.member, method.signature, body.bytes.items, reset);
+        const bus = self.bus orelse return error.Disconnected;
+        _ = try bus.callWithFlags(helper_name, helper_path, helper_name, method.member, method.signature, body, self, reply, 120000, wire.flag_allow_interactive_authorization);
+    }
+
+    fn directReady(raw: *anyopaque) void {
+        const self: *Manager = @ptrCast(@alignCast(raw));
+        if (self.closing) return;
+        const worker = self.worker.?;
+        switch (worker.state()) {
+            1 => {
+                self.authentication = true;
+                self.status = "CUPS requires an administrator username and password.";
+                self.notify();
+            },
+            2 => {
+                self.authentication = false;
+                const result = worker.result();
+                if (result != 0) {
+                    self.fail(switch (result) {
+                        2 => "Printer administration was cancelled.",
+                        3 => "CUPS authentication failed after three attempts. Check the administrator account and permissions.",
+                        4 => "Queue rename only partly completed. Refresh and check both queues before retrying.",
+                        5 => "This printer belongs to a CUPS class. Manage its class membership before renaming it here.",
+                        else => "CUPS refused or could not complete the request. Check authorization and refresh before retrying.",
+                    });
+                    return;
+                }
+                if (self.stage == .discovery) {
+                    var body: wire.Writer = .{ .allocator = a };
+                    defer body.deinit();
+                    worker.devices(&body) catch {
+                        self.fail("Invalid or oversized printer discovery reply.");
+                        return;
+                    };
+                    var reader: wire.Reader = .{ .bytes = body.bytes.items };
+                    self.readDevices(&reader) catch {
+                        self.fail("Invalid or oversized printer discovery reply.");
+                        return;
+                    };
+                    worker.finish();
+                    self.stage = .idle;
+                    self.busy = false;
+                    self.status = if (self.devices.len == 0) "CUPS discovered no supported printer addresses. You can enter a network address." else "Printer discovery complete.";
+                    self.notify();
+                } else self.advance();
+            },
+            else => {},
+        }
+    }
+
+    pub fn authenticate(self: *Manager, user: []const u8, password: []const u8) !void {
+        if (!self.authentication) return error.NoChallenge;
+        try self.worker.?.credentials(user, password);
+        self.authentication = false;
+        self.status = "Authenticating with CUPS…";
+    }
+    pub fn cancelAuthentication(self: *Manager) void {
+        if (self.worker) |worker| worker.cancel();
+        self.authentication = false;
     }
 
     fn available(self: *Manager) void {
@@ -224,7 +303,7 @@ pub const Manager = struct {
             .device => |device| try self.requireDiscovered(device.uri, device.discovered),
             else => {},
         }
-        const bus = self.bus orelse return error.Disconnected;
+        if (self.bus == null and self.worker == null) return error.Disconnected;
         if (action != .start_service and self.availability != .available) return error.HelperUnavailable;
         var body: wire.Writer = .{ .allocator = a };
         defer body.deinit();
@@ -272,19 +351,23 @@ pub const Manager = struct {
             else => "Applying printer change; authorization may be required…",
         };
         if (action == .start_service) {
+            const bus = self.bus orelse {
+                self.fail("The system service manager is unavailable.");
+                return error.Disconnected;
+            };
             _ = bus.callWithFlags("org.freedesktop.systemd1", "/org/freedesktop/systemd1", "org.freedesktop.systemd1.Manager", method.member, method.signature, &body, self, reply, 120000, 4) catch |err| {
                 self.fail("Could not request CUPS start.");
                 return err;
             };
         } else {
-            _ = bus.callWithFlags(helper_name, helper_path, helper_name, method.member, method.signature, &body, self, reply, 120000, 4) catch |err| {
+            self.send(method, &body, true) catch |err| {
                 self.fail("Could not send printer administration request.");
                 return err;
             };
         }
     }
 
-    fn reply(owner: ?*anyopaque, bus: *dbus.Connection, result: dbus.Connection.Failure!wire.Message) void {
+    fn reply(owner: ?*anyopaque, _: *dbus.Connection, result: dbus.Connection.Failure!wire.Message) void {
         const self: *Manager = @ptrCast(@alignCast(owner.?));
         if (self.closing) return;
         const msg = result catch |err| {
@@ -295,7 +378,7 @@ pub const Manager = struct {
             const error_name = msg.headers.error_name orelse "";
             if (std.mem.eql(u8, error_name, "org.freedesktop.DBus.Error.ServiceUnknown") or std.mem.eql(u8, error_name, "org.freedesktop.DBus.Error.NameHasNoOwner")) {
                 if (self.stage != .start_service) self.availability = .missing;
-                self.fail(if (self.stage == .start_service) "The system service manager is unavailable; start CUPS using your distribution's service tools." else "Install cups-pk-helper to add or configure printers.");
+                self.fail(if (self.stage == .start_service) "The system service manager is unavailable; start CUPS using your distribution's service tools." else "Printer authorization helper unavailable. Refresh before trying again.");
             } else if (std.mem.indexOf(u8, error_name, "NotPrivileged") != null or std.mem.indexOf(u8, error_name, "AccessDenied") != null or std.mem.indexOf(u8, error_name, "NotAuthorized") != null or std.mem.indexOf(u8, error_name, "InteractiveAuthorizationRequired") != null) {
                 self.fail("Printer administration was not authorized or was cancelled.");
             } else self.fail("Printer administration failed; refresh and check the printer status.");
@@ -351,14 +434,18 @@ pub const Manager = struct {
             self.fail("Invalid cups-pk-helper reply.");
             return;
         };
+        self.advance();
+    }
+
+    fn advance(self: *Manager) void {
         switch (self.stage) {
             .add => {
                 self.stage = .enable_added;
-                self.sendAdded(bus, .{ .enabled = .{ .name = self.added_name[0..self.added_len], .value = true } });
+                self.sendAdded(.{ .enabled = .{ .name = self.added_name[0..self.added_len], .value = true } });
             },
             .enable_added => {
                 self.stage = .accept_added;
-                self.sendAdded(bus, .{ .accepting = .{ .name = self.added_name[0..self.added_len], .value = true } });
+                self.sendAdded(.{ .accepting = .{ .name = self.added_name[0..self.added_len], .value = true } });
             },
             .accept_added => self.succeed("Printer added, enabled and accepting jobs."),
             .rename => self.succeed("Queue rename request completed. Check the refreshed queues and options."),
@@ -366,29 +453,29 @@ pub const Manager = struct {
             .clear_ppd_override => {
                 if (self.option_alias != null) {
                     self.stage = .clear_ppd_alias;
-                    self.clearOptionAlias(bus);
+                    self.clearOptionAlias();
                 } else {
                     self.stage = .ppd_option;
-                    self.sendPpdOption(bus);
+                    self.sendPpdOption();
                 }
             },
             .clear_ppd_alias => {
                 self.stage = .ppd_option;
-                self.sendPpdOption(bus);
+                self.sendPpdOption();
             },
             .ppd_option => self.succeed("Printer option applied."),
             else => self.succeed("Printer change applied."),
         }
     }
 
-    fn sendAdded(self: *Manager, bus: *dbus.Connection, action: Action) void {
+    fn sendAdded(self: *Manager, action: Action) void {
         var body: wire.Writer = .{ .allocator = a };
         defer body.deinit();
         const method = encode(&body, action) catch {
             self.fail("Printer was added, but could not be enabled. Refresh and resume it.");
             return;
         };
-        _ = bus.callWithFlags(helper_name, helper_path, helper_name, method.member, method.signature, &body, self, reply, 120000, 4) catch {
+        self.send(method, &body, false) catch {
             self.fail("Printer was added, but could not be enabled. Refresh and resume it.");
         };
     }
@@ -399,13 +486,13 @@ pub const Manager = struct {
         return error.UntrustedDevice;
     }
 
-    fn sendPpdOption(self: *Manager, bus: *dbus.Connection) void {
-        _ = bus.callWithFlags(helper_name, helper_path, helper_name, "PrinterAddOption", "ssas", &self.option_body, self, reply, 120000, wire.flag_allow_interactive_authorization) catch {
+    fn sendPpdOption(self: *Manager) void {
+        self.send(.{ .member = "PrinterAddOption", .signature = "ssas" }, &self.option_body, false) catch {
             self.fail("Could not apply the printer option.");
         };
     }
 
-    fn clearOptionAlias(self: *Manager, bus: *dbus.Connection) void {
+    fn clearOptionAlias(self: *Manager) void {
         var body: wire.Writer = .{ .allocator = a };
         defer body.deinit();
         const method = encode(&body, .{ .clear_option = .{
@@ -415,12 +502,15 @@ pub const Manager = struct {
             self.fail("Could not clear the canonical default override.");
             return;
         };
-        _ = bus.callWithFlags(helper_name, helper_path, helper_name, method.member, method.signature, &body, self, reply, 120000, wire.flag_allow_interactive_authorization) catch {
+        self.send(method, &body, false) catch {
             self.fail("Could not clear the canonical default override.");
         };
     }
 
     fn fail(self: *Manager, status: []const u8) void {
+        self.authentication = false;
+        if (self.worker) |worker| worker.finish();
+        if (self.worker != null and self.stage == .mutation) self.generation +%= 1;
         // A chained add may already have changed CUPS; force an inventory reload
         // and describe its partial result rather than deleting anyone's queue.
         const partial = self.stage == .enable_added or self.stage == .accept_added;
@@ -446,6 +536,8 @@ pub const Manager = struct {
     }
 
     fn succeed(self: *Manager, status: []const u8) void {
+        self.authentication = false;
+        if (self.worker) |worker| worker.finish();
         self.generation +%= 1;
         self.status = status;
         self.busy = false;

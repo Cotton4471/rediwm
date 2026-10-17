@@ -16,6 +16,7 @@ const titles = [_][]const u8{ "Name", "PID", "User", "CPU %", "Memory (resident)
 const proportions = [_]f32{ 0.28, 0.10, 0.15, 0.12, 0.21, 0.14 };
 const Pending = enum { none, end, confirm, cancel, force };
 const Confirmation = struct { identity: proc.Identity, name: [256]u8 = undefined, len: usize };
+const Selection = struct { identity: proc.Identity, fade: ui.hover_glide.Fade = .{} };
 
 pub const App = struct {
     worker: *collector.Worker,
@@ -53,6 +54,8 @@ pub const App = struct {
     bar: scrollbar.Appearance = .{},
     bar_drag: scrollbar.Drag = .{},
     last_scroll: f64 = 0,
+    row_hover: ui.hover_glide.Glide = .{},
+    selections: std.ArrayList(Selection) = .empty,
 
     pub fn init(io: std.Io) !App {
         return .{ .worker = try collector.Worker.init(io), .model = .{ .allocator = a, .uid = c.getuid() } };
@@ -62,6 +65,7 @@ pub const App = struct {
         self.dispatcher.reset();
         if (self.initialized) a.free(self.toolbar[0].kind.text_input.value);
         self.model.deinit();
+        self.selections.deinit(a);
     }
     pub fn getTitle(_: *App) [*:0]const u8 {
         return "System Monitor";
@@ -231,6 +235,8 @@ pub const App = struct {
         self.dirty = true;
     }
     pub fn cancelDrag(self: *App) void {
+        self.px = -1;
+        self.py = -1;
         self.bar_drag.end();
         self.dispatcher.pressed = null;
         self.dispatcher.text_drag = null;
@@ -258,8 +264,6 @@ pub const App = struct {
             self.applyPending();
         } else {
             if (self.confirmation == null) {
-                const list = self.listBox();
-                const gutter = scrollbar.gutter(theme.global.scrollbar_width);
                 if (self.barGeometry()) |g| if (scrollbar.press(g, self.px, self.py, @floatCast(self.model.scroll))) |decision| {
                     switch (decision) {
                         .grab => self.bar_drag.begin(g, self.px, self.py, @floatCast(self.model.scroll)),
@@ -268,12 +272,9 @@ pub const App = struct {
                     self.dirty = true;
                     return;
                 };
-                if (self.py >= list.y and self.py < list.y + list.h and self.px >= 16 and self.px < @as(f32, @floatFromInt(self.w)) - gutter - 16) {
-                    const index: usize = @intFromFloat(@floor((self.py - list.y + self.model.scroll) / row_h));
-                    if (index < self.model.rows.items.len) {
-                        self.model.selected = self.model.snapshot.?.processes[self.model.rows.items[index]].identity;
-                        self.notice = "";
-                    }
+                if (self.processAt()) |index| {
+                    self.model.selected = self.model.snapshot.?.processes[self.model.rows.items[index]].identity;
+                    self.notice = "";
                     self.dispatcher.focus(&self.root, null);
                 }
             }
@@ -373,6 +374,18 @@ pub const App = struct {
     fn listBox(self: *const App) Rect {
         return .{ .x = 16, .y = 236, .w = @floatFromInt(self.w - 32), .h = @floatFromInt(@max(0, self.h - 310)) };
     }
+    fn processAt(self: *const App) ?usize {
+        if (self.confirmation != null or self.suspended or self.bar_drag.active) return null;
+        const list = self.listBox();
+        const right = list.x + list.w - scrollbar.gutter(theme.global.scrollbar_width);
+        if (self.px < list.x or self.px >= right or self.py < list.y or self.py >= list.y + list.h) return null;
+        const index: usize = @intFromFloat(@floor((self.py - list.y + self.model.scroll) / row_h));
+        return if (index < self.model.rows.items.len) index else null;
+    }
+    fn rowBox(self: *const App, row: f32) cairo.ItemBox {
+        const list = self.listBox();
+        return .{ .x = list.x + 1, .y = list.y + @as(f64, row) * row_h - self.model.scroll + 1, .w = list.w - scrollbar.gutter(theme.global.scrollbar_width) - 2, .h = row_h - 2 };
+    }
     fn clampScroll(self: *App) void {
         self.model.scroll = std.math.clamp(self.model.scroll, 0, @max(0, @as(f64, @floatFromInt(self.model.rows.items.len)) * row_h - self.listBox().h));
     }
@@ -382,9 +395,33 @@ pub const App = struct {
         return scrollbar.Geometry.compute(.vertical, .{ .x = list.x + list.w - gutter, .y = list.y, .w = gutter, .h = list.h }, list.h, @as(f32, @floatFromInt(self.model.rows.items.len)) * @as(f32, @floatCast(row_h)), @floatCast(self.model.scroll));
     }
     pub fn stepAnimations(self: *App, now: i64) void {
+        const index = self.processAt();
+        const hovered = if (index) |i| blk: {
+            const identity = self.model.snapshot.?.processes[self.model.rows.items[i]].identity;
+            if (self.model.selected) |selected| if (identity.eql(selected)) break :blk null;
+            break :blk @as(?ui.hover_glide.Cell, .{ .col = 0, .row = @intCast(i) });
+        } else null;
+        self.row_hover.setTarget(now, hovered);
+        const pixel = ui.anim.rasterPixelQuantum(@floatCast(self.density));
+        if (self.row_hover.step(now, pixel, pixel / @as(f32, row_h))) self.dirty = true;
+        if (self.model.selected) |identity| {
+            const found = for (self.selections.items) |selection| {
+                if (selection.identity.eql(identity)) break true;
+            } else false;
+            if (!found) self.selections.append(a, .{ .identity = identity }) catch {};
+        }
+        var i: usize = 0;
+        while (i < self.selections.items.len) {
+            const selection = &self.selections.items[i];
+            const selected = if (self.model.selected) |identity| identity.eql(selection.identity) else false;
+            if (selection.fade.step(now, selected)) self.dirty = true;
+            if (!selected and selection.fade.alpha == 0 and selection.fade.animation.settled(now)) {
+                _ = self.selections.swapRemove(i);
+            } else i += 1;
+        }
         const geom = self.barGeometry();
-        const hovered = if (geom) |g| g.overThumb(self.px, self.py) else false;
-        if (self.bar.step(now, self.model.scroll != self.last_scroll, hovered, self.bar_drag.active, geom != null)) self.dirty = true;
+        const thumb_hovered = if (geom) |g| g.overThumb(self.px, self.py) else false;
+        if (self.bar.step(now, self.model.scroll != self.last_scroll, thumb_hovered, self.bar_drag.active, geom != null)) self.dirty = true;
         self.last_scroll = self.model.scroll;
         if (self.focused and self.dispatcher.focused == &self.toolbar[0]) {
             const visible = self.dispatcher.caret.visible(now);
@@ -397,6 +434,11 @@ pub const App = struct {
     pub fn animationTimeout(self: *App, now: i64) ?u32 {
         if (self.suspended) return null;
         var timeout: ?u32 = if (self.bar.active) 16 else if (self.bar.deadline) |deadline| @intCast(@min(60000, @max(0, deadline - now))) else null;
+        if (self.row_hover.animating(now)) timeout = 16;
+        for (self.selections.items) |selection| if (!selection.fade.animation.settled(now)) {
+            timeout = if (timeout) |existing| @min(existing, 16) else 16;
+            break;
+        };
         if (self.focused and self.dispatcher.focused == &self.toolbar[0] and self.dispatcher.caret.animating(now)) {
             const caret = self.dispatcher.caret;
             const half: i64 = @max(1, ui.input.caret_config.blink_ms / 2);
@@ -494,12 +536,15 @@ pub const App = struct {
         c.cairo_clip(cr);
         const first: usize = @intFromFloat(@floor(self.model.scroll / row_h));
         const last = @min(self.model.rows.items.len, first + @as(usize, @intFromFloat(@ceil(list.h / row_h))) + 1);
+        const hover = self.row_hover.frame;
+        if (hover.alpha > 0) cairo.drawItemHighlight(cr, self.rowBox(hover.row), false, hover.alpha, hover.alpha);
         for (first..last) |i| {
             const row = snap.processes[self.model.rows.items[i]];
             const y: f32 = @floatCast(list.y + @as(f64, @floatFromInt(i)) * row_h - self.model.scroll);
-            if (self.model.selected != null and row.identity.eql(self.model.selected.?)) {
-                cairo.drawSidebarSelected(cr, .{ .x = list.x, .y = y, .w = list.w - scrollbar.gutter(theme.global.scrollbar_width), .h = row_h });
-            }
+            for (self.selections.items) |selection| if (selection.identity.eql(row.identity)) {
+                cairo.drawItemHighlight(cr, self.rowBox(@floatFromInt(i)), true, selection.fade.alpha, selection.fade.alpha);
+                break;
+            };
             var pid_buf: [32]u8 = undefined;
             var cpu_buf: [32]u8 = undefined;
             var mem_buf: [32]u8 = undefined;

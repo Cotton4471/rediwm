@@ -23,6 +23,10 @@ confirmation has been open. Signals use a validated pidfd. Other users'
 processes can be viewed where `/proc` permits but cannot be managed here.
 The monitor never requests elevated privileges.
 
+Process rows use Files' rounded hover and selection cards. The hover fades in
+and glides between rows; selection fades use the accent outline. Both follow
+the theme and animation settings and stop requesting frames when settled.
+
 | Key | Action |
 | --- | --- |
 | Ctrl+F | Focus search and select its text |
@@ -48,7 +52,9 @@ Fractional scaling uses fractional-scale-v1 and viewporter when available.
 ## Existing shortcut configuration
 
 Both presets now use `open_system_monitor`. Explicit user bindings are
-preserved. For an older canvas config containing
+preserved. Existing canvas shortcut lists inherit Ctrl+Alt+Delete when that
+key is unassigned, so **Open System Monitor** also appears under **System**
+in Settings → Keyboard Shortcuts. For an older canvas config containing
 `"ctrl+alt+delete" = "poweroff"`, replace that line in
 `~/.config/rediwm/config.toml`:
 

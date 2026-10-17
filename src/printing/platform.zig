@@ -15,7 +15,7 @@ pub const Info = struct {
     // never evidence that the daemon is running/enabled. null means inaccessible.
     daemon_installed: ?bool = null,
     missing_cups: []const u8 = "Printing needs CUPS. Ask your distribution's package manager for its CUPS print-server package, then start the print service.",
-    missing_helper: []const u8 = "Printer administration needs the optional cups-pk-helper package and an authorization policy that permits the action.",
+    missing_helper: []const u8 = "Printer administration uses CUPS authentication when the optional cups-pk-helper package is unavailable.",
 
     pub fn deinit(self: *Info, a: A) void {
         a.free(self.id);
@@ -90,9 +90,9 @@ pub fn parse(a: A, bytes: []const u8) !Info {
         .generic => info.missing_cups,
     };
     info.missing_helper = switch (distro) {
-        .arch, .cachyos, .artix => "Install the optional cups-pk-helper package for authorized printer setup and configuration. Printing and user-level status do not require it.",
-        .debian, .ubuntu => "Install the optional cups-pk-helper package for authorized printer setup and configuration. Printing and user-level status do not require it.",
-        .fedora => "Install the optional cups-pk-helper package for authorized printer setup and configuration. Printing and user-level status do not require it.",
+        .arch, .cachyos, .artix => "The optional cups-pk-helper package provides polkit authorization. Without it, printer setup uses CUPS administrator credentials.",
+        .debian, .ubuntu => "The optional cups-pk-helper package provides polkit authorization. Without it, printer setup uses CUPS administrator credentials.",
+        .fedora => "The optional cups-pk-helper package provides polkit authorization. Without it, printer setup uses CUPS administrator credentials.",
         .opensuse => "Look for the optional cups-pk-helper package in your openSUSE repositories. Availability and authorization depend on the release and local policy.",
         .generic => info.missing_helper,
     };

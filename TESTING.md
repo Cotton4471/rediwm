@@ -34,7 +34,10 @@ compiler, `wayland-scanner` and wayland-protocols; D-Bus suites need PyGObject,
 `tests/printers.py` against the real headless Settings page. It needs the regular
 integration dependencies above, `wl-paste` (`wl-clipboard`), PyGObject/Gio/GLib,
 `dbus-daemon`, and a C compiler capable of a small shared `LD_PRELOAD` fixture.
-It does not require installed CUPS, cups-pk-helper or a printer.
+It needs libcups and its development headers, but does not require a running
+CUPS server, cups-pk-helper or a printer. `tests/printers_direct.py` also exercises
+the native backend against private schedulers: queue operations, PPD editing,
+rename, authentication retry, password cancellation and page teardown.
 
 ```sh
 zig build test-printers
@@ -323,7 +326,8 @@ actions against disposable children, and worker pause/resume/cancellation.
 `python3 tests/system_monitor.py` covers shortcut launch and restore in both
 desktop modes, search, keyboard actions, named force-quit confirmation,
 disappearing targets, resize, live theme updates while paused, focus loss,
-minimize/restore and idle worker lifetime. Repeat with `REDIWM_TEST_SCALE=1.5`.
+minimize/restore, Files-style row hover/selection, pointer leave and idle worker
+lifetime. Repeat with `REDIWM_TEST_SCALE=1.5`.
 The noninstalled preload fixture uses seccomp user notifications to permit
 signals only to recorded disposable child identities, and verifies that gate
 against an unlisted disposable child before exercising UI actions. These tests

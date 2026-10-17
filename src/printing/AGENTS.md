@@ -3,8 +3,16 @@
 * `cups.zig` queries the configured Unix or cleartext TCP CUPS endpoint. TLS and
   authentication are explicit unsupported states; never fall back to a
   different server. Configuration read failures are not missing files.
-  cups-pk-helper targets its local default server: allow its actions only with
-  the canonical local socket, never a custom Unix or remote CUPS endpoint.
+  Both administration backends target the canonical local socket, never a
+  custom Unix or remote endpoint. `admin.zig` selects the helper when present,
+  otherwise `direct.zig`/`direct.c` use libcups in a page-owned worker. Never
+  retry an uncertain mutation through another backend. The native worker alone
+  uses libcups (including its thread-local authentication state); UI credentials
+  use locked storage and are wiped on submit/cancel/hide. A chain may reuse its
+  CUPS connection, but completion closes it and wipes the worker password.
+  The deadline watcher owns a duplicated socket descriptor, never a borrowed
+  descriptor that libcups could close/reuse during authentication. It has no
+  timed wakeups while idle or waiting for user input.
 * IPP and HTTP replies are untrusted and bounded. Socket operations share an
   absolute deadline and include the worker cancellation fd in every wait.
 * `cups.Snapshot` owns an arena. Parser helpers allocate into that arena;

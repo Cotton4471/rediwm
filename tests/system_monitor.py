@@ -76,7 +76,8 @@ def run(scale, workspace):
         tmp = Path(directory)
         config = ('[compositor]\nxwayland = false\n' +
                   ('desktop_mode = "workspaces"\n' if workspace else '') +
-                  '[theme]\napp_bg = "#203040"\n')
+                  '[theme]\napp_bg = "#203040"\napp_item_hover = "#4a6076"\n'
+                  'app_item_selected = "#62768a"\n')
         env = {"HOME": directory, "XDG_CONFIG_HOME": str(tmp / "config"),
                "XDG_DATA_HOME": str(tmp / "data"), "XDG_CACHE_HOME": str(tmp / "cache"),
                "DBUS_SESSION_BUS_ADDRESS": "", "REDIWM_FILES_DEVICES": "0"}
@@ -164,6 +165,37 @@ def run(scale, workspace):
                 paused = shot("paused", True)
                 time.sleep(1.2)
                 assert ImageChops.difference(paused, shot("still-paused", True)).getbbox() is None
+
+                # Files' rounded hover and selection fills, with no idle timer.
+                def move(x, y):
+                    b = box()
+                    ipc.move_cursor(round(b["x"] + x), round(b["y"] + y))
+
+                def row_pixel(name, y):
+                    image = shot(name)
+                    factor = image.width / box()["width"]
+                    return image.getpixel((round(20 * factor), round(y * factor)))
+
+                assert row_pixel("row-idle", 252) == (32, 48, 64)
+                move(40, 252)
+                time.sleep(.6)
+                assert row_pixel("row-hover", 252) == (74, 96, 118)
+                idle("hover settled")
+                move(40, 284)
+                time.sleep(.6)
+                assert row_pixel("row-glide", 284) == (74, 96, 118)
+                assert row_pixel("row-glide-old", 252) == (32, 48, 64)
+                click(40, 284)
+                time.sleep(.6)
+                assert row_pixel("row-selected", 284) == (98, 118, 138)
+                # Leaving the surface fades hover away without dropping selection.
+                move(40, 316)
+                time.sleep(.6)
+                ipc.move_cursor(0, 0)
+                time.sleep(.6)
+                assert row_pixel("row-left", 316) == (32, 48, 64)
+                assert row_pixel("row-selection-kept", 284) == (98, 118, 138)
+                idle("row feedback settled")
 
                 # Atomic theme replacement still wakes a paused app.
                 changed = tmp / "theme-new.toml"
