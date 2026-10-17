@@ -284,6 +284,29 @@ pub const Renderer = struct {
             .w = @intFromFloat(@round(w)),
             .h = @intFromFloat(@round(h)),
         };
+        if (style.highlight_query.len > 0) {
+            const pal = r.palette orelse theme.global;
+            // Use the same face, scale and hinted advances as the label. Keep
+            // highlights inside its box, including when the label ellipsizes.
+            const limit = text_mod.measureWidthF(style.content, font, style.font_size, r.scale) catch 0;
+            const ellipsis = if (limit > w) text_mod.measureWidthF("…", font, style.font_size, r.scale) catch 0 else 0;
+            const metrics = text_mod.verticalMetrics(font, style.font_size, r.scale) catch text_mod.VMetrics{ .ascent = style.font_size, .descent = 0 };
+            const line_h = @min(h, metrics.ascent + metrics.descent);
+            var words = std.mem.tokenizeAny(u8, style.highlight_query, " \t\r\n");
+            while (words.next()) |word| {
+                if (word.len > style.content.len) continue;
+                for (0..style.content.len - word.len + 1) |i| {
+                    if (!std.ascii.eqlIgnoreCase(style.content[i..][0..word.len], word)) continue;
+                    const left = text_mod.measureWidthF(style.content[0..i], font, style.font_size, r.scale) catch continue;
+                    const right = text_mod.measureWidthF(style.content[0 .. i + word.len], font, style.font_size, r.scale) catch continue;
+                    const clipped_right = @min(right, w - ellipsis);
+                    if (clipped_right > left) r.fillRect(@as(f32, @floatFromInt(rect.x)) + left, y + (h - line_h) / 2, clipped_right - left, line_h, .{
+                        .color = .{ pal.accent[0], pal.accent[1], pal.accent[2], 0.25 },
+                        .radius = 2,
+                    });
+                }
+            }
+        }
         text_mod.drawOpts(r.pixels, r.width, r.height, style.content, toColor(style.color), r.scale, font, style.font_size, .{ .rect = rect, .sensitive = style.sensitive, .device_clip = r.textClip(r.effectiveClip()) }) catch |err| {
             log.err("drawText: could not rasterize label: {}", .{err});
         };

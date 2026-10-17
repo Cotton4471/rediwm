@@ -1,6 +1,7 @@
 // Compositor integration/unit-test root. Shared modules have separate test
 // targets in build.zig; their roots cannot import compositor code.
 test {
+    _ = @import("control_center/search_index.zig");
     _ = @import("auto_layout.zig");
     _ = @import("desktop/app.zig");
     _ = @import("desktop/config.zig");

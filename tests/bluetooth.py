@@ -208,6 +208,13 @@ def run(scale):
                 fake=start_fake();wait_label('WH-1000XM5')
                 choose('WH-1000XM5');capture('bluetooth-restarted')
                 click('bluetooth_scan');wait_for(lambda:state()['scanning'],'discovery restarted')
+                # Search hides the page just like selecting another category:
+                # discovery must stop even though Bluetooth stays selected.
+                click('settings_search');ipc.type_text('volume');ui.wait_settled('control_center')
+                wait_for(lambda:not state()['scanning'],'stop discovery during global search')
+                assert find('output_volume')['role']=='row'
+                ipc.key_press('Escape');ui.wait_settled('control_center');wait_label('WH-1000XM5')
+                click('bluetooth_scan');wait_for(lambda:state()['scanning'],'discovery after clearing search')
                 window=next(w for w in ipc.get_windows() if w.get('app_id')=='rediwm-settings')
                 ipc.close_window(window['id']);ui.wait_absent('control_center')
                 wait_for(lambda:not state()['scanning'],'stop discovery on close')

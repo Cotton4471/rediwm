@@ -317,6 +317,18 @@ confirmation, cancellation and Settings portal preferences). The chooser can
 also be launched with `rediwm-files --open`, `--save` or `--folder`; it returns
 a JSON result on stdout.
 
+**System Monitor**: `zig build test-monitor` covers proc parsing, CPU and memory
+accounting, PID reuse, filtering/sorting, stable selection, history, real pidfd
+actions against disposable children, and worker pause/resume/cancellation.
+`python3 tests/system_monitor.py` covers shortcut launch and restore in both
+desktop modes, search, keyboard actions, named force-quit confirmation,
+disappearing targets, resize, live theme updates while paused, focus loss,
+minimize/restore and idle worker lifetime. Repeat with `REDIWM_TEST_SCALE=1.5`.
+The noninstalled preload fixture uses seccomp user notifications to permit
+signals only to recorded disposable child identities, and verifies that gate
+against an unlisted disposable child before exercising UI actions. These tests
+require Linux seccomp user notifications; production builds contain no hooks.
+
 **Desktop, Files, Images**: `desktop_icons.py`, `desktop_damage.py`,
 `zig build test-files-terminal` (Files units plus isolated Bash/PTY and real drawer tests;
 also `python3 tests/files_terminal.py` after building; supports `REDIWM_TEST_SCALE=1.5`),

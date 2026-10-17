@@ -283,6 +283,7 @@ pub const Client = struct {
             .close => {
                 self.app.requestClose();
             },
+            .configure_bounds, .wm_capabilities => {},
         }
     }
 

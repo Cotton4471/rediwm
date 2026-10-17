@@ -52,3 +52,10 @@ Settings is an ordinary window with a compositor-drawn body (`Backend.shell`).
   Discovered backend URIs must match the current helper catalog exactly;
   arbitrary typed vendor/file backends are not allowed. PPD settings use
   `PrinterAddOption` after clearing stale IPP defaults, followed by readback.
+
+* Global search uses `search_index.zig` destinations (widget names or `@` plus
+  visible label text), without building hidden sections. Add an index entry
+  with new settings. A selected category can be covered by search results:
+  background callbacks must use `showingPage`, rather than `page`, to decide
+  whether to refresh or fetch for it. The search field owns its text across
+  rebuilds; result widgets/strings belong to a separate arena.

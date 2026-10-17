@@ -53,7 +53,7 @@ if [ "$prebuilt" = no ]; then
     wlroots_flag=${REDIWM_WLROOTS_PREFIX:+-Dwlroots-prefix=$REDIWM_WLROOTS_PREFIX}
     as_user zig build -Doptimize=ReleaseSafe -j"$ZIG_JOBS" --prefix "$release_dir" $wlroots_flag
 fi
-for binary in rediwm rediwm-msg rediwm-theme rediwm-files rediwm-images rediwm-editor rediwm-pdf rediwm-share-picker rediwm-dm rediwm-accounts-helper; do
+for binary in rediwm rediwm-msg rediwm-theme rediwm-files rediwm-images rediwm-monitor rediwm-editor rediwm-pdf rediwm-share-picker rediwm-dm rediwm-accounts-helper; do
     test -x "$release_dir/bin/$binary"
 done
 as_root sh "$repo_dir/scripts/install-session-root.sh" "$repo_dir" "$release_dir" "$dm_flag"

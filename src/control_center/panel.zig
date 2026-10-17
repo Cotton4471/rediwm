@@ -40,6 +40,7 @@ const network_section = @import("sections/network.zig");
 
 const log = std.log.scoped(.control_center);
 const welcome_section = @import("welcome.zig");
+const settings_search = @import("search.zig");
 
 /// Default content size; a saved size (window_sizes) or a rule wins.
 const default_width = 960;
@@ -48,8 +49,8 @@ const default_height = 640;
 // .glass-strong uses shared CSS palette and --r-lg.
 const theme = @import("ui").theme;
 
-pub const Page = enum { general, input, displays, audio, network, appearance, shortcuts, desktop, bluetooth, region, users, printers, services };
-const page_labels = [_][]const u8{ "General", "Input", "Displays", "Audio", "Network", "Appearance", "Keyboard Shortcuts", "Desktop", "Bluetooth", "Region & Language", "Users", "Printers", "Services" };
+pub const Page = @import("search_index.zig").Page;
+pub const page_labels = [_][]const u8{ "General", "Input", "Displays", "Audio", "Network", "Appearance", "Keyboard Shortcuts", "Desktop", "Bluetooth", "Region & Language", "Users", "Printers", "Services" };
 const page_names = [_][]const u8{ "general", "input", "displays", "audio", "network", "appearance", "shortcuts", "desktop", "bluetooth", "region", "users", "printers", "services" };
 const page_descriptions = [_][]const u8{
     "Everyday controls, all in one place.",                "Make your mouse and keyboard feel right.",
@@ -179,6 +180,8 @@ pub const ControlCenter = struct {
     root: Widget = undefined,
     root_children: [2]Widget = undefined,
     body_children: [2]Widget = undefined,
+    search: settings_search.State = .{},
+    sidebar_children: [2]Widget = undefined,
     nav_rows: [page_names.len]Widget = undefined,
     nav_children: [page_names.len][2]Widget = undefined,
     // Sized for the worst case across all pages: 2 (heading + description)
@@ -313,6 +316,7 @@ pub const ControlCenter = struct {
         cc.shortcuts.cancel();
         if (cc.systemd_client) |client| client.detachSettings();
         cc.welcome.deinit();
+        cc.search.deinit();
         cc.services.deinit();
         cc.printers.deinit();
         cc.network.deinit();
@@ -435,6 +439,19 @@ pub const ControlCenter = struct {
             cc.refresh_pending = false;
             return;
         }
+        cc.search.capture();
+        if (cc.search.active != cc.search.built_active) {
+            if (cc.search.active) {
+                if (cc.body_children[1].kind == .scroll_container) cc.search.saved_scroll = cc.body_children[1].kind.scroll_container;
+                cc.shortcuts.cancel();
+                if (cc.page == .services) if (cc.systemd_client) |client| client.hide();
+                if (cc.page == .printers) cc.printers.hide();
+                if (cc.page == .bluetooth) if (cc.server.bluetooth) |manager| manager.closed();
+            } else {
+                cc.search.restore_scroll = true;
+                if (cc.page == .bluetooth) if (cc.server.bluetooth) |manager| manager.opened();
+            }
+        }
         cc.services.capture();
         if (cc.page == .bluetooth and cc.built_page == .bluetooth) cc.bluetooth.capture();
         if (cc.page == .network and cc.built_page == .network) cc.network.captureFocus();
@@ -446,32 +463,33 @@ pub const ControlCenter = struct {
         const selected_row: f32 = @floatFromInt(@intFromEnum(cc.page));
         if (cc.nav_selection.to != selected_row) cc.nav_selection.cancel(selected_row);
         const t = palette();
-        if (cc.page == .displays) {
-            const selected = cc.selectedDisplayOutput() orelse cc.wlr_output;
-            display_section.build(&cc.display, cc, selected);
+        if (!cc.search.active) {
+            if (cc.page == .displays) {
+                const selected = cc.selectedDisplayOutput() orelse cc.wlr_output;
+                display_section.build(&cc.display, cc, selected);
+            }
+            if (cc.page == .general or cc.page == .audio) {
+                sound_section.build(&cc.sound, cc.server.audio);
+                restyle(&cc.sound.root);
+            }
+            if (cc.page == .appearance) {
+                appearance_section.build(&cc.appearance, cc);
+                restyle(&cc.appearance.root);
+            }
+            if (cc.page == .input) {
+                input_section.build(&cc.input, &cc.server.input);
+                restyle(&cc.input.root);
+            }
+            if (cc.page == .displays) restyle(&cc.display.root);
+            if (cc.page == .users) {
+                users_section.build(&cc.users, cc);
+                restyle(&cc.users.root);
+            }
         }
-        if (cc.page == .general or cc.page == .audio) {
-            sound_section.build(&cc.sound, cc.server.audio);
-            restyle(&cc.sound.root);
-        }
-        if (cc.page == .appearance) {
-            appearance_section.build(&cc.appearance, cc);
-            restyle(&cc.appearance.root);
-        }
-        if (cc.page == .input) {
-            input_section.build(&cc.input, &cc.server.input);
-            restyle(&cc.input.root);
-        }
-        if (cc.page == .displays) restyle(&cc.display.root);
-        if (cc.page == .users) {
-            users_section.build(&cc.users, cc);
-            restyle(&cc.users.root);
-        }
-
         const narrow = cc.panel_box.width < 660;
         const nav_count = page_names.len - @as(usize, @intFromBool(!has_services));
         const nav_gap: f32 = if (cc.panel_box.height < 550) 2 else 5;
-        const nav_height = @min(52, @max(24, (@as(f32, @floatFromInt(cc.panel_box.height)) - 48 - nav_gap * @as(f32, @floatFromInt(nav_count - 1))) / @as(f32, @floatFromInt(nav_count))));
+        const nav_height = @min(52, @max(24, (@as(f32, @floatFromInt(cc.panel_box.height)) - 92 - (if (narrow and cc.search.expanded) @as(f32, 46) else 0) - nav_gap * @as(f32, @floatFromInt(nav_count - 1))) / @as(f32, @floatFromInt(nav_count))));
         const nav_fg = theme.global.sidebarForeground();
         for (cc.nav_rows[0..nav_count], 0..) |*row, i| {
             const selected = i == @intFromEnum(cc.page);
@@ -492,104 +510,119 @@ pub const ControlCenter = struct {
                 .children = cc.nav_children[i][0..if (narrow) @as(usize, 1) else 2],
             };
         }
-        cc.content_count = 0;
-        var heading = label(page_labels[@intFromEnum(cc.page)], 24, false);
-        heading.kind.text.weight = 600;
-        if (cc.page != .bluetooth) {
-            cc.append(heading);
-            cc.append(label(page_descriptions[@intFromEnum(cc.page)], 13, true));
+        if (!cc.search.active) {
+            cc.content_count = 0;
+            var heading = label(page_labels[@intFromEnum(cc.page)], 24, false);
+            heading.kind.text.weight = 600;
+            if (cc.page != .bluetooth) {
+                cc.append(heading);
+                cc.append(label(page_descriptions[@intFromEnum(cc.page)], 13, true));
+            }
+            if (cc.search.unavailable) cc.append(label("This setting is unavailable on this device or in the current mode.", t.settings_description_size, true));
+            switch (cc.page) {
+                .desktop => {
+                    desktop_section.build(&cc.desktop, cc);
+                    cc.append(cc.desktop.root);
+                },
+                .region => {
+                    region_section.build(&cc.region, cc);
+                    cc.append(cc.region.root);
+                },
+                .users => cc.append(cc.users.root),
+                .services => {
+                    services_section.build(&cc.services, cc);
+                    cc.append(cc.services.root);
+                },
+                .printers => {
+                    printers_section.build(&cc.printers, cc);
+                    cc.append(cc.printers.root);
+                },
+                .shortcuts => {
+                    shortcut_section.build(&cc.shortcuts, cc);
+                    for (cc.shortcuts.groups[0..cc.shortcuts.group_count]) |widget| cc.append(widget);
+                },
+                .general => cc.buildGeneral(),
+                .bluetooth => {
+                    bluetooth_section.build(&cc.bluetooth, cc);
+                    cc.append(cc.bluetooth.root);
+                },
+                .network => {
+                    network_section.build(&cc.network, cc);
+                    cc.append(cc.network.root);
+                },
+                .input => for (cc.input.row_storage[0..cc.input.row_count]) |*row| {
+                    var framed = card(row.children);
+                    framed.name = "input";
+                    framed.direction = row.direction;
+                    framed.justify = row.justify;
+                    framed.@"align" = if (row.direction == .column) .stretch else row.@"align";
+                    cc.append(framed);
+                },
+                .displays => {
+                    if (cc.display.has_arrangement) {
+                        var arrangement_card = card(&cc.display.arrangement_children);
+                        arrangement_card.name = "displays";
+                        cc.append(arrangement_card);
+                    }
+                    var display_card = card(&cc.display.row_storage);
+                    display_card.name = "displays";
+                    cc.append(display_card);
+                    cc.append(cc.display.top_children[2]);
+                    cc.append(cc.display.xwayland_hint);
+                    var nl_card = card(&cc.display.nl_group_children);
+                    nl_card.name = "displays";
+                    cc.append(nl_card);
+                    if (cc.display.has_lid) {
+                        var lid_card = card(&cc.display.lid_group_children);
+                        lid_card.name = "displays";
+                        cc.append(lid_card);
+                    }
+                },
+                .audio => {
+                    var audio_card = card(cc.sound.top_children[1].children);
+                    audio_card.name = "sound";
+                    cc.append(audio_card);
+                    cc.buildDevices();
+                    if (cc.device_count > 0) {
+                        cc.device_title = .{ sectionTitle("Audio output"), .{ .kind = .container, .direction = .column, .gap = 4, .children = cc.device_rows[0..cc.device_count] } };
+                        var dev_card = card(&cc.device_title);
+                        dev_card.name = "sound";
+                        cc.append(dev_card);
+                    }
+                },
+                .appearance => for (&cc.appearance.group_cards) |*row| {
+                    var framed = card(row.children);
+                    framed.name = "appearance";
+                    framed.direction = row.direction;
+                    framed.justify = row.justify;
+                    framed.@"align" = if (row.direction == .column) .stretch else row.@"align";
+                    cc.append(framed);
+                },
+            }
+        } else {
+            cc.content_count = 0;
+            cc.append(cc.search.build(cc));
         }
-        switch (cc.page) {
-            .desktop => {
-                desktop_section.build(&cc.desktop, cc);
-                cc.append(cc.desktop.root);
-            },
-            .region => {
-                region_section.build(&cc.region, cc);
-                cc.append(cc.region.root);
-            },
-            .users => cc.append(cc.users.root),
-            .services => {
-                services_section.build(&cc.services, cc);
-                cc.append(cc.services.root);
-            },
-            .printers => {
-                printers_section.build(&cc.printers, cc);
-                cc.append(cc.printers.root);
-            },
-            .shortcuts => {
-                shortcut_section.build(&cc.shortcuts, cc);
-                for (cc.shortcuts.groups[0..cc.shortcuts.group_count]) |widget| cc.append(widget);
-            },
-            .general => cc.buildGeneral(),
-            .bluetooth => {
-                bluetooth_section.build(&cc.bluetooth, cc);
-                cc.append(cc.bluetooth.root);
-            },
-            .network => {
-                network_section.build(&cc.network, cc);
-                cc.append(cc.network.root);
-            },
-            .input => for (cc.input.row_storage[0..cc.input.row_count]) |*row| {
-                var framed = card(row.children);
-                framed.name = "input";
-                framed.direction = row.direction;
-                framed.justify = row.justify;
-                framed.@"align" = if (row.direction == .column) .stretch else row.@"align";
-                cc.append(framed);
-            },
-            .displays => {
-                if (cc.display.has_arrangement) {
-                    var arrangement_card = card(&cc.display.arrangement_children);
-                    arrangement_card.name = "displays";
-                    cc.append(arrangement_card);
-                }
-                var display_card = card(&cc.display.row_storage);
-                display_card.name = "displays";
-                cc.append(display_card);
-                cc.append(cc.display.top_children[2]);
-                cc.append(cc.display.xwayland_hint);
-                var nl_card = card(&cc.display.nl_group_children);
-                nl_card.name = "displays";
-                cc.append(nl_card);
-                if (cc.display.has_lid) {
-                    var lid_card = card(&cc.display.lid_group_children);
-                    lid_card.name = "displays";
-                    cc.append(lid_card);
-                }
-            },
-            .audio => {
-                var audio_card = card(cc.sound.top_children[1].children);
-                audio_card.name = "sound";
-                cc.append(audio_card);
-                cc.buildDevices();
-                if (cc.device_count > 0) {
-                    cc.device_title = .{ sectionTitle("Audio output"), .{ .kind = .container, .direction = .column, .gap = 4, .children = cc.device_rows[0..cc.device_count] } };
-                    var dev_card = card(&cc.device_title);
-                    dev_card.name = "sound";
-                    cc.append(dev_card);
-                }
-            },
-            .appearance => for (&cc.appearance.group_cards) |*row| {
-                var framed = card(row.children);
-                framed.name = "appearance";
-                framed.direction = row.direction;
-                framed.justify = row.justify;
-                framed.@"align" = if (row.direction == .column) .stretch else row.@"align";
-                cc.append(framed);
-            },
-        }
+        cc.search.buildToolbar(cc);
+        cc.sidebar_children = .{
+            if (narrow)
+                .{ .name = "settings_search_open", .kind = .{ .button = .{ .icon = .search, .label = "Search settings", .owner = cc, .on_click = settings_search.focusClicked } }, .height = .{ .fixed = 36 }, .width = .{ .percent = 1 } }
+            else
+                .{ .kind = .container, .height = .{ .fixed = 36 }, .width = .{ .percent = 1 }, .children = (&cc.search.toolbar)[0..1] },
+            .{ .name = "nav", .kind = if (cc.panel_box.height < (if (narrow and cc.search.expanded) @as(i32, 486) else 440)) .{ .scroll_container = .{} } else .container, .direction = .column, .width = .{ .percent = 1 }, .height = .{ .flex = 1 }, .gap = nav_gap, .underlay = .{ .owner = cc, .paint = paintNavHighlights }, .children = cc.nav_rows[0..nav_count] },
+        };
         cc.body_children = .{
-            .{ .name = "nav", .kind = .{ .rect = .{ .color = t.app_sidebar, .replace = t.app_sidebar[3] < 1, .radius = t.settings_sidebar_radius, .border_width = 1, .border_color = t.app_item_border } }, .direction = .column, .width = .{ .fixed = if (narrow) 70 else 238 }, .height = .{ .percent = 1 }, .padding = layout.Edges.all(8), .gap = nav_gap, .underlay = .{ .owner = cc, .paint = paintNavHighlights }, .children = cc.nav_rows[0..nav_count] },
+            .{ .name = "settings_sidebar", .kind = .{ .rect = .{ .color = t.app_sidebar, .replace = t.app_sidebar[3] < 1, .radius = t.settings_sidebar_radius, .border_width = 1, .border_color = t.app_item_border } }, .direction = .column, .width = .{ .fixed = if (narrow) 70 else 238 }, .height = .{ .percent = 1 }, .padding = layout.Edges.all(8), .gap = 8, .children = &cc.sidebar_children },
             .{ .kind = .{ .scroll_container = .{} }, .direction = .column, .@"align" = .stretch, .width = .{ .flex = 1 }, .height = .{ .percent = 1 }, .padding = layout.Edges.all(12), .gap = 14, .children = cc.content_children[0..cc.content_count] },
         };
-        if (cc.page == .services) {
+        if (cc.page == .services and !cc.search.active) {
             cc.body_children[1].kind = .container;
         } else {
             // Keep the scrollbar's full hover/drag gutter outside the cards.
             cc.body_children[1].padding.right += ui.widgets.scrollbar.gutter(theme.global.scrollbar_width);
         }
-        cc.root_children[0] = .{ .kind = .container, .direction = .row, .padding = .{ .left = 16, .top = 16, .bottom = 16, .right = if (cc.page == .services) 16 else 6 }, .gap = 14, .width = .{ .percent = 1 }, .height = .{ .flex = 1 }, .children = &cc.body_children };
+        cc.root_children[0] = .{ .kind = .container, .direction = .column, .padding = .{ .left = 16, .right = 16, .top = 10 }, .width = .{ .percent = 1 }, .height = .{ .fixed = 46 }, .children = (&cc.search.toolbar)[0..1] };
+        cc.root_children[1] = .{ .kind = .container, .direction = .row, .padding = .{ .left = 16, .top = 16, .bottom = 16, .right = if (cc.page == .services) 16 else 6 }, .gap = 14, .width = .{ .percent = 1 }, .height = .{ .flex = 1 }, .children = &cc.body_children };
         // The content stays opaque; the sidebar replaces its background with
         // app_sidebar so translucent themes expose the scene beneath it.
         cc.root = .{
@@ -598,15 +631,21 @@ pub const ControlCenter = struct {
             .gap = 0,
             .width = .{ .fixed = @floatFromInt(cc.panel_box.width) },
             .height = .{ .fixed = @floatFromInt(cc.panel_box.height) },
-            .children = cc.root_children[0..1],
+            .children = cc.root_children[if (narrow and cc.search.expanded) @as(usize, 0) else 1..2],
         };
         cc.root.linkParents();
-        if (cc.page == .services and cc.services.search_focus) {
+        if (!cc.search.active and cc.page == .services and cc.services.search_focus) {
             if (cc.services.search) |field| ui.input.current.focus(&cc.root, field);
         }
-        if (cc.page == .users) {
+        if (!cc.search.active and cc.page == .users) {
             if (users_section.initialFormFocus(&cc.users)) |field| ui.input.current.focus(&cc.root, field);
         }
+        if (cc.search.focused or cc.search.request_focus) {
+            if (cc.search.initialized) ui.input.current.focus(&cc.root, &cc.search.field);
+            cc.search.request_focus = false;
+        }
+        cc.search.reset_scroll = false;
+        cc.search.built_active = cc.search.active;
         cc.built_page = cc.page;
         cc.refresh_pending = false;
     }
@@ -700,6 +739,11 @@ pub const ControlCenter = struct {
     }
 
     pub fn selectPage(cc: *ControlCenter, page: Page) void {
+        if (cc.search.active) {
+            settings_search.clear(cc);
+            cc.search.built_active = false;
+            cc.search.restore_scroll = false;
+        }
         cc.shortcuts.cancel();
         // The service list is only kept live while its page is on screen.
         if (cc.page == .services and page != .services) if (cc.systemd_client) |client| client.hide();
@@ -748,7 +792,17 @@ pub const ControlCenter = struct {
     }
 
     /// Route select keys before panel-level Escape. Tab cycles display fields.
+    /// Global search replaces the page body without selecting another category.
+    pub fn showingPage(cc: *const ControlCenter, page: Page) bool {
+        return !cc.is_welcome and !cc.search.active and cc.page == page;
+    }
+
+    pub fn focusSearch(cc: *ControlCenter) void {
+        settings_search.focus(cc);
+    }
+
     pub fn selectKey(cc: *ControlCenter, key: ui.input.Key, shift: bool) bool {
+        if (settings_search.key(cc, key, shift)) return true;
         if (cc.page != .displays and cc.page != .appearance and cc.page != .desktop and cc.page != .general and cc.page != .users and cc.page != .services and cc.page != .printers and cc.page != .network and cc.page != .bluetooth and cc.page != .region) return false;
         const dispatcher = &ui.input.current;
         if (cc.page == .appearance) {
@@ -873,6 +927,10 @@ pub const ControlCenter = struct {
     }
 
     fn applyPending(cc: *ControlCenter) void {
+        if (cc.search.pending_result != null) {
+            settings_search.apply(cc);
+            return;
+        }
         if (cc.page == .services) services_section.apply(&cc.services, cc);
         cc.shortcuts.apply(cc);
         if (cc.page == .displays) {
@@ -963,7 +1021,7 @@ pub const ControlCenter = struct {
     fn rebuildTree(cc: *ControlCenter) void {
         const hovered_nav = cc.nav_hover.target;
         const same_page = cc.built_page == cc.page;
-        const bluetooth_scroll: ?layout.ScrollState = if (same_page and cc.page == .bluetooth) cc.body_children[1].kind.scroll_container else null;
+        const bluetooth_scroll: ?layout.ScrollState = if (same_page and cc.page == .bluetooth and !cc.search.active and !cc.search.built_active) cc.body_children[1].kind.scroll_container else null;
         var saved: ui.widgets.slider.Saved = .{};
         var knobs: ui.widgets.toggle.Saved = .{};
         if (same_page) {
@@ -973,7 +1031,7 @@ pub const ControlCenter = struct {
         cc.buildTree();
         if (hovered_nav) |cell| {
             const index: usize = @intCast(cell.row);
-            if (index < cc.body_children[0].children.len) {
+            if (index < cc.sidebar_children[1].children.len) {
                 cc.nav_rows[index].kind.row.state = .hover;
                 ui.input.adoptHover(&cc.root, &cc.nav_rows[index]);
             } else cc.nav_hover.setTarget(anim.nowMs(), null);
@@ -997,12 +1055,19 @@ pub const ControlCenter = struct {
         cc.background.invalidate();
         const width: f32 = @floatFromInt(cc.panel_box.width);
         const height: f32 = @floatFromInt(cc.panel_box.height);
+        if (cc.search.restore_scroll and cc.body_children[1].kind == .scroll_container) {
+            cc.body_children[1].kind.scroll_container = cc.search.saved_scroll;
+            cc.search.restore_scroll = false;
+        }
         ui.measure.measure(&cc.root, width, height);
         ui.arrange.arrange(&cc.root, 0, 0, width, height);
-        if (cc.page == .appearance) appearance_section.restoreItemFocus(&cc.appearance);
-        if (cc.page == .network) network_section.restoreFocus(&cc.network, cc);
-        if (cc.page == .bluetooth) bluetooth_section.restoreFocus(&cc.bluetooth, cc);
-        if (cc.page == .printers) cc.printers.restoreFocus(cc);
+        if (!cc.search.active and ui.input.current.focused != &cc.search.field) {
+            if (cc.page == .appearance) appearance_section.restoreItemFocus(&cc.appearance);
+            if (cc.page == .network) network_section.restoreFocus(&cc.network, cc);
+            if (cc.page == .bluetooth) bluetooth_section.restoreFocus(&cc.bluetooth, cc);
+            if (cc.page == .printers) cc.printers.restoreFocus(cc);
+        }
+        settings_search.reveal(cc);
         cc.dirty = true;
     }
 
@@ -1011,7 +1076,10 @@ pub const ControlCenter = struct {
     fn resizeNeedsTree(cc: *const ControlCenter) bool {
         if (cc.is_welcome) return (cc.root.computed_width < 680) != (cc.panel_box.width < 680) or (cc.root.computed_height < 740) != welcome_section.compact(cc);
         const old = cc.root.computed_width;
+        if ((old < 660) != (cc.panel_box.width < 660)) return true;
         const width: f32 = @floatFromInt(cc.panel_box.width);
+        const nav_height_limit: f32 = if (width < 660 and cc.search.expanded) 486 else 440;
+        if ((cc.root.computed_height < nav_height_limit) != (@as(f32, @floatFromInt(cc.panel_box.height)) < nav_height_limit)) return true;
         const thresholds: []const f32 = switch (cc.page) {
             .shortcuts => &.{660},
             .desktop => &.{760},
@@ -1033,11 +1101,11 @@ pub const ControlCenter = struct {
             return;
         }
         const narrow = cc.panel_box.width < 660;
-        const nav_count = cc.body_children[0].children.len;
+        const nav_count = cc.sidebar_children[1].children.len;
         const gap: f32 = if (cc.panel_box.height < 550) 2 else 5;
-        const height = @min(52, @max(24, (@as(f32, @floatFromInt(cc.panel_box.height)) - 48 - gap * @as(f32, @floatFromInt(nav_count - 1))) / @as(f32, @floatFromInt(nav_count))));
+        const height = @min(52, @max(24, (@as(f32, @floatFromInt(cc.panel_box.height)) - 92 - (if (narrow and cc.search.expanded) @as(f32, 46) else 0) - gap * @as(f32, @floatFromInt(nav_count - 1))) / @as(f32, @floatFromInt(nav_count))));
         cc.body_children[0].width = .{ .fixed = if (narrow) 70 else 238 };
-        cc.body_children[0].gap = gap;
+        cc.sidebar_children[1].gap = gap;
         for (cc.nav_rows[0..nav_count], 0..) |*row, i| {
             row.height = .{ .fixed = height };
             row.children = cc.nav_children[i][0..if (narrow) @as(usize, 1) else 2];
@@ -1059,7 +1127,7 @@ pub const ControlCenter = struct {
         const rebuild = cc.refresh_pending and !cc.pointer_down and ui.input.openSelect(&cc.root) == null;
         if ((cc.layout_pending or rebuild) and cc.panel_box.width > 0 and cc.panel_box.height > 0) {
             cc.layout_pending = false;
-            const body = if (cc.body_children[1].kind == .scroll_container) cc.body_children[1].kind.scroll_container else null;
+            const body = if (!cc.search.reset_scroll and cc.search.active == cc.search.built_active and cc.body_children[1].kind == .scroll_container) cc.body_children[1].kind.scroll_container else null;
             if (rebuild or cc.resizeNeedsTree()) cc.rebuildTree();
             cc.resizeLayout();
             // Keep a wheel glide going across the rebuild.
@@ -1105,7 +1173,8 @@ pub const ControlCenter = struct {
     }
 
     fn stepNavHighlights(cc: *ControlCenter, now_ms: i64) bool {
-        const list = &cc.body_children[0];
+        if (cc.is_welcome) return false;
+        const list = &cc.sidebar_children[1];
         if (list.children.len == 0) return false;
         const pitch = @max(1, list.children[0].computed_height + list.gap);
         const q = anim.rasterPixelQuantum(cc.toplevel.render_scale) / pitch;
@@ -1260,6 +1329,7 @@ pub fn overDraggable(cc: *ControlCenter, sx: f64, sy: f64) bool {
 }
 
 pub fn pointerButtonDown(cc: *ControlCenter, sx: f64, sy: f64) void {
+    if (!cc.is_welcome and sx >= cc.body_children[1].computed_x) settings_search.dismiss(cc);
     cc.pointer_down = true;
     if (cc.page == .appearance and appearance_section.beginItemDrag(&cc.appearance, @floatCast(sx), @floatCast(sy))) return;
     ui.input.pointerButtonDown(&cc.root, @floatCast(sx), @floatCast(sy));
@@ -1296,6 +1366,13 @@ pub fn bodyColor() [4]f32 {
 
 fn pageClicked(owner: ?*anyopaque, id: usize) void {
     const cc: *ControlCenter = @ptrCast(@alignCast(owner orelse return));
+    if (cc.search.query().len > 0) settings_search.clear(cc);
+    cc.search.built_active = false;
+    cc.search.restore_scroll = false;
+    cc.search.unavailable = false;
+    cc.search.destination = null;
+    cc.search.focused = false;
+    cc.search.request_focus = false;
     cc.pending_page = @enumFromInt(id);
 }
 

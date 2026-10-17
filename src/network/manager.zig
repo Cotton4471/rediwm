@@ -197,7 +197,7 @@ pub const Manager = struct {
         self.publishOffline();
         self.publishPresence();
         if (self.server.input.open_wifi) |popup| popup.changed();
-        if (self.server.input.open_control_center) |cc| if (cc.page == .network) cc.refresh();
+        if (self.server.input.open_control_center) |cc| if (cc.showingPage(.network)) cc.refresh();
     }
     fn reset(self: *Manager) void {
         self.epoch +%= 1;
@@ -287,7 +287,7 @@ pub const Manager = struct {
             self.state = try body.uint32();
             self.publishOffline();
         }
-        const settings_open = if (self.server.input.open_control_center) |cc| cc.page == .network else false;
+        const settings_open = if (self.server.input.open_control_center) |cc| cc.showingPage(.network) else false;
         // Adapters and cables coming and going decide which taskbar items show;
         // access-point churn does not, so it only matters while a page is open.
         const iface = msg.headers.interface orelse "";

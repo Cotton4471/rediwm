@@ -237,6 +237,7 @@ const Client = struct {
                 self.decision = .cancel;
                 self.running = false;
             },
+            .configure_bounds, .wm_capabilities => {},
         }
     }
 

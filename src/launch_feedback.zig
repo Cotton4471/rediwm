@@ -87,6 +87,13 @@ pub fn busy(self: *const Self) bool {
     return self.len > 0;
 }
 
+pub fn pendingDesktop(self: *const Self, desktop_id: []const u8) bool {
+    for (self.launches[0..self.len]) |*launch| {
+        if (std.mem.eql(u8, launch.desktop_id.get(), desktop_id)) return true;
+    }
+    return false;
+}
+
 /// The next launch started from `origin`. Call `clearOrigin` once the launch
 /// call returns, in case it failed before `begin`.
 pub fn setOrigin(self: *Self, origin: Origin) void {

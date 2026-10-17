@@ -169,6 +169,8 @@ pub const pill_pad_y: f32 = 2;
 pub const TextStyle = struct {
     sensitive: bool = false,
     content: []const u8,
+    /// Case-insensitive query words highlighted behind this label.
+    highlight_query: []const u8 = "",
     font_size: f32,
     weight: u32 = 400,
     color: [4]f32,

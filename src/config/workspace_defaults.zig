@@ -9,6 +9,7 @@ pub const source =
     \\"Super+m" = "toggle_power_menu"
     \\"Super+f" = "toggle_fullscreen"
     \\"Super+l" = "lock_screen"
+    \\"Ctrl+Alt+Delete" = "open_system_monitor"
     \\"Super+z" = "undo"
     \\"Ctrl+Shift+s" = "screenshot_region"
     \\"Ctrl+Tab" = "focus_next"

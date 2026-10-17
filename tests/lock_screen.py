@@ -42,6 +42,7 @@ def run(scale, outputs, sequence=False):
                 for call in (
                     client.get_shell_state,
                     lambda: client.key(1, True),  # Escape is no bypass
+                    lambda: client.key(111, True),  # Ctrl+Alt+Delete cannot launch while locked
                     lambda: client.key_press("XF86AudioRaiseVolume"),
                     lambda: client.key_press("XF86AudioMicMute"),
                     lambda: client.key_press("Caps_Lock"),

@@ -46,7 +46,11 @@ pub fn build(b: *std.Build) void {
     scanner.generate("wl_output", 4);
     scanner.generate("wl_seat", 8);
     scanner.generate("wl_data_device_manager", 3);
-    scanner.generate("xdg_wm_base", 2);
+    scanner.generate("xdg_wm_base", 6);
+    scanner.addSystemProtocol("stable/viewporter/viewporter.xml");
+    scanner.generate("wp_viewporter", 1);
+    scanner.addSystemProtocol("staging/fractional-scale/fractional-scale-v1.xml");
+    scanner.generate("wp_fractional_scale_manager_v1", 1);
     scanner.generate("zwp_tablet_manager_v2", 1);
     scanner.generate("wp_cursor_shape_manager_v1", 2);
     scanner.generate("ext_idle_notifier_v1", 1);
@@ -258,6 +262,23 @@ pub fn build(b: *std.Build) void {
     images_step.dependOn(&images_entry.step);
     files_step.dependOn(&install_images.step);
     files_step.dependOn(&images_entry.step);
+
+    const monitor = b.addExecutable(.{
+        .name = "rediwm-monitor",
+        .root_module = b.createModule(.{ .root_source_file = b.path("src/system_monitor_main.zig"), .target = target, .optimize = optimize, .link_libc = true }),
+        .use_llvm = use_llvm,
+        .use_lld = use_llvm,
+    });
+    monitor.root_module.addImport("wayland", wayland);
+    inline for (.{ "wayland-client", "wayland-cursor", "xkbcommon" }) |lib| monitor.root_module.linkSystemLibrary(lib, .{});
+    const install_monitor = b.addInstallArtifact(monitor, .{});
+    const monitor_entry = b.addInstallFileWithDir(b.path("data/rediwm-monitor.desktop"), .prefix, "share/applications/rediwm-monitor.desktop");
+    const monitor_icon = b.addInstallFileWithDir(b.path("data/rediwm-monitor.svg"), .prefix, "share/icons/hicolor/scalable/apps/rediwm-monitor.svg");
+    const monitor_step = b.step("monitor", "Build the standalone System Monitor");
+    inline for (.{ &install_monitor.step, &monitor_entry.step, &monitor_icon.step }) |step| {
+        b.getInstallStep().dependOn(step);
+        monitor_step.dependOn(step);
+    }
 
     const editor = b.addExecutable(.{
         .name = "rediwm-editor",
@@ -487,6 +508,16 @@ pub fn build(b: *std.Build) void {
     const run_ipc_tests = b.addRunArtifact(ipc_tests);
 
     const test_step = b.step("test", "Run the project unit tests");
+    const monitor_tests = b.addTest(.{ .root_module = b.createModule(.{
+        .root_source_file = b.path("src/system_monitor_tests.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    }) });
+    const run_monitor_tests = b.addRunArtifact(monitor_tests);
+    const monitor_test_step = b.step("test-monitor", "Test System Monitor collection, process identity and model");
+    monitor_test_step.dependOn(&run_monitor_tests.step);
+    test_step.dependOn(&run_monitor_tests.step);
     const printing_tests = b.addTest(.{ .root_module = b.createModule(.{
         .root_source_file = b.path("src/printing/tests.zig"),
         .target = target,
@@ -716,10 +747,10 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_ipc_tests.step);
 
     // Hosts also rasterize app-specific content through their own C imports.
-    inline for (.{ files.root_module, images.root_module, editor.root_module, pdf.root_module, share_picker.root_module, files_tests.root_module, images_tests.root_module, editor_tests.root_module, pdf_tests.root_module }) |module| {
+    inline for (.{ files.root_module, images.root_module, editor.root_module, pdf.root_module, share_picker.root_module, monitor.root_module, files_tests.root_module, images_tests.root_module, editor_tests.root_module, pdf_tests.root_module }) |module| {
         inline for (.{ "cairo", "librsvg-2.0", "freetype2", "harfbuzz", "fontconfig" }) |lib| module.linkSystemLibrary(lib, .{});
     }
-    inline for (.{ compositor.root_module, ui_tests_module, files.root_module, images.root_module, editor.root_module, pdf.root_module, share_picker.root_module, editor_tests.root_module, images_tests.root_module, pdf_tests.root_module, files_tests.root_module, ipc_tests_module, protocol_mod, session_supervisor.root_module, session_tests.root_module, share_picker_tests.root_module, dbus_tests.root_module }) |module| {
+    inline for (.{ compositor.root_module, ui_tests_module, files.root_module, images.root_module, editor.root_module, pdf.root_module, share_picker.root_module, monitor.root_module, editor_tests.root_module, images_tests.root_module, pdf_tests.root_module, files_tests.root_module, ipc_tests_module, protocol_mod, session_supervisor.root_module, session_tests.root_module, share_picker_tests.root_module, dbus_tests.root_module }) |module| {
         module.addImport("ui", ui_mod);
         module.addImport("config", config_mod);
         module.addImport("memory", memory_mod);

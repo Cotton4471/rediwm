@@ -44,10 +44,8 @@ pub fn handleChromeClick(toplevel: *Toplevel, sx: f64, sy: f64, button: u32) voi
     }
 }
 
-// xdg-shell has no minimized state of its own, so minimizing is purely a
-// compositor-side hint: hide the frame and drop keyboard focus while the
-// client stays mapped. Taskbar.pointerPress restores it on the next chip
-// click (see Taskbar.zig).
+// The client stays mapped while minimized. xdg-shell v6 reports suspended
+// so native clients can stop background work until restore.
 pub fn minimize(toplevel: *Toplevel) void {
     if (toplevel.tab_hidden) {
         if (@import("../window_tabs.zig").active(toplevel.server, toplevel.tab_group)) |active_tab| active_tab.minimize();
@@ -71,7 +69,10 @@ pub fn minimize(toplevel: *Toplevel) void {
             adapter.xsurface.setMinimized(true);
             adapter.xsurface.restack(null, .below);
         },
-        .xdg, .placeholder, .shell => {},
+        .xdg => |*adapter| {
+            _ = adapter.xdg_toplevel.setSuspended(true);
+        },
+        .placeholder, .shell => {},
     }
 
     // Move to the back of the stack so the taskbar's active-window mark and
@@ -113,7 +114,10 @@ pub fn restore(toplevel: *Toplevel) void {
     toplevel.frame_tree.node.setEnabled(@import("../window_tabs.zig").visible(toplevel));
     switch (toplevel.backend) {
         .xwayland => |*adapter| adapter.xsurface.setMinimized(false),
-        .xdg, .placeholder, .shell => {},
+        .xdg => |*adapter| {
+            _ = adapter.xdg_toplevel.setSuspended(false);
+        },
+        .placeholder, .shell => {},
     }
     toplevel.server.world.focus(toplevel);
     toplevel.syncForeign();

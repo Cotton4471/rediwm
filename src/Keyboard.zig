@@ -895,6 +895,7 @@ fn shellKeyRepeats(keyboard: *Keyboard, event_keycode: u32, target: ShellTarget)
         .polkit => if (server.polkit_dialog) |dialog| dialog.keyRepeats(sym, utf8) else false,
         .lock => if (server.locker) |lock| lock.keyRepeats(sym, utf8) else false,
         .control_center => |cc| blk: {
+            if (cc.search.initialized and @import("ui").input.current.focused == &cc.search.field) break :blk @import("input/repeat_keys.zig").editing(sym, utf8);
             if (cc.page == .network) if (@import("ui").input.current.focused) |widget| {
                 if (widget.kind == .text_input or widget.kind == .secret_input) break :blk @import("input/repeat_keys.zig").editing(sym, utf8);
             };
@@ -929,6 +930,10 @@ fn deliverShell(keyboard: *Keyboard, target: ShellTarget, event_keycode: u32) vo
         .polkit => if (server.polkit_dialog) |dialog| if (syms.len > 0) dialog.key(syms[0], utf8, mods),
         .lock => if (server.locker) |lock| if (syms.len > 0) lock.key(syms[0], utf8, mods),
         .control_center => |cc| for (syms) |sym| {
+            if (mods.ctrl and !mods.alt and !mods.logo and (@intFromEnum(sym) == xkb.Keysym.f or @intFromEnum(sym) == xkb.Keysym.F)) {
+                cc.focusSearch();
+                break;
+            }
             const key: ?@import("ui").input.Key = switch (@intFromEnum(sym)) {
                 xkb.Keysym.Escape => .escape,
                 xkb.Keysym.Return, xkb.Keysym.KP_Enter => .enter,

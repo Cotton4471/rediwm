@@ -37,7 +37,8 @@ def run():
                    '"super+z" = "toggle_floating"\n"super+x" = "toggle_floating"\n'
                    if workspace_mode else '[keybinds]\n'
                    '"super+z" = "set_depth 2"\n"super+x" = "set_depth 0"\n') +
-                  '"alt+tab" = "focus_next"\n')
+                  '"alt+tab" = "focus_next"\n'
+                  '"ctrl+alt+delete" = "open_system_monitor"\n')
         compositor, log = start_compositor(tmp, config, {
             "XDG_STATE_HOME": str(tmp / "state"), "XDG_CACHE_HOME": str(tmp / "cache"),
             "DBUS_SYSTEM_BUS_ADDRESS": "unix:path=/nonexistent-rediwm-test-system-bus",
@@ -127,6 +128,10 @@ def run():
             vm.send("inhibit")
             vm.expect_count("active", 1)
             binding_inhibited(vm)
+            deletes = vm.count("key 111 1")
+            chord(29, KEY_LEFTALT, 111)
+            vm.expect_count("key 111 1", deletes + 1)
+            assert window("rediwm-monitor") is None, "System Monitor bypassed shortcut inhibition"
             vm_id = window("rediwm.vm")["id"]
             tabs = vm.count(f"key {KEY_TAB} 1")
             chord(KEY_LEFTALT, KEY_TAB)
@@ -205,6 +210,8 @@ def run():
             focus("rediwm.other")
             binding_fires(other)
             assert compositor.poll() is None
+            chord(29, KEY_LEFTALT, 111)
+            wait_for(lambda: window("rediwm-monitor"), "System Monitor shortcut did not resume after inhibition")
             print("PASS: client exit while inhibiting")
         except BaseException:
             for path in tmp.glob("*.log"):

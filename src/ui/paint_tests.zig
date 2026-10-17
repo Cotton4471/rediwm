@@ -272,7 +272,7 @@ test "text clipping preserves layout at scroll edges" {
         var full: [240 * 90]u32 = @splat(0);
         var clipped: [240 * 90]u32 = @splat(0);
         var r = Renderer.init(&full, 240, 90, scale);
-        const style: TextStyle = .{ .content = "Transmission label", .font_size = 16, .color = .{ 1, 1, 1, 1 } };
+        const style: TextStyle = .{ .content = "Transmission label", .highlight_query = "TRANS label", .font_size = 16, .color = .{ 1, 1, 1, 1 } };
         r.drawText(4, 4, 140, 34, style);
         r.pixels = &clipped;
         r.clip = .{ .x = 18, .y = 20, .w = 90, .h = 12 };

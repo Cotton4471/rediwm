@@ -92,7 +92,7 @@ pub const Manager = struct {
         m.cancelPair();
     }
     fn notify(m: *Manager) void {
-        if (!m.closing) if (m.server.input.open_control_center) |cc| if (cc.page == .bluetooth) cc.refresh();
+        if (!m.closing) if (m.server.input.open_control_center) |cc| if (cc.showingPage(.bluetooth)) cc.refresh();
     }
     fn clearPrompt(m: *Manager) void {
         if (m.reply) |*reply| if (m.conn) |conn| conn.releaseDeferred(reply);
@@ -188,7 +188,7 @@ pub const Manager = struct {
         const iface = msg.headers.interface orelse "";
         if (!eq(u8, iface, properties) and !eq(u8, iface, "org.freedesktop.DBus.ObjectManager")) return;
         if (m.server.input.open_control_center) |cc| {
-            if (cc.page == .bluetooth) m.fetch();
+            if (cc.showingPage(.bluetooth)) m.fetch();
         } else if (m.busy) m.fetch();
     }
     fn request(m: *Manager, path: []const u8, iface: []const u8, member: []const u8, sig: []const u8, b: *const wire.Writer, device: Path, pair: bool, callback: dbus.Connection.Callback, timeout: u32) !void {
@@ -446,7 +446,7 @@ pub const Manager = struct {
             m.notify();
             return;
         }
-        const visible = if (m.server.input.open_control_center) |cc| cc.page == .bluetooth and cc.toplevel.in_world and !cc.toplevel.minimized else false;
+        const visible = if (m.server.input.open_control_center) |cc| cc.showingPage(.bluetooth) and cc.toplevel.in_world and !cc.toplevel.minimized else false;
         var b = msg.body;
         const path = try b.objectPath();
         if (m.server.locker != null or !visible or m.pairing == null or !eq(u8, path, m.pairing.?.slice())) {

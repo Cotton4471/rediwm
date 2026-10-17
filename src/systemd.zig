@@ -351,7 +351,7 @@ pub const Client = struct {
     }
     fn changed(self: *Client) void {
         if (!self.closing) if (self.server.input.open_control_center) |cc| {
-            if (cc.page == .services) cc.refresh();
+            if (cc.showingPage(.services)) cc.refresh();
         };
     }
     /// The Services page is on screen: go live. Idempotent; the page calls it

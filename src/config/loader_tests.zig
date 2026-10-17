@@ -84,10 +84,21 @@ test "empty config keeps built-in zoom steps and default keybinds" {
     try std.testing.expectEqual(@as(u8, 4), cfg.compositor.zoom_step_count);
     try std.testing.expectEqual(@as(u8, 100), cfg.compositor.zoom_percents[0]);
     try std.testing.expect(cfg.autostart.len == 0);
+    const monitor = try keybinds.parseKeybind("Ctrl+Alt+Delete");
+    try std.testing.expectEqual(Action.open_system_monitor, cfg.lookupKeybind(monitor.modifiers, monitor.sym).?);
     try std.testing.expect(cfg.keybinds.len > 0);
     const spec = try keybinds.parseKeybind("super+t");
     const action = cfg.lookupKeybind(spec.modifiers, spec.sym) orelse return error.TestExpectedEqual;
     try std.testing.expectEqualStrings("default-terminal", action.spawn);
+}
+
+test "System Monitor defaults preserve explicit canvas and workspace shortcut overrides" {
+    var cfg = try parse(std.testing.allocator, "[keybinds]\n\"Ctrl+Alt+Delete\" = \"poweroff\"\n[keybinds.workspace]\n\"Ctrl+Alt+Delete\" = \"noop\"\n", "mem");
+    defer cfg.deinit();
+    const binding = try keybinds.parseKeybind("Ctrl+Alt+Delete");
+    try std.testing.expectEqual(Action.poweroff, cfg.lookupKeybind(binding.modifiers, binding.sym).?);
+    cfg.compositor.desktop_mode = .workspaces;
+    try std.testing.expectEqual(Action.noop, cfg.lookupKeybind(binding.modifiers, binding.sym).?);
 }
 
 test "the desktop follows its section, then a legacy rediwm-desktop autostart" {
@@ -903,6 +914,8 @@ test "workspace preset is independent, overrides include noop, and mode preserve
     const two = try keybinds.parseKeybind("Super+2");
     try std.testing.expectEqualStrings("custom-canvas", cfg.lookupKeybind(q.modifiers, q.sym).?.spawn);
     cfg.compositor.desktop_mode = .workspaces;
+    const monitor = try keybinds.parseKeybind("Ctrl+Alt+Delete");
+    try std.testing.expectEqual(Action.open_system_monitor, cfg.lookupKeybind(monitor.modifiers, monitor.sym).?);
     try std.testing.expectEqualStrings("default-terminal", cfg.lookupKeybind(q.modifiers, q.sym).?.spawn);
     try std.testing.expectEqual(Action.noop, cfg.lookupKeybind(c.modifiers, c.sym).?);
     try std.testing.expectEqual(@as(u8, 2), cfg.lookupKeybind(two.modifiers, two.sym).?.workspace);

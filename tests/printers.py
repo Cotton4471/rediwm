@@ -443,6 +443,20 @@ def run(scale):
                 scheduler.release.set()
                 refresh()
 
+                # Global search replaces the body while Printers stays selected.
+                # Its worker and CUPS activity must stop until results are cleared.
+                click('settings_search')
+                ipc.type_text('volume')
+                ui.wait_settled('control_center')
+                assert not printer_workers(process), 'global search must join the printer worker'
+                count = len(scheduler.calls())
+                time.sleep(.3)
+                assert len(scheduler.calls()) == count, 'global search must not retain CUPS activity'
+                ipc.key_press('Escape')
+                ui.wait_settled('control_center')
+                ready()
+                wait_for(lambda: len(printer_workers(process)) == 1, 'printer worker after clearing search')
+
                 # Leaving the page must cancel an outstanding socket deadline.
                 scheduler.release.clear()
                 scheduler.configure(fault='stall')

@@ -98,6 +98,108 @@ print(f'fixture,backlight,{value},{value}%,100')
                     # It is an ordinary, focused window with an opaque body.
                     window = settings_window()
                     assert window is not None and window["is_focused"], ipc.get_windows()
+                    # Global search updates on each keystroke, keeps field focus,
+                    # searches aliases, and opens the control without changing it.
+                    click('settings_search')
+                    ipc.type_text('natura')
+                    ui.wait_settled('control_center')
+                    assert named('settings_search')['text_length'] == 6
+                    assert named('natural_scroll')['role'] == 'row'
+                    ipc.type_text('l scroll')
+                    ui.wait_settled('control_center')
+                    assert named('settings_search')['text_length'] == 14
+                    capture('search-results')
+                    ipc.key_press('Tab')
+                    ipc.key_press('Down')
+                    ipc.key_press('Up')
+                    ipc.key_press('Return')
+                    ui.wait_settled('control_center')
+                    assert ipc.get_shell_state()['control_center']['category'] == 'input'
+                    target = named('natural_scroll')
+                    assert target['role'] == 'toggle' and target['visible'] and not target['clipped']
+                    assert named('settings_search')['text_length'] == 14
+                    # Ctrl+F reopens results and selects the retained query.
+                    ipc.key(29, True)
+                    ipc.key_press('f')
+                    ipc.key(29, False)
+                    ui.wait_settled('control_center')
+                    ipc.type_text('background')
+                    ui.wait_settled('control_center')
+                    assert named('settings_search')['text_length'] == 10
+                    assert named('@Wallpaper')['role'] == 'row'
+                    click('@Wallpaper')
+                    ui.wait_settled('control_center')
+                    assert ipc.get_shell_state()['control_center']['category'] == 'appearance'
+                    wallpaper = next(w for w in widgets() if w['role'] == 'text' and w['label'] == 'Wallpaper')
+                    assert wallpaper['visible'] and not wallpaper['clipped']
+                    ipc.key_press('Escape')
+                    ui.wait_settled('control_center')
+                    assert named('settings_search')['text_length'] == 0
+                    scroll_before = next(w['scroll_offset'] for w in widgets() if w['role'] == 'scroll_container')
+                    click('settings_search')
+                    ipc.type_text('zzzznosuchsetting')
+                    ui.wait_settled('control_center')
+                    assert any(w['label'] == 'No settings found' for w in widgets())
+                    ipc.key_press('Escape')
+                    ui.wait_settled('control_center')
+                    assert named('settings_search')['text_length'] == 0
+                    scroll_after = next(w['scroll_offset'] for w in widgets() if w['role'] == 'scroll_container')
+                    assert scroll_before == scroll_after, (scroll_before, scroll_after)
+                    page('General')
+                    ui.wait_settled('control_center')
+                    # Settings which depend on a different desktop mode still
+                    # lead to their page with an explicit availability message.
+                    click('settings_search')
+                    ipc.type_text('floating apps')
+                    ui.wait_settled('control_center')
+                    click('@Floating apps')
+                    ui.wait_settled('control_center')
+                    assert ipc.get_shell_state()['control_center']['category'] == 'desktop'
+                    assert any(w['label'] == 'This setting is unavailable on this device or in the current mode.' for w in widgets())
+                    ipc.key_press('Escape')
+                    ui.wait_settled('control_center')
+                    page('General')
+                    ui.wait_settled('control_center')
+                    # The compact sidebar opens a full-width field above the
+                    # content. Escape clears results before hiding the field.
+                    edge_x, edge_y = box['x'] + box['width'], box['y'] + box['height'] // 2
+                    ipc.move_cursor(edge_x, edge_y)
+                    ipc.pointer_button(272, True)
+                    ipc.move_cursor(box['x'] + 600, edge_y)
+                    ipc.pointer_button(272, False)
+                    ipc.wait_for('window_geometry_settled', window_id=window['id'])
+                    ui.wait_settled('control_center')
+                    click('settings_search_open')
+                    ui.wait_settled('control_center')
+                    field_box = named('settings_search')['global_box']
+                    assert field_box['width'] > 300
+                    assert field_box['y'] < named('nav')['global_box']['y']
+                    ipc.type_text('volume')
+                    ui.wait_settled('control_center')
+                    assert named('output_volume')['role'] == 'row'
+                    capture('search-compact')
+                    ipc.action('set_window_size', {'id': window['id'], 'width': 600, 'height': 360})
+                    ipc.wait_for('window_geometry_settled', window_id=window['id'])
+                    ui.wait_settled('control_center')
+                    assert named('nav')['role'] == 'scroll_container'
+                    assert named('settings_search')['text_length'] == 6
+                    assert ui.scroll_into_view('printers')['visible']
+                    ipc.action('set_window_size', {'id': window['id'], 'width': 600, 'height': box['height']})
+                    ipc.wait_for('window_geometry_settled', window_id=window['id'])
+                    ui.wait_settled('control_center')
+                    ipc.key_press('Escape')
+                    ui.wait_settled('control_center')
+                    assert named('settings_search')['text_length'] == 0
+                    ipc.key_press('Escape')
+                    ui.wait_settled('control_center')
+                    assert not any(w['name'] == 'settings_search' for w in widgets())
+                    ipc.move_cursor(box['x'] + 600, edge_y)
+                    ipc.pointer_button(272, True)
+                    ipc.move_cursor(edge_x, edge_y)
+                    ipc.pointer_button(272, False)
+                    ipc.wait_for('window_geometry_settled', window_id=window['id'])
+                    ui.wait_settled('control_center')
+                    assert ipc.get_shell_state()['control_center']['box'] == box
                     # Check the first frame while the resize is held: waiting
                     # for settlement hides a body painted one size behind chrome.
                     title = next(w for w in widgets(f"window/{window['id']}") if w["role"] == "titlebar")["global_box"]
@@ -937,6 +1039,20 @@ def systemd_services(scale):
                 fake.stdin.write('reload-type\n'); fake.stdin.flush()
                 wait(lambda: ui.find('notify:alpha.service')['selected_index'] == 2, 'type update after external daemon reload')
                 assert count('ListUnits') == lists + 3 and count('Property:Type') == types + 1 + 45, 'a daemon reload re-reads the list and every detail'
+                # Global search covers the selected category: it must release
+                # the Services subscription until results are cleared.
+                before = count('Unsubscribe')
+                click('settings_search')
+                ipc.type_text('volume')
+                ui.wait_settled('control_center')
+                wait(lambda: count('Unsubscribe') == before + 1, 'unsubscribed while global search covers Services')
+                assert ui.find('output_volume')['role'] == 'row'
+                lists, nreads = count('ListUnits'), len(reads())
+                fake.stdin.write('change\n'); fake.stdin.flush()
+                time.sleep(.3)
+                assert count('ListUnits') == lists and len(reads()) == nreads
+                ipc.key_press('Escape')
+                wait(lambda: any('46 services' in label for label in labels()), 'Services resumes after global search')
                 # Leaving the page lets go: matches dropped, Unsubscribe sent, later
                 # signals unheard, and coming back loads afresh.
                 subscribes, lists, before = count('Subscribe'), count('ListUnits'), count('Unsubscribe')

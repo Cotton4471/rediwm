@@ -54,6 +54,7 @@ pub const Action = union(enum) {
     tile_up,
     tile_down,
     toggle_start_menu,
+    open_system_monitor,
     set_depth: u8,
     zoom_in,
     zoom_out,
@@ -308,6 +309,8 @@ test "poweroff, reboot and suspend parse and round-trip through describeAction" 
     try std.testing.expectEqual(Action.suspend_auto, try parseAction("suspend_auto", std.testing.allocator));
     try std.testing.expectEqualStrings("suspend", describeAction(.@"suspend", &buf));
     try std.testing.expectEqualStrings("poweroff_auto", describeAction(.poweroff_auto, &buf));
+    try std.testing.expectEqual(Action.open_system_monitor, try parseAction("open_system_monitor", std.testing.allocator));
+    try std.testing.expectEqualStrings("open_system_monitor", describeAction(.open_system_monitor, &buf));
 }
 
 test "parseAction splits on first space" {

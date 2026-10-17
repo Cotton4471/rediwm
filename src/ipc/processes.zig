@@ -80,32 +80,11 @@ pub const Job = struct {
 
 const Sample = struct { cpu: u64, start: u64, rss: u64 };
 fn readSample(pid: i32) ?Sample {
-    var path: [64]u8 = undefined;
-    const name = std.fmt.bufPrintZ(&path, "/proc/{d}/stat", .{pid}) catch return null;
-    const fd = c.open(name, c.O_RDONLY | c.O_CLOEXEC);
-    if (fd < 0) return null;
-    defer _ = c.close(fd);
     var buf: [4096]u8 = undefined;
-    const n = c.read(fd, &buf, buf.len);
-    if (n <= 0) return null;
-    const bytes = buf[0..@intCast(n)];
-    const end = std.mem.lastIndexOfScalar(u8, bytes, ')') orelse return null;
-    var fields = std.mem.tokenizeScalar(u8, bytes[end + 1 ..], ' ');
-    var utime: u64 = 0;
-    var stime: u64 = 0;
-    var start_ticks: u64 = 0;
-    var index: usize = 0;
-    while (fields.next()) |field| : (index += 1) {
-        switch (index) {
-            11 => utime = std.fmt.parseInt(u64, field, 10) catch return null,
-            12 => stime = std.fmt.parseInt(u64, field, 10) catch return null,
-            19 => start_ticks = std.fmt.parseInt(u64, field, 10) catch return null,
-            21 => return .{ .cpu = utime +| stime, .start = start_ticks, .rss = std.fmt.parseInt(u64, field, 10) catch return null },
-            else => {},
-        }
-    }
-    return null;
+    const stat = @import("../system_monitor/proc.zig").readStat(pid, &buf) orelse return null;
+    return .{ .cpu = stat.cpu, .start = stat.start, .rss = stat.rss };
 }
+
 fn nowNs() u64 {
     var ts: c.struct_timespec = undefined;
     if (c.clock_gettime(c.CLOCK_MONOTONIC, &ts) != 0) return 0;

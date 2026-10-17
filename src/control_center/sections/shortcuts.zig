@@ -251,6 +251,7 @@ fn descriptionFor(action: keys.Action, buf: []u8) []const u8 {
         .workspace_next => "Cycle to the next existing workspace.",
         .workspace_prev => "Cycle to the previous existing workspace.",
         .toggle_power_menu => "Open the session and power menu.",
+        .open_system_monitor => "Open System Monitor, or restore and focus its window.",
         .noop => "Disabled shortcut.",
         .toggle_fullscreen => "Enter or leave fullscreen.",
         .toggle_maximize => "Maximize or restore the focused window.",

@@ -39,6 +39,7 @@ pub fn executeAction(server: *Server, action: Action) void {
         .tile_up => tileFocused(server, .up),
         .tile_down => tileFocused(server, .down),
         .toggle_start_menu => toggleStartMenu(server),
+        .open_system_monitor => openSystemMonitor(server),
         .set_depth => |band| setFocusedDepth(server, band),
         .zoom_in => zoomFocused(server, -1),
         .zoom_out => zoomFocused(server, 1),
@@ -79,6 +80,27 @@ pub fn focusedToplevel(server: *Server) ?*Toplevel {
     return @import("../ipc/handlers.zig").findFocusedToplevel(server) orelse server.world.toplevels.first();
 }
 
+fn openSystemMonitor(server: *Server) void {
+    if (server.greeter_mode or server.locker != null or server.polkit_dialog != null) return;
+    var it = server.world.toplevels.iterator(.forward);
+    while (it.next()) |top| {
+        if (!top.in_world or !std.mem.eql(u8, top.appId(), "rediwm-monitor")) continue;
+        top.restore();
+        server.world.focus(top);
+        if (server.getDefaultOutput()) |output| server.world.navigateTo(top, output);
+        return;
+    }
+    if (server.launch_feedback.pendingDesktop("rediwm-monitor.desktop")) return;
+    // Sibling executable also works from a build tree whose bin isn't on PATH.
+    const dir = std.process.executableDirPathAlloc(server.io, gpa) catch return;
+    defer gpa.free(dir);
+    const executable = std.fs.path.join(gpa, &.{ dir, "rediwm-monitor" }) catch return;
+    defer gpa.free(executable);
+    if (spawnTracked(server, "rediwm-monitor", false, &.{executable})) |pid| {
+        server.launch_feedback.begin(.{ .pid = pid, .desktop_id = "rediwm-monitor.desktop" });
+    }
+}
+
 fn tileFocused(server: *Server, dir: snap.Direction) void {
     const toplevel = focusedToplevel(server) orelse return;
     if (!toplevel.in_world or toplevel.minimized) return;
@@ -106,30 +128,30 @@ fn tileFocused(server: *Server, dir: snap.Direction) void {
 }
 
 pub fn spawnProcess(server: *Server, cmd: []const u8) void {
-    spawnTracked(server, cmd, false, &.{ "/bin/sh", "-c", cmd });
+    _ = spawnTracked(server, cmd, false, &.{ "/bin/sh", "-c", cmd });
 }
 
 /// Runs `argv` directly, no shell, as `spawnProcess` would a command line.
 pub fn spawnArgv(server: *Server, argv: []const []const u8) void {
-    spawnTracked(server, argv[0], false, argv);
+    _ = spawnTracked(server, argv[0], false, argv);
 }
 
 pub fn spawnHelper(server: *Server, cmd: []const u8) void {
     if (server.services) |manager| {
         if (manager.helperRunning(cmd)) return;
     }
-    spawnTracked(server, cmd, true, &.{ "/bin/sh", "-c", cmd });
+    _ = spawnTracked(server, cmd, true, &.{ "/bin/sh", "-c", cmd });
 }
 
-fn spawnTracked(server: *Server, cmd: []const u8, helper: bool, argv: []const []const u8) void {
+fn spawnTracked(server: *Server, cmd: []const u8, helper: bool, argv: []const []const u8) ?i32 {
     var env_map = server.environ.createMap(gpa) catch |err| {
         log.warn("autostart/spawn env: {}", .{err});
-        return;
+        return null;
     };
     defer env_map.deinit();
     server.applyChildEnv(&env_map) catch |err| {
         log.warn("autostart/spawn env: {}", .{err});
-        return;
+        return null;
     };
     const child = std.process.spawn(server.io, .{
         .argv = argv,
@@ -137,7 +159,7 @@ fn spawnTracked(server: *Server, cmd: []const u8, helper: bool, argv: []const []
         .pgid = if (helper) 0 else null,
     }) catch |err| {
         log.warn("spawn failed for '{s}': {}", .{ cmd, err });
-        return;
+        return null;
     };
     if (child.id) |pid| {
         app_scope.place(server, pid, app_scope.commandId(cmd));
@@ -148,6 +170,7 @@ fn spawnTracked(server: *Server, cmd: []const u8, helper: bool, argv: []const []
             } else s.trackChild(pid) catch {};
         }
     }
+    return child.id;
 }
 
 pub fn spawnAutostartCommand(server: *Server, cmd: []const u8) void {
@@ -639,5 +662,5 @@ fn launchPreferred(server: *Server, cmd: []const u8) void {
     if (args.len == 0) return;
     const themed = @import("config").terminal_theme.wrap(arena.allocator(), server.io, args, server.config.theme, server.config.compositor.terminal_opacity) catch return;
     if (themed.ptr == args.ptr) return spawnProcess(server, command);
-    spawnTracked(server, command, false, themed);
+    _ = spawnTracked(server, command, false, themed);
 }

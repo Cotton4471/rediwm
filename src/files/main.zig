@@ -391,6 +391,7 @@ pub const Client = struct {
             .close => {
                 self.app.terminalRequestClose();
             },
+            .configure_bounds, .wm_capabilities => {},
         }
     }
 

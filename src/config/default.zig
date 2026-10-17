@@ -381,9 +381,7 @@ pub const source =
     \\"super+l"           = "lock_screen"
     \\"ctrl+alt+l"        = "lock_screen"
     \\"super+shift+e"     = "quit"
-    \\# poweroff/reboot/suspend go through logind, as the logged-in user;
-    \\# system policy (polkit) decides whether to allow or challenge them.
-    \\"ctrl+alt+delete"   = "poweroff"
+    \\"ctrl+alt+delete"   = "open_system_monitor"
     \\# Take shortcuts back from a VM or remote desktop that captured the keyboard
     \\"super+escape"      = "restore_shortcuts"
     \\
