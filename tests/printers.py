@@ -25,6 +25,26 @@ from ui_driver import UIDriver
 from xwayland_support import wayland_display_name
 
 
+def cups_ready(ui):
+    widgets = ui.widgets('control_center')
+    return (any(w.get('name') == 'printers_refresh' and not w['is_disabled'] for w in widgets)
+            and not any(w.get('name') == 'printers_status' for w in widgets))
+
+
+def select_printer(ipc, ui, index):
+    wait_for(lambda: not ui.find('printers_printer', panel='control_center')['is_disabled'],
+             'printer selector enabled', timeout=15)
+    widget = ui.scroll_into_view('printers_printer', panel='control_center')
+    ui.click(widget, panel='control_center')
+    ipc.key_press('Home')
+    for _ in range(index):
+        ipc.key_press('Down')
+    ipc.key_press('Return')
+    wait_for(lambda: cups_ready(ui), 'selected printer ready', timeout=15)
+    ui.wait_settled('control_center')
+    assert ui.find('printers_printer', panel='control_center')['selected_index'] == index
+
+
 def attribute(tag, name, value):
     name = name.encode()
     if tag in (0x21, 0x23):
@@ -89,6 +109,7 @@ class Scheduler(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
         self.denied = False
         self.stopped = False
         self.cancelled = False
+        self.job_state = 3
         self.release = threading.Event()
         self.username = pwd.getpwuid(os.getuid()).pw_name
         super().__init__(str(path), Handler)
@@ -110,6 +131,7 @@ class Scheduler(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
             fault = self.fault
             empty, stopped, denied = self.empty, self.stopped, self.denied
             cancelled = self.cancelled
+            job_state = self.job_state
             if operation == 8 and not denied:
                 self.cancelled = True
         if fault == 'stall':
@@ -147,21 +169,24 @@ class Scheduler(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
         elif operation == 0x000a and not empty:
             response += b'\x02'
             response += attribute(0x21, 'job-id', 17)
-            response += attribute(0x23, 'job-state', 7 if cancelled else 3)
+            if cancelled or job_state is not None:
+                response += attribute(0x23, 'job-state', 7 if cancelled else job_state)
             response += attribute(0x42, 'job-originating-user-name', self.username)
             response += attribute(0x42, 'job-name', 'PRIVATE-DOCUMENT-NAME')
             response += attribute(0x45, 'job-printer-uri', 'ipp://localhost/printers/Label_Test')
             response += attribute(0x44, 'job-state-reasons', 'job-canceled-by-user' if cancelled else 'job-incoming')
             response += attribute(0x21, 'job-media-sheets-completed', 0)
-            response += b'\x02'
-            response += attribute(0x21, 'job-id', 16)
-            response += attribute(0x23, 'job-state', 9)
-            response += attribute(0x42, 'job-originating-user-name', self.username)
-            response += attribute(0x42, 'job-name', 'OLDER-PRIVATE-DOCUMENT')
-            response += attribute(0x45, 'job-printer-uri', 'ipp://localhost/printers/Label_Test')
-            response += attribute(0x44, 'job-state-reasons', 'job-completed-successfully')
-            response += attribute(0x21, 'job-media-sheets-completed', 0)
-            response += attribute(0x41, 'job-printer-state-message', 'No pages were found.')
+            for job_id in range(16, 8, -1):
+                response += b'\x02'
+                response += attribute(0x21, 'job-id', job_id)
+                response += attribute(0x23, 'job-state', 8 if job_id == 15 else 9)
+                response += attribute(0x42, 'job-originating-user-name', self.username)
+                response += attribute(0x42, 'job-name', 'OLDER-PRIVATE-DOCUMENT')
+                response += attribute(0x45, 'job-printer-uri', 'ipp://localhost/printers/Label_Test')
+                response += attribute(0x44, 'job-state-reasons', 'job-completed-successfully')
+                response += attribute(0x21, 'job-media-sheets-completed', 0)
+                if job_id == 16:
+                    response += attribute(0x41, 'job-printer-state-message', 'No pages were found.')
             # Even a scheduler that ignores my-jobs must not make another
             # user's pending job cancellable in the page.
             response += b'\x02'
@@ -270,7 +295,7 @@ def run(scale):
                         ui.wait_settled('control_center')
 
                 def ready():
-                    wait_for(lambda: named('printers_status')['label'] == 'Connected to CUPS.', 'CUPS ready', timeout=15)
+                    wait_for(lambda: cups_ready(ui), 'CUPS ready', timeout=15)
 
                 def refresh():
                     before = len(scheduler.calls())
@@ -293,18 +318,68 @@ def run(scale):
                 assert any(operation == 0x4002 for operation, _ in scheduler.calls())
                 assert any(operation == 0x000a and fields.get('my-jobs') is True and fields.get('which-jobs') == 'all'
                            for operation, fields in scheduler.calls()), scheduler.calls()
-                click('printers_queue_0')
+                select_printer(ipc, ui, 0)
                 assert any('Label' in text for text in labels()), labels()
-                assert any('No pages were found.' in text for text in labels()), labels()
+                names = {w.get('name') for w in ui.widgets()}
+                assert 'printers_cancel_17' in names, 'active jobs remain visible'
+                assert not names & {'printers_job_16', 'printers_copy_report', 'printers_rename', 'printers_raw_dpi'}, 'secondary sections start collapsed'
+                assert not any('No pages were found.' in text for text in labels()), 'historical details start hidden'
+                click('printers_history')
+                names = {w.get('name') for w in ui.widgets()}
+                assert {f'printers_job_{i}' for i in range(12, 18)} <= names
+                assert 'printers_job_11' not in names, 'history initially shows five jobs'
+                assert not any('No pages were found.' in text for text in labels()), 'history rows start compact'
+                click('printers_job_16')
+                assert 'No pages were found.' in labels(), 'individual history details remain accessible'
+                refresh()
+                assert 'No pages were found.' in labels(), 'refresh preserves the open job'
+                click('printers_job_16')
+                assert 'No pages were found.' not in labels()
+                click('printers_history_more')
+                names = {w.get('name') for w in ui.widgets()}
+                assert 'printers_job_9' in names and 'printers_history_more' not in names
+                click('printers_history')
+                assert not any(w.get('name') == 'printers_job_16' for w in ui.widgets())
                 assert not any('PRIVATE-DOCUMENT' in text for text in labels()), labels()
                 assert not any(widget.get('name') == 'printers_cancel_18' for widget in ui.widgets()), 'another user\'s job must not be cancellable'
                 if preview := os.environ.get('REDIWM_PRINTERS_PREVIEW'):
+                    ui.scroll_into_view('printers_printer', panel='control_center')
+                    ui.wait_settled('control_center')
                     captured = tmp / 'printers-preview.png'
                     ipc.screenshot(str(captured))
                     Path(preview).write_bytes(captured.read_bytes())
-                click('printers_queue_1')
+                select_printer(ipc, ui, 1)
                 assert 'Resolution: Unavailable' in labels(), 'hostile dpcm resolution must be unavailable, without overflowing'
-                click('printers_queue_0')
+                select_printer(ipc, ui, 0)
+
+                for job_state in (4, 6, None):
+                    scheduler.configure(job_state=job_state)
+                    refresh()
+                    names = {w.get('name') for w in ui.widgets()}
+                    assert 'printers_job_17' in names, 'held, stopped and unknown jobs must stay in the current queue'
+                    assert ('printers_cancel_17' in names) == (job_state is not None)
+                scheduler.configure(job_state=3)
+                refresh()
+
+                if scale == '1':
+                    window = next(w for w in ipc.get_windows() if w.get('app_id') == 'rediwm-settings')
+                    for width in (620, 820, 1120):
+                        ipc.action('set_window_size', {'id': window['id'], 'width': width, 'height': 580})
+                        ipc.wait_for('window_geometry_settled', window_id=window['id'])
+                        ui.wait_settled('control_center')
+                        test_box = named('printers_test_page')['box']
+                        default_box = named('printers_default')['box']
+                        selector = named('printers_printer')
+                        assert selector['role'] == 'select'
+                        assert selector['box']['y'] < test_box['y'], 'printer dropdown stays above details'
+                        assert not any((w.get('name') or '').startswith('printers_queue_') for w in ui.widgets()), 'no printer sidebar remains'
+                        assert abs(selector['box']['x'] + 14 - test_box['x']) < 1, 'details use the full width below the dropdown'
+                        if width < 760:
+                            assert default_box['y'] >= test_box['y'] + test_box['height'], 'narrow actions stack'
+                        else:
+                            assert abs(default_box['y'] - test_box['y']) < 1, 'wide actions share a row'
+                        click('printers_history')
+                        click('printers_history')
 
                 # Check the worker itself, as well as scheduler request count:
                 # an idle timer can wake without issuing a CUPS request.
@@ -320,6 +395,7 @@ def run(scale):
                     assert all(delta >= 0 for delta in deltas) and sum(deltas) <= 2, f'idle printer worker context switches: {deltas}'
                     print('Printer worker idle context-switch deltas: voluntary=%d involuntary=%d' % deltas)
 
+                click('printers_diagnostics')
                 click('printers_copy_report')
                 copied = subprocess.check_output(['wl-paste', '--no-newline'], env={
                     **os.environ, 'XDG_RUNTIME_DIR': str(tmp), 'WAYLAND_DISPLAY': wayland_display_name(tmp),
@@ -333,6 +409,8 @@ def run(scale):
                 click('printers_cancel_17')
                 wait_for(lambda: any(operation == 8 and fields.get('job-id') == 17 for operation, fields in scheduler.calls()), 'own job cancellation')
                 ready()
+                assert 'No active jobs' in labels()
+                assert not any(w.get('name') == 'printers_cancel_17' for w in ui.widgets()), 'cancelled jobs leave the active queue'
                 scheduler.configure(cancelled=False, denied=True)
                 refresh()
                 click('printers_cancel_17')
@@ -810,7 +888,7 @@ def setup_and_tools(scale, queue_rename=True, preview=False):
                     return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
                 def called(member, predicate=lambda args: True):
                     return any(method == member and predicate(args) for method, args in calls())
-                def ready(): wait_for(lambda: named('printers_status')['label'] == 'Connected to CUPS.', 'CUPS ready', timeout=15)
+                def ready(): wait_for(lambda: cups_ready(ui), 'CUPS ready', timeout=15)
                 def quiet_inventory():
                     previous = len(scheduler.calls())
                     since = time.monotonic()
@@ -827,18 +905,22 @@ def setup_and_tools(scale, queue_rename=True, preview=False):
                 assert not calls() and not scheduler.calls(), 'opening Settings must not administer or contact CUPS'
                 click('printers')
                 ready()
-                click('printers_queue_0')
+                select_printer(ipc, ui, 0)
                 click('printers_resume')
                 wait_for(lambda: called('PrinterSetEnabled', lambda args: args == ['Label_Test', True]), 'resume queue')
+                assert not any(w.get('name') == 'printers_accepting' for w in ui.widgets()), 'management starts collapsed'
+                click('printers_manage')
                 click('printers_accepting')
                 wait_for(lambda: called('PrinterSetAcceptJobs', lambda args: args == ['Label_Test', True, '']), 'allow jobs')
                 ready()
                 wait_for(lambda: named('printers_accepting')['label'] == 'Stop accepting jobs', 'accepted queue appears in refreshed state')
                 if preview:
-                    ui.scroll_into_view('printers_queue_0', panel='control_center')
+                    click('printers_manage')
+                    ui.scroll_into_view('printers_printer', panel='control_center')
                     ui.wait_settled('control_center')
                     Path('/tmp/rediwm-printers-setup-top.png').unlink(missing_ok=True)
                     ipc.screenshot('/tmp/rediwm-printers-setup-top.png')
+                    click('printers_manage')
                 wait_for(lambda: any(operation == 0x0016 for operation, _ in scheduler.calls()), 'page-owned CUPS subscription')
                 count = quiet_inventory()
                 helper.stdin.write('notify\n')
@@ -873,6 +955,7 @@ def setup_and_tools(scale, queue_rename=True, preview=False):
                 assert scheduler.printed[0]['_document'].startswith(b'%PDF-'), scheduler.printed
                 assert scheduler.printed[0]['printer-uri'].endswith('/Label_Test'), scheduler.printed
                 click('printers_test_blank')
+                click('printers_label_tools')
                 click('printers_test_raw')
                 assert len(scheduler.printed) == 1, 'raw test must require its own confirmation'
                 click('printers_test_confirm')
@@ -891,7 +974,7 @@ def setup_and_tools(scale, queue_rename=True, preview=False):
                 assert scheduler.printed[2]['print-scaling'] == 'none', scheduler.printed
                 click('printers_test_printed')
                 ready()
-                click('printers_queue_1')
+                select_printer(ipc, ui, 1)
                 ready()
                 if not named('printers_label')['checked']:
                     click('printers_label')
@@ -900,7 +983,7 @@ def setup_and_tools(scale, queue_rename=True, preview=False):
                 click('printers_calibrate')
                 wait_for(lambda: any('No supported resolution' in label for label in labels()), 'the other queue must use its own 203 dpi instead of the first ruler 300 dpi')
                 assert not any(widget.get('name') == 'printers_apply_resolution' for widget in ui.widgets()), 'another queue must not inherit the 300 dpi ruler receipt'
-                click('printers_queue_0')
+                select_printer(ipc, ui, 0)
                 ready()
                 fill('printers_measured_width', '75.074')
                 fill('printers_measured_height', '112.611')
@@ -924,12 +1007,14 @@ def setup_and_tools(scale, queue_rename=True, preview=False):
                     ['PrinterAddOption', ['Label_Test', 'Resolution', ['300dpi']]],
                 ], 'clear native and canonical overrides before applying the native PPD choice'
 
-                click('printers_option_sides')
+                click('printers_option_Duplex')
                 ipc.key_press('Down')
                 ipc.key_press('Return')
-                wait_for(lambda: called('PrinterAddOption', lambda args: args == ['Label_Test', 'sides', ['two-sided-long-edge']]), 'IPP-supported queue setting through CUPS PPD mapping')
+                wait_for(lambda: called('PrinterAddOption', lambda args: args == ['Label_Test', 'Duplex', ['DuplexNoTumble']]), 'native duplex setting without a duplicate IPP control')
                 wait_for(lambda: called('PrinterDeleteOptionDefault', lambda args: args == ['Label_Test', 'sides']), 'clear obsolete sides override before PPD update')
-                assert next(i for i, call in enumerate(calls()) if call == ['PrinterDeleteOptionDefault', ['Label_Test', 'sides']]) < next(i for i, (method, args) in enumerate(calls()) if method == 'PrinterAddOption' and args[:2] == ['Label_Test', 'sides'])
+                assert next(i for i, call in enumerate(calls()) if call == ['PrinterDeleteOptionDefault', ['Label_Test', 'sides']]) < next(i for i, (method, args) in enumerate(calls()) if method == 'PrinterAddOption' and args[:2] == ['Label_Test', 'Duplex'])
+                assert not any(w.get('name') in ('printers_option_sides', 'printers_option_printer-resolution', 'printers_option_Darkness') for w in ui.widgets()), 'everyday preferences appear once; driver extras start collapsed'
+                click('printers_more_options')
                 click('printers_option_Darkness')
                 ipc.key_press('Down')
                 ipc.key_press('Return')
@@ -938,7 +1023,7 @@ def setup_and_tools(scale, queue_rename=True, preview=False):
                 assert next(i for i, call in enumerate(calls()) if call == ['PrinterDeleteOptionDefault', ['Label_Test', 'Darkness']]) < next(i for i, (method, args) in enumerate(calls()) if method == 'PrinterAddOption' and args[:2] == ['Label_Test', 'Darkness'])
                 if preview:
                     ready()
-                    ui.scroll_into_view('printers_option_printer-resolution', panel='control_center')
+                    ui.scroll_into_view('printers_option_Resolution', panel='control_center')
                     ui.wait_settled('control_center')
                     Path('/tmp/rediwm-printers-setup-options.png').unlink(missing_ok=True)
                     ipc.screenshot('/tmp/rediwm-printers-setup-options.png')
@@ -1060,8 +1145,8 @@ def setup_and_tools(scale, queue_rename=True, preview=False):
                     wait_for(lambda: 'Default Renamed_Label' in (tmp / '.cups/lpoptions').read_text(), 'renamed user default migration')
                     assert not called('PrinterDelete'), 'native queue rename must not use separate direct delete calls'
                     ready()
-                    queue_widget = next(widget for widget in ui.widgets() if (widget.get('name') or '').startswith('printers_queue_') and (widget.get('label') or '').startswith('Renamed_Label'))
-                    click(queue_widget['name'])
+                    assert 'Fixture renamed label' in labels(), 'renamed printer remains selected'
+                    click('printers_diagnostics')
                     click('printers_copy_report')
                     report = subprocess.check_output(['wl-paste', '--no-newline'], env={**os.environ, 'XDG_RUNTIME_DIR': str(tmp), 'WAYLAND_DISPLAY': wayland_display_name(tmp)}, timeout=5).decode()
                     assert 'driver=no_output, raw=printed, ruler=printed' in report, 'renamed queue must retain user observations'
@@ -1079,7 +1164,7 @@ def setup_and_tools(scale, queue_rename=True, preview=False):
                 # during the page's lifetime cannot fall back to direct admin.
                 helper.terminate()
                 helper.wait(timeout=5)
-                click('printers_queue_0')
+                select_printer(ipc, ui, 0)
                 click('printers_disable')
                 wait_for(lambda: any('cups-pk-helper' in label and ('install' in label.lower() or 'unavailable' in label.lower()) for label in labels()), 'missing helper guidance')
                 assert named('printers_add')['is_disabled'] and named('printers_disable')['is_disabled'] and named('printers_connection')['is_disabled'], 'missing helper must disable privileged controls'
@@ -1136,10 +1221,11 @@ def tcp_reading(scale):
                 ipc.open_control_center()
                 ui.wait_settled('control_center')
                 ui.click(ui.find('printers', panel='control_center'), panel='control_center')
-                wait_for(lambda: ui.find('printers_status', panel='control_center')['label'] == 'Connected to CUPS.', 'private TCP scheduler', timeout=15)
+                wait_for(lambda: cups_ready(ui), 'private TCP scheduler', timeout=15)
                 assert any(operation == 0x4002 for operation, _ in endpoint.events), endpoint.events
                 assert ui.find('printers_add', panel='control_center')['is_disabled'], 'remote scheduler must never administer local CUPS'
-                assert any('Label_Test' in (widget.get('label') or '') for widget in ui.widgets()), ui.widgets()
+                assert ui.find('printers_printer', panel='control_center')['selected_index'] == 0
+                assert any(widget.get('label') == 'Label Test' for widget in ui.widgets()), 'remote printer details remain available'
             print('Private TCP scheduler reading and administration isolation passed at scale', scale)
         finally:
             if process: stop_process(process)
@@ -1154,4 +1240,4 @@ if __name__ == '__main__':
     run(scale)
     endpoint_errors(scale)
     tcp_reading(scale)
-    setup_and_tools(scale)
+    setup_and_tools(scale, preview=bool(os.environ.get('REDIWM_PRINTERS_PREVIEW')))
