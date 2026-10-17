@@ -1,0 +1,228 @@
+//! A single cancellable worker. Snapshots own their arena; only copied data
+//! crosses the mutex. Paused/hidden workers block indefinitely on an eventfd.
+const std = @import("std");
+const proc = @import("proc.zig");
+const c = proc.c;
+const a = std.heap.c_allocator;
+
+pub const Process = struct {
+    identity: proc.Identity,
+    name: []const u8,
+    user: []const u8,
+    uids: ?proc.Uids,
+    state: u8,
+    cpu_ticks: u64,
+    cpu_percent: ?f64 = null,
+    resident_bytes: ?u64,
+    protected: bool,
+};
+pub const Snapshot = struct {
+    arena: std.heap.ArenaAllocator,
+    processes: []Process,
+    at_ns: u64,
+    cpu: ?proc.Cpu,
+    cpu_percent: ?f64 = null,
+    memory: ?proc.Memory,
+    unavailable: usize = 0,
+    truncated: bool = false,
+    failed: bool = false,
+    pub fn deinit(self: *Snapshot) void {
+        self.arena.deinit();
+        a.destroy(self);
+    }
+};
+
+pub fn sample(cancelled: *const std.atomic.Value(u64), generation: u64) !*Snapshot {
+    const snapshot = try a.create(Snapshot);
+    snapshot.* = .{ .arena = .init(a), .processes = &.{}, .at_ns = proc.nowNs(), .cpu = null, .memory = null };
+    errdefer snapshot.deinit();
+    const arena = snapshot.arena.allocator();
+    var buf: [65536]u8 = undefined;
+    if (proc.readAt(c.AT_FDCWD, "/proc/stat", &buf)) |bytes| snapshot.cpu = proc.parseCpu(bytes) else |_| {}
+    if (proc.readAt(c.AT_FDCWD, "/proc/meminfo", &buf)) |bytes| snapshot.memory = proc.parseMemory(bytes) else |_| {}
+    const dir = c.opendir("/proc") orelse {
+        snapshot.failed = true;
+        return snapshot;
+    };
+    defer _ = c.closedir(dir);
+    const page_size = c.sysconf(c._SC_PAGESIZE);
+    var rows: std.ArrayList(Process) = .empty;
+    var users: std.AutoHashMapUnmanaged(u32, []const u8) = .empty;
+    // Avoid NSS here: a directory service outage must never prevent stopping
+    // or joining the collector. Nonlocal accounts are displayed by UID.
+    if (proc.readAt(c.AT_FDCWD, "/etc/passwd", &buf)) |bytes| {
+        var lines = std.mem.splitScalar(u8, bytes, '\n');
+        while (lines.next()) |line| {
+            var fields = std.mem.splitScalar(u8, line, ':');
+            const user = fields.next() orelse continue;
+            _ = fields.next() orelse continue;
+            const uid = std.fmt.parseInt(u32, fields.next() orelse continue, 10) catch continue;
+            try users.put(arena, uid, try safeName(arena, user));
+        }
+    } else |_| {}
+    while (c.readdir(dir)) |entry| {
+        if (cancelled.load(.acquire) != generation) return error.Cancelled;
+        const name = std.mem.sliceTo(entry.*.d_name[0..], 0);
+        const pid = std.fmt.parseInt(i32, name, 10) catch continue;
+        if (pid <= 0) continue;
+        if (rows.items.len >= 131072) {
+            snapshot.truncated = true;
+            break;
+        }
+        const process_dir = proc.openProcess(pid) catch {
+            snapshot.unavailable += 1;
+            continue;
+        };
+        defer _ = c.close(process_dir);
+        const stat = proc.parseStat(proc.readAt(process_dir, "stat", &buf) catch {
+            snapshot.unavailable += 1;
+            continue;
+        }) orelse continue;
+        const process_name = try safeName(arena, stat.name);
+        const uids = if (proc.readAt(process_dir, "status", &buf)) |bytes| proc.parseUids(bytes) else |_| null;
+        const user = if (uids) |ids| blk: {
+            if (users.get(ids[0])) |value| break :blk value;
+            const value = try std.fmt.allocPrint(arena, "{d}", .{ids[0]});
+            try users.put(arena, ids[0], value);
+            break :blk value;
+        } else "Unavailable";
+        const protected = proc.protectedAt(process_dir, pid) catch true;
+        try rows.append(arena, .{
+            .identity = .{ .pid = pid, .start = stat.start },
+            .name = process_name,
+            .user = user,
+            .uids = uids,
+            .state = stat.state,
+            .cpu_ticks = stat.cpu,
+            .resident_bytes = if (page_size > 0) std.math.mul(u64, stat.rss, @intCast(page_size)) catch null else null,
+            .protected = protected,
+        });
+    }
+    snapshot.processes = rows.items;
+    return snapshot;
+}
+
+fn safeName(allocator: std.mem.Allocator, bytes: []const u8) ![]const u8 {
+    const value = try allocator.dupe(u8, if (std.unicode.utf8ValidateSlice(bytes)) bytes else "Unknown process");
+    for (value) |*byte| if (byte.* < 32 or byte.* == 127) {
+        byte.* = ' ';
+    };
+    return value;
+}
+
+const Baseline = struct { start: u64, cpu: u64 };
+pub const Worker = struct {
+    wake_fd: c_int,
+    notify_fd: c_int,
+    thread: ?std.Thread = null,
+    generation: std.atomic.Value(u64) = .init(0),
+    stopping: std.atomic.Value(bool) = .init(false),
+    active: std.atomic.Value(bool) = .init(false),
+    mutex: std.Io.Mutex = .init,
+    io: std.Io,
+    pending: ?*Snapshot = null,
+
+    pub fn init(io: std.Io) !*Worker {
+        const self = try a.create(Worker);
+        errdefer a.destroy(self);
+        const wake_fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
+        if (wake_fd < 0) return error.EventFdFailed;
+        errdefer _ = c.close(wake_fd);
+        const notify = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
+        if (notify < 0) return error.EventFdFailed;
+        errdefer _ = c.close(notify);
+        self.* = .{ .wake_fd = wake_fd, .notify_fd = notify, .io = io };
+        self.thread = try std.Thread.spawn(.{}, run, .{self});
+        return self;
+    }
+    pub fn deinit(self: *Worker) void {
+        self.stopping.store(true, .release);
+        _ = self.generation.fetchAdd(1, .acq_rel);
+        wake(self.wake_fd);
+        self.thread.?.join();
+        if (self.pending) |old| old.deinit();
+        _ = c.close(self.wake_fd);
+        _ = c.close(self.notify_fd);
+        a.destroy(self);
+    }
+    pub fn setActive(self: *Worker, active: bool) void {
+        if (self.active.swap(active, .acq_rel) == active) return;
+        _ = self.generation.fetchAdd(1, .acq_rel);
+        self.mutex.lockUncancelable(self.io);
+        if (self.pending) |old| old.deinit();
+        self.pending = null;
+        self.mutex.unlock(self.io);
+        wake(self.wake_fd);
+    }
+    pub fn take(self: *Worker) ?*Snapshot {
+        drain(self.notify_fd);
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        const result = self.pending;
+        self.pending = null;
+        return result;
+    }
+    fn run(self: *Worker) void {
+        var previous: std.AutoHashMapUnmanaged(i32, Baseline) = .empty;
+        defer previous.deinit(a);
+        var last_at: u64 = 0;
+        var last_cpu: ?proc.Cpu = null;
+        var observed: u64 = std.math.maxInt(u64);
+        var deadline: u64 = 0;
+        const hz_raw = c.sysconf(c._SC_CLK_TCK);
+        const hz: u64 = @intCast(@max(0, hz_raw));
+        while (!self.stopping.load(.acquire)) {
+            const generation = self.generation.load(.acquire);
+            if (generation != observed) {
+                observed = generation;
+                previous.clearRetainingCapacity();
+                last_at = 0;
+                last_cpu = null;
+                deadline = 0;
+            }
+            if (self.active.load(.acquire) and proc.nowNs() >= deadline) {
+                const snap = sample(&self.generation, generation) catch {
+                    deadline = proc.nowNs() + 1_000_000_000;
+                    continue;
+                };
+                if (self.generation.load(.acquire) != generation) {
+                    snap.deinit();
+                    continue;
+                }
+                if (last_cpu) |before| if (snap.cpu) |after| {
+                    snap.cpu_percent = proc.cpuPercent(before, after);
+                };
+                for (snap.processes) |*row| {
+                    if (previous.get(row.identity.pid)) |before| {
+                        row.cpu_percent = proc.processPercent(.{ .name = "", .state = 0, .cpu = before.cpu, .start = before.start, .rss = 0 }, .{ .name = "", .state = 0, .cpu = row.cpu_ticks, .start = row.identity.start, .rss = 0 }, hz, snap.at_ns -| last_at);
+                    }
+                }
+                previous.clearRetainingCapacity();
+                for (snap.processes) |row| previous.put(a, row.identity.pid, .{ .start = row.identity.start, .cpu = row.cpu_ticks }) catch {};
+                last_at = snap.at_ns;
+                last_cpu = snap.cpu;
+                deadline = snap.at_ns + 1_000_000_000;
+                self.mutex.lockUncancelable(self.io);
+                if (self.generation.load(.acquire) == generation and self.active.load(.acquire)) {
+                    if (self.pending) |old| old.deinit();
+                    self.pending = snap;
+                    wake(self.notify_fd);
+                } else snap.deinit();
+                self.mutex.unlock(self.io);
+            }
+            var fd = c.struct_pollfd{ .fd = self.wake_fd, .events = c.POLLIN, .revents = 0 };
+            const timeout: c_int = if (!self.active.load(.acquire)) -1 else @intCast(@min(1000, (deadline -| proc.nowNs() + 999_999) / 1_000_000));
+            _ = c.poll(&fd, 1, timeout);
+            drain(self.wake_fd);
+        }
+    }
+};
+
+pub fn wake(fd: c_int) void {
+    const one: u64 = 1;
+    _ = c.write(fd, &one, @sizeOf(u64));
+}
+pub fn drain(fd: c_int) void {
+    var value: u64 = undefined;
+    _ = c.read(fd, &value, @sizeOf(u64));
+}

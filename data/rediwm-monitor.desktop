@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=System Monitor
+Comment=View CPU, memory and processes
+Exec=rediwm-monitor
+Icon=rediwm-monitor
+Terminal=false
+Categories=System;Monitor;
+Keywords=process;task;CPU;memory;performance;
+StartupWMClass=rediwm-monitor

@@ -1,0 +1,325 @@
+#!/usr/bin/env python3
+"""System Monitor input, disposable process actions and worker lifetime.
+
+Every signal target is a child created here, selected by a unique comm value.
+Compositors, themes, state and application databases stay in a private session.
+"""
+import os
+from pathlib import Path
+import signal
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+
+from PIL import Image, ImageChops
+from files_browser import wait_for
+from ipc_client import IPCClient, ROOT, spawn_compositor, stop_process
+
+
+def switches(pid):
+    total = 0
+    for status in Path(f"/proc/{pid}/task").glob("*/status"):
+        try:
+            for line in status.read_text().splitlines():
+                if line.startswith(("voluntary_ctxt_switches:", "nonvoluntary_ctxt_switches:")):
+                    total += int(line.split()[1])
+        except FileNotFoundError:
+            pass
+    return total
+
+
+def check_signal_guard(tmp, guard, targets):
+    """Prove the guard with two disposable children, before using the UI."""
+    probe_dir = tmp / "guard-probe"
+    probe_dir.mkdir()
+    source = probe_dir / "probe.c"
+    source.write_text('''#define _GNU_SOURCE
+#include <errno.h>
+#include <signal.h>
+#include <stdlib.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+int main(int argc, char **argv) {
+    if (argc != 3) return 1;
+    int denied = syscall(SYS_pidfd_open, atoi(argv[2]), 0);
+    int allowed = syscall(SYS_pidfd_open, atoi(argv[1]), 0);
+    if (denied < 0 || allowed < 0) return 2;
+    if (syscall(SYS_pidfd_send_signal, denied, SIGTERM, 0, 0) != -1 || errno != EPERM) return 3;
+    if (syscall(SYS_pidfd_send_signal, allowed, SIGTERM, 0, 0) != 0) return 4;
+    close(denied); close(allowed);
+    return 0;
+}
+''')
+    binary = probe_dir / "rediwm-monitor"
+    subprocess.run(["cc", "-Wall", "-Wextra", "-Werror", str(source), "-o", str(binary)], check=True)
+    allowed = subprocess.Popen(["/bin/sleep", "120"])
+    denied = subprocess.Popen(["/bin/sleep", "120"])
+    try:
+        start = Path(f"/proc/{allowed.pid}/stat").read_text().rsplit(")", 1)[1].split()[19]
+        targets.write_text(f"{os.getpid()}\n{allowed.pid} {start}\n")
+        subprocess.run([str(binary), str(allowed.pid), str(denied.pid)], check=True, timeout=10,
+                       env=dict(os.environ, LD_PRELOAD=str(guard), REDIWM_TEST_MONITOR_TARGETS=str(targets)))
+        assert allowed.wait(timeout=5) == -signal.SIGTERM
+        assert denied.poll() is None, "signal guard did not protect the unlisted fixture"
+    finally:
+        for child in (allowed, denied):
+            if child.poll() is None:
+                child.kill()
+            child.wait(timeout=5)
+        targets.write_text(f"{os.getpid()}\n")
+
+
+def run(scale, workspace):
+    with tempfile.TemporaryDirectory(prefix="rediwm-monitor-") as directory:
+        tmp = Path(directory)
+        config = ('[compositor]\nxwayland = false\n' +
+                  ('desktop_mode = "workspaces"\n' if workspace else '') +
+                  '[theme]\napp_bg = "#203040"\n')
+        env = {"HOME": directory, "XDG_CONFIG_HOME": str(tmp / "config"),
+               "XDG_DATA_HOME": str(tmp / "data"), "XDG_CACHE_HOME": str(tmp / "cache"),
+               "DBUS_SESSION_BUS_ADDRESS": "", "REDIWM_FILES_DEVICES": "0"}
+        guard = tmp / "monitor-guard.so"
+        subprocess.run(["cc", "-shared", "-fPIC", "-Wall", "-Wextra", "-Werror", "-pthread",
+                        str(ROOT / "tests/system_monitor_guard.c"), "-o", str(guard)], check=True)
+        targets = tmp / "signal-targets"
+        targets.write_text(f"{os.getpid()}\n")
+        check_signal_guard(tmp, guard, targets)
+        env.update(LD_PRELOAD=str(guard), REDIWM_TEST_MONITOR_TARGETS=str(targets))
+        compositor, log = spawn_compositor(tmp, scale=str(scale), config_content=config, env_extra=env,
+                                          binary=os.environ.get("REDIWM_TEST_BINARY"))
+        fixtures = []
+        monitor_pid = None
+        try:
+            with IPCClient(tmp, timeout=20) as ipc:
+                def windows():
+                    return [w for w in ipc.get_windows() if w["app_id"] == "rediwm-monitor"]
+
+                def monitor():
+                    return next(iter(windows()), None)
+
+                def chord(*codes):
+                    for code in codes:
+                        ipc.key(code, True)
+                    for code in reversed(codes):
+                        ipc.key(code, False)
+
+                def settled():
+                    ipc.wait_for("window_geometry_settled", window_id=monitor()["id"])
+                    ipc.wait_for_frame()
+
+                def box():
+                    return ipc.get_window_debug(monitor()["id"])["client_box"]
+
+                def click(x, y):
+                    b = box()
+                    ipc.click_at(round(b["x"] + x), round(b["y"] + y))
+
+                def shot(name, graph=False):
+                    path = tmp / f"{name}.png"
+                    ipc.wait_for_frame()
+                    ipc.screenshot(path=str(path))
+                    with Image.open(path) as image:
+                        b = box()
+                        output = ipc.get_outputs()[0]
+                        factor = image.width / output["logical_width"]
+                        region = ((b["x"] + 16, b["y"] + 68, b["x"] + b["width"] - 16, b["y"] + 134)
+                                  if graph else (b["x"], b["y"], b["x"] + b["width"], b["y"] + b["height"]))
+                        return image.convert("RGB").crop(tuple(round(v * factor) for v in region))
+
+                def idle(label):
+                    time.sleep(.4)  # finish pending buffer release and hover transitions
+                    before = switches(monitor_pid)
+                    time.sleep(2.2)
+                    delta = switches(monitor_pid) - before
+                    assert delta <= 2, f"{label}: monitor kept waking ({delta} context switches)"
+
+                for _ in range(3):
+                    chord(29, 56, 111)  # Ctrl+Alt+Delete, including activation while starting
+                ipc.wait_for("window_mapped", app_id="rediwm-monitor", timeout_ms=15000)
+                settled()
+                assert len(windows()) == 1, windows()
+                window_id = monitor()["id"]
+                monitor_pid = monitor()["pid"]
+                time.sleep(1.2)
+                debug = ipc.get_window_debug(window_id)
+                assert debug["buffer_scale"] == 1, debug
+                assert abs(debug["buffer_width"] - round(debug["client_box"]["width"] * scale)) <= 1, debug
+                assert shot("initial").getpixel((4, 4)) == (32, 48, 64)
+
+                # Background collection follows visibility, independently of keyboard focus.
+                ipc.open_control_center()
+                before = switches(monitor_pid)
+                time.sleep(2.2)
+                assert switches(monitor_pid) - before >= 3, "collection stopped on focus loss"
+                settings = next(w for w in ipc.get_windows() if w["backend"] == "shell")
+                ipc.close_window(settings["id"])
+                ipc.focus_window(window_id)
+                settled()
+
+                # Pause has no recurring worker or theme-stat timer.
+                click(box()["width"] - 80, 171)
+                idle("paused")
+                paused = shot("paused", True)
+                time.sleep(1.2)
+                assert ImageChops.difference(paused, shot("still-paused", True)).getbbox() is None
+
+                # Atomic theme replacement still wakes a paused app.
+                changed = tmp / "theme-new.toml"
+                changed.write_text(config.replace("#203040", "#304050"))
+                changed.replace(tmp / "rediwm-config.toml")
+                wait_for(lambda: shot("theme").getpixel((4, 4)) == (48, 64, 80), "live app theme did not update")
+                click(box()["width"] - 80, 171)
+                time.sleep(1.2)
+
+                # Minimize is a real xdg-shell v6 suspended configure. Restore
+                # starts a fresh interval and repeated activation keeps this ID.
+                ipc.minimize(window_id)
+                idle("minimized")
+                for _ in range(2):
+                    chord(29, 56, 111)
+                wait_for(lambda: monitor() and not monitor()["is_minimized"], "shortcut did not restore monitor")
+                settled()
+                assert len(windows()) == 1 and monitor()["id"] == window_id
+                before = switches(monitor_pid)
+                time.sleep(2.2)
+                assert switches(monitor_pid) - before >= 3, "restored monitor did not resume"
+                if workspace:
+                    ipc.action("switch_workspace", {"workspace": 9})
+                    chord(29, 56, 111)
+                    ipc.wait_for("window_focused", window_id=window_id)
+                    assert monitor()["id"] == window_id and len(windows()) == 1
+
+                # Resize through maximize and return; the controls remain usable.
+                ipc.maximize(window_id)
+                settled()
+                assert box()["width"] > 640
+                ipc.maximize(window_id)
+                settled()
+
+                def fixture(ignore_term, replace_with=None):
+                    name = f"rmon{os.getpid()}-{len(fixtures)}"[:15]
+                    program = ('import ctypes,signal,time,sys;'
+                               f'ctypes.CDLL(None).prctl(15,{name.encode()!r},0,0,0);' +
+                               ('signal.signal(signal.SIGTERM,signal.SIG_IGN);' if ignore_term else '') +
+                               'print("ready",flush=True);' +
+                               ('sys.stdin.readline();import os;os.execv(sys.argv[1],["rediwm","120"])'
+                                if replace_with else 'time.sleep(120)'))
+                    argv = [sys.executable, "-c", program]
+                    if replace_with:
+                        argv.append(str(replace_with))
+                    child = subprocess.Popen(argv, stdout=subprocess.PIPE, stdin=subprocess.PIPE, text=True)
+                    fixtures.append(child)
+                    assert child.stdout.readline().strip() == "ready"
+                    stat = Path(f"/proc/{child.pid}/stat").read_text().rsplit(")", 1)[1].split()
+                    with targets.open("a") as allowed:
+                        allowed.write(f"{child.pid} {stat[19]}\n")
+                    time.sleep(1.2)  # next collector snapshot contains this fixture
+                    chord(29, 33)  # Ctrl+F
+                    chord(29, 30)  # Ctrl+A
+                    ipc.type_text(name)
+                    time.sleep(.2)
+                    chord(102)  # Home edits the field; Down transfers to the process list
+                    chord(108)
+                    time.sleep(.15)
+                    return child
+
+                normal = fixture(False)
+                chord(111)  # Delete sends TERM only to the selected fixture
+                wait_for(lambda: normal.poll() is not None, "End process did not terminate fixture")
+                assert normal.returncode == -signal.SIGTERM
+
+                stubborn = fixture(True)
+                chord(111)
+                time.sleep(.25)
+                assert stubborn.poll() is None, "fixture did not ignore SIGTERM"
+                chord(42, 111)  # Shift+Delete opens the named confirmation
+                time.sleep(.2)
+                confirmation = shot("force-confirm")
+                assert stubborn.poll() is None, "force quit ran before confirmation"
+                chord(1)  # Escape cancels
+                time.sleep(.2)
+                assert stubborn.poll() is None
+                assert ImageChops.difference(confirmation, shot("cancelled")).getbbox()
+                chord(42, 111)
+                time.sleep(.15)
+                chord(15)  # Cancel is focused first; Tab focuses Force quit
+                chord(28)
+                wait_for(lambda: stubborn.poll() is not None, "confirmed Force quit did not terminate fixture")
+                assert stubborn.returncode == -signal.SIGKILL
+
+                # A confirmation owns its identity even after the target exits.
+                gone = fixture(True)
+                chord(42, 111)
+                time.sleep(.15)
+                gone.kill()
+                gone.wait(timeout=5)
+                time.sleep(1.2)  # list refresh clears selection while confirmation keeps its identity
+                chord(15)
+                chord(28)
+                time.sleep(.15)
+                assert monitor()["id"] == window_id
+
+                # Recheck protection at execution: this disposable process
+                # execs a protected executable name while confirmation is open.
+                protected_exe = tmp / "rediwm"
+                shutil.copyfile("/bin/sleep", protected_exe)
+                protected_exe.chmod(0o700)
+                protected = fixture(True, protected_exe)
+                chord(42, 111)
+                protected.stdin.write("exec\n")
+                protected.stdin.flush()
+                wait_for(lambda: Path(f"/proc/{protected.pid}/exe").resolve() == protected_exe,
+                         "fixture did not exec the protected name")
+                time.sleep(1.2)
+                chord(15)
+                chord(28)
+                time.sleep(.15)
+                assert protected.poll() is None, "confirmation bypassed refreshed session protection"
+
+                # Close joins the worker, even if a sample has just started.
+                chord(29, 16)  # Ctrl+Q
+                ipc.wait_for("window_closed", window_id=window_id)
+                wait_for(lambda: not Path(f"/proc/{monitor_pid}").exists(), "monitor worker outlived its window")
+                assert not windows()
+                # A paused app stays paused across minimize/restore, and a
+                # hidden app must still consume close and join its worker.
+                chord(29, 56, 111)
+                ipc.wait_for("window_mapped", app_id="rediwm-monitor")
+                settled()
+                window_id = monitor()["id"]
+                monitor_pid = monitor()["pid"]
+                click(box()["width"] - 80, 171)
+                ipc.minimize(window_id)
+                chord(29, 56, 111)
+                wait_for(lambda: not monitor()["is_minimized"], "paused monitor did not restore")
+                settled()
+                idle("restored while paused")
+                ipc.minimize(window_id)
+                ipc.close_window(window_id)
+                ipc.wait_for("window_closed", window_id=window_id)
+                wait_for(lambda: not Path(f"/proc/{monitor_pid}").exists(), "hidden monitor did not stop")
+                print(f"System Monitor: scale={scale} mode={'workspaces' if workspace else 'canvas'} passed", flush=True)
+        finally:
+            for child in fixtures:
+                if child.poll() is None:
+                    child.kill()
+                child.wait(timeout=5)
+                if child.stdout:
+                    child.stdout.close()
+                if child.stdin:
+                    child.stdin.close()
+            stop_process(compositor)
+            log.close()
+            errors = (tmp / "compositor.log").read_text()
+            if "panic" in errors or "error(gpa)" in errors:
+                print(errors[-6000:], file=sys.stderr)
+                raise AssertionError("compositor or monitor reported a panic/leak")
+
+
+if __name__ == "__main__":
+    os.umask(0o077)
+    scale = float(os.environ.get("REDIWM_TEST_SCALE", "1"))
+    run(scale, False)
+    run(scale, True)
