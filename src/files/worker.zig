@@ -244,6 +244,14 @@ pub const Worker = struct {
         defer if (inotify_fd >= 0) {
             _ = c.close(inotify_fd);
         };
+        // Its own descriptor: the browsed folder can be the config directory,
+        // and leaving it must not drop the theme watch.
+        const theme_fd = c.inotify_init1(c.IN_NONBLOCK | c.IN_CLOEXEC);
+        defer if (theme_fd >= 0) {
+            _ = c.close(theme_fd);
+        };
+        if (theme_fd >= 0) settings.watch(theme_fd);
+        var theme_changed = true;
 
         var watched_dir: ?[]u8 = null;
         defer if (watched_dir) |d| self.allocator.free(d);
@@ -273,7 +281,9 @@ pub const Worker = struct {
             var opened_storage = opened;
             opened_storage.deinit(self.allocator);
             if (self.stop.load(.acquire)) break;
-            if (settings.poll(self.allocator, self.io)) |t| {
+            const update = if (theme_fd < 0) settings.poll(self.allocator, self.io) else if (theme_changed) settings.reload(self.allocator, self.io) else null;
+            theme_changed = false;
+            if (update) |t| {
                 _ = c.pthread_mutex_lock(&self.mutex);
                 self.animation_settings = settings.animations;
                 if (self.theme) |old| old.deinit();
@@ -358,13 +368,20 @@ pub const Worker = struct {
             }
 
             if (inotify_fd >= 0) {
-                var fds = [2]c.struct_pollfd{
+                var fds = [3]c.struct_pollfd{
                     .{ .fd = self.wake, .events = c.POLLIN, .revents = 0 },
                     .{ .fd = inotify_fd, .events = c.POLLIN, .revents = 0 },
+                    .{ .fd = theme_fd, .events = c.POLLIN, .revents = 0 },
                 };
-                // Requests and directory changes wake the poll; the timeout
-                // only paces Settings.poll, which stats the theme once a second.
-                const poll_res = c.poll(&fds, fds.len, 1000);
+                // Requests, directory and theme changes wake the poll. Without
+                // a theme watch the timeout paces Settings.poll's once-a-second stat.
+                const poll_res = c.poll(&fds, fds.len, if (theme_fd >= 0) -1 else 1000);
+                if (poll_res > 0 and (fds[2].revents & c.POLLIN != 0)) {
+                    var buf: [4096]u8 align(@alignOf(c.struct_inotify_event)) = undefined;
+                    while (c.read(theme_fd, &buf, buf.len) > 0) {}
+                    settings.watch(theme_fd);
+                    theme_changed = true;
+                }
                 if (poll_res > 0 and (fds[0].revents & c.POLLIN != 0)) {
                     var count: u64 = 0;
                     _ = c.read(self.wake, &count, @sizeOf(u64));

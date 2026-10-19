@@ -22,19 +22,10 @@ pub const Watch = struct {
         _ = c.close(self.fd);
     }
     fn arm(self: *Watch) void {
-        for ([_]?[:0]const u8{ self.settings.config_path, self.settings.theme_path }) |maybe_path| {
-            var parent = std.fs.path.dirname(maybe_path orelse continue) orelse continue;
-            while (true) {
-                var buf: [4096]u8 = undefined;
-                const path = std.fmt.bufPrintZ(&buf, "{s}", .{parent}) catch break;
-                if (c.inotify_add_watch(self.fd, path, c.IN_CLOSE_WRITE | c.IN_MOVED_TO | c.IN_CREATE | c.IN_DELETE | c.IN_DELETE_SELF | c.IN_MOVE_SELF) >= 0) break;
-                parent = std.fs.path.dirname(parent) orelse break;
-            }
-        }
+        self.settings.watch(self.fd);
     }
     fn apply(self: *Watch) bool {
-        self.settings.last_second = -1;
-        if (self.settings.poll(a, self.io)) |update| {
+        if (self.settings.reload(a, self.io)) |update| {
             update.apply();
             @import("ui").anim.applySettings(self.settings.animations);
             return true;

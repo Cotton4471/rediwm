@@ -259,7 +259,8 @@ def run():
                 before = context_switches(files.pid)
                 time.sleep(2.0)
                 switches = context_switches(files.pid) - before
-                assert switches <= 4, f"idle Files context-switched {switches} times in 2 s"
+                # The theme is followed through inotify, so nothing ticks.
+                assert switches <= 1, f"idle Files context-switched {switches} times in 2 s"
                 print(f"Idle Files made {switches} context switches in 2 s.")
                 stop(files)
 
@@ -299,7 +300,8 @@ def run():
                 before = context_switches(files.pid)
                 time.sleep(2.0)
                 switches = context_switches(files.pid) - before
-                assert switches <= 4, f"idle Files context-switched {switches} times in 2 s"
+                # The theme is followed through inotify, so nothing ticks.
+                assert switches <= 1, f"idle Files context-switched {switches} times in 2 s"
                 stop(files)
         except Exception:
             for log in tmp.glob("*.log"):

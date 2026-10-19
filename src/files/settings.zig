@@ -1,6 +1,8 @@
 //! Follow the compositor's persisted theme without blocking the UI thread.
-//! Stat once per second; read only after changes, including atomic replacement.
-//! Shared by the Files, Images and PDF clients.
+//! `watch` arms inotify on the files' directories so followers sleep until a
+//! change; `poll` stats at most once per second and reads only after changes,
+//! including atomic replacement. Shared by the Files, Images, PDF and System
+//! Monitor clients.
 const std = @import("std");
 const c = @import("c.zig").api;
 const anim = @import("ui").anim;
@@ -99,6 +101,28 @@ pub const Settings = struct {
     pub fn deinit(self: *Settings, a: std.mem.Allocator) void {
         if (self.config_path) |p| a.free(p);
         if (self.theme_path) |p| a.free(p);
+    }
+
+    /// Adds inotify watches on the directories holding the config and theme
+    /// files, so atomic saves are seen too. A missing directory is replaced by
+    /// its nearest existing parent: call again after events, so a created
+    /// directory gets its own watch (re-adding a watch is harmless).
+    pub fn watch(self: *const Settings, fd: c_int) void {
+        for ([_]?[:0]const u8{ self.config_path, self.theme_path }) |maybe_path| {
+            var parent = std.fs.path.dirname(maybe_path orelse continue) orelse continue;
+            while (true) {
+                var buf: [4096]u8 = undefined;
+                const path = std.fmt.bufPrintZ(&buf, "{s}", .{parent}) catch break;
+                if (c.inotify_add_watch(fd, path, c.IN_CLOSE_WRITE | c.IN_MOVED_TO | c.IN_CREATE | c.IN_DELETE | c.IN_DELETE_SELF | c.IN_MOVE_SELF) >= 0) break;
+                parent = std.fs.path.dirname(parent) orelse break;
+            }
+        }
+    }
+
+    /// `poll` without its once-a-second pacing, for after `watch` saw events.
+    pub fn reload(self: *Settings, a: std.mem.Allocator, io: std.Io) ?ThemeUpdate {
+        self.last_second = -1;
+        return self.poll(a, io);
     }
 
     /// The merged `[theme]` of the config and `REDIWM_THEME` files, when
