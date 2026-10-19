@@ -60,11 +60,7 @@ libseccomp, libarchive, libjpeg, libpng, libwebp and GNU Readline. Files embeds
 the pinned libvterm 0.3.3 source (downloaded by Zig; no system libvterm needed). Optional:
 Xwayland, `foot`, `brightnessctl`, `gio`/`xdg-open`, `git` (optional).
 
-Printer support uses an existing CUPS server (`cups`). Installing the optional
-`cups-pk-helper` package enables authorized setup and configuration from
-Settings → Printers; viewing status and submitting ordinary user jobs do not
-require that helper. These are optional runtime packages, not compositor build
-dependencies. RediWM does not install printer drivers or change USB rules.
+Printer support uses an existing CUPS server (`cups`).
 
 Run from a checkout, `scripts/install.sh` builds that checkout (dependencies,
 then `install-session.sh` with the arguments you give it).
@@ -75,15 +71,6 @@ zig build -Doptimize=ReleaseSafe          # for daily use and measurements
 sh scripts/install-session.sh             # install and restart the running session
 sh scripts/install-session.sh --no-restart --dm   # install only, plus rediwm-dm
 ```
-
-### Releasing
-
-`scripts/make-release.sh` builds each distro's tarball (`rediwm-<distro>-x86_64.tar.gz`)
-in a clean container of that distro, with `scripts/build-wlroots.sh`'s pinned.
-
-`rediwm-pdf FILE` opens one PDF in a sandboxed viewer process. It requires
-Landlock ABI 3 or newer and a compositor with `security-context-v1` (including
-RediWM); it refuses to parse a document if isolation cannot be established.
  
 ## Using it
 
@@ -92,7 +79,6 @@ RediWM); it refuses to parse a document if isolation cannot be established.
 | Super+Space | centered app launcher |
 | Super+T / E / B | terminal / Files / browser |
 | Super+Q, Super+F, Super+M | close, fullscreen, maximize |
-| Super+Shift+arrows | tile halves and quarters |
 | Super+arrows | slide to the neighbouring desktop |
 | Super+Ctrl+arrows | focus the window in that direction |
 | Alt+Tab | window switcher |
@@ -105,124 +91,6 @@ RediWM); it refuses to parse a document if isolation cannot be established.
 
 Canvas bindings live in `[keybinds]`; `"noop"` disables one.
 
-**Optional automatically tiled workspaces:** select **Settings → Desktop → Workspaces**, or
-set `[compositor] desktop_mode = "workspaces"`. Each output shows one workspace;
-selecting a workspace on another output focuses that output. Switching back to
-Canvas restores surviving windows' canvas positions, sizes and zoom.
-
-Workspace mode uses a separate, stable Hyprland-style preset: Super+Q opens the
-configured terminal, C closes, E opens Files, R opens the launcher, M opens the
-power menu, and arrows focus. Super+1…9/0 selects workspace 1…10; adding Shift
-moves the focused window (including its tabs and dialogs) there and follows it.
-Super+wheel cycles existing workspaces. Super+left-drag inserts a tile beside
-another tile with a preview; Super+right-drag adjusts its split dividers.
-Floating windows keep ordinary move/resize behavior. Escape cancels an
-insertion or restores the split sizes from before a resize.
-Fullscreen, lock, Alt+Tab, screenshots and undo remain
-available. Canvas panning and window zoom are inactive in workspace mode.
-
-Override the preset in `[keybinds.workspace]`, including `"noop"` to disable a
-binding, or edit the active preset in Settings → Keyboard Shortcuts. Mode
-changes never rewrite `[keybinds]`. Configurable actions are `workspace N`,
-`move_to_workspace N`, `workspace_next`, `workspace_prev` and
-`toggle_power_menu` (workspace IDs 1–32).
-
-| Workspace tiling shortcut | Action |
-| --- | --- |
-| Super+V | Toggle the focused window between floating and automatic tiling |
-| Super+J | Rotate the nearest active split |
-| Super+Shift+arrows | Swap with a tile in that direction |
-| Super+Ctrl+arrows | Move the relevant split divider by 32 logical pixels |
-| Super+Shift+Space | Toggle automatic tiling for the current workspace |
-
-The last three are RediWM extensions. All are editable in Keyboard Shortcuts
-and `[keybinds.workspace]`. Their action names are `toggle_floating`,
-`toggle_split`, `toggle_workspace_tiling`, `swap_left/right/up/down`, and
-`resize_split_left/right/up/down` (choose one direction, e.g. `swap_left`).
-IPC uses the same actions: `tiling_action` takes an `action` string and an
-optional window `id`; without `id`, it uses the focused window/current workspace.
-
-New workspace windows use a recursive split layout: a new window splits the
-focused tile along its longer side, and a window moved to another workspace
-joins beside that workspace's focused tile. Tiles glide to their new places, and
-switching workspaces slides the old one out and the new one in (the higher
-number from the right, or from below when other displays sit beside the output;
-a cross-fade when displays surround it or motion is reduced) at
-`[compositor] desktop_switch_ms`. There is an 8 px gap around and between
-frames by default. Set `[compositor] window_gap` to override it,
-including `0` for no gap; Canvas keeps its default gap of 0 px. Existing explicit
-gap settings are preserved. The active workspace window has a 1 px red outline,
-including floating windows and clients that draw their own decorations;
-fullscreen windows have no outline. The colour is configurable through
-`[theme] workspace_active_border` (default `"#ed1b2e"`).
-Focus never changes tile order. Dialogs and fixed-size
-clients float; each tab group occupies one tile. A window that cannot fit its
-minimum size floats until space becomes available. Earlier workspace members
-keep priority when an output shrinks. Maximum sizes leave unused tile space.
-Manual snapping or explicit IPC placement/size requests remove a window from
-automatic arrangement; the remaining tiles reflow. Minimize, maximize and
-fullscreen temporarily suspend a tile and restore its split afterwards.
-
-Floating toggles and remapped clients remember a nearby split for reinsertion;
-if its neighbor has closed, stable member order supplies a fallback. Tab groups
-and launch placeholders keep one tile. Cross-output drops and workspace
-transfers reflow both layouts.
-
-Super+Z (or IPC `undo`) restores the last layout operation across all affected
-windows: swaps, split direction/size changes, floating and automatic-layout
-toggles, manual snaps, moves/resizes, and workspace transfers. Cross-output
-operations restore both layouts. Closed windows stay closed; surviving tiles
-are reconciled with current client limits and outputs. Escape cancels a tiled
-gesture; canceled and no-op layout changes do not add an undo entry.
-
-Settings → Desktop exposes each workspace's automatic/floating placement, window
-spacing, and a checklist of floating apps. The checklist saves app ID patterns in
-`[compositor] floating_apps`; advanced exceptions use the existing rule matchers:
-
-```toml
-[[window_rules]]
-app_id = "utility*"
-floating = true
-
-[[window_rules]]
-app_id = "utility-editor"
-title = "Main*"
-floating = false
-```
-
-The last matching `floating` rule overrides the checklist default. Super+V and
-manual placement override the default for that window or tab group. Rule/config
-reloads update windows without replacing an explicit window override. Dialogs
-and fixed-size clients continue to float.
-
-Workspace mode saves a version 2 JSON snapshot to
-`$XDG_STATE_HOME/rediwm/workspace-layout.json` (normally
-`~/.local/state/rediwm/workspace-layout.json`), leaving the canvas autosave separate.
-Membership, output ownership, layout choices, split structure/ratios, floating
-restore geometry, tab groups and saved canvas state survive restarts. Existing
-apps must reopen themselves; snapshots do not launch apps. Each window matches
-once by app/backend, preferring its title and X11 instance, with saved occurrence
-order as a fallback. Missing members are pruned and missing outputs use a surviving
-output. Periodic writes wait for pending startup matches, up to 37 seconds; user layout edits protect
-that workspace from later split restoration.
-
-`save_layout NAME` and `restore_layout NAME` support workspace snapshots too.
-Named files retain their historical `layouts/NAME.toml` path; workspace snapshots
-inside them use versioned JSON. Older canvas TOML remains readable. Restoring an
-older canvas save while in workspace mode updates the saved return-to-canvas state.
-
-- **Mouse:** Alt+drag moves windows, Alt+right-drag resizes. Super+Alt+drag (or middle-drag) pans the desktop, Super+Alt+scroll zooms it, and Alt+scroll zooms a single window.
-- **Zoom on window switch:** `[compositor] focus_zoom` (also in Settings → Appearance) controls what Alt+Tab, directional focus and taskbar activation do. `"boost"` (default) shows the window at 100% until you switch away, `"keep"` only pans, and `"camera"` zooms the desktop to the window's depth.
-- **Dock:** enable **RediWM dock** in Settings → Appearance (`[compositor] dock_enabled = true`, off by default). The compact dock sits above a bottom taskbar, with Applications, Files, Terminal, running windows, Settings and the Trash (**Show Trash**, `dock_show_trash`, on by default; it opens the trash in Files). A window launched from a dock icon grows out of that icon as it opens (`[animations.window_launch]`). Appearance’s **Dock height** slider offers 48–96px (68px by default; `[compositor] dock_height`), resizing icons, spacing and click targets together. A docked dock keeps maximized and tiled windows out of its strip; turn on **Auto-hide dock** (`[compositor] dock_auto_hide`) and it hides until the pointer reaches its screen edge, while windows use the whole area. **Dock opacity** (`dock_opacity`), **Dock corner radius** (the theme’s `dock_radius`; by default the windows’ radius) and **Highlight active app** (`dock_active_highlight`, off by default: a rectangle behind the focused app’s icon) sit beside them, and an icon’s tooltip shows its window title after the pointer rests on it for 1.5 s. Files, Terminal and Settings share their shortcut with running windows and show a pill underneath, including configured default apps. The pill smoothly grows, shrinks and fades with focus and app state, following the animation and reduced-motion settings. Click a running icon to focus/restore its app or minimize the focused window; scroll the dock to reach overflow windows. Drag an application from the start menu or launcher onto the dock to pin it: a marker shows where it will land, Escape cancels, and a drop away from the dock does nothing. A pinned icon launches its app, or focuses/minimizes it like a running icon once open, and takes over that app's windows. Pins (up to 16) are saved as desktop entry IDs in `dock_pinned_apps`; drag a pinned icon along the dock to reorder the pins (a marker shows where it will land, Escape cancels, and a drop where it started changes nothing; a pinned icon acts when released, so a plain click still launches or focuses it); right-click a pin for Unpin from dock. Every running app shows in the dock, pinned or not: an unpinned one gets its own icon while it runs, and right-clicking it offers Close and Force Close. Right-click a Files, Terminal, Applications or Settings shortcut to remove it; the choice is remembered in `dock_hidden_shortcuts` (`applications`, `files`, `terminal`, `settings`; delete an entry to restore it). Removal drops only the launcher: that app still shows as an ordinary icon while it runs. The old `dock_hidden_apps` list is gone, as running apps can no longer be hidden. It hides on the focused fullscreen window’s display.
-- **Window tabs:** enable per app in Settings → Appearance (saved in `[compositor] window_tab_apps`). **+** opens a new window as a tab. The app needs a desktop entry with a launch command.
-- **Lock screen:** covers every output and engages before suspend (`[compositor] lock_on_suspend`) and on `loginctl lock-session`. There's no idle lock; add `swayidle -w timeout 300 'swaylock -f'` to `[[autostart]]`.
-- **Desktop icons:** a `.desktop` launcher only runs if it's installed, root-owned, executable, or an exact copy of an installed entry. Otherwise, choose **Allow Launching** from its menu.
-- **`rediwm-dm`:** disable your current display manager, run `sudo systemctl enable rediwm-dm`, and reboot. Options are in `/etc/rediwm/dm.conf`.
-- **Text editor:** `rediwm-editor [FILE ...]` opens UTF-8 files in tabs, from tiny notes to logs of hundreds of megabytes (up to 4 GiB, if they fit in free memory). Ctrl+N new, Ctrl+O open, Ctrl+S save, Ctrl+Shift+S save as, Ctrl+W close tab, Ctrl+PgUp/PgDn switch tabs, Ctrl+F or F3 find. In `rediwm-files`, Space previews images, PDFs and text.
-- **Files terminal:** F4 or the terminal button opens a resizable drawer below the file list. Hiding it keeps commands running; each Files window owns its own session. Bash follows folder navigation at an empty prompt and defers it while editing or running a command. Ctrl+Shift+C/V copies and pastes; Shift overrides application mouse reporting for selection. The header also opens your configured external terminal. See [terminal support](docs/files-terminal.md) for shell support and limits.
-- **Games and VMs:** games get pointer lock and relative motion. If a VM or remote desktop grabs your shortcuts, Super+Escape takes them back.
-- **Known issues (wlroots 0.20):** X11→Wayland drag-and-drop doesn't start, and X11 pointer input on a second output doesn't arrive.
-
 ## Protocols
 
 Beyond xdg-shell, layer-shell and Xwayland:
@@ -234,23 +102,32 @@ Beyond xdg-shell, layer-shell and Xwayland:
 | Capture | `wlr-screencopy-v1`, `ext-image-copy-capture-v1` | grim, wf-recorder, OBS, xdg-desktop-portal-wlr |
 | Locking and idle | `ext-session-lock-v1`, `ext-idle-notify-v1`, `idle-inhibit-v1` | swaylock, gtklock, swayidle |
 | Remote input | `virtual-pointer-v1`, `virtual-keyboard-v1` | wayvnc, KDE Connect, wtype |
-| Clipboard | `wlr-data-control-v1`, `ext-data-control-v1`, primary selection | wl-clipboard |
 | Input | `text-input-v3`, `input-method-v2`, `relative-pointer-v1`, `pointer-constraints-v1`, `keyboard-shortcuts-inhibit-v1`, `pointer-gestures-v1`, `cursor-shape-v1` | fcitx5, IBus, games, virt-manager |
-| Workspace | `ext-workspace-v1` | Canvas, or per-output workspaces with activation |
 | Window metadata | `xdg-toplevel-tag-v1`, `content-type-v1`, `xdg-activation-v1` | window rules, content hints, authorized activation |
 | Colour | `color-management-v1`, `color-representation-v1` | renderer-supported colour spaces and pixel representations |
 | Presentation | `tearing-control-v1`, `drm-lease-v1` | opt-in fullscreen tearing, DRM-connected VR headsets |
 | Rendering | `fractional-scale-v1`, `viewporter`, `single-pixel-buffer-v1`, `linux-dmabuf-v1`, `linux-drm-syncobj-v1`, `presentation-time` | |
- 
+and more 
  
 ## Configuration
 
 `$XDG_CONFIG_HOME/rediwm/config.toml` (`REDIWM_CONFIG` overrides) is written with
 commented defaults on first run and reloads on save; a parse error keeps the
-previous config. Sections: `[theme]`, `[input]`, `[input_method]`,
-`[compositor]`, `[region]`, `[idle]`, `[night_light]`, `[notifications]`, `[desktop]`,
-`[polkit]`, `[ipc]`, `[keybinds]`, `[[outputs]]`, `[[autostart]]`,
-`[[window_rules]]`, `[[notification_rules]]` and `[[sandbox_allow]]`.
+previous config. 
+Sections: 
+`[theme]`
+`[input]`
+`[input_method]`
+`[compositor]`
+`[region]`
+`[idle]`
+`[night_light]`
+`[notifications]`
+`[desktop]`
+`[polkit]`
+`[ipc]`
+and more
+
 
 Window rules match by globs; for each property the last matching rule wins:
 
@@ -285,31 +162,6 @@ uses this envelope (command names are case-sensitive snake_case):
 {"version":1,"id":2,"command":"move_cursor","params":{"x":100,"y":200}}
 ```
 
-Settings and desktop inspection also work without opening Settings.
-`set_desktop_mode`, `set_window_gap` and `set_floating_apps` persist by default;
-`persist: false` makes a temporary change until config reload:
-
-| Query/action | Parameters and behavior |
-| --- | --- |
-| `workspaces` | Output, visibility, automatic/floating placement, gap, and a preorder split tree (`nodes`). Leaf `id` is a window's `workspace_order`, or `tab_group` when `group` is true. `windows` reports placement and explicit floating overrides. |
-| `set_desktop_mode` | `mode`: `canvas` or `workspaces`. |
-| `set_workspace_layout` | `workspace`: 1–32, `automatic`: boolean. Saved in workspace state; participates in layout undo. |
-| `switch_workspace` | `workspace`: 1–32. |
-| `move_to_workspace` | Window `id`, `workspace`: 1–32; moves dialogs/tab members together and follows. |
-| `set_window_gap` | `gap`: 0–512 logical pixels. |
-| `set_floating_apps` | `apps`: app ID glob strings; replaces the checklist defaults. |
-| `get_services` | System services, raw systemd state, activation times (`activation_us`) and total `boot_us`. First requests may report `loading`/`analyzing`; unavailable times are null. |
-| `set_service_mode` | `service`, `mode`: `on`, `disabled`, or `on-demand`. Changes boot policy without starting/stopping the unit. `on-demand` requires an existing activation trigger and disables boot enablement; it does not create or enable a socket/timer. `deferred` returns `UnsupportedServiceMode`. Static/masked units are read-only. |
-| `get_sounds` | Configured theme and registered events, including enabled/available flags and resolved files. |
-| `play_sound` | `event`: a name from `get_sounds`. Queues an enabled, available event using `/usr/bin/paplay`; returns an accepted playback PID, not a playback-completion guarantee. |
-| `get_wallpaper` | Configured selection, resolved and displayed paths, dimensions, loading and failure/fallback status. |
-| `set_wallpaper` | `path`: wallpaper name or file path; `""` restores the bundled default. Decode is asynchronous; inspect `get_wallpaper` for completion/fallback. |
-| `get_theme` | Effective theme `tokens`, theme file path (null for inline configuration), and dark-mode preference. Colors are straight RGBA arrays in 0–1; null optional tokens use the UI's automatic defaults. |
-| `set_accent_color` | `color`: `#RRGGBB` or `#RRGGBBAA`; updates live shell decorations and widgets. |
-| `get_processes` | Window-owning app processes grouped by PID, with window IDs, RSS bytes and CPU sampled for approximately 200 ms on a worker. 100% means one logical CPU; this excludes background processes and app child-process aggregation. Missing/exited processes have null usage. No idle sampling. |
-| `set_night_light` | Optional `enabled` and `temperature` (1700–10000 K); at least one required. Enabling follows the configured schedule. |
- 
-
 ## More
 
 - [SECURITY.md](SECURITY.md): security boundaries and decisions.
@@ -332,5 +184,3 @@ terms or conditions.
 
 Bundled third-party assets keep their own licenses: the fonts under
 `assets/fonts` (SIL OFL 1.1) and the cursors under `assets/cursors` (CC BY-SA 4.0).
-
-Theme packs are selected in Settings → Appearance. Packs can include wallpapers, shell glyphs, file/app icons and cursors. See [theme packs](docs/themes.md) for the format, installation and sharing.
