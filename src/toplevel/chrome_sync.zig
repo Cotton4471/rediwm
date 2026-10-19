@@ -14,6 +14,7 @@ const theme = @import("ui").theme;
 const stats = @import("../ipc/stats.zig");
 const xdg = @import("../xdg.zig");
 const border_glow = @import("../border_glow.zig");
+const gpa = @import("../main.zig").gpa;
 const log = std.log.scoped(.toplevel);
 const titlebar_stretch = Toplevel.titlebar_stretch;
 const applySizeClip = Toplevel.applySizeClip;
@@ -96,8 +97,9 @@ pub fn clearChromeCache(toplevel: *Toplevel) void {
 
 /// `rebuild_shadow` is false on a pure hover repaint, which cannot change the
 /// shadow; geometry and theme changes pass true.
+/// Every change goes through node and projection setters, which ask for a
+/// frame themselves: a client commit that changes nothing schedules none.
 pub fn syncChrome(toplevel: *Toplevel, rebuild_shadow: bool, now_ms: i64) !void {
-    defer toplevel.server.scheduleFrames();
     defer if (toplevel.server.input.grabbed_toplevel == toplevel) toplevel.server.input.updateGrabBorderGlow();
     const geometry_box = toplevel.clientGeometry();
     if (geometry_box.width <= 0 or geometry_box.height <= 0) return;
@@ -146,9 +148,12 @@ pub fn syncChrome(toplevel: *Toplevel, rebuild_shadow: bool, now_ms: i64) !void 
     toplevel.updateHeldIcon(icon);
     const hover = toplevel.hover_anim.value(now_ms);
     const chip_alpha = toplevel.chip_alpha.value(now_ms);
-    var tab_storage: [@import("../window_tabs.zig").max_tabs]@import("../chrome_tabs.zig").Tab = undefined;
+    // Only a grouped window has tabs. Others skip the 4 KiB scratch, which
+    // ReleaseSafe would fill on every client commit.
+    const tab_storage = if (toplevel.tab_group != 0) try gpa.create([@import("../window_tabs.zig").max_tabs]@import("../chrome_tabs.zig").Tab) else null;
+    defer if (tab_storage) |storage| gpa.destroy(storage);
     const state: chrome.ChromeState = .{
-        .tabs = toplevel.tabStrip(&tab_storage),
+        .tabs = toplevel.tabStrip(tab_storage),
         .active = toplevel.activated,
         .workspace_focus = toplevel.hasWorkspaceFocusBorder(),
         .maximized = toplevel.isMaximized(),

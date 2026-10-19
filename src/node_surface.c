@@ -287,6 +287,16 @@ static void surface_reconfigure(struct rediwm_surface *scene_surface) {
   scene_buffer->color_encoding = color_encoding;
   scene_buffer->color_range = color_range;
 
+  // A commit that attached nothing and damaged nothing shows the same content. Setting
+  // the buffer again would report the node changed and build a whole frame for a
+  // client that only asked for a frame callback (the lock mark below nets to zero).
+  if (surface->buffer && scene_buffer->buffer == &surface->buffer->base &&
+      !(state->committed & WLR_SURFACE_STATE_BUFFER) &&
+      !pixman_region32_not_empty(&surface->buffer_damage)) {
+    pixman_region32_fini(&opaque);
+    return;
+  }
+
   unmark_client_buffer(scene_buffer);
 
   if (surface->buffer) {
@@ -332,8 +342,13 @@ static void handle_scene_surface_surface_commit(struct wl_listener *listener, vo
   // never reach the surface anyway.
   bool enabled = rediwm_node_coords(&surface->buffer->node, NULL, NULL);
   struct wlr_output *output = get_surface_frame_pacing_output(surface->surface);
-  if (!wl_list_empty(&surface->surface->current.frame_callback_list) && output && enabled)
-    wlr_output_schedule_frame(output);
+  if (!wl_list_empty(&surface->surface->current.frame_callback_list) && output && enabled) {
+    struct rediwm_scene *scene = surface->buffer->node.scene;
+    if (scene && scene->frame_callbacks)
+      scene->frame_callbacks(output);
+    else
+      wlr_output_schedule_frame(output);
+  }
 }
 
 static bool scene_buffer_point_accepts_input(struct rediwm_buffer *buffer, double *sx, double *sy) {

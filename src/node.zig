@@ -237,6 +237,8 @@ pub const Scene = extern struct {
     changed_data: ?*anyopaque,
     /// The outputs this scene is shown on (scene_outputs.h).
     outputs: ?*anyopaque,
+    /// A client surface committed with frame callbacks waiting (node.h).
+    frame_callbacks: ?*const fn (output: *wlr.Output) callconv(.c) void,
 
     extern fn rediwm_scene_create(changed: ?*const fn (?*anyopaque, ?*Node, bool) callconv(.c) void, data: ?*anyopaque) ?*Scene;
     pub fn create() !*Scene {

@@ -135,10 +135,11 @@ void rediwm_glass_hold_all(struct glass_engine *engine, bool hold)
 }
 void rediwm_glass_configure(struct glass_effect *effect, float radius, float opacity)
 {
-	if (!effect)
+	if (!effect || (effect->radius == radius && effect->opacity == opacity))
 		return;
 	effect->radius = radius;
 	effect->opacity = opacity;
+	rediwm_node_touch(&effect->node->node);
 }
 void rediwm_glass_detach(struct glass_effect *effect)
 {

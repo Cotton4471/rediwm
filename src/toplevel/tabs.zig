@@ -5,7 +5,19 @@ const Toplevel = @import("../Toplevel.zig");
 const geometry = @import("../geometry.zig");
 const nowMs = Toplevel.nowMs;
 
-pub fn tabStrip(toplevel: *Toplevel, storage: *[@import("../window_tabs.zig").max_tabs]@import("../chrome_tabs.zig").Tab) @import("../chrome_tabs.zig").Strip {
+/// `storage` may be null for a window outside any tab group, which has no tabs.
+pub fn tabStrip(toplevel: *Toplevel, storage: ?*[@import("../window_tabs.zig").max_tabs]@import("../chrome_tabs.zig").Tab) @import("../chrome_tabs.zig").Strip {
+    var strip: @import("../chrome_tabs.zig").Strip = .{ .first = toplevel.tab_first, .hover = toplevel.tab_hover, .notice = toplevel.tab_notice };
+    const selected = if (storage) |tabs| fillTabs(toplevel, tabs, &strip) else 0;
+    const geom = @import("../chrome_tabs.zig").geometry(toplevel.chrome_width, toplevel.chromeDensity(), strip);
+    if (selected < strip.first) strip.first = selected;
+    if (selected >= strip.first + geom.count) strip.first = selected + 1 -| geom.count;
+    toplevel.tab_first = strip.first;
+    return strip;
+}
+
+/// The group's tabs into `storage`; returns the index of `toplevel`'s own tab.
+fn fillTabs(toplevel: *Toplevel, storage: *[@import("../window_tabs.zig").max_tabs]@import("../chrome_tabs.zig").Tab, strip: *@import("../chrome_tabs.zig").Strip) usize {
     var members_storage: [@import("../window_tabs.zig").max_tabs]*Toplevel = undefined;
     const members = @import("../window_tabs.zig").members(toplevel, &members_storage);
     var selected: usize = 0;
@@ -13,12 +25,8 @@ pub fn tabStrip(toplevel: *Toplevel, storage: *[@import("../window_tabs.zig").ma
         storage[i] = .{ .id = member.id, .title = member.title(), .active = member == toplevel, .attention = member.needs_attention };
         if (member == toplevel) selected = i;
     }
-    var strip: @import("../chrome_tabs.zig").Strip = .{ .tabs = storage[0..members.len], .first = toplevel.tab_first, .hover = toplevel.tab_hover, .notice = toplevel.tab_notice };
-    const geom = @import("../chrome_tabs.zig").geometry(toplevel.chrome_width, toplevel.chromeDensity(), strip);
-    if (selected < strip.first) strip.first = selected;
-    if (selected >= strip.first + geom.count) strip.first = selected + 1 -| geom.count;
-    toplevel.tab_first = strip.first;
-    return strip;
+    strip.tabs = storage[0..members.len];
+    return selected;
 }
 
 pub fn tabAt(toplevel: *Toplevel, x: f64, y: f64) @import("../chrome_tabs.zig").Hit {

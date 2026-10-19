@@ -513,6 +513,11 @@ static void committed(struct wl_listener *listener, void *data) {
   struct leaf *l = wl_container_of(listener, l, commit);
   struct wlr_surface *surface = l->surface->surface;
   const struct wlr_surface_state *state = &surface->current;
+  // A commit with no new content (a client only asking for a frame callback) leaves
+  // the leaf as it is; geometry and regions reach it through the node setters.
+  if (!(state->committed & WLR_SURFACE_STATE_BUFFER) &&
+      !pixman_region32_not_empty(&surface->buffer_damage) && !rediwm_surface_state_remapped(state))
+    return;
   // Regions from different buffer mappings cannot safely be combined. A full
   // repaint also covers a mapping changed and restored between presentations.
   if (state->buffer_width != l->damage_width ||
@@ -1485,7 +1490,10 @@ static void watched_commit(struct wl_listener *listener, void *data) {
   bool known = false;
   wl_list_for_each(f, &p->feedback, link)
       if (f->leaf->surface && f->leaf->surface->surface == watch->surface) known = true;
-  if (!known) mark_all(p);
+  // A known surface's leaf reports its own changes; frame callbacks alone are the
+  // surface node's to deliver.
+  if (known) return;
+  mark_all(p);
   schedule(p);
 }
 static void watched_destroy(struct wl_listener *listener, void *data) {

@@ -378,6 +378,7 @@ pub fn init(server: *Server, scale: ?f32, icon_theme_cfg: icon_theme.Config, io:
     const nodes = sn.Scene.create() catch return error.SceneCreateFailed;
     errdefer nodes.destroy();
     nodes.outputs = scene_outputs;
+    nodes.frame_callbacks = Output.frameCallbacksWanted;
     const background_tree = nodes.tree.createSceneTree() catch return error.SceneCreateFailed;
     const desktop_tree = nodes.tree.createSceneTree() catch return error.SceneCreateFailed;
     const world_tree = nodes.tree.createSceneTree() catch return error.SceneCreateFailed;

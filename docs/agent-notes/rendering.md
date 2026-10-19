@@ -59,6 +59,11 @@ chrome, capture, or retained panel painting. General rules remain in
   `wlr_output_commit_state`. `commitIsRedundant` skips commits with no damage,
   colour change, attach-render lock or cursor change; register anything new
   there. Skipped frames get callbacks from `vblank_timer`, never immediately.
+  A client commit with nothing new (no attach, no damage, no remap) changes no
+  node and schedules no frame: its callbacks go through the scene's
+  `frame_callbacks` hook (`Output.frameCallbacksWanted`), which arms the timer
+  at idle unless a frame is coming anyway. Keep it that way: a setter or listener
+  that reports a change on every commit brings back a whole frame per commit.
   Build output state through `Server.buildOutputState`, including capture: the
   owned GLES2 pass is the only presenter (the session requires GLES2) and keeps
   one swapchain damage history. It reads graph geometry and the buffers,

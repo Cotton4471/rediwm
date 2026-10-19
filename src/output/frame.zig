@@ -113,6 +113,36 @@ pub fn deferFrameDone(output: *Output) void {
     output.vblank_target_ns = target;
 }
 
+/// A client surface committed with frame callbacks waiting (node_surface.c).
+/// A commit that changed nothing must not build a frame just to find it
+/// redundant: once every commit handler of this dispatch has run, deliver the
+/// callbacks at the next vblank unless a frame is coming anyway.
+pub fn frameCallbacksWanted(wlr_output: *wlr.Output) callconv(.c) void {
+    const output: *Output = @ptrCast(@alignCast(wlr_output.data orelse {
+        wlr_output.scheduleFrame();
+        return;
+    }));
+    if (output.vblank_armed or output.callback_idle != null) return;
+    output.callback_frame_seq = output.frame_seq;
+    output.callback_idle = output.server.wl_server.getEventLoop().addIdle(*Output, callbacksIdle, output) catch {
+        wlr_output.scheduleFrame();
+        return;
+    };
+}
+
+fn callbacksIdle(output: *Output) void {
+    output.callback_idle = null;
+    const wlr_output = output.wlr_output;
+    // A frame since the request sent them; a scheduled one or the timer will.
+    if (output.frame_seq != output.callback_frame_seq or output.vblank_armed or wlr_output.needs_frame) return;
+    const scene_output = output.server.scene_outputs.get(wlr_output) orelse return wlr_output.scheduleFrame();
+    // A frame waiter (IPC) counts on client frames reaching the output.
+    const waiting = if (output.server.ipc) |ipc| ipc.wait_mgr.waitsForFrame() else false;
+    if (wlr_output.frame_pending or waiting or !commitIsRedundant(output, scene_output)) return wlr_output.scheduleFrame();
+    stats.global_stats.output_skipped_commits +%= 1;
+    deferFrameDone(output);
+}
+
 pub fn handleVblank(output: *Output) c_int {
     output.vblank_armed = false;
     output.last_vblank_ns = output.vblank_target_ns;

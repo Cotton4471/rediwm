@@ -65,6 +65,7 @@ static void commit_damage(struct leaf *l, int x, int y, int width, int height) {
   pixman_region32_clear(&surface->buffer_damage);
   assert(pixman_region32_union_rect(&surface->buffer_damage,
       &surface->buffer_damage, x, y, width, height));
+  surface->current.committed |= WLR_SURFACE_STATE_BUFFER; // an attach
   committed(&l->commit, NULL);
 }
 static bool damaged(struct rediwm_scene_output *out, int x, int y) {
@@ -1412,6 +1413,13 @@ int main(void) {
   assert(damaged(out, 11, 11) && damaged(out, 171, 91));
   assert(!damaged(out, 100, 60));
   clear_damage(out);
+
+  // A commit that attaches and damages nothing (a client only asking for a frame
+  // callback) leaves the leaf and its group clean.
+  surface.current.committed = 0;
+  pixman_region32_clear(&surface.buffer_damage);
+  committed(&l->commit, NULL);
+  assert(!l->dirty && !p->any_dirty);
 
   // Rotation with empty damage is not a repaint; rotation with partial damage
   // must retain only that region. The source tree itself is disabled.

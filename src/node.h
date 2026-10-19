@@ -26,6 +26,7 @@
 #include <wlr/util/box.h>
 
 struct wlr_buffer;
+struct wlr_output;
 struct wlr_texture;
 struct wlr_drm_syncobj_timeline;
 struct rediwm_scene;
@@ -125,6 +126,9 @@ struct rediwm_scene {
   void *changed_data;
   // The outputs this scene is shown on (what surfaces are told about).
   struct rediwm_scene_outputs *outputs;
+  // A client surface shown on `output` committed with frame callbacks waiting. NULL
+  // schedules a frame, which delivers them; the owner may deliver them without one.
+  void (*frame_callbacks)(struct wlr_output *output);
 };
 
 static inline struct rediwm_tree *rediwm_tree_from_node(struct rediwm_node *node) {

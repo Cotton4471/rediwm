@@ -367,6 +367,11 @@ pub const WaitManager = struct {
         }
     }
 
+    pub fn waitsForFrame(mgr: *const WaitManager) bool {
+        for (mgr.entries.items) |entry| if (entry.kind == .frame) return true;
+        return false;
+    }
+
     pub fn checkAll(mgr: *WaitManager) void {
         const now = anim.nowMs();
         var i: usize = 0;

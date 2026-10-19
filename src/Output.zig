@@ -105,6 +105,10 @@ frame_wanted: bool = false,
 /// Last known vblank: a page-flip frame event or a fired `vblank_timer`.
 last_vblank_ns: u64 = 0,
 flip_pending: bool = false,
+/// Decides, once this dispatch's commits are handled, whether client frame
+/// callbacks need a frame (`frameCallbacksWanted`).
+callback_idle: ?*wl.EventSource = null,
+callback_frame_seq: u64 = 0,
 tearing_idle: ?*wl.EventSource = null,
 tearing_rejected: bool = false,
 /// An ext-session-lock client waits for this output to commit a locked frame.
@@ -421,6 +425,7 @@ pub const commitIsRedundant = output_frame.commitIsRedundant;
 pub const refreshPeriodNs = output_frame.refreshPeriodNs;
 pub const deferFrameDone = output_frame.deferFrameDone;
 pub const handleVblank = output_frame.handleVblank;
+pub const frameCallbacksWanted = output_frame.frameCallbacksWanted;
 pub const sendFrameDone = output_frame.sendFrameDone;
 pub const tearingAllowed = output_frame.tearingAllowed;
 pub const queueTearing = output_frame.queueTearing;
@@ -532,6 +537,7 @@ pub fn handleDestroy(listener: *wl.Listener(*wlr.Output), _: *wlr.Output) void {
     if (output.power_menu) |pm| pm.destroy();
     output.color.deinit();
     if (output.vblank_timer) |timer| timer.remove();
+    if (output.callback_idle) |idle| idle.remove();
     output.link.remove();
     output.frame.link.remove();
     output.present.link.remove();
