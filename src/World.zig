@@ -341,12 +341,18 @@ pub fn initBounds(world: *World, layout_x: i32, layout_y: i32, layout_w: i32, la
 /// a window happened to pass through.
 fn derivedBounds(world: *World, layout_x: i32, layout_y: i32, layout_w: i32, layout_h: i32) camera_mod.Bounds {
     const cfg = world.server.config.compositor;
-    var bounds = camera_mod.computeGridBounds(layout_x, layout_y, layout_w, layout_h, cfg.canvas_columns, cfg.canvas_rows);
-    if (world.workspaces.active) return bounds;
+    const grid = camera_mod.computeGridBounds(layout_x, layout_y, layout_w, layout_h, cfg.canvas_columns, cfg.canvas_rows);
+    if (world.workspaces.active) return grid;
+    // Each window is measured against the grid alone, so stacking order
+    // cannot change whether a frame's grab strip counts as reachable.
+    var bounds = grid;
     var it = world.toplevels.iterator(.forward);
     while (it.next()) |top| {
         if (top.tab_hidden or top.closing or top.backend_gone or !top.in_world) continue;
-        expandForToplevel(&bounds, top);
+        var reach = grid;
+        expandForToplevel(&reach, top);
+        bounds.max_x = @max(bounds.max_x, reach.max_x);
+        bounds.max_y = @max(bounds.max_y, reach.max_y);
     }
     return bounds;
 }

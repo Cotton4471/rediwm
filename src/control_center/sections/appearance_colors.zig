@@ -1,5 +1,6 @@
 //! Appearance app colours: applying the accent to GTK and Qt apps and reporting the result.
 
+const i18n = @import("i18n");
 const std = @import("std");
 const layout = @import("ui").layout;
 const theme = @import("ui").theme;
@@ -11,22 +12,23 @@ const section = @import("appearance_dock.zig").section;
 const Section = @import("appearance.zig").Section;
 
 pub fn appColorsNote(s: *Section, a: std.mem.Allocator, color: [4]f32) Widget {
+    const message = if (s.app_colors_message.len > 0) s.app_colors_message else i18n.tr("Uses the main theme. Apply again after changing it; restart apps to see the colors.");
     const text = @import("ui").text;
     const width: f32 = @floatFromInt(@max(120, s.cc.panel_box.width - @as(i32, if (s.cc.panel_box.width < 660) 70 else 238) - 100));
     var lines: std.ArrayList(Widget) = .empty;
     var start: usize = 0;
-    var words = std.mem.tokenizeScalar(u8, s.app_colors_message, ' ');
+    var words = std.mem.tokenizeScalar(u8, message, ' ');
     var end: usize = 0;
     while (words.next()) |word| {
-        const next = @intFromPtr(word.ptr) - @intFromPtr(s.app_colors_message.ptr) + word.len;
-        const measured = text.measureWidthF(s.app_colors_message[start..next], .manrope, theme.global.settings_description_size, 1) catch 0;
+        const next = @intFromPtr(word.ptr) - @intFromPtr(message.ptr) + word.len;
+        const measured = text.measureWidthF(message[start..next], .manrope, theme.global.settings_description_size, 1) catch 0;
         if (end > start and measured > width) {
-            lines.append(a, .{ .name = std.fmt.allocPrint(a, "app_colors_status_{d}", .{lines.items.len}) catch "app_colors_status_line", .kind = .{ .text = .{ .content = s.app_colors_message[start..end], .font_size = theme.global.settings_description_size, .color = color } } }) catch break;
+            lines.append(a, .{ .name = std.fmt.allocPrint(a, "app_colors_status_{d}", .{lines.items.len}) catch "app_colors_status_line", .kind = .{ .text = .{ .content = message[start..end], .font_size = theme.global.settings_description_size, .color = color } } }) catch break;
             start = next - word.len;
         }
         end = next;
     }
-    if (end > start) lines.append(a, .{ .name = std.fmt.allocPrint(a, "app_colors_status_{d}", .{lines.items.len}) catch "app_colors_status_line", .kind = .{ .text = .{ .content = s.app_colors_message[start..end], .font_size = theme.global.settings_description_size, .color = color } } }) catch {};
+    if (end > start) lines.append(a, .{ .name = std.fmt.allocPrint(a, "app_colors_status_{d}", .{lines.items.len}) catch "app_colors_status_line", .kind = .{ .text = .{ .content = message[start..end], .font_size = theme.global.settings_description_size, .color = color } } }) catch {};
     return .{ .name = "app_colors_status", .kind = .container, .direction = .column, .gap = 2, .children = lines.toOwnedSlice(a) catch &.{} };
 }
 
@@ -50,16 +52,16 @@ pub fn onApplyAppColors(owner: ?*anyopaque, id: usize) void {
     };
     s.app_colors_job = job;
     s.app_colors_source = source;
-    s.app_colors_message = "Applying app colors…";
+    s.app_colors_message = i18n.tr("Applying app colors…");
     s.cc.refresh();
 }
 
 pub fn appColorsFailure(s: *Section, err: anyerror) void {
     s.app_colors_message = switch (err) {
-        error.QtToolsMissing => "Install qt5ct for Qt 5 apps or qt6ct for Qt 6 apps, then apply again.",
-        error.ManagedSymlink => "A toolkit config folder is a symlink. Apply the colors in its real location, or make it a regular folder.",
-        error.InvalidManagedCss => "The RediWM block in gtk.css is incomplete. Repair it before applying colors.",
-        else => std.fmt.bufPrint(&s.app_colors_message_buf, "Could not apply app colors: {s}. Check your configuration files and permissions.", .{@errorName(err)}) catch "Could not apply app colors. Check your configuration files and permissions.",
+        error.QtToolsMissing => i18n.tr("Install qt5ct for Qt 5 apps or qt6ct for Qt 6 apps, then apply again."),
+        error.ManagedSymlink => i18n.tr("A toolkit config folder is a symlink. Apply the colors in its real location, or make it a regular folder."),
+        error.InvalidManagedCss => i18n.tr("The RediWM block in gtk.css is incomplete. Repair it before applying colors."),
+        else => i18n.fmt(&s.app_colors_message_buf, i18n.tr("Could not apply app colors: {reason}. Check your configuration files and permissions."), .{ .reason = @errorName(err) }) catch i18n.tr("Could not apply app colors. Check your configuration files and permissions."),
     };
     std.log.warn("app colors export failed: {}", .{err});
     s.cc.refresh();
@@ -79,13 +81,13 @@ pub fn finishAppColors(s: *Section, refresh: bool) void {
     if (job.toolkit == .qt) s.cc.server.qt_app_colors = true;
     if (!refresh) return;
     s.app_colors_message = switch (job.toolkit) {
-        .gtk => "GTK colors applied. Restart GTK apps. Apps with their own styles or sandbox settings may differ.",
+        .gtk => i18n.tr("GTK colors applied. Restart GTK apps. Apps with their own styles or sandbox settings may differ."),
         .qt => if (support.qt5 and support.qt6)
-            "Qt 5 and Qt 6 colors applied. Restart apps; sign in again if their colors do not change."
+            i18n.tr("Qt 5 and Qt 6 colors applied. Restart apps; sign in again if their colors do not change.")
         else if (support.qt6)
-            "Qt 6 colors applied. Install qt5ct for Qt 5 apps. Restart apps; sign in again if their colors do not change."
+            i18n.tr("Qt 6 colors applied. Install qt5ct for Qt 5 apps. Restart apps; sign in again if their colors do not change.")
         else
-            "Qt 5 colors applied. Install qt6ct for Qt 6 apps. Restart apps; sign in again if their colors do not change.",
+            i18n.tr("Qt 5 colors applied. Install qt6ct for Qt 6 apps. Restart apps; sign in again if their colors do not change."),
     };
     s.cc.refresh();
 }

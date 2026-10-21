@@ -31,12 +31,12 @@ def compile_client(tmp):
 
 
 class Keyboard:
-    def __init__(self, tmp, layout):
+    def __init__(self, tmp, layout, variant=""):
         env = dict(os.environ, XDG_RUNTIME_DIR=str(tmp), WAYLAND_DISPLAY=wayland_display_name(tmp))
         env.pop("DISPLAY", None)
         self.log = tmp / "keyboard.log"
         with self.log.open("w") as out:
-            self.process = subprocess.Popen([str(tmp / "virtual-keyboard-client"), layout], env=env,
+            self.process = subprocess.Popen([str(tmp / "virtual-keyboard-client"), layout, variant], env=env,
                                             stdin=subprocess.PIPE, stdout=out, stderr=out, text=True)
         wait_for(lambda: "ready\n" in self.log.read_text(), lambda: f"keyboard did not start: {self.log.read_text()}")
 
@@ -170,6 +170,29 @@ def files_rename(tmp, language, accented_c):
     assert "panic:" not in (tmp / "compositor.log").read_text()
 
 
+def direct_text(tmp, language, layout, variant, keys, expected):
+    """Real layout keysyms and composed text survive the shell input path."""
+    config = f'[compositor]\nxwayland = false\n[region]\nlanguage = "{language}"\n'
+    process, log = spawn_compositor(tmp, config_content=config, env_extra={"DBUS_SESSION_BUS_ADDRESS": ""})
+    keyboard = None
+    try:
+        with IPCClient(tmp, timeout=15) as ipc:
+            ipc.wait_for("wallpaper_presented", timeout_ms=10000)
+            ipc.action("open_start_menu")
+            wait_for(lambda: ipc.get_shell_state()["start_menu"]["state"] == "open", "start menu did not open")
+            keyboard = Keyboard(tmp, layout, variant)
+            for key in keys:
+                keyboard.press(key)
+            wait_for(lambda: search_text(ipc) == expected,
+                     lambda: f"{layout}/{variant}: expected {expected!r}, got {search_text(ipc)!r}")
+    finally:
+        if keyboard:
+            keyboard.close()
+        stop_process(process)
+        log.close()
+    assert "panic:" not in (tmp / "compositor.log").read_text()
+
+
 def run():
     with tempfile.TemporaryDirectory(prefix="rediwm-dead-keys-") as directory:
         tmp = Path(directory)
@@ -186,6 +209,15 @@ def run():
             (app / "virtual-keyboard-client").symlink_to(tmp / "virtual-keyboard-client")
             files_rename(app, language, accented_c)
             print(f"PASS: Files rename composes under {language}")
+        for language, layout, variant, keys, expected in (
+                ("de_DE.UTF-8", "de", "nodeadkeys", (40, 39, 26, 12), "äöüß"),
+                ("fr_FR.UTF-8", "fr", "", (26, 18, 3), "êé"),
+                ("ru_RU.UTF-8", "ru", "", (49, 20, 35, 47), "терм")):
+            sub = tmp / layout
+            sub.mkdir(mode=0o700)
+            (sub / "virtual-keyboard-client").symlink_to(tmp / "virtual-keyboard-client")
+            direct_text(sub, language, layout, variant, keys, expected)
+            print(f"PASS: {layout} keyboard text {expected!r}")
 
 
 if __name__ == "__main__":

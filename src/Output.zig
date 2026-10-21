@@ -194,6 +194,34 @@ pub const restoreReconnectedWindows = output_layout.restoreReconnectedWindows;
 pub const Placement = struct { output: *Output, x: i32, y: i32 };
 
 // The wlr.Output should be destroyed by the caller on failure to trigger cleanup.
+/// The kernel DRM driver of a DRM output when it is a hypervisor's virtual GPU.
+fn virtualGpuDriver(wlr_output: *wlr.Output) ?[]const u8 {
+    if (!wlr_output.isDrm()) return null;
+    const fd = wlr_output.backend.getDrmFd();
+    if (fd < 0) return null;
+    // struct drm_version; only the name is asked for.
+    const Version = extern struct {
+        major: c_int = 0,
+        minor: c_int = 0,
+        patch: c_int = 0,
+        name_len: usize,
+        name: [*]u8,
+        date_len: usize = 0,
+        date: ?[*]u8 = null,
+        desc_len: usize = 0,
+        desc: ?[*]u8 = null,
+    };
+    const DRM_IOCTL_VERSION = std.os.linux.IOCTL.IOWR('d', 0x00, Version);
+    var name: [32]u8 = undefined;
+    var version: Version = .{ .name_len = name.len, .name = &name };
+    if (std.os.linux.errno(std.os.linux.ioctl(fd, DRM_IOCTL_VERSION, @intFromPtr(&version))) != .SUCCESS) return null;
+    const driver = name[0..@min(version.name_len, name.len)];
+    for ([_][]const u8{ "vmwgfx", "vboxvideo", "virtio_gpu", "qxl", "bochs-drm", "cirrus", "cirrus-qemu", "hyperv_drm" }) |known| {
+        if (std.mem.eql(u8, driver, known)) return known;
+    }
+    return null;
+}
+
 pub fn create(server: *Server, wlr_output: *wlr.Output) !void {
     const output = try gpa.create(Output);
     errdefer gpa.destroy(output); // listeners are attached last, so this cannot double-free with handleDestroy
@@ -205,7 +233,13 @@ pub fn create(server: *Server, wlr_output: *wlr.Output) !void {
     };
 
     errdefer output.lock_view.tree.node.destroy();
-    output.vblank_timer = server.wl_server.getEventLoop().addTimer(*Output, handleVblank, output) catch null;
+    if (virtualGpuDriver(wlr_output)) |driver| {
+        // These drivers' cursor planes are often invisible in the guest
+        // (VMware, VirtualBox): draw the cursor in the frame instead.
+        wlr_output.lockSoftwareCursors(true);
+        log.info("{s}: software cursor ({s} virtual GPU)", .{ wlr_output.name, driver });
+    }
+    output.vblank_timer =server.wl_server.getEventLoop().addTimer(*Output, handleVblank, output) catch null;
     errdefer if (output.vblank_timer) |timer| timer.remove();
 
     // Layout entry and scene output are addons on `wlr_output`. On error the

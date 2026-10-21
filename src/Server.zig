@@ -388,9 +388,6 @@ pub fn init(server: *Server, scale: ?f32, icon_theme_cfg: icon_theme.Config, io:
     const ime_tree = nodes.tree.createSceneTree() catch return error.SceneCreateFailed;
     const lock_tree = nodes.tree.createSceneTree() catch return error.SceneCreateFailed;
 
-    const catalog = applications.Catalog.init(@import("main.zig").gpa, io, environ, !greeter) catch return error.ServerCreateFailed;
-    errdefer catalog.deinit();
-
     var config_load_error: ?[]const u8 = null;
     var loaded = (if (greeter) loadGreeterConfig(io, environ) else config_loader.loadDefault(@import("main.zig").gpa, io, environ)) catch |err| blk: {
         config_load_error = @errorName(err);
@@ -398,6 +395,10 @@ pub fn init(server: *Server, scale: ?f32, icon_theme_cfg: icon_theme.Config, io:
         break :blk config_loader.default(@import("main.zig").gpa) catch return error.ServerCreateFailed;
     };
     errdefer loaded.deinit();
+    const locale_tag = @import("i18n").resolve(if (greeter) "" else loaded.region.language, environ);
+    _ = @import("i18n").setLanguage(locale_tag);
+    const catalog = applications.Catalog.init(@import("main.zig").gpa, io, environ, !greeter, locale_tag) catch return error.ServerCreateFailed;
+    errdefer catalog.deinit();
     if (greeter) {
         // The greeter shows no windows or desktop and speaks for no one on
         // the session bus; X11 and the authentication agent have no role.
@@ -1081,6 +1082,7 @@ pub fn configurePolkit(server: *Server, config: config_loader.PolkitConfig) void
             return;
         };
         if (server.polkit) |agent| {
+            agent.setLocale(@import("i18n").resolve(server.config.region.language, server.environ)) catch |err| log.warn("could not set authentication language: {}", .{err});
             agent.conversation = .{ .owner = server, .opened = @import("polkit/dialog.zig").Dialog.opened, .event = @import("polkit/dialog.zig").Dialog.event };
             if (server.locker != null) agent.pauseForLock();
         }

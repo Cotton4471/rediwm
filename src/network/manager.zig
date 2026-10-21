@@ -1,5 +1,6 @@
 //! Asynchronous NetworkManager client. Snapshots are fetched on menu open and
 //! service signals, never from a polling timer. No shell commands or argv secrets.
+const i18n = @import("i18n");
 const std = @import("std");
 const dbus = @import("dbus");
 const wire = dbus.wire;
@@ -70,14 +71,14 @@ pub const Ethernet = struct {
         return self.state >= 40 and self.state <= 100;
     }
     pub fn status(self: Ethernet) []const u8 {
-        if (!self.managed) return "Unmanaged";
-        if (!self.carrier) return "Cable unplugged";
+        if (!self.managed) return i18n.tr("Unmanaged");
+        if (!self.carrier) return i18n.tr("Cable unplugged");
         return switch (self.state) {
-            40...90 => "Connecting…",
-            100 => "Connected",
-            110 => "Disconnecting…",
-            120 => "Connection failed",
-            else => "Disconnected",
+            40...90 => i18n.tr("Connecting…"),
+            100 => i18n.tr("Connected"),
+            110 => i18n.tr("Disconnecting…"),
+            120 => i18n.tr("Connection failed"),
+            else => i18n.tr("Disconnected"),
         };
     }
 };
@@ -123,7 +124,7 @@ pub const Manager = struct {
     scanning: bool = false,
     last_scan: i64 = -1,
     scan_timer: ?*@import("wayland").server.wl.EventSource = null,
-    message: []const u8 = "NetworkManager is unavailable",
+    message: []const u8 = "",
     state: u32 = 0,
     connectivity: u32 = 0,
     ethernet: [16]Ethernet = @splat(.{}),
@@ -219,7 +220,7 @@ pub const Manager = struct {
         if (self.wired_timer) |timer| timer.timerUpdate(0) catch {};
         self.busy = false;
         self.joining = null;
-        self.message = "NetworkManager is unavailable";
+        self.message = i18n.tr("NetworkManager is unavailable");
         self.refresh();
     }
     fn connect(self: *Manager) void {
@@ -324,13 +325,13 @@ pub const Manager = struct {
             }
         }
         var msg = result catch {
-            self.message = "Could not read Wi-Fi networks";
+            self.message = i18n.tr("Could not read Wi-Fi networks");
             self.refresh();
             return;
         };
         if (!self.fromOwner(msg) or msg.kind != .method_return or !eq(u8, msg.headers.signature, "a{oa{sa{sv}}}")) return;
         self.parseObjects(&msg.body) catch {
-            self.message = "Could not read Wi-Fi networks";
+            self.message = i18n.tr("Could not read Wi-Fi networks");
             self.refresh();
             return;
         };
@@ -496,7 +497,7 @@ pub const Manager = struct {
                 if (dev.state == 120) {
                     self.busy = false;
                     self.joining = null;
-                    self.message = "Connection failed. Check the password and try again.";
+                    self.message = i18n.tr("Connection failed. Check the password and try again.");
                 }
             }
         }
@@ -537,7 +538,7 @@ pub const Manager = struct {
         if (self.joining == null) if (self.join_timer) |timer| timer.timerUpdate(0) catch {};
         self.applySaved();
         std.mem.sort(Network, self.networks[0..self.count], {}, less);
-        if (eq(u8, self.message, "NetworkManager is unavailable")) self.message = "";
+        if (eq(u8, self.message, i18n.tr("NetworkManager is unavailable"))) self.message = "";
     }
     fn less(_: void, a: Network, b: Network) bool {
         if (a.connected != b.connected) return a.connected;
@@ -656,14 +657,14 @@ pub const Manager = struct {
         req.* = .{ .manager = self, .epoch = self.epoch, .path = path, .wired_generation = self.wired_generation };
         _ = self.conn.?.callWithFlags(self.owner.slice(), if (on) root else path.slice(), if (on) nm else device_iface, if (!on) "Disconnect" else if (eth.has_profile) "ActivateConnection" else "AddAndActivateConnection", if (!on) "" else if (eth.has_profile) "ooo" else "a{sa{sv}}oo", &b, req, wiredDone, 15000, wire.flag_allow_interactive_authorization) catch {
             gpa.destroy(req);
-            self.wired_message = "Could not send the Ethernet request.";
+            self.wired_message = i18n.tr("Could not send the Ethernet request.");
             self.refresh();
             return;
         };
         self.wired_pending = path;
         self.wired_want_connected = on;
         self.wired_accepted = false;
-        self.wired_message = if (on) "Connecting Ethernet…" else "Disconnecting Ethernet…";
+        self.wired_message = if (on) i18n.tr("Connecting Ethernet…") else i18n.tr("Disconnecting Ethernet…");
         self.wired_timer.?.timerUpdate(45000) catch {};
         self.refresh();
     }
@@ -675,11 +676,11 @@ pub const Manager = struct {
         const pending = self.wired_pending orelse return;
         if (!eq(u8, pending.slice(), req.path.slice())) return;
         const msg = result catch {
-            self.finishWired("Ethernet request failed. Check permissions and try again.");
+            self.finishWired(i18n.tr("Ethernet request failed. Check permissions and try again."));
             return;
         };
         if (!self.fromOwner(msg) or msg.kind != .method_return) {
-            self.finishWired("Ethernet request failed. Check permissions and try again.");
+            self.finishWired(i18n.tr("Ethernet request failed. Check permissions and try again."));
             return;
         }
         self.wired_accepted = true;
@@ -691,11 +692,11 @@ pub const Manager = struct {
             if (!eq(u8, eth.path.slice(), pending.slice())) continue;
             if (!self.wired_accepted) return;
             if (self.wired_want_connected and (!eth.carrier or eth.state == 120 or !eth.managed)) {
-                self.finishWired("Ethernet could not connect. Check the cable and connection settings.");
+                self.finishWired(i18n.tr("Ethernet could not connect. Check the cable and connection settings."));
             } else if ((self.wired_want_connected and eth.connected()) or (!self.wired_want_connected and !eth.active() and eth.state != 110)) self.finishWired("");
             return;
         }
-        self.finishWired("Ethernet adapter was removed.");
+        self.finishWired(i18n.tr("Ethernet adapter was removed."));
     }
     fn finishWired(self: *Manager, message: []const u8) void {
         self.wired_pending = null;
@@ -704,7 +705,7 @@ pub const Manager = struct {
         self.refresh();
     }
     fn wiredTimeout(self: *Manager) c_int {
-        self.finishWired("Ethernet connection timed out. Check the cable and try again.");
+        self.finishWired(i18n.tr("Ethernet connection timed out. Check the cable and try again."));
         return 0;
     }
     pub fn join(self: *Manager, net: Network, password: []const u8, autojoin: bool, hidden: bool) void {
@@ -735,7 +736,7 @@ pub const Manager = struct {
             self.joining = net;
             if (self.join_timer == null) self.join_timer = self.server.wl_server.getEventLoop().addTimer(*Manager, joinTimeout, self) catch null;
             if (self.join_timer) |timer| timer.timerUpdate(45000) catch {};
-            self.message = "Connecting…";
+            self.message = i18n.tr("Connecting…");
             self.refresh();
         }
     }
@@ -800,19 +801,19 @@ pub const Manager = struct {
             return;
         };
         self.action(root, nm, "ActivateConnection", "ooo", &b);
-        if (self.busy) self.message = "Connecting…";
+        if (self.busy) self.message = i18n.tr("Connecting…");
     }
     fn action(self: *Manager, path: []const u8, iface: []const u8, method: []const u8, sig: []const u8, b: *wire.Writer) void {
         const req = gpa.create(Request) catch return;
         req.* = .{ .manager = self, .epoch = self.epoch, .path = .{} };
         _ = self.conn.?.callWithFlags(self.owner.slice(), path, iface, method, sig, b, req, actionDone, 15000, wire.flag_allow_interactive_authorization) catch {
             gpa.destroy(req);
-            self.message = "Could not send the Wi-Fi request";
+            self.message = i18n.tr("Could not send the Wi-Fi request");
             self.refresh();
             return;
         };
         self.busy = true;
-        self.message = "Updating Wi-Fi…";
+        self.message = i18n.tr("Updating Wi-Fi…");
         self.refresh();
     }
     fn actionDone(owner: ?*anyopaque, _: *dbus.Connection, result: dbus.Connection.Failure!wire.Message) void {
@@ -844,7 +845,7 @@ pub const Manager = struct {
         if (self.join_timer) |timer| timer.timerUpdate(0) catch {};
         self.busy = false;
         self.joining = null;
-        self.message = "Wi-Fi request failed. Check credentials and permissions.";
+        self.message = i18n.tr("Wi-Fi request failed. Check credentials and permissions.");
         self.refresh();
     }
 };
@@ -852,20 +853,20 @@ pub fn sameNetwork(a: Network, b: Network) bool {
     return a.security == b.security and eq(u8, a.ssid.slice(), b.ssid.slice());
 }
 pub fn networkName(net: *const Network) []const u8 {
-    return if (std.unicode.utf8ValidateSlice(net.ssid.slice())) net.ssid.slice() else "Wi-Fi network";
+    return if (std.unicode.utf8ValidateSlice(net.ssid.slice())) net.ssid.slice() else i18n.tr("Wi-Fi network");
 }
 pub fn networkSubtitle(net: Network) []const u8 {
-    return if (net.connected) (if (net.saved.len != 0) "Connected · Saved" else "Connected") else if (net.saved.len != 0) "Saved" else if (net.security == .open) "Open" else if (net.security == .unsupported) "Additional setup required" else "Secured";
+    return if (net.connected) (if (net.saved.len != 0) i18n.tr("Connected · Saved") else i18n.tr("Connected")) else if (net.saved.len != 0) i18n.tr("Saved") else if (net.security == .open) i18n.tr("Open") else if (net.security == .unsupported) i18n.tr("Additional setup required") else i18n.tr("Secured");
 }
 pub fn joinError(net: Network, password: []const u8) ?[]const u8 {
-    if (net.ssid.len == 0) return "Enter a network name.";
-    if (net.security == .unsupported and net.saved.len == 0) return "This security type needs a network configuration tool.";
+    if (net.ssid.len == 0) return i18n.tr("Enter a network name.");
+    if (net.security == .unsupported and net.saved.len == 0) return i18n.tr("This security type needs a network configuration tool.");
     if (net.connected or net.security == .open or (net.saved.len != 0 and password.len == 0)) return null;
     const hex = password.len == 64 and for (password) |c| {
         if (!std.ascii.isHex(c)) break false;
     } else true;
-    if (net.security == .personal and !hex and (password.len < 8 or password.len > 63)) return "Use 8–63 characters or a 64-digit hex key.";
-    if (net.security == .sae and (password.len < 1 or password.len > 63)) return "Enter a password (1–63 bytes).";
+    if (net.security == .personal and !hex and (password.len < 8 or password.len > 63)) return i18n.tr("Use 8–63 characters or a 64-digit hex key.");
+    if (net.security == .sae and (password.len < 1 or password.len > 63)) return i18n.tr("Enter a password (1–63 bytes).");
     return null;
 }
 fn addressList(b: *wire.Reader) !Text(256) {
@@ -948,7 +949,7 @@ fn writeSettings(b: *wire.Writer, net: Network, password: []const u8, autojoin: 
     const all = try b.beginArray(8);
     const conn = try section(b, "connection");
     // SSIDs are byte strings. Use a valid UTF-8 display name for connection.id.
-    try str(b, "id", if (std.unicode.utf8ValidateSlice(net.ssid.slice())) net.ssid.slice() else "Wi-Fi network");
+    try str(b, "id", if (std.unicode.utf8ValidateSlice(net.ssid.slice())) net.ssid.slice() else i18n.tr("Wi-Fi network"));
     try str(b, "type", "802-11-wireless");
     try prop(b, "autoconnect", "b");
     try b.boolean(autojoin);

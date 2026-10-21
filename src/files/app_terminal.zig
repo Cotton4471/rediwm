@@ -1,5 +1,7 @@
 //! Files terminal controller. All terminal state stays in this client process.
 const std = @import("std");
+const i18n = @import("i18n");
+const tr = i18n.tr;
 const App = @import("app.zig").App;
 const model = @import("terminal/model.zig");
 const tc = model.c;
@@ -29,6 +31,48 @@ pub fn terminalRect(self: *App) Rect {
 pub fn terminalBody(self: *App) Rect {
     const rect = self.terminalRect();
     return .{ .x = rect.x + 8, .y = rect.y + header_height + 6, .w = @max(0, rect.w - 16 - @as(f64, @floatFromInt(self.scrollbarGutter()))), .h = @max(0, rect.h - header_height - 12) };
+}
+pub fn terminalDropAt(self: *App, x: f64, y: f64) bool {
+    if (self.chooser != null or self.dialog != null or self.menu != null or self.terminal.close_at != null or !self.terminal.visible or self.terminalHeight() <= 0) return false;
+    const session = self.terminal.session orelse return false;
+    return tc.ft_running(session) and self.terminalBody().contains(x, y);
+}
+
+/// Quote each absolute path as one shell word, with a trailing argument gap.
+/// Control bytes cannot survive the terminal's paste filtering unchanged.
+pub fn quotePaths(allocator: std.mem.Allocator, paths: []const []const u8) ![]u8 {
+    var bytes: std.ArrayList(u8) = .empty;
+    defer bytes.deinit(allocator);
+    for (paths) |path| {
+        if (!std.fs.path.isAbsolute(path)) return error.InvalidPath;
+        var size: usize = 3;
+        for (path) |ch| {
+            if (ch < 32 or ch == 127) return error.ControlCharacter;
+            size += if (ch == '\'') @as(usize, 4) else 1;
+            if (size > @import("transfer.zig").limit) return error.TooLong;
+        }
+        if (bytes.items.len > @import("transfer.zig").limit - size) return error.TooLong;
+        try bytes.append(allocator, '\'');
+        for (path) |ch| {
+            if (ch == '\'') try bytes.appendSlice(allocator, "'\\''") else try bytes.append(allocator, ch);
+        }
+        try bytes.appendSlice(allocator, "' ");
+    }
+    return bytes.toOwnedSlice(allocator);
+}
+
+pub fn terminalDropPaths(self: *App, paths: []const []const u8) void {
+    if (self.dialog != null or self.menu != null or !self.terminal.visible or self.terminal.close_at != null) return;
+    const session = self.terminal.session orelse return;
+    if (!tc.ft_running(session)) return;
+    const bytes = quotePaths(self.allocator, paths) catch |err| {
+        self.setStatusNotice(if (err == error.ControlCharacter) tr("Cannot insert paths containing control characters") else tr("The dropped paths are invalid or too long"), true);
+        return;
+    };
+    defer self.allocator.free(bytes);
+    if (!tc.ft_paste(session, bytes.ptr, bytes.len)) self.setStatusNotice(tr("Terminal paste exceeds the available input queue"), true);
+    self.terminal.selection = null;
+    self.terminalDamage();
 }
 /// Button indices: status toggle, collapse, external terminal, restart.
 pub fn terminalControl(self: *App, index: usize) Rect {
@@ -112,10 +156,11 @@ pub fn terminalStart(self: *App) void {
         tc.ft_free(old);
         self.terminal.session = null;
     }
+    self.edit_revision += 1;
     self.terminal.error_message = null;
     self.terminal.selection = null;
     const session = tc.ft_new(12, 80) orelse {
-        self.terminal.error_message = "Could not allocate terminal";
+        self.terminal.error_message = tr("Could not allocate terminal");
         self.invalidate();
         return;
     };
@@ -123,14 +168,14 @@ pub fn terminalStart(self: *App) void {
     self.terminal.generation = std.math.maxInt(u64);
     rememberDirectory(self);
     const directory = self.terminal.directory orelse self.allocator.dupeZ(u8, self.home_dir) catch {
-        self.terminal.error_message = "No terminal directory";
+        self.terminal.error_message = tr("No terminal directory");
         return;
     };
     defer if (self.terminal.directory == null) self.allocator.free(directory);
     var helper_buf: [4096]u8 = undefined;
     var plugin_buf: [4096]u8 = undefined;
     const helper = self.terminalHelper("rediwm-files-terminal", &helper_buf) catch {
-        self.terminal.error_message = "Terminal helper is unavailable";
+        self.terminal.error_message = tr("Terminal helper is unavailable");
         return;
     };
     const plugin = self.terminalHelper("../lib/rediwm/files-bash.so", &plugin_buf) catch "";
@@ -140,7 +185,7 @@ pub fn terminalStart(self: *App) void {
 pub fn terminalToggle(self: *App) void {
     if (self.chooser != null or self.dialog != null or self.terminal.close_at != null) return;
     if (!self.terminal.visible and self.terminalMaximum() == 0) {
-        self.setStatusNotice("Enlarge this window to show the terminal", false);
+        self.setStatusNotice(tr("Enlarge this window to show the terminal"), false);
         return;
     }
     self.cancelDrag();
@@ -427,7 +472,7 @@ pub fn terminalRequestClose(self: *App) void {
         if (self.dialog != null) return;
         // A snapshot cannot prove that no job began since it arrived. Confirm
         // every live session, including hidden and unintegrated shells.
-        self.dialog = .{ .kind = .terminal_close, .title = "Close terminal session?" };
+        self.dialog = .{ .kind = .terminal_close, .title = tr("Close terminal session?") };
         self.invalidate();
         return;
     };

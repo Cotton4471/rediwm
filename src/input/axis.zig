@@ -53,10 +53,13 @@ pub fn processAxis(
     // Flip here, before zoom/UI/client branches, so `invert_scroll` behaves
     // like `natural_scroll` would if libinput's device toggle applied to
     // this device: a single, uniform reversal rather than one per consumer.
-    if (input.window_menu.node != null) return;
     const invert = input.server.config.input.invert_scroll;
     const delta: f64 = if (invert) -raw_delta else raw_delta;
     const delta_discrete: i32 = if (invert) -raw_delta_discrete else raw_delta_discrete;
+    if (input.window_menu.node != null) {
+        if (orientation == .vertical_scroll) input.window_menu.scroll(ui_scroll.axisDeltaPx(delta, delta_discrete));
+        return;
+    }
     if (input.server.tray) |tray| {
         if (tray.menu_item != 0) {
             tray.menuScroll(delta);

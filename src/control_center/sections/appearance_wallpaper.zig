@@ -1,5 +1,6 @@
 //! Appearance wallpaper strip: tiles, folder choice, thumbnails and teardown.
 
+const i18n = @import("i18n");
 const std = @import("std");
 const Server = @import("../../Server.zig");
 const layout = @import("ui").layout;
@@ -113,7 +114,7 @@ pub fn buildWallpaper(out: *Section, arena: std.mem.Allocator) void {
         labels = l;
     } else |_| {}
     out.wallpaper_row_children = .{
-        labelWidget("Image"),
+        labelWidget(i18n.tr("Image")),
         .{
             .name = "wallpaper",
             .kind = .{
@@ -160,15 +161,16 @@ pub fn buildWallpaper(out: *Section, arena: std.mem.Allocator) void {
 
     const dir = wallpapers.userDir(arena) catch "";
     const hint = if (folder) |f|
-        std.fmt.allocPrint(arena, "Images in {s}", .{tildePath(arena, f)}) catch "Images in the chosen folder"
+        i18n.allocPrint(arena, i18n.tr("Images in {folder}"), .{ .folder = tildePath(arena, f) }) catch i18n.tr("Images in the chosen folder")
     else
-        std.fmt.allocPrint(arena, "Add your own images to {s}", .{tildePath(arena, dir)}) catch "Add your own images";
+        i18n.allocPrint(arena, i18n.tr("Add your own images to {folder}"), .{ .folder = tildePath(arena, dir) }) catch i18n.tr("Add your own images");
     out.wallpaper_footer_children = .{
         .{ .kind = .{ .text = .{ .content = hint, .font_size = theme.global.settings_description_size, .color = pal.dim } }, .width = .{ .flex = 1 } },
         .{
             .name = "wallpaper_folder",
-            .kind = .{ .button = .{ .label = "Choose folder", .owner = out, .on_click = &onChooseWallpaperFolder, .state = if (folder_picker.running()) .disabled else .idle } },
-            .width = .{ .fixed = 124 },
+            .kind = .{ .button = .{ .label = i18n.tr("Choose folder"), .owner = out, .on_click = &onChooseWallpaperFolder, .state = if (folder_picker.running()) .disabled else .idle } },
+            .width = .auto,
+            .min_width = 124,
             .height = .{ .fixed = 30 },
         },
     };
@@ -182,7 +184,7 @@ pub fn buildStrip(out: *Section, arena: std.mem.Allocator, pal: theme.Theme, cur
     const n = out.strip_entries.len;
     if (n == 0) {
         const note = arena.alloc(Widget, 1) catch return .{ .kind = .container };
-        note[0] = .{ .kind = .{ .text = .{ .content = "No images in this folder", .font_size = theme.global.settings_description_size, .color = pal.dim } } };
+        note[0] = .{ .kind = .{ .text = .{ .content = i18n.tr("No images in this folder"), .font_size = theme.global.settings_description_size, .color = pal.dim } } };
         return .{ .name = "wallpaper_strip_empty", .kind = .container, .direction = .row, .children = note };
     }
     const tiles = arena.alloc(Widget, n) catch return .{ .kind = .container };
@@ -298,7 +300,7 @@ pub fn onChooseWallpaperFolder(owner: ?*anyopaque, _: usize) void {
         };
         break :blk dir;
     };
-    folder_picker.start(server, "Choose wallpaper folder", start, server, &onFolderChosen) catch |err| {
+    folder_picker.start(server, i18n.tr("Choose wallpaper folder"), start, server, &onFolderChosen) catch |err| {
         std.log.warn("could not open the folder chooser: {}", .{err});
         return;
     };

@@ -16,6 +16,7 @@ const linux = std.os.linux;
 
 const catalog_cache = @import("catalog_cache.zig");
 const startup = @import("../startup.zig");
+const i18n = @import("i18n");
 const stats = @import("../ipc/stats.zig");
 
 const log = std.log.scoped(.catalog);
@@ -47,10 +48,16 @@ pub const Locale = struct {
     modifier: []const u8 = "",
 
     pub fn fromEnv(environ: std.process.Environ) Locale {
-        const raw = environ.getPosix("LC_ALL") orelse
-            environ.getPosix("LC_MESSAGES") orelse
-            environ.getPosix("LANG") orelse return .{};
-        return parseLocale(raw);
+        const raw = i18n.resolve("", environ);
+        return forLanguage(raw);
+    }
+
+    /// The catalog's bare Portuguese choice follows Brazilian Portuguese.
+    /// Keep parsing desktop-entry keys pure so Name[pt_BR] outranks Name[pt].
+    pub fn forLanguage(raw: []const u8) Locale {
+        var locale = parseLocale(raw);
+        if (locale.country.len == 0 and std.ascii.eqlIgnoreCase(locale.lang, "pt")) locale.country = "BR";
+        return locale;
     }
 
     pub fn parseLocale(raw: []const u8) Locale {
@@ -69,7 +76,7 @@ pub const Locale = struct {
             rest = rest[0..at];
         }
 
-        if (std.mem.indexOfScalar(u8, rest, '_')) |us| {
+        if (std.mem.indexOfAny(u8, rest, "_-")) |us| {
             loc.lang = rest[0..us];
             loc.country = rest[us + 1 ..];
         } else {
@@ -199,14 +206,14 @@ fn localePriority(key_loc: ?[]const u8, target: Locale) u8 {
     if (target.lang.len == 0) return 0;
 
     const parsed = Locale.parseLocale(k);
-    if (!std.mem.eql(u8, parsed.lang, target.lang)) return 0;
+    if (!std.ascii.eqlIgnoreCase(parsed.lang, target.lang)) return 0;
 
     if (target.modifier.len > 0 and std.mem.eql(u8, parsed.modifier, target.modifier) and
-        target.country.len > 0 and std.mem.eql(u8, parsed.country, target.country))
+        target.country.len > 0 and std.ascii.eqlIgnoreCase(parsed.country, target.country))
     {
         return 5;
     }
-    if (target.country.len > 0 and std.mem.eql(u8, parsed.country, target.country)) {
+    if (target.country.len > 0 and std.ascii.eqlIgnoreCase(parsed.country, target.country)) {
         return 4;
     }
     if (target.modifier.len > 0 and std.mem.eql(u8, parsed.modifier, target.modifier)) {
@@ -302,6 +309,7 @@ pub const Snapshot = struct {
     loading: bool = false,
     from_cache: bool = false,
     scan_ns: u64 = 0,
+    locale_tag: []const u8 = "",
 
     pub fn create(parent: Allocator) !*Snapshot {
         const snap = try parent.create(Snapshot);
@@ -342,6 +350,7 @@ pub const Catalog = struct {
     generation: u64 = 0,
     epoch: u64 = 0,
     refresh_requested: bool = false,
+    locale_tag: []u8,
     running: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
     eventfd: posix.fd_t = -1,
     thread: ?std.Thread = null,
@@ -354,26 +363,26 @@ pub const Catalog = struct {
 
     /// `scan` false leaves the catalog empty and never touches the cache
     /// (the greeter has no start menu).
-    pub fn init(allocator: Allocator, io: Io, environ: std.process.Environ, scan: bool) !*Catalog {
+    pub fn init(allocator: Allocator, io: Io, environ: std.process.Environ, scan: bool, locale_tag: []const u8) !*Catalog {
         const cat = try allocator.create(Catalog);
         errdefer allocator.destroy(cat);
 
         const loading = try Snapshot.create(allocator);
+        errdefer loading.release();
         loading.loading = scan;
 
         const efd = c.eventfd(0, @intCast(std.os.linux.EFD.CLOEXEC | std.os.linux.EFD.NONBLOCK));
-        if (efd < 0) {
-            loading.release();
-            allocator.destroy(cat);
-            return error.EventFdFailed;
-        }
+        if (efd < 0) return error.EventFdFailed;
         errdefer _ = c.close(efd);
 
+        const owned_locale = try allocator.dupe(u8, locale_tag);
+        errdefer allocator.free(owned_locale);
         cat.* = .{
             .allocator = allocator,
             .io = io,
             .environ = environ,
             .current = loading,
+            .locale_tag = owned_locale,
             .eventfd = efd,
             .delay_ns = startup.envDelayNs(environ, "REDIWM_CATALOG_SCAN_DELAY_MS"),
         };
@@ -430,6 +439,7 @@ pub const Catalog = struct {
         if (self.eventfd >= 0) _ = c.close(self.eventfd);
         if (self.pending) |snap| snap.release();
         self.current.release();
+        self.allocator.free(self.locale_tag);
         self.allocator.destroy(self);
     }
 
@@ -448,6 +458,19 @@ pub const Catalog = struct {
         self.unlock();
     }
 
+    /// Main thread updates the request; the worker snapshots it under the mutex.
+    pub fn setLocale(self: *Catalog, locale_tag: []const u8) !void {
+        self.lock();
+        defer self.unlock();
+        if (std.mem.eql(u8, self.locale_tag, locale_tag)) return;
+        const owned = try self.allocator.dupe(u8, locale_tag);
+        self.allocator.free(self.locale_tag);
+        self.locale_tag = owned;
+        self.refresh_requested = true;
+        self.epoch += 1;
+        self.signal();
+    }
+
     pub fn refreshAsync(self: *Catalog) void {
         self.requestRefresh();
     }
@@ -458,8 +481,12 @@ pub const Catalog = struct {
         _ = c.read(self.eventfd, &discard, discard.len);
 
         self.lock();
-        const incoming = self.pending;
+        var incoming = self.pending;
         self.pending = null;
+        if (incoming) |candidate| if (!std.mem.eql(u8, candidate.locale_tag, self.locale_tag)) {
+            candidate.release();
+            incoming = null;
+        };
         const old: ?*Snapshot = if (incoming != null) self.current else null;
         if (incoming) |snap| {
             self.generation += 1;
@@ -525,9 +552,16 @@ pub const Catalog = struct {
         const snap = Snapshot.create(self.allocator) catch return null;
         snap.epoch = epoch;
         const a = snap.allocator();
+        self.lock();
+        snap.locale_tag = a.dupe(u8, self.locale_tag) catch {
+            self.unlock();
+            snap.release();
+            return null;
+        };
+        self.unlock();
         const t0 = stats.nowNs();
 
-        if (!baseline.loading) {
+        if (!baseline.loading and std.mem.eql(u8, baseline.locale_tag, snap.locale_tag)) {
             if (collectSources(a, self.io, self.environ)) |sources| {
                 if (catalog_cache.sourcesMatch(baseline.sources, sources)) {
                     if (copyFiltered(a, baseline.entries, self.environ)) |entries| {
@@ -543,7 +577,7 @@ pub const Catalog = struct {
             } else |_| {}
         }
 
-        const outcome = scanAll(a, self.io, self.environ) catch {
+        const outcome = scanAllWithLocale(a, self.io, self.environ, snap.locale_tag) catch {
             snap.loading = false;
             snap.provisional = false;
             snap.scan_ns = stats.nowNs() -% t0;
@@ -555,7 +589,7 @@ pub const Catalog = struct {
         snap.provisional = false;
         snap.scan_ns = stats.nowNs() -% t0;
 
-        const keys = catalog_cache.envKeys(a, self.environ) catch {
+        const keys = catalog_cache.envKeysWithLocale(a, self.environ, snap.locale_tag) catch {
             return snap;
         };
         catalog_cache.write(self.allocator, self.io, self.environ, .{
@@ -572,7 +606,11 @@ pub const Catalog = struct {
     fn readCacheSnapshot(self: *Catalog) ?*Snapshot {
         const t0 = stats.nowNs();
         const snap = Snapshot.create(self.allocator) catch return null;
-        const payload = catalog_cache.read(snap.allocator(), self.io, self.environ) orelse {
+        const payload = catalog_cache.readWithLocale(snap.allocator(), self.io, self.environ, self.locale_tag) orelse {
+            snap.release();
+            return null;
+        };
+        snap.locale_tag = snap.allocator().dupe(u8, self.locale_tag) catch {
             snap.release();
             return null;
         };
@@ -723,7 +761,11 @@ pub const ScanOutcome = struct {
 };
 
 pub fn scanAll(arena: Allocator, io: Io, environ: std.process.Environ) !ScanOutcome {
-    const locale = Locale.fromEnv(environ);
+    return scanAllWithLocale(arena, io, environ, i18n.resolve("", environ));
+}
+
+pub fn scanAllWithLocale(arena: Allocator, io: Io, environ: std.process.Environ, locale_tag: []const u8) !ScanOutcome {
+    const locale = Locale.forLanguage(locale_tag);
     const current_desktop = environ.getPosix("XDG_CURRENT_DESKTOP");
     const app_dirs = try resolveApplicationDirs(arena, environ);
 
@@ -920,4 +962,20 @@ test "desktop file hidden override" {
     const parsed = parseDesktopFile(arena.allocator(), fixture, .{}) orelse return error.TestFailed;
     try std.testing.expect(parsed.hidden);
     try std.testing.expect(!checkDesktopVisibility(parsed, null));
+}
+
+test "bare Portuguese requests Brazil without promoting generic desktop keys" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const entry = parseDesktopFile(arena.allocator(),
+        \\[Desktop Entry]
+        \\Type=Application
+        \\Name=Files
+        \\Name[pt_BR]=Arquivos
+        \\Name[pt]=Ficheiros
+        \\Exec=/bin/true
+    , Locale.forLanguage("pt.UTF-8")).?;
+    try std.testing.expectEqualStrings("Arquivos", entry.name.?);
+    try std.testing.expectEqualStrings("", Locale.parseLocale("pt").country);
+    try std.testing.expectEqualStrings("PT", Locale.forLanguage("pt_PT.UTF-8").country);
 }

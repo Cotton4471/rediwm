@@ -1,6 +1,8 @@
 //! Files Git sidebar: branch card, status list and their geometry.
 
 const std = @import("std");
+const i18n = @import("i18n");
+const tr = i18n.tr;
 const App = @import("app.zig").App;
 const c = @import("c.zig").api;
 const git = @import("git.zig");
@@ -49,7 +51,7 @@ pub fn gitCardHeight(self: *App) f64 {
 }
 
 pub fn gitCard(self: *App) header.Rect {
-    return .{ .x = 10, .y = @floatFromInt(self.pinRowY(self.pins.items.items.len) + 44 + self.deviceBlock()), .w = @floatFromInt(self.sidebarWidth() - 20 - self.scrollbarGutter()), .h = self.gitCardHeight() };
+    return .{ .x = 10, .y = @floatFromInt(self.pinRowY(self.pins.items.items.len) + 44 + self.deviceBlock() + self.torrentSidebarHeight()), .w = @floatFromInt(self.sidebarWidth() - 20 - self.scrollbarGutter()), .h = self.gitCardHeight() };
 }
 
 pub fn renderGitSidebar(self: *App, cr: *c.cairo_t, content_width: f64) void {
@@ -82,7 +84,7 @@ pub fn renderGitSidebar(self: *App, cr: *c.cairo_t, content_width: f64) void {
                 layer.renderer.drawIcon(0, 0, 14, 14, .{ .id = .plus, .color = ui_theme.global.sidebarForeground() });
                 layer.finish();
             }
-            drawText(cr, "New branch", 44, baseline, shell_ui.textSize(), false);
+            drawText(cr, tr("New branch"), 44, baseline, shell_ui.textSize(), false);
             break;
         }
         const row = gitBranchRow(repo, i);
@@ -101,7 +103,7 @@ pub fn renderGitSidebar(self: *App, cr: *c.cairo_t, content_width: f64) void {
             }
         }
         var detached_buf: [40]u8 = undefined;
-        const label = if (row.current and std.mem.eql(u8, row.name, "(detached)")) std.fmt.bufPrint(&detached_buf, "Detached {s}", .{repo.oid[0..@min(7, repo.oid.len)]}) catch "Detached" else row.name;
+        const label = if (row.current and std.mem.eql(u8, row.name, "(detached)")) i18n.fmt(&detached_buf, tr("Detached {count}"), .{ .count = repo.oid[0..@min(7, repo.oid.len)] }) catch "Detached" else row.name;
         drawEllipsis(cr, label, 44, baseline, @max(0, right - counts_width - 50), shell_ui.textSize(), row.current);
     }
 }

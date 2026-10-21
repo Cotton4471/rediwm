@@ -3,7 +3,9 @@
 // Matches search queries against application entries and built-in Settings,
 // ranking exact matches, name prefixes, word prefixes, keywords, and descriptions.
 const std = @import("std");
+const i18n = @import("i18n");
 const Allocator = std.mem.Allocator;
+const fold = @import("ui").fold;
 
 const applications = @import("applications.zig");
 const AppEntry = applications.AppEntry;
@@ -25,12 +27,12 @@ pub const SearchResult = struct {
 };
 
 pub const settings_id = "rediwm.settings";
-pub const settings_name = "Settings";
-pub const settings_description = "System preferences, display, appearance and input";
+pub const settings_name = i18n.msg("Settings");
+pub const settings_description = i18n.msg("System preferences, display, appearance and input");
 pub const loading_id = "rediwm.loading";
-pub const loading_name = "Loading applications…";
-pub const loading_description = "Scanning installed apps";
-const settings_keywords = "settings;control;panel;preferences;display;appearance;mouse;keyboard;printer;printers;printing";
+pub const loading_name = i18n.msg("Loading applications…");
+pub const loading_description = i18n.msg("Scanning installed apps");
+const settings_keywords = i18n.msg("settings;control;panel;preferences;display;appearance;mouse;keyboard;printer;printers;printing");
 
 pub fn search(
     allocator: Allocator,
@@ -38,6 +40,17 @@ pub fn search(
     query: []const u8,
     category: Category,
     loading: bool,
+) ![]SearchResult {
+    return searchWithOptions(allocator, catalog, query, category, loading, .{ .turkish = @import("i18n").isTurkish() });
+}
+
+pub fn searchWithOptions(
+    allocator: Allocator,
+    catalog: []const AppEntry,
+    query: []const u8,
+    category: Category,
+    loading: bool,
+    options: fold.Options,
 ) ![]SearchResult {
     var results: std.ArrayList(SearchResult) = .empty;
     errdefer results.deinit(allocator);
@@ -60,13 +73,13 @@ pub fn search(
         }
 
         // Sort applications alphabetically
-        std.mem.sort(SearchResult, results.items, {}, sortAlphabetical);
+        std.mem.sort(SearchResult, results.items, options, sortAlphabetical);
 
         if (loading) {
             try results.append(allocator, .{
                 .id = loading_id,
-                .name = loading_name,
-                .description = loading_description,
+                .name = loading_name.get(),
+                .description = loading_description.get(),
                 .is_loading = true,
                 .score = 0,
             });
@@ -75,8 +88,8 @@ pub fn search(
         if (category == .all) {
             try results.append(allocator, .{
                 .id = settings_id,
-                .name = settings_name,
-                .description = settings_description,
+                .name = settings_name.get(),
+                .description = settings_description.get(),
                 .icon = @import("ui").shell_icons.settings_icon_name,
                 .is_settings = true,
                 .app_entry = null,
@@ -86,17 +99,10 @@ pub fn search(
         return results.toOwnedSlice(allocator);
     }
 
-    var q_buf: [256]u8 = undefined;
-    const q_lower = if (trimmed.len <= q_buf.len)
-        std.ascii.lowerString(&q_buf, trimmed)
-    else
-        try std.ascii.allocLowerString(allocator, trimmed);
-    defer if (trimmed.len > q_buf.len) allocator.free(q_lower);
-
     // Score applications
     for (catalog) |*app| {
         const desc = app.generic_name orelse app.comment orelse "";
-        if (scoreItem(app.name, app.generic_name, app.keywords, app.comment, q_lower)) |sc| {
+        if (scoreItem(app.name, app.generic_name, app.keywords, app.comment, trimmed, options)) |sc| {
             try results.append(allocator, .{
                 .id = app.id,
                 .name = app.name,
@@ -111,11 +117,13 @@ pub fn search(
 
     // Score Settings if in .all
     if (category == .all) {
-        if (scoreItem(settings_name, null, settings_keywords, settings_description, q_lower)) |sc| {
+        const localized = scoreItem(settings_name.get(), null, settings_keywords.get(), settings_description.get(), trimmed, options);
+        const english = scoreItem(settings_name.source, null, settings_keywords.source, settings_description.source, trimmed, options);
+        if (localized orelse english) |sc| {
             try results.append(allocator, .{
                 .id = settings_id,
-                .name = settings_name,
-                .description = settings_description,
+                .name = settings_name.get(),
+                .description = settings_description.get(),
                 .icon = @import("ui").shell_icons.settings_icon_name,
                 .is_settings = true,
                 .app_entry = null,
@@ -125,7 +133,7 @@ pub fn search(
     }
 
     // Sort by ranking criteria
-    std.mem.sort(SearchResult, results.items, {}, sortRanked);
+    std.mem.sort(SearchResult, results.items, options, sortRanked);
 
     return results.toOwnedSlice(allocator);
 }
@@ -135,45 +143,37 @@ fn scoreItem(
     generic_name: ?[]const u8,
     keywords: []const u8,
     comment: ?[]const u8,
-    q_lower: []const u8,
+    query: []const u8,
+    options: fold.Options,
 ) ?i32 {
-    var name_buf: [256]u8 = undefined;
     const name_len = name.len;
-    const n_lower = if (name.len <= name_buf.len)
-        std.ascii.lowerString(&name_buf, name)
-    else
-        return null;
 
     const len_penalty: i32 = @intCast(@min(name_len, 50));
 
     // Tier 1: Exact match
-    if (std.mem.eql(u8, n_lower, q_lower)) {
+    if (fold.eql(name, query, options)) {
         return 1000;
     }
 
     // Tier 2: Prefix match
-    if (std.mem.startsWith(u8, n_lower, q_lower)) {
+    if (fold.startsWith(name, query, options)) {
         return 800 - len_penalty;
     }
 
     // Tier 3: Word prefix in name
-    if (matchesWordPrefix(n_lower, q_lower)) {
+    if (matchesWordPrefix(name, query, options)) {
         return 600 - len_penalty;
     }
 
     // Tier 4: Substring in name
-    if (std.mem.indexOf(u8, n_lower, q_lower) != null) {
+    if (fold.contains(name, query, options)) {
         return 400 - len_penalty;
     }
 
     // Tier 5: Generic name / keywords match
     if (generic_name) |gn| {
-        var gn_buf: [256]u8 = undefined;
-        if (gn.len <= gn_buf.len) {
-            const gn_lower = std.ascii.lowerString(&gn_buf, gn);
-            if (std.mem.startsWith(u8, gn_lower, q_lower) or matchesWordPrefix(gn_lower, q_lower)) {
-                return 300;
-            }
+        if (fold.startsWith(gn, query, options) or matchesWordPrefix(gn, query, options)) {
+            return 300;
         }
     }
 
@@ -182,52 +182,44 @@ fn scoreItem(
         while (it.next()) |kw| {
             const kw_trim = std.mem.trim(u8, kw, " \t");
             if (kw_trim.len == 0) continue;
-            var kw_buf: [128]u8 = undefined;
-            if (kw_trim.len <= kw_buf.len) {
-                const kw_lower = std.ascii.lowerString(&kw_buf, kw_trim);
-                if (std.mem.startsWith(u8, kw_lower, q_lower)) {
-                    return 280;
-                }
+            if (fold.startsWith(kw_trim, query, options)) {
+                return 280;
             }
         }
     }
 
     // Tier 6: Description/comment match
     if (comment) |c| {
-        var c_buf: [512]u8 = undefined;
-        if (c.len <= c_buf.len) {
-            const c_lower = std.ascii.lowerString(&c_buf, c);
-            if (std.mem.indexOf(u8, c_lower, q_lower) != null) {
-                return 200;
-            }
+        if (fold.contains(c, query, options)) {
+            return 200;
         }
     }
 
     return null;
 }
 
-fn matchesWordPrefix(text: []const u8, prefix: []const u8) bool {
+fn matchesWordPrefix(text: []const u8, prefix: []const u8, options: fold.Options) bool {
     var it = std.mem.splitAny(u8, text, " \t-_/");
     while (it.next()) |word| {
         if (word.len == 0) continue;
-        if (std.mem.startsWith(u8, word, prefix)) return true;
+        if (fold.startsWith(word, prefix, options)) return true;
     }
     return false;
 }
 
-fn sortAlphabetical(_: void, a: SearchResult, b: SearchResult) bool {
-    const ord = std.ascii.orderIgnoreCase(a.name, b.name);
+fn sortAlphabetical(options: fold.Options, a: SearchResult, b: SearchResult) bool {
+    const ord = fold.order(a.name, b.name, options);
     if (ord != .eq) return ord == .lt;
     return std.mem.order(u8, a.id, b.id) == .lt;
 }
 
-fn sortRanked(_: void, a: SearchResult, b: SearchResult) bool {
+fn sortRanked(options: fold.Options, a: SearchResult, b: SearchResult) bool {
     // Higher score first
     if (a.score != b.score) return a.score > b.score;
     // Shorter name preferred
     if (a.name.len != b.name.len) return a.name.len < b.name.len;
     // Alphabetical tie-breaking
-    const ord = std.ascii.orderIgnoreCase(a.name, b.name);
+    const ord = fold.order(a.name, b.name, options);
     if (ord != .eq) return ord == .lt;
     // Stable ID tie-breaking
     return std.mem.order(u8, a.id, b.id) == .lt;
@@ -270,6 +262,34 @@ test "search word prefix in name" {
 
     try std.testing.expectEqual(@as(usize, 1), res.len);
     try std.testing.expectEqualStrings("Foot Server", res[0].name);
+}
+
+test "search folds translated names aliases and arbitrarily long fields" {
+    const long_prefix = "Long " ** 80;
+    const apps = [_]AppEntry{
+        .{ .id = "camera", .desktop_file_path = "", .name = "Cámara", .exec = "camera" },
+        .{ .id = "terminal", .desktop_file_path = "", .name = "Терминал", .exec = "terminal" },
+        .{ .id = "photo", .desktop_file_path = "", .name = "Photos", .generic_name = "Álbum", .exec = "photo" },
+        .{ .id = "street", .desktop_file_path = "", .name = "Maps", .keywords = "Straße;Œuvre", .exec = "maps" },
+        .{ .id = "long", .desktop_file_path = "", .name = long_prefix ++ "Éditeur", .comment = long_prefix ++ "Удобный", .exec = "editor" },
+    };
+    const cases = .{
+        .{ "camara", "camera" },
+        .{ "терм", "terminal" },
+        .{ "album", "photo" },
+        .{ "STRASSE", "street" },
+        .{ "oeuv", "street" },
+        .{ "editeur", "long" },
+        .{ "удоб", "long" },
+    };
+    inline for (cases) |case| {
+        const results = try searchWithOptions(std.testing.allocator, &apps, case[0], .apps, false, .{});
+        defer std.testing.allocator.free(results);
+        try std.testing.expectEqual(@as(usize, 1), results.len);
+        try std.testing.expectEqualStrings(case[1], results[0].id);
+    }
+    try std.testing.expectEqual(@as(?i32, 1000), scoreItem("IŞIK", null, "", null, "ışık", .{ .turkish = true }));
+    try std.testing.expectEqual(@as(?i32, null), scoreItem("IŞIK", null, "", null, "ışık", .{}));
 }
 
 test "search empty query and category filtering" {

@@ -1,10 +1,13 @@
 const std = @import("std");
+const tr = @import("i18n").tr;
 const archive = @import("archive.zig");
+const appimage = @import("appimage.zig");
 const c = @import("c.zig").api;
 const theme = @import("../icon_theme.zig");
 const icons = @import("../icon_cache.zig");
 const git = @import("git.zig");
 const recent = @import("recent.zig");
+const collation = @import("collation.zig");
 const Allocator = std.mem.Allocator;
 
 pub const Item = struct {
@@ -14,6 +17,8 @@ pub const Item = struct {
     name: []const u8,
     /// Path relative to the listed folder, for the flat list of changed files.
     label: []const u8 = "",
+    name_key: ?[]const u8 = null,
+    label_key: ?[]const u8 = null,
     path: []const u8,
     is_dir: bool,
     is_symlink: bool,
@@ -39,6 +44,7 @@ pub const Snapshot = struct {
     changed: []Item = &.{},
     /// More files changed than `max_changed_rows`; `changed` is cut short.
     changed_truncated: bool = false,
+    collation_name: []const u8 = "C",
 
     pub fn destroy(self: *Snapshot) void {
         self.arena.deinit();
@@ -51,6 +57,8 @@ pub const Worker = struct {
     io: std.Io,
     environ: std.process.Environ,
     theme_cfg: theme.Config,
+    /// Accessed only by the directory worker; snapshots own transformed keys.
+    collate: collation.Locale,
     mutex: c.pthread_mutex_t = undefined,
     thread: ?std.Thread = null,
     stop: std.atomic.Value(bool) = .init(false),
@@ -71,6 +79,9 @@ pub const Worker = struct {
     opened_paths: std.ArrayList([]u8) = .empty,
     theme_installs: std.ArrayList([]u8) = .empty,
     theme_notice: ?[]u8 = null,
+    application_pending: ?[]u8 = null,
+    application_busy: bool = false,
+    application_notice: ?appimage.Notice = null,
     /// Signalled after each request so the worker sleeps between them
     /// instead of polling on an 80 ms clock.
     wake: c_int = -1,
@@ -94,7 +105,9 @@ pub const Worker = struct {
             .environ = environ,
             .theme_cfg = theme_cfg,
             .current_dir = try allocator.dupe(u8, initial_dir),
+            .collate = collation.Locale.fromPreferences("", environ),
         };
+        errdefer self.collate.deinit();
 
         if (c.pthread_mutex_init(&self.mutex, null) != 0) return error.MutexInitFailed;
         errdefer _ = c.pthread_mutex_destroy(&self.mutex);
@@ -113,6 +126,7 @@ pub const Worker = struct {
         self.stop.store(true, .release);
         self.signal();
         if (self.thread) |t| t.join();
+        self.collate.deinit();
         _ = c.close(self.wake);
         _ = c.close(self.wake_main);
         if (self.pending_snapshot) |s| s.destroy();
@@ -122,6 +136,7 @@ pub const Worker = struct {
         for (self.theme_installs.items) |p| self.allocator.free(p);
         self.theme_installs.deinit(self.allocator);
         if (self.theme_notice) |p| self.allocator.free(p);
+        if (self.application_pending) |p| self.allocator.free(p);
 
         for (self.theme_cfg.base_dirs) |d| self.allocator.free(d);
         self.allocator.free(self.theme_cfg.base_dirs);
@@ -159,7 +174,7 @@ pub const Worker = struct {
         const helper = std.fs.path.join(mem, &.{ exe_dir, "rediwm-theme" }) catch return;
         const result = std.process.run(mem, self.io, .{ .argv = &.{ helper, "install", path }, .stdout_limit = .limited(4096), .stderr_limit = .limited(16384), .timeout = .{ .duration = .{ .raw = .fromSeconds(30), .clock = .awake } } }) catch return;
         const success = result.term == .exited and result.term.exited == 0;
-        const message = self.allocator.dupe(u8, if (success) "Theme installed. Choose it in Settings → Appearance." else result.stderr) catch return;
+        const message = self.allocator.dupe(u8, if (success) tr("Theme installed. Choose it in Settings → Appearance.") else result.stderr) catch return;
         _ = c.pthread_mutex_lock(&self.mutex);
         if (self.theme_notice) |old| self.allocator.free(old);
         self.theme_notice = message;
@@ -176,6 +191,37 @@ pub const Worker = struct {
             return;
         };
         self.signal();
+    }
+
+    pub fn addApplication(self: *Worker, path: []const u8) !void {
+        _ = c.pthread_mutex_lock(&self.mutex);
+        defer _ = c.pthread_mutex_unlock(&self.mutex);
+        if (self.application_busy) return error.Busy;
+        self.application_pending = try self.allocator.dupe(u8, path);
+        self.application_busy = true;
+        self.signal();
+    }
+
+    pub fn takeApplicationNotice(self: *Worker) ?appimage.Notice {
+        _ = c.pthread_mutex_lock(&self.mutex);
+        defer _ = c.pthread_mutex_unlock(&self.mutex);
+        const notice = self.application_notice;
+        self.application_notice = null;
+        if (notice != null) self.application_busy = false;
+        return notice;
+    }
+
+    fn processApplication(self: *Worker, path: []const u8) void {
+        var arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer arena.deinit();
+        const notice: appimage.Notice = if (appimage.install(arena.allocator(), self.io, self.environ, path))
+            .{ .message = tr("Added to applications. Keep the AppImage in its current location.") }
+        else |err|
+            .{ .message = appimage.message(err), .failed = true };
+        _ = c.pthread_mutex_lock(&self.mutex);
+        self.application_notice = notice;
+        _ = c.pthread_mutex_unlock(&self.mutex);
+        notify(self.wake_main);
     }
 
     pub fn navigateLocation(self: *Worker, new_dir: []const u8, show_hidden: bool, archive_len: usize) u64 {
@@ -267,7 +313,13 @@ pub const Worker = struct {
             self.theme_installs = .empty;
             const opened = self.opened_paths;
             self.opened_paths = .empty;
+            const application = self.application_pending;
+            self.application_pending = null;
             _ = c.pthread_mutex_unlock(&self.mutex);
+            if (application) |path| {
+                defer self.allocator.free(path);
+                if (!self.stop.load(.acquire)) self.processApplication(path);
+            }
             for (installs.items) |p| {
                 self.processTheme(p);
                 self.allocator.free(p);
@@ -284,6 +336,12 @@ pub const Worker = struct {
             const update = if (theme_fd < 0) settings.poll(self.allocator, self.io) else if (theme_changed) settings.reload(self.allocator, self.io) else null;
             theme_changed = false;
             if (update) |t| {
+                const requested = collation.Locale.requested(t.region.formats, self.environ);
+                if (!std.mem.eql(u8, requested, self.collate.name())) {
+                    self.collate.deinit();
+                    self.collate = collation.Locale.fromPreferences(t.region.formats, self.environ);
+                    self.rescan_requested.store(true, .release);
+                }
                 _ = c.pthread_mutex_lock(&self.mutex);
                 self.animation_settings = settings.animations;
                 if (self.theme) |old| old.deinit();
@@ -344,6 +402,11 @@ pub const Worker = struct {
 
             if (dir_changed or self.rescan_requested.swap(false, .acq_rel)) {
                 const snap = if (cur_archive_len > 0) self.scanArchive(cur_dir, cur_archive_len, cur_show_hidden, cur_req_id, &archive_cache) else self.scan(cur_dir, cur_show_hidden, cur_req_id);
+                self.prepareCollation(snap) catch {
+                    snap.items = &.{};
+                    snap.changed = &.{};
+                    snap.err_msg = tr("Could not sort folder names");
+                };
                 // Register new watches before dropping old ones. Re-adding an
                 // existing path returns its descriptor and creates no events.
                 var next_watches: [4]c_int = @splat(-1);
@@ -491,13 +554,13 @@ pub const Worker = struct {
         };
         const mem = snap.arena.allocator();
         snap.dir = mem.dupe(u8, dir_path) catch {
-            snap.err_msg = "Out of memory";
+            snap.err_msg = tr("Out of memory");
             return snap;
         };
 
         if (recent.isLocation(dir_path)) {
             const entries = recent.read(mem, self.io, self.environ) catch {
-                snap.err_msg = "Could not read recent files";
+                snap.err_msg = tr("Could not read recent files");
                 return snap;
             };
             var list: std.ArrayList(Item) = .empty;
@@ -521,10 +584,10 @@ pub const Worker = struct {
 
         var dir = std.Io.Dir.cwd().openDir(self.io, dir_path, .{ .iterate = true }) catch |err| {
             snap.err_msg = switch (err) {
-                error.FileNotFound => "Folder not found",
-                error.AccessDenied => "Permission denied",
-                error.NotDir => "Not a directory",
-                else => "Could not open folder",
+                error.FileNotFound => tr("Folder not found"),
+                error.AccessDenied => tr("Permission denied"),
+                error.NotDir => tr("Not a directory"),
+                else => tr("Could not open folder"),
             };
             return snap;
         };
@@ -575,21 +638,25 @@ pub const Worker = struct {
             }
         }
 
-        // Sort items: folders first, then alphabetical (case-insensitive)
-        std.mem.sort(Item, list.items, {}, struct {
-            fn less(_: void, a: Item, b: Item) bool {
-                if (a.is_dir != b.is_dir) {
-                    return a.is_dir; // Folders come before files
-                }
-                if (!std.ascii.eqlIgnoreCase(a.name, b.name)) {
-                    return std.ascii.lessThanIgnoreCase(a.name, b.name);
-                }
-                return std.mem.lessThan(u8, a.name, b.name);
-            }
-        }.less);
-
         snap.items = list.toOwnedSlice(mem) catch &.{};
         return snap;
+    }
+
+    fn prepareCollation(self: *Worker, snap: *Snapshot) !void {
+        const mem = snap.arena.allocator();
+        snap.collation_name = try mem.dupe(u8, self.collate.name());
+        for ([_][]Item{ snap.items, snap.changed }) |items| for (items) |*item| {
+            item.name_key = try self.collate.key(mem, item.name);
+            if (item.label.len > 0) item.label_key = try self.collate.key(mem, item.label);
+        };
+        // Freeze expensive libc transformations once, also for archive and
+        // Recent listings. UI re-sorts compare these byte keys only.
+        std.mem.sort(Item, snap.items, {}, struct {
+            fn less(_: void, a: Item, b: Item) bool {
+                if (a.is_dir != b.is_dir) return a.is_dir;
+                return collation.order(a.name_key.?, b.name_key.?, a.name, b.name, a.path, b.path) == .lt;
+            }
+        }.less);
     }
 };
 

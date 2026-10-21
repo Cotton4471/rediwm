@@ -1,6 +1,8 @@
 //! PDF viewer document state: opening, passwords, worker sync and render jobs.
 
 const std = @import("std");
+const i18n = @import("i18n");
+const tr = i18n.tr;
 const App = @import("app.zig").App;
 const document = @import("document.zig");
 const layout = @import("layout.zig");
@@ -70,7 +72,7 @@ pub fn submitPassword(self: *App) void {
         self.loading = false;
         self.dialog = .password;
         self.focus = .password;
-        self.error_message = "Could not prepare password. Please try again.";
+        self.error_message = tr("Could not prepare password. Please try again.");
     };
     self.password_input.clear();
     self.dirty = true;
@@ -95,7 +97,7 @@ pub fn sync(self: *App) void {
                 self.page_sizes.clearRetainingCapacity();
                 self.page_sizes.ensureTotalCapacity(a, self.n_pages) catch {
                     self.n_pages = 0;
-                    self.error_message = "Not enough memory to open this document.";
+                    self.error_message = tr("Not enough memory to open this document.");
                     self.dirty = true;
                     continue;
                 };
@@ -123,13 +125,13 @@ pub fn sync(self: *App) void {
                     self.dialog = .password;
                     self.focus = .password;
                     self.password_input.clear();
-                    self.error_message = "Document is encrypted. Enter password:";
+                    self.error_message = tr("Document is encrypted. Enter password:");
                 } else if (of.err == error.FileNotFound) {
-                    self.error_message = "File not found.";
+                    self.error_message = tr("File not found.");
                 } else if (of.err == error.InvalidPdf) {
-                    self.error_message = "Invalid or corrupt PDF document.";
+                    self.error_message = tr("Invalid or corrupt PDF document.");
                 } else {
-                    self.error_message = "Could not open document.";
+                    self.error_message = tr("Could not open document.");
                 }
                 self.dirty = true;
             },
@@ -173,25 +175,25 @@ pub fn sync(self: *App) void {
                 self.dirty = true;
             },
 
-            .thumb_rendered => |*tr| {
+            .thumb_rendered => |*thumb| {
                 const key = cache.ThumbKey{
                     .generation = self.generation,
-                    .page_index = tr.page_index,
-                    .rotation = tr.rotation,
-                    .card_w = tr.card_w,
-                    .card_h = tr.card_h,
+                    .page_index = thumb.page_index,
+                    .rotation = thumb.rotation,
+                    .card_w = thumb.card_w,
+                    .card_h = thumb.card_h,
                 };
                 self.thumb_cache.put(.{
                     .key = key,
-                    .pixels = tr.rendered.pixels,
-                    .width = tr.rendered.width,
-                    .height = tr.rendered.height,
-                    .stride = tr.rendered.stride,
-                    .bytes = @intCast(tr.rendered.stride * tr.rendered.height),
+                    .pixels = thumb.rendered.pixels,
+                    .width = thumb.rendered.width,
+                    .height = thumb.rendered.height,
+                    .stride = thumb.rendered.stride,
+                    .bytes = @intCast(thumb.rendered.stride * thumb.rendered.height),
                     .last_used = 0,
-                    .allocator = tr.rendered.allocator,
+                    .allocator = thumb.rendered.allocator,
                 }) catch {};
-                tr.rendered.pixels = &[_]u32{};
+                thumb.rendered.pixels = &[_]u32{};
                 self.dirty = true;
             },
 

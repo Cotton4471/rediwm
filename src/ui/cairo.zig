@@ -371,3 +371,26 @@ test "a scrollbar thumb paints its look through cairo" {
     scrollbar.paint(&renderer, hot);
     try std.testing.expectEqualSlices(u32, &expected, data[0..expected.len]);
 }
+
+/// A determinate progress ring. Updates follow its data; no frame clock.
+pub fn drawProgressRing(cr_any: *anyopaque, box: ItemBox, fraction: f64, color: [4]f32) void {
+    const cr: *c.cairo_t = @ptrCast(cr_any);
+    c.cairo_save(cr);
+    defer c.cairo_restore(cr);
+    const radius = @max(0, @min(box.w, box.h) / 2 - 3);
+    const x = box.x + box.w / 2;
+    const y = box.y + box.h / 2;
+    c.cairo_set_line_width(cr, 2);
+    var track = theme.global.window_fg;
+    track[3] *= 0.2;
+    setSource(cr, track);
+    c.cairo_arc(cr, x, y, radius, 0, 2 * std.math.pi);
+    c.cairo_stroke(cr);
+    const amount = std.math.clamp(fraction, 0, 1);
+    if (amount > 0) {
+        setSource(cr, color);
+        c.cairo_set_line_cap(cr, c.CAIRO_LINE_CAP_ROUND);
+        c.cairo_arc(cr, x, y, radius, -std.math.pi / 2.0, -std.math.pi / 2.0 + 2 * std.math.pi * amount);
+        c.cairo_stroke(cr);
+    }
+}

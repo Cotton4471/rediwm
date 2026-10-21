@@ -1,6 +1,8 @@
 //! Files clipboard and file operations: copy, cut, paste, size and delete.
 
 const std = @import("std");
+const i18n = @import("i18n");
+const tr = i18n.tr;
 const App = @import("app.zig").App;
 const recent = @import("recent.zig");
 const ops_mod = @import("ops.zig");
@@ -21,7 +23,8 @@ pub fn copySelected(self: *App) void {
         self.clipboard_cut = false;
         self.clipboard_revision += 1;
         var buf: [128]u8 = undefined;
-        const msg = std.fmt.bufPrint(&buf, "Copied {d} item(s)", .{self.clipboard_paths.items.len}) catch "Copied";
+        const count = self.clipboard_paths.items.len;
+        const msg = i18n.fmt(&buf, i18n.trn("Copied {count} item", "Copied {count} items", count), .{ .count = count }) catch tr("Copied");
         self.setStatusNotice(msg, false);
         self.invalidate();
     }
@@ -41,7 +44,8 @@ pub fn cutSelected(self: *App) void {
         self.clipboard_cut = true;
         self.clipboard_revision += 1;
         var buf: [128]u8 = undefined;
-        const msg = std.fmt.bufPrint(&buf, "Cut {d} item(s)", .{self.clipboard_paths.items.len}) catch "Cut";
+        const count = self.clipboard_paths.items.len;
+        const msg = i18n.fmt(&buf, i18n.trn("Cut {count} item", "Cut {count} items", count), .{ .count = count }) catch tr("Cut");
         self.setStatusNotice(msg, false);
         self.invalidate();
     }
@@ -78,7 +82,7 @@ pub fn executeTransfer(self: *App, kind: ops_mod.OpKind, paths: []const []const 
     if (paths.len == 0) return false;
     const runner = self.job_runner orelse return false;
     runner.start(kind, paths, directory, .ask) catch {
-        self.setStatusNotice("Failed to start transfer job", true);
+        self.setStatusNotice(tr("Failed to start transfer job"), true);
         return false;
     };
     self.job_cut_revision = if (clipboard and kind == .move and self.clipboard_cut) self.clipboard_revision else null;
@@ -128,10 +132,10 @@ pub fn executeDeletion(self: *App) void {
     const state = &self.dialog.?.deletion;
     const result = if (state.empty_trash) ops_mod.emptyTrash(self.io) else if (state.permanent) ops_mod.deleteItems(self.io, state.paths.items) else ops_mod.trashItems(self.io, state.paths.items);
     result catch |err| {
-        self.setStatusNotice(if (state.empty_trash) "Could not empty Trash" else if (state.permanent) "Could not delete all items" else if (err == error.GioNotAvailable) "Trash unavailable (gio not installed)" else "Could not move all items to Trash", true);
+        self.setStatusNotice(if (state.empty_trash) tr("Could not empty Trash") else if (state.permanent) tr("Could not delete all items") else if (err == error.GioNotAvailable) tr("Trash unavailable (gio not installed)") else tr("Could not move all items to Trash"), true);
         self.refresh();
         return;
     };
-    self.setStatusNotice(if (state.empty_trash) "Trash emptied" else if (state.permanent) "Items permanently deleted" else "Items moved to Trash", false);
+    self.setStatusNotice(if (state.empty_trash) tr("Trash emptied") else if (state.permanent) tr("Items permanently deleted") else tr("Items moved to Trash"), false);
     self.refresh();
 }

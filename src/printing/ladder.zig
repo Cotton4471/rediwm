@@ -78,22 +78,22 @@ fn connectionRow(input: Input) Row {
     switch (input.connection) {
         .usb => {
             if (input.usb) |device| return if (device.printer_class)
-                .{ .layer = .connection, .verdict = .pass, .message = "A matching USB printer interface is attached." }
+                .{ .layer = .connection, .verdict = .pass, .message = @import("i18n").tr("A matching USB printer interface is attached.") }
             else
-                .{ .layer = .connection, .verdict = .fail, .message = "The matching USB device has no printer-class interface.", .fix = "Check the device's USB mode and its self-test instructions." };
+                .{ .layer = .connection, .verdict = .fail, .message = @import("i18n").tr("The matching USB device has no printer-class interface."), .fix = @import("i18n").tr("Check the device's USB mode and its self-test instructions.") };
             return if (input.usb_scan_complete)
-                .{ .layer = .connection, .verdict = .fail, .message = "The matching USB printer was not found.", .fix = "Check power, the USB cable, and which printer this queue uses." }
+                .{ .layer = .connection, .verdict = .fail, .message = @import("i18n").tr("The matching USB printer was not found."), .fix = @import("i18n").tr("Check power, the USB cable, and which printer this queue uses.") }
             else
-                .{ .layer = .connection, .verdict = .unknown, .message = "USB presence or queue-to-device identity could not be established." };
+                .{ .layer = .connection, .verdict = .unknown, .message = @import("i18n").tr("USB presence or queue-to-device identity could not be established.") };
         },
         .network => return if (input.network_reachable) |reachable|
             if (reachable)
-                .{ .layer = .connection, .verdict = .pass, .message = "The printer answered an IPP request." }
+                .{ .layer = .connection, .verdict = .pass, .message = @import("i18n").tr("The printer answered an IPP request.") }
             else
-                .{ .layer = .connection, .verdict = .fail, .message = "The network printer did not answer.", .fix = "Check printer power, the address, and access through the network or VPN." }
+                .{ .layer = .connection, .verdict = .fail, .message = @import("i18n").tr("The network printer did not answer."), .fix = @import("i18n").tr("Check printer power, the address, and access through the network or VPN.") }
         else
-            .{ .layer = .connection, .verdict = .unknown, .message = "Network reachability has not been checked." },
-        .other => return .{ .layer = .connection, .verdict = .unknown, .message = "This connection has no direct presence check." },
+            .{ .layer = .connection, .verdict = .unknown, .message = @import("i18n").tr("Network reachability has not been checked.") },
+        .other => return .{ .layer = .connection, .verdict = .unknown, .message = @import("i18n").tr("This connection has no direct presence check.") },
     }
 }
 
@@ -104,15 +104,15 @@ fn backendKind(input: Input) UsbBackend {
 }
 fn nodeRow(input: Input) Row {
     const layer = Layer.device_node;
-    if (input.connection != .usb) return .{ .layer = layer, .verdict = .unknown, .message = "A USB character device is not applicable to this connection." };
-    if (backendKind(input) == .libusb) return .{ .layer = layer, .verdict = .unknown, .message = "The CUPS USB backend uses libusb; a usblp node is not required." };
+    if (input.connection != .usb) return .{ .layer = layer, .verdict = .unknown, .message = @import("i18n").tr("A USB character device is not applicable to this connection.") };
+    if (backendKind(input) == .libusb) return .{ .layer = layer, .verdict = .unknown, .message = @import("i18n").tr("The CUPS USB backend uses libusb; a usblp node is not required.") };
     if (backendKind(input) == .device_node) if (input.node_kind) |kind| return switch (kind) {
-        .regular, .other => .{ .layer = layer, .verdict = .fail, .message = "The queue's device-node path is a regular file or another wrong file type.", .fix = "Have an administrator inspect the node; never write print data to a regular file." },
-        .missing => .{ .layer = layer, .verdict = .fail, .message = "The character-device path used by this queue is missing.", .fix = "Check the usblp driver and the queue's device path; node names can change after reconnection." },
-        .character => .{ .layer = layer, .verdict = .pass, .message = "The queue's character device exists; backend access has not been tested." },
-        .unavailable => .{ .layer = layer, .verdict = .unknown, .message = "The file type of the queue's device-node path could not be read." },
+        .regular, .other => .{ .layer = layer, .verdict = .fail, .message = @import("i18n").tr("The queue's device-node path is a regular file or another wrong file type."), .fix = @import("i18n").tr("Have an administrator inspect the node; never write print data to a regular file.") },
+        .missing => .{ .layer = layer, .verdict = .fail, .message = @import("i18n").tr("The character-device path used by this queue is missing."), .fix = @import("i18n").tr("Check the usblp driver and the queue's device path; node names can change after reconnection.") },
+        .character => .{ .layer = layer, .verdict = .pass, .message = @import("i18n").tr("The queue's character device exists; backend access has not been tested.") },
+        .unavailable => .{ .layer = layer, .verdict = .unknown, .message = @import("i18n").tr("The file type of the queue's device-node path could not be read.") },
     };
-    const device = input.usb orelse return .{ .layer = layer, .verdict = .unknown, .message = "No matching USB device is available to identify its node." };
+    const device = input.usb orelse return .{ .layer = layer, .verdict = .unknown, .message = @import("i18n").tr("No matching USB device is available to identify its node.") };
     var character = false;
     var regular = false;
     var inaccessible = false;
@@ -126,63 +126,63 @@ fn nodeRow(input: Input) Row {
         "A matched node path is not a character device; this backend's need for it is unknown."
     else
         "This backend's need for a usblp node has not been established." };
-    if (regular) return .{ .layer = layer, .verdict = .fail, .message = "A matched device-node path is a regular file or another wrong file type.", .fix = "Have an administrator inspect the node; never write print data to a regular file." };
-    if (character) return .{ .layer = layer, .verdict = .pass, .message = "A matching character device exists; backend access has not been tested." };
-    if (inaccessible) return .{ .layer = layer, .verdict = .unknown, .message = "The matching device-node file type could not be read." };
-    return .{ .layer = layer, .verdict = .fail, .message = "This backend needs a character device, but no matching node was found.", .fix = "Check the usblp driver and the queue's device path; node names can change after reconnection." };
+    if (regular) return .{ .layer = layer, .verdict = .fail, .message = @import("i18n").tr("A matched device-node path is a regular file or another wrong file type."), .fix = @import("i18n").tr("Have an administrator inspect the node; never write print data to a regular file.") };
+    if (character) return .{ .layer = layer, .verdict = .pass, .message = @import("i18n").tr("A matching character device exists; backend access has not been tested.") };
+    if (inaccessible) return .{ .layer = layer, .verdict = .unknown, .message = @import("i18n").tr("The matching device-node file type could not be read.") };
+    return .{ .layer = layer, .verdict = .fail, .message = @import("i18n").tr("This backend needs a character device, but no matching node was found."), .fix = @import("i18n").tr("Check the usblp driver and the queue's device path; node names can change after reconnection.") };
 }
 fn cupsRow(input: Input) Row {
     if (input.cups_reachable) |reachable| return if (reachable)
-        .{ .layer = .cups, .verdict = .pass, .message = "CUPS answered an IPP request." }
+        .{ .layer = .cups, .verdict = .pass, .message = @import("i18n").tr("CUPS answered an IPP request.") }
     else
-        .{ .layer = .cups, .verdict = .fail, .message = "CUPS did not answer an IPP request.", .fix = "Check the configured CUPS server and whether the print service is installed and available." };
-    return .{ .layer = .cups, .verdict = .unknown, .message = "CUPS availability has not been checked." };
+        .{ .layer = .cups, .verdict = .fail, .message = @import("i18n").tr("CUPS did not answer an IPP request."), .fix = @import("i18n").tr("Check the configured CUPS server and whether the print service is installed and available.") };
+    return .{ .layer = .cups, .verdict = .unknown, .message = @import("i18n").tr("CUPS availability has not been checked.") };
 }
 fn queueRow(input: Input) Row {
     const queue = input.queue orelse return if (input.cups_reachable == true)
-        .{ .layer = .queue, .verdict = .fail, .message = "The selected queue was not found.", .fix = "Select an existing queue or add the printer again." }
+        .{ .layer = .queue, .verdict = .fail, .message = @import("i18n").tr("The selected queue was not found."), .fix = @import("i18n").tr("Select an existing queue or add the printer again.") }
     else
-        .{ .layer = .queue, .verdict = .unknown, .message = "The queue could not be checked without a CUPS response." };
-    if (queue.state == .stopped) return .{ .layer = .queue, .verdict = .fail, .message = "The printer queue is stopped.", .fix = "Resolve the reported printer problem before resuming the queue." };
-    if (queue.accepting == false) return .{ .layer = .queue, .verdict = .fail, .message = "The printer queue is not accepting new jobs.", .fix = "Enable acceptance of jobs when the printer is ready." };
-    if (queue.accepting == null or queue.state == .unknown) return .{ .layer = .queue, .verdict = .unknown, .message = "The queue exists, but its state or acceptance of jobs is unknown." };
-    return .{ .layer = .queue, .verdict = .pass, .message = "The queue exists, is enabled, and accepts jobs." };
+        .{ .layer = .queue, .verdict = .unknown, .message = @import("i18n").tr("The queue could not be checked without a CUPS response.") };
+    if (queue.state == .stopped) return .{ .layer = .queue, .verdict = .fail, .message = @import("i18n").tr("The printer queue is stopped."), .fix = @import("i18n").tr("Resolve the reported printer problem before resuming the queue.") };
+    if (queue.accepting == false) return .{ .layer = .queue, .verdict = .fail, .message = @import("i18n").tr("The printer queue is not accepting new jobs."), .fix = @import("i18n").tr("Enable acceptance of jobs when the printer is ready.") };
+    if (queue.accepting == null or queue.state == .unknown) return .{ .layer = .queue, .verdict = .unknown, .message = @import("i18n").tr("The queue exists, but its state or acceptance of jobs is unknown.") };
+    return .{ .layer = .queue, .verdict = .pass, .message = @import("i18n").tr("The queue exists, is enabled, and accepts jobs.") };
 }
 fn backendRow(input: Input) Row {
-    if (input.backend_match == false) return .{ .layer = .backend, .verdict = .fail, .message = "The queue's device address does not match the selected printer.", .fix = "Check the queue address and USB serial; reconnecting can change a device-node path." };
+    if (input.backend_match == false) return .{ .layer = .backend, .verdict = .fail, .message = @import("i18n").tr("The queue's device address does not match the selected printer."), .fix = @import("i18n").tr("Check the queue address and USB serial; reconnecting can change a device-node path.") };
     if (input.last_job) |job| {
         if (hasReason(job.reasons, "printer-unreachable") or ((job.state == .aborted or job.state == .stopped) and hasReason(job.reasons, "connecting-to-device")) or containsAsciiIgnoreCase(job.message, "USB transaction timeout")) return .{
             .layer = .backend,
             .verdict = .fail,
-            .message = "The last job reports a backend connection problem.",
-            .fix = "Check the connection and backend address. A timeout alone does not prove that a USB quirk is needed.",
+            .message = @import("i18n").tr("The last job reports a backend connection problem."),
+            .fix = @import("i18n").tr("Check the connection and backend address. A timeout alone does not prove that a USB quirk is needed."),
         };
     }
     return .{ .layer = .backend, .verdict = .unknown, .message = if (input.backend_match == true)
-        "The device address matches; successful communication has not been confirmed."
+        @import("i18n").tr("The device address matches; successful communication has not been confirmed.")
     else
-        "Backend communication and device identity have not been confirmed." };
+        @import("i18n").tr("Backend communication and device identity have not been confirmed.") };
 }
 fn settingsRow(input: Input) Row {
-    const queue = input.queue orelse return .{ .layer = .settings, .verdict = .unknown, .message = "Queue media and resolution could not be read." };
-    if (input.settings_consistent == false) return .{ .layer = .settings, .verdict = .fail, .message = "CUPS reports conflicting queue and driver defaults.", .fix = "Reapply the intended paper, resolution or driver option, then refresh to verify the result." };
+    const queue = input.queue orelse return .{ .layer = .settings, .verdict = .unknown, .message = @import("i18n").tr("Queue media and resolution could not be read.") };
+    if (input.settings_consistent == false) return .{ .layer = .settings, .verdict = .fail, .message = @import("i18n").tr("CUPS reports conflicting queue and driver defaults."), .fix = @import("i18n").tr("Reapply the intended paper, resolution or driver option, then refresh to verify the result.") };
     if (input.expected_media) |expected| {
-        if (queue.default_media.len > 0 and !std.mem.eql(u8, expected, queue.default_media)) return .{ .layer = .settings, .verdict = .fail, .message = "The queue's default media differs from the expected media.", .fix = "Choose the paper or label size actually loaded in the printer." };
+        if (queue.default_media.len > 0 and !std.mem.eql(u8, expected, queue.default_media)) return .{ .layer = .settings, .verdict = .fail, .message = @import("i18n").tr("The queue's default media differs from the expected media."), .fix = @import("i18n").tr("Choose the paper or label size actually loaded in the printer.") };
     }
     if (input.expected_resolution) |expected| {
-        if (queue.resolution) |actual| if (expected.x_dpi != actual.x_dpi or expected.y_dpi != actual.y_dpi) return .{ .layer = .settings, .verdict = .fail, .message = "The queue resolution differs from the expected resolution.", .fix = "Confirm resolution using the printer's self-test or a measured ruler test." };
+        if (queue.resolution) |actual| if (expected.x_dpi != actual.x_dpi or expected.y_dpi != actual.y_dpi) return .{ .layer = .settings, .verdict = .fail, .message = @import("i18n").tr("The queue resolution differs from the expected resolution."), .fix = @import("i18n").tr("Confirm resolution using the printer's self-test or a measured ruler test.") };
     }
-    if ((input.expected_media != null and queue.default_media.len == 0) or (input.expected_resolution != null and queue.resolution == null) or (input.expected_media == null and input.expected_resolution == null)) return .{ .layer = .settings, .verdict = .unknown, .message = "Media and resolution need confirmation against what is loaded in the printer." };
-    return .{ .layer = .settings, .verdict = .pass, .message = "The available queue settings match the supplied media or resolution expectations." };
+    if ((input.expected_media != null and queue.default_media.len == 0) or (input.expected_resolution != null and queue.resolution == null) or (input.expected_media == null and input.expected_resolution == null)) return .{ .layer = .settings, .verdict = .unknown, .message = @import("i18n").tr("Media and resolution need confirmation against what is loaded in the printer.") };
+    return .{ .layer = .settings, .verdict = .pass, .message = @import("i18n").tr("The available queue settings match the supplied media or resolution expectations.") };
 }
 fn jobRow(job_value: ?Job) Row {
-    const job = job_value orelse return .{ .layer = .last_job, .verdict = .unknown, .message = "No recent job information is available." };
-    if (containsAsciiIgnoreCase(job.message, "No pages were found") or hasReason(job.reasons, "document-format-error") or hasReason(job.reasons, "document-unprintable-error") or hasReason(job.reasons, "cups-filter-error")) return .{ .layer = .last_job, .verdict = .fail, .message = "The last job reports a document or filter failure.", .fix = "Check the document, driver, media size, and resolution. Compare with a test that skips the filters." };
-    if (job.state == .completed and job.sheets_completed == 0) return .{ .layer = .last_job, .verdict = .unknown, .message = "CUPS completed the job with zero sheets reported; physical output is not confirmed.", .fix = "Check the physical output and any document or filter failure; sheet counters can be incomplete." };
-    if (job.state == .aborted or job.state == .stopped) return .{ .layer = .last_job, .verdict = .fail, .message = "The last job was aborted or stopped.", .fix = "Check the job's reported reason before retrying." };
-    if (job.state == .completed) return .{ .layer = .last_job, .verdict = .unknown, .message = "CUPS reports the job completed; physical printed output is not confirmed." };
-    if (job.state == .canceled) return .{ .layer = .last_job, .verdict = .unknown, .message = "The last job was canceled." };
-    return .{ .layer = .last_job, .verdict = .unknown, .message = "The last job has not completed." };
+    const job = job_value orelse return .{ .layer = .last_job, .verdict = .unknown, .message = @import("i18n").tr("No recent job information is available.") };
+    if (containsAsciiIgnoreCase(job.message, "No pages were found") or hasReason(job.reasons, "document-format-error") or hasReason(job.reasons, "document-unprintable-error") or hasReason(job.reasons, "cups-filter-error")) return .{ .layer = .last_job, .verdict = .fail, .message = @import("i18n").tr("The last job reports a document or filter failure."), .fix = @import("i18n").tr("Check the document, driver, media size, and resolution. Compare with a test that skips the filters.") };
+    if (job.state == .completed and job.sheets_completed == 0) return .{ .layer = .last_job, .verdict = .unknown, .message = @import("i18n").tr("CUPS completed the job with zero sheets reported; physical output is not confirmed."), .fix = @import("i18n").tr("Check the physical output and any document or filter failure; sheet counters can be incomplete.") };
+    if (job.state == .aborted or job.state == .stopped) return .{ .layer = .last_job, .verdict = .fail, .message = @import("i18n").tr("The last job was aborted or stopped."), .fix = @import("i18n").tr("Check the job's reported reason before retrying.") };
+    if (job.state == .completed) return .{ .layer = .last_job, .verdict = .unknown, .message = @import("i18n").tr("CUPS reports the job completed; physical printed output is not confirmed.") };
+    if (job.state == .canceled) return .{ .layer = .last_job, .verdict = .unknown, .message = @import("i18n").tr("The last job was canceled.") };
+    return .{ .layer = .last_job, .verdict = .unknown, .message = @import("i18n").tr("The last job has not completed.") };
 }
 
 fn containsAsciiIgnoreCase(haystack: []const u8, needle: []const u8) bool {

@@ -4,6 +4,7 @@ const formats = @import("images/formats.zig");
 const a = std.heap.c_allocator;
 
 pub fn main(init: std.process.Init) void {
+    @import("i18n").init(init.minimal.environ);
     run(init) catch |err| {
         std.log.err("rediwm-images: {}", .{err});
         std.process.exit(1);

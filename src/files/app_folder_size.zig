@@ -18,7 +18,7 @@ pub fn startFolderSize(self: *App, idx: usize) void {
     if (self.history.archive_len > 0) return;
     if (idx >= self.items.items.len) return;
     const it = self.items.items[idx];
-    if (!it.is_dir or it.is_symlink) return;
+    if (!it.is_dir or it.is_symlink or it.transfer_stub) return;
     if (self.folder_sizes.get(it.path)) |sz| {
         switch (sz) {
             .running => return,

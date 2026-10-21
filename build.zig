@@ -81,7 +81,23 @@ pub fn build(b: *std.Build) void {
 
     // Module roots enforce one-way dependencies: shared code cannot import Server.
     const memory_mod = b.createModule(.{ .root_source_file = b.path("src/memory/allocator.zig"), .target = target, .optimize = optimize });
+    const i18n_tool = b.addExecutable(.{ .name = "i18n-tool", .root_module = b.createModule(.{ .root_source_file = b.path("tools/i18n.zig"), .target = b.graph.host, .optimize = .ReleaseSafe }) });
+    const catalog_compile = b.addRunArtifact(i18n_tool);
+    catalog_compile.setCwd(b.path("."));
+    catalog_compile.addArg("compile");
+    const catalog_source = catalog_compile.addOutputFileArg("catalogs.zig");
+    catalog_compile.addDirectoryArg(b.path("po"));
+    addCatalogInputs(b, catalog_compile);
+    const i18n_mod = b.createModule(.{ .root_source_file = b.path("src/i18n/mod.zig"), .target = target, .optimize = optimize });
+    i18n_mod.addAnonymousImport("catalogs", .{ .root_source_file = catalog_source });
+    inline for (.{ .{ "extract", "Regenerate the UI message template" }, .{ "check", "Check UI catalogs, placeholders and plural forms" }, .{ "lint", "Check converted UI files for untranslated literals" } }) |entry| {
+        const run = b.addRunArtifact(i18n_tool);
+        run.setCwd(b.path("."));
+        run.addArg(entry[0]);
+        b.step("i18n-" ++ entry[0], entry[1]).dependOn(&run.step);
+    }
     const ui_mod = b.createModule(.{ .root_source_file = b.path("src/ui/mod.zig"), .target = target, .optimize = optimize, .link_libc = true });
+    ui_mod.addImport("i18n", i18n_mod);
     ui_mod.addImport("memory", memory_mod);
     ui_mod.addImport("wayland", wayland);
     ui_mod.linkSystemLibrary("xkbcommon", .{});
@@ -103,6 +119,7 @@ pub fn build(b: *std.Build) void {
     dbus_mod.linkSystemLibrary("wayland-server", .{});
     const config_mod = b.createModule(.{ .root_source_file = b.path("src/config/mod.zig"), .target = target, .optimize = optimize, .link_libc = true });
     config_mod.addImport("ui", ui_mod);
+    config_mod.addImport("i18n", i18n_mod);
     config_mod.addImport("xkbcommon", xkbcommon);
     config_mod.linkSystemLibrary("xkbcommon", .{});
 
@@ -114,12 +131,13 @@ pub fn build(b: *std.Build) void {
     });
     theme_helper.root_module.addImport("config", config_mod);
     theme_helper.root_module.addImport("ui", ui_mod);
+    theme_helper.root_module.addImport("i18n", i18n_mod);
     theme_helper.root_module.addCSourceFile(.{ .file = b.path("src/theme_helper/native.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     inline for (.{ "libarchive", "librsvg-2.0", "gdk-pixbuf-2.0" }) |lib| theme_helper.root_module.linkSystemLibrary(lib, .{});
     addThumbCodec(b, theme_helper.root_module);
     theme_helper.root_module.linkSystemLibrary("libwebp", .{});
     b.installArtifact(theme_helper);
-    b.getInstallStep().dependOn(&b.addInstallFileWithDir(b.path("data/rediwm-theme.desktop"), .prefix, "share/applications/rediwm-theme.desktop").step);
+    b.getInstallStep().dependOn(&b.addInstallFileWithDir(localizedData(b, i18n_tool, "data/rediwm-theme.desktop"), .prefix, "share/applications/rediwm-theme.desktop").step);
     b.getInstallStep().dependOn(&b.addInstallFileWithDir(b.path("data/rediwm-theme.xml"), .prefix, "share/mime/packages/rediwm-theme.xml").step);
 
     const protocol_mod = b.createModule(.{
@@ -203,13 +221,27 @@ pub fn build(b: *std.Build) void {
     addFilesTerminal(b, files.root_module, false);
     const terminal_license = b.addInstallFileWithDir(b.dependency("vterm", .{}).path("LICENSE"), .prefix, "share/licenses/rediwm/libvterm-LICENSE");
     b.getInstallStep().dependOn(&terminal_license.step);
+    // Use the system C++ ABI, matching the distro's libtorrent-rasterbar.
+    const torrents = b.addSystemCommand(&.{ "sh", "-c", "exec c++ -std=c++17 -Wall -Wextra -Werror -Wno-deprecated-declarations -Wno-missing-field-initializers $(pkg-config --cflags libtorrent-rasterbar gio-unix-2.0 json-glib-1.0) \"$@\" $(pkg-config --libs libtorrent-rasterbar gio-unix-2.0 json-glib-1.0)", "build-transfers" });
+    torrents.addArg(if (optimize == .Debug) "-O0" else "-O2");
+    torrents.addArg("-g");
+    torrents.addArg("-D_GLIBCXX_ASSERTIONS");
+    torrents.addArg("-fstack-protector-strong");
+    if (optimize != .Debug) torrents.addArg("-D_FORTIFY_SOURCE=3");
+    torrents.addFileArg(b.path("src/files/torrent/helper.cpp"));
+    torrents.addArg("-o");
+    const torrent_binary = torrents.addOutputFileArg("rediwm-transfers");
+    const install_torrents = b.addInstallFileWithDir(torrent_binary, .bin, "rediwm-transfers");
+    b.getInstallStep().dependOn(&install_torrents.step);
+    const torrent_license = b.addInstallFileWithDir(b.path("src/files/torrent/LICENSE.libtorrent"), .prefix, "share/licenses/rediwm/libtorrent-LICENSE");
+    b.getInstallStep().dependOn(&torrent_license.step);
     const install_files = b.addInstallArtifact(files, .{});
     // Advertises rediwm-files to the start menu's applications scanner
     // (src/start_menu/applications.zig) and to any other XDG-aware
     // launcher. Its icon is installed in the hicolor fallback theme so the
     // start menu and taskbar can resolve the desktop entry's Icon name.
     const install_files_desktop_entry = b.addInstallFileWithDir(
-        b.path("data/rediwm-files.desktop"),
+        localizedData(b, i18n_tool, "data/rediwm-files.desktop"),
         .prefix,
         "share/applications/rediwm-files.desktop",
     );
@@ -225,6 +257,17 @@ pub fn build(b: *std.Build) void {
     // builds everything, this only adds a narrower entry point.
     const files_step = b.step("files", "Build the standalone Files and image viewer clients");
     files_step.dependOn(&install_files.step);
+    files_step.dependOn(&install_torrents.step);
+    files_step.dependOn(&torrent_license.step);
+    const transfers_entry = b.addInstallFileWithDir(localizedData(b, i18n_tool, "data/rediwm-transfers.desktop"), .prefix, "share/applications/rediwm-transfers.desktop");
+    b.getInstallStep().dependOn(&transfers_entry.step);
+    files_step.dependOn(&transfers_entry.step);
+    const test_torrents = b.step("test-files-torrents", "Test real loopback transfers and the Files/tray interface");
+    const torrent_engine_test = b.addSystemCommand(&.{ "python3", "tests/files_torrents.py" });
+    torrent_engine_test.step.dependOn(b.getInstallStep());
+    const torrent_ui_test = b.addSystemCommand(&.{ "python3", "tests/files_transfers_ui.py" });
+    torrent_ui_test.step.dependOn(&torrent_engine_test.step);
+    test_torrents.dependOn(&torrent_ui_test.step);
     files_step.dependOn(&install_files_desktop_entry.step);
     files_step.dependOn(&terminal_license.step);
     const terminal_child = b.addExecutable(.{
@@ -256,7 +299,7 @@ pub fn build(b: *std.Build) void {
     images.root_module.addImport("wayland", wayland);
     inline for (.{ "wayland-client", "wayland-cursor", "gdk-pixbuf-2.0", "gobject-2.0", "glib-2.0", "xkbcommon" }) |lib| images.root_module.linkSystemLibrary(lib, .{});
     const install_images = b.addInstallArtifact(images, .{});
-    const images_entry = b.addInstallFileWithDir(b.path("data/rediwm-images.desktop"), .prefix, "share/applications/rediwm-images.desktop");
+    const images_entry = b.addInstallFileWithDir(localizedData(b, i18n_tool, "data/rediwm-images.desktop"), .prefix, "share/applications/rediwm-images.desktop");
     b.getInstallStep().dependOn(&install_images.step);
     b.getInstallStep().dependOn(&images_entry.step);
     const images_step = b.step("images", "Build the standalone image viewer");
@@ -274,12 +317,29 @@ pub fn build(b: *std.Build) void {
     monitor.root_module.addImport("wayland", wayland);
     inline for (.{ "wayland-client", "wayland-cursor", "xkbcommon" }) |lib| monitor.root_module.linkSystemLibrary(lib, .{});
     const install_monitor = b.addInstallArtifact(monitor, .{});
-    const monitor_entry = b.addInstallFileWithDir(b.path("data/rediwm-monitor.desktop"), .prefix, "share/applications/rediwm-monitor.desktop");
+    const monitor_entry = b.addInstallFileWithDir(localizedData(b, i18n_tool, "data/rediwm-monitor.desktop"), .prefix, "share/applications/rediwm-monitor.desktop");
     const monitor_icon = b.addInstallFileWithDir(b.path("data/rediwm-monitor.svg"), .prefix, "share/icons/hicolor/scalable/apps/rediwm-monitor.svg");
     const monitor_step = b.step("monitor", "Build the standalone System Monitor");
     inline for (.{ &install_monitor.step, &monitor_entry.step, &monitor_icon.step }) |step| {
         b.getInstallStep().dependOn(step);
         monitor_step.dependOn(step);
+    }
+
+    const calculator = b.addExecutable(.{
+        .name = "rediwm-calculator",
+        .root_module = b.createModule(.{ .root_source_file = b.path("src/calculator_main.zig"), .target = target, .optimize = optimize, .link_libc = true }),
+        .use_llvm = use_llvm,
+        .use_lld = use_llvm,
+    });
+    calculator.root_module.addImport("wayland", wayland);
+    inline for (.{ "wayland-client", "wayland-cursor", "xkbcommon" }) |lib| calculator.root_module.linkSystemLibrary(lib, .{});
+    const install_calculator = b.addInstallArtifact(calculator, .{});
+    const calculator_entry = b.addInstallFileWithDir(localizedData(b, i18n_tool, "data/rediwm-calculator.desktop"), .prefix, "share/applications/rediwm-calculator.desktop");
+    const calculator_icon = b.addInstallFileWithDir(b.path("data/rediwm-calculator.svg"), .prefix, "share/icons/hicolor/scalable/apps/rediwm-calculator.svg");
+    const calculator_step = b.step("calculator", "Build the standalone Calculator");
+    inline for (.{ &install_calculator.step, &calculator_entry.step, &calculator_icon.step }) |step| {
+        b.getInstallStep().dependOn(step);
+        calculator_step.dependOn(step);
     }
 
     const editor = b.addExecutable(.{
@@ -291,7 +351,7 @@ pub fn build(b: *std.Build) void {
     editor.root_module.addImport("wayland", wayland);
     inline for (.{ "wayland-client", "wayland-cursor", "xkbcommon", "pangocairo" }) |lib| editor.root_module.linkSystemLibrary(lib, .{});
     const install_editor = b.addInstallArtifact(editor, .{});
-    const editor_entry = b.addInstallFileWithDir(b.path("data/rediwm-editor.desktop"), .prefix, "share/applications/rediwm-editor.desktop");
+    const editor_entry = b.addInstallFileWithDir(localizedData(b, i18n_tool, "data/rediwm-editor.desktop"), .prefix, "share/applications/rediwm-editor.desktop");
     b.getInstallStep().dependOn(&install_editor.step);
     b.getInstallStep().dependOn(&editor_entry.step);
     const editor_step = b.step("editor", "Build the standalone text editor");
@@ -312,7 +372,7 @@ pub fn build(b: *std.Build) void {
     pdf.root_module.linkSystemLibrary("seccomp", .{});
     inline for (.{ "wayland-client", "wayland-cursor", "poppler-glib", "cairo", "gio-2.0", "gobject-2.0", "glib-2.0", "xkbcommon" }) |lib| pdf.root_module.linkSystemLibrary(lib, .{});
     const install_pdf = b.addInstallArtifact(pdf, .{});
-    const pdf_entry = b.addInstallFileWithDir(b.path("data/rediwm-pdf.desktop"), .prefix, "share/applications/rediwm-pdf.desktop");
+    const pdf_entry = b.addInstallFileWithDir(localizedData(b, i18n_tool, "data/rediwm-pdf.desktop"), .prefix, "share/applications/rediwm-pdf.desktop");
     b.getInstallStep().dependOn(&install_pdf.step);
     b.getInstallStep().dependOn(&pdf_entry.step);
     const pdf_step = b.step("pdf", "Build the standalone PDF viewer");
@@ -354,10 +414,13 @@ pub fn build(b: *std.Build) void {
         "share/xdg-desktop-portal-wlr/config",
     ).step);
     b.getInstallStep().dependOn(&b.addInstallFileWithDir(
-        b.path("data/rediwm.desktop"),
+        localizedData(b, i18n_tool, "data/rediwm.desktop"),
         .prefix,
         "share/wayland-sessions/rediwm.desktop",
     ).step);
+
+    b.getInstallStep().dependOn(&b.addInstallFileWithDir(localizedData(b, i18n_tool, "data/org.rediwm.accounts.policy"), .prefix, "share/polkit-1/actions/org.rediwm.accounts.policy").step);
+    b.getInstallStep().dependOn(&b.addInstallFileWithDir(localizedData(b, i18n_tool, "data/rediwm-release-safe.desktop"), .prefix, "share/wayland-sessions/rediwm-release-safe.desktop").step);
 
     // Wallpapers, found at runtime through share/rediwm/wallpapers next to
     // the binaries (wallpapers.zig); `[compositor] wallpaper` picks one.
@@ -512,6 +575,12 @@ pub fn build(b: *std.Build) void {
     const run_ipc_tests = b.addRunArtifact(ipc_tests);
 
     const test_step = b.step("test", "Run the project unit tests");
+    const i18n_tests = b.addTest(.{ .root_module = i18n_mod });
+    const run_i18n_tests = b.addRunArtifact(i18n_tests);
+    test_step.dependOn(&run_i18n_tests.step);
+    const i18n_tool_tests = b.addTest(.{ .root_module = i18n_tool.root_module });
+    test_step.dependOn(&b.addRunArtifact(i18n_tool_tests).step);
+    b.step("test-i18n", "Test locale resolution, catalogs and formatting").dependOn(&run_i18n_tests.step);
     const monitor_tests = b.addTest(.{ .root_module = b.createModule(.{
         .root_source_file = b.path("src/system_monitor_tests.zig"),
         .target = target,
@@ -529,6 +598,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     }) });
     printing_tests.root_module.addImport("dbus", dbus_mod);
+    printing_tests.root_module.addImport("i18n", i18n_mod);
     printing_tests.root_module.addImport("wayland", wayland);
     printing_tests.root_module.linkSystemLibrary("wayland-server", .{});
     printing_tests.root_module.linkSystemLibrary("cups", .{});
@@ -590,6 +660,7 @@ pub fn build(b: *std.Build) void {
         .use_lld = use_llvm,
     });
     polkit_service.root_module.addImport("wayland", wayland);
+    polkit_service.root_module.addImport("i18n", i18n_mod);
     polkit_service.root_module.linkSystemLibrary("wayland-server", .{});
     polkit_service.root_module.addCSourceFile(.{ .file = b.path("src/polkit/native.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     polkit_service.root_module.linkSystemLibrary("pthread", .{});
@@ -757,11 +828,12 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_ipc_tests.step);
 
     // Hosts also rasterize app-specific content through their own C imports.
-    inline for (.{ files.root_module, images.root_module, editor.root_module, pdf.root_module, share_picker.root_module, monitor.root_module, files_tests.root_module, images_tests.root_module, editor_tests.root_module, pdf_tests.root_module }) |module| {
+    inline for (.{ files.root_module, images.root_module, editor.root_module, pdf.root_module, share_picker.root_module, monitor.root_module, calculator.root_module, files_tests.root_module, images_tests.root_module, editor_tests.root_module, pdf_tests.root_module }) |module| {
         inline for (.{ "cairo", "librsvg-2.0", "freetype2", "harfbuzz", "fontconfig" }) |lib| module.linkSystemLibrary(lib, .{});
     }
-    inline for (.{ compositor.root_module, ui_tests_module, files.root_module, images.root_module, editor.root_module, pdf.root_module, share_picker.root_module, monitor.root_module, editor_tests.root_module, images_tests.root_module, pdf_tests.root_module, files_tests.root_module, ipc_tests_module, protocol_mod, session_supervisor.root_module, session_tests.root_module, share_picker_tests.root_module, dbus_tests.root_module }) |module| {
+    inline for (.{ compositor.root_module, ui_tests_module, files.root_module, images.root_module, editor.root_module, pdf.root_module, share_picker.root_module, monitor.root_module, calculator.root_module, editor_tests.root_module, images_tests.root_module, pdf_tests.root_module, files_tests.root_module, ipc_tests_module, protocol_mod, session_supervisor.root_module, session_tests.root_module, share_picker_tests.root_module, dbus_tests.root_module }) |module| {
         module.addImport("ui", ui_mod);
+        module.addImport("i18n", i18n_mod);
         module.addImport("config", config_mod);
         module.addImport("memory", memory_mod);
     }
@@ -960,4 +1032,36 @@ fn addShellIcons(b: *std.Build, module: *std.Build.Module) void {
     inline for (.{ "git-branch", "home", "folder", "terminal", "settings", "keyboard", "edit", "mouse", "display", "music", "headphones", "wifi", "ethernet", "globe", "bluetooth", "battery", "notification-bell", "speaker", "speaker-xmark", "power-button", "clock", "lock", "logout", "restart", "eye", "eye-off", "refresh", "cut", "copy", "paste", "trash-outline", "trash", "view-grid", "view-list", "sort", "filter", "zoom-in", "zoom-out", "rotate", "crop", "undo", "save", "fit", "print", "open", "usb-stick", "drive", "eject", "users", "squares" }) |name| {
         module.addAnonymousImport("shell-icon-" ++ name, .{ .root_source_file = b.path("assets/icons/" ++ name ++ ".svg") });
     }
+}
+
+/// Localize installed metadata from the same reviewed catalog entries as UI.
+fn localizedData(b: *std.Build, tool: *std.Build.Step.Compile, path: []const u8) std.Build.LazyPath {
+    const run = b.addRunArtifact(tool);
+    run.setCwd(b.path("."));
+    run.addArg("data");
+    run.addFileArg(b.path(path));
+    const result = run.addOutputFileArg(std.fs.path.basename(path));
+    run.addDirectoryArg(b.path("po"));
+    addCatalogInputs(b, run);
+    return result;
+}
+
+/// Directory arguments alone do not hash their contents. Track every catalog
+/// explicitly so edits, review flags and newly added languages invalidate both
+/// compiled UI tables and installed desktop/polkit metadata.
+fn addCatalogInputs(b: *std.Build, run: *std.Build.Step.Run) void {
+    var dir = b.build_root.handle.openDir(b.graph.io, "po", .{ .iterate = true }) catch @panic("cannot open po/");
+    defer dir.close(b.graph.io);
+    var paths: std.ArrayList([]const u8) = .empty;
+    var it = dir.iterate();
+    while (it.next(b.graph.io) catch @panic("cannot read po/")) |entry| {
+        if (entry.kind != .file) continue;
+        if (std.mem.endsWith(u8, entry.name, ".po") or std.mem.eql(u8, entry.name, "rediwm.pot")) paths.append(b.allocator, b.fmt("po/{s}", .{entry.name})) catch @panic("OOM");
+    }
+    std.mem.sort([]const u8, paths.items, {}, struct {
+        fn less(_: void, left: []const u8, right: []const u8) bool {
+            return std.mem.lessThan(u8, left, right);
+        }
+    }.less);
+    for (paths.items) |path| run.addFileInput(b.path(path));
 }

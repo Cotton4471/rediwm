@@ -1,6 +1,8 @@
 //! Files sidebar rows: Places, pins and devices, their drops and actions.
 
 const std = @import("std");
+const i18n = @import("i18n");
+const tr = i18n.tr;
 const App = @import("app.zig").App;
 const c = @import("c.zig").api;
 const recent = @import("recent.zig");
@@ -88,7 +90,7 @@ pub fn openPlace(self: *App, index: usize) void {
     var buf: [4096]u8 = undefined;
     if (self.placePath(index, &buf)) |path| {
         if (index == 1) std.Io.Dir.cwd().createDirPath(self.io, path) catch {
-            self.setStatusNotice("Could not open Trash", true);
+            self.setStatusNotice(tr("Could not open Trash"), true);
             return;
         };
         self.navigate(path);
@@ -104,11 +106,11 @@ pub fn openPlaceWindow(self: *App, index: usize) void {
     else
         self.placePath(index, &buf) orelse return;
     if (index == 1) std.Io.Dir.cwd().createDirPath(self.io, path) catch {
-        self.setStatusNotice("Could not open Trash", true);
+        self.setStatusNotice(tr("Could not open Trash"), true);
         return;
     };
     if (!recent.isLocation(path) and pins_mod.kindOf(path) != .dir) {
-        self.setStatusNotice("Could not open folder", true);
+        self.setStatusNotice(tr("Could not open folder"), true);
         return;
     }
     var exe: [4096]u8 = undefined;
@@ -117,12 +119,12 @@ pub fn openPlaceWindow(self: *App, index: usize) void {
     var child = std.process.spawn(self.io, .{
         .argv = &.{ executable, path },
     }) catch {
-        self.setStatusNotice("Could not open new window", true);
+        self.setStatusNotice(tr("Could not open new window"), true);
         return;
     };
     self.children.add(self.allocator, child.id.?) catch {
         child.kill(self.io);
-        self.setStatusNotice("Could not open new window", true);
+        self.setStatusNotice(tr("Could not open new window"), true);
     };
 }
 
@@ -140,7 +142,7 @@ pub fn openPin(self: *App, j: usize) void {
         } else self.openFile(pin.path),
         .missing => {
             var buf: [160]u8 = undefined;
-            self.setStatusNotice(std.fmt.bufPrint(&buf, "{s} is no longer there", .{pin.name()}) catch "Not found", true);
+            self.setStatusNotice(i18n.fmt(&buf, tr("{name} is no longer there"), .{ .name = pin.name() }) catch tr("Not found"), true);
             self.invalidate();
         },
     }
@@ -163,6 +165,7 @@ pub fn placeAt(self: *App, x: f64, y: f64) ?usize {
 /// Whether place `index` is the folder being shown; a device also when the
 /// folder is inside it.
 pub fn placeActive(self: *App, index: usize) bool {
+    if (self.transfer_view.active) return false;
     if (self.deviceAt(index)) |volume| {
         const mount = volume.mount orelse return false;
         return volumes_mod.contains(mount, self.history.current);
@@ -242,6 +245,7 @@ pub fn dropMotion(self: *App, x: f64, y: f64) bool {
 /// Content drops use the folder under the pointer, or the displayed folder
 /// on empty space. Archives, dialogs, and file choosers are not targets.
 pub fn dropDirectoryAt(self: *App, x: f64, y: f64) ?[]const u8 {
+    if (self.transfer_view.active) return null;
     if (self.chooser != null or self.dialog != null or self.menu != null or self.history.archive_len > 0) return null;
     if (self.job_state == .running or self.job_state == .waiting_conflict) return null;
     if (x < @as(f64, @floatFromInt(self.sidebarWidth())) or x >= @as(f64, @floatFromInt(self.w - self.scrollbarGutter())) or
@@ -323,11 +327,11 @@ pub fn pinDropped(self: *App, slot: usize, paths: []const []const u8) void {
         self.savePins();
         self.pinsChanged();
         self.setStatusNotice(if (added == 1)
-            std.fmt.bufPrint(&buf, "Added {s} to Places", .{first}) catch "Added to Places"
+            i18n.fmt(&buf, tr("Added {value} to Places"), .{ .value = first }) catch tr("Added to Places")
         else
-            std.fmt.bufPrint(&buf, "Added {d} items to Places", .{added}) catch "Added to Places", false);
+            i18n.fmt(&buf, tr("Added {value} items to Places"), .{ .value = added }) catch tr("Added to Places"), false);
     } else {
-        self.setStatusNotice(if (full) "Places is full" else if (listed) "Already in Places" else "Nothing to add to Places", true);
+        self.setStatusNotice(if (full) tr("Places is full") else if (listed) tr("Already in Places") else tr("Nothing to add to Places"), true);
     }
 }
 
@@ -344,7 +348,7 @@ pub fn removePin(self: *App, j: usize) void {
 
 pub fn savePins(self: *App) void {
     const file = self.pins_path orelse return;
-    self.pins.save(self.allocator, self.io, file) catch self.setStatusNotice("Could not save Places", true);
+    self.pins.save(self.allocator, self.io, file) catch self.setStatusNotice(tr("Could not save Places"), true);
 }
 
 pub fn reloadPins(self: *App) void {
@@ -384,7 +388,7 @@ pub fn deviceLabel(volume: *const volumes_mod.Volume, buf: []u8) []const u8 {
     if (volume.label.len > 0) return volume.label;
     var size: [32]u8 = undefined;
     const bytes: i64 = @intCast(@min(volume.size, std.math.maxInt(i64)));
-    return std.fmt.bufPrint(buf, "{s} Volume", .{formatSize(bytes, &size)}) catch "Volume";
+    return i18n.fmt(buf, tr("{size} Volume"), .{ .size = formatSize(bytes, &size) }) catch tr("Volume");
 }
 
 /// Starts watching for volumes. Once, after the window exists.
@@ -420,7 +424,7 @@ pub fn startDeviceOp(self: *App, volume: *const volumes_mod.Volume, unmount: boo
     self.device_op = .{ .id = id, .unmount = unmount, .open = open, .navigation = self.navigation_count };
     if (unmount) monitor.unmount(volume.id) else monitor.mount(volume.id);
     // Unmounting waits for pending writes, which can take a while.
-    self.setStatusNotice(if (unmount) "Ejecting…" else "Mounting…", false);
+    self.setStatusNotice(if (unmount) tr("Ejecting…") else tr("Mounting…"), false);
 }
 
 /// A click on a device row: browse it, mounting it first when it is not.
@@ -442,7 +446,7 @@ pub fn ejectDevice(self: *App, k: usize) void {
     const mount = volume.mount orelse return;
     if (self.device_op != null) return;
     if (self.job_state == .running) {
-        self.setStatusNotice("Finish the running file operation first", true);
+        self.setStatusNotice(tr("Finish the running file operation first"), true);
         return;
     }
     // The window must not be what keeps the volume busy.
@@ -455,15 +459,15 @@ pub fn deviceResult(self: *App, result: *const volumes_mod.Result) void {
     self.device_op = null;
     defer self.allocator.free(op.id);
     var label_buf: [96]u8 = undefined;
-    const name = if (self.device_list.find(volumes_mod.resultId(result))) |volume| deviceLabel(volume, &label_buf) else "Device";
+    const name = if (self.device_list.find(volumes_mod.resultId(result))) |volume| deviceLabel(volume, &label_buf) else tr("Device");
     var buf: [160]u8 = undefined;
     if (result.ok == 0) {
         self.setStatusNotice(volumes_mod.failureMessage(&buf, result, name), true);
     } else if (op.unmount) {
-        self.setStatusNotice(std.fmt.bufPrint(&buf, "{s} can be safely removed", .{name}) catch "Ejected", false);
+        self.setStatusNotice(i18n.fmt(&buf, tr("{name} can be safely removed"), .{ .name = name }) catch tr("Ejected"), false);
     } else if (op.open and op.navigation == self.navigation_count and volumes_mod.resultPath(result).len > 0) {
         self.navigate(volumes_mod.resultPath(result));
     } else {
-        self.setStatusNotice(std.fmt.bufPrint(&buf, "{s} mounted", .{name}) catch "Mounted", false);
+        self.setStatusNotice(i18n.fmt(&buf, tr("{name} mounted"), .{ .name = name }) catch tr("Mounted"), false);
     }
 }

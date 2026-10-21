@@ -9,6 +9,7 @@ no waybar/greeter/launcher/notification daemon to wire up.
 - [Getting Started](Getting-Started.md): build, install, recover a stuck session
 - [Using RediWM](Using-RediWM.md): keybinds, mouse, zoom, tabs, tiling
 - [Configuration](Configuration.md): the config file, window rules, sandbox allowances
+- [Languages](Languages.md): locale settings, translation drafts and contributing a catalog
 - [IPC](IPC.md): the socket, the wire format, events, waiting, automation
 - [IPC Commands](IPC-Commands.md): every command, grouped
 - [rediwm-msg](rediwm-msg.md): the CLI, with copy-paste recipes

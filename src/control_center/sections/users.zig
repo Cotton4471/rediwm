@@ -1,4 +1,5 @@
 //! Account overview and automatic-login settings.
+const i18n = @import("i18n");
 const std = @import("std");
 const Child = @import("../../session/child.zig");
 const panel = @import("../panel.zig");
@@ -90,15 +91,15 @@ pub fn build(s: *Section, cc: *panel.ControlCenter) void {
 
 fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
     const snapshot = model.load(a, cc.server.io) catch {
-        return buildCard(a, &.{ text("Could not read login accounts.", 14, false), text("Check NSS and /etc/login.defs.", 12, true) });
+        return buildCard(a, &.{ text(i18n.tr("Could not read login accounts."), 14, false), text(i18n.tr("Check NSS and /etc/login.defs."), 12, true) });
     };
     const rows = try a.alloc(W, snapshot.users.len + 32);
     var count: usize = 0;
     const header = try a.alloc(W, 2);
-    header[0] = panel.sectionTitle("Accounts");
+    header[0] = panel.sectionTitle(i18n.tr("Accounts"));
     header[0].width = .{ .flex = 1 };
     header[1] = .{ .kind = .{ .button = .{
-        .label = if (s.unlocked) "Lock" else "Unlock",
+        .label = if (s.unlocked) i18n.tr("Lock") else i18n.tr("Unlock"),
         .leading_icon = if (s.unlocked) .checkmark else .lock,
         .owner = cc,
         .on_click = lockClicked,
@@ -106,25 +107,25 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
     } }, .height = .{ .fixed = 34 } };
     rows[count] = .{ .kind = .container, .direction = .row, .gap = 10, .@"align" = .center, .width = .{ .percent = 1 }, .children = header };
     count += 1;
-    rows[count] = text(if (s.message.len > 0) s.message else if (s.auth != null) "Waiting for authentication…" else if (s.unlocked) "Account settings are unlocked for this session." else "Unlock to make account changes.", 12, true);
+    rows[count] = text(if (s.message.len > 0) s.message else if (s.auth != null) i18n.tr("Waiting for authentication…") else if (s.unlocked) i18n.tr("Account settings are unlocked for this session.") else i18n.tr("Unlock to make account changes."), 12, true);
     count += 1;
     if (snapshot.users.len == 0) {
-        rows[count] = text("No login accounts were found.", 13, true);
+        rows[count] = text(i18n.tr("No login accounts were found."), 13, true);
         count += 1;
     } else {
         for (snapshot.users, 0..) |user, user_index| {
             const full_name = if (user.full_name.len == 0) user.name else user.full_name;
-            const kind = if (user.admin) "Administrator" else "Standard";
+            const kind = if (user.admin) i18n.tr("Administrator") else i18n.tr("Standard");
             const row = try a.alloc(W, 4);
             row[0] = .{ .kind = .avatar, .width = .{ .fixed = 28 }, .height = .{ .fixed = 28 } };
             row[1] = .{ .kind = .container, .direction = .column, .gap = 2, .width = .{ .flex = 1 }, .children = try a.dupe(W, &.{ text(full_name, 14, false), text(user.name, 12, true) }) };
-            row[2] = text(if (user.is_current) "You" else kind, 11, true);
-            row[3] = actionButton(cc, if (user.local) "Details" else "Read only", user_index, detailsClicked, !user.local or !s.unlocked or s.auth != null or s.form != .none);
+            row[2] = text(if (user.is_current) i18n.tr("You") else kind, 11, true);
+            row[3] = actionButton(cc, if (user.local) i18n.tr("Details") else i18n.tr("Read only"), user_index, detailsClicked, !user.local or !s.unlocked or s.auth != null or s.form != .none);
             rows[count] = .{ .kind = .container, .direction = .row, .gap = 12, .@"align" = .center, .width = .{ .percent = 1 }, .height = .{ .fixed = 44 }, .children = row };
             count += 1;
         }
     }
-    rows[count] = actionButton(cc, "Add user…", 0, addUserClicked, !s.unlocked or s.auth != null or s.form != .none);
+    rows[count] = actionButton(cc, i18n.tr("Add user…"), 0, addUserClicked, !s.unlocked or s.auth != null or s.form != .none);
     count += 1;
     switch (s.form) {
         .add => {
@@ -147,10 +148,10 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
         },
         .none => {},
     }
-    rows[count] = panel.sectionTitle("Automatic login");
+    rows[count] = panel.sectionTitle(i18n.tr("Automatic login"));
     count += 1;
     const user_labels = try a.alloc([]const u8, snapshot.users.len + 1);
-    user_labels[0] = "Off";
+    user_labels[0] = i18n.tr("Off");
     var selected_user: usize = 0;
     for (snapshot.users, 0..) |user, i| {
         user_labels[i + 1] = user.name;
@@ -158,12 +159,12 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
             if (std.mem.eql(u8, name, user.name)) selected_user = i + 1;
         }
     }
-    rows[count] = try selectRow(cc, a, "User", "autologin_user", user_labels, selected_user, s.auth != null or s.form != .none or !s.unlocked or snapshot.sessions.len == 0, autologinUserChanged);
+    rows[count] = try selectRow(cc, a, i18n.tr("User"), "autologin_user", user_labels, selected_user, s.auth != null or s.form != .none or !s.unlocked or snapshot.sessions.len == 0, autologinUserChanged);
     count += 1;
     const session_labels = try a.alloc([]const u8, @max(snapshot.sessions.len, 1));
     var selected_session: usize = 0;
     if (snapshot.sessions.len == 0) {
-        session_labels[0] = "No sessions available";
+        session_labels[0] = i18n.tr("No sessions available");
     } else {
         for (snapshot.sessions, 0..) |session, i| {
             session_labels[i] = session.name;
@@ -172,9 +173,9 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
             }
         }
     }
-    rows[count] = try selectRow(cc, a, "Session", "autologin_session", session_labels, selected_session, s.auth != null or s.form != .none or !s.unlocked or snapshot.sessions.len == 0 or snapshot.autologin_user == null, autologinSessionChanged);
+    rows[count] = try selectRow(cc, a, i18n.tr("Session"), "autologin_session", session_labels, selected_session, s.auth != null or s.form != .none or !s.unlocked or snapshot.sessions.len == 0 or snapshot.autologin_user == null, autologinSessionChanged);
     count += 1;
-    rows[count] = text("Takes effect at next boot. The keyring will not unlock automatically.", 12, true);
+    rows[count] = text(i18n.tr("Takes effect at next boot. The keyring will not unlock automatically."), 12, true);
     count += 1;
     return buildCard(a, rows[0..count]);
 }
@@ -267,16 +268,16 @@ fn formButtons(a: std.mem.Allocator, cc: *panel.ControlCenter, left_label: []con
 
 fn buildAddForm(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
     if (s.password_memory == null or s.confirm_memory == null) {
-        return buildCard(a, &.{text("Could not allocate locked password storage.", 13, true)});
+        return buildCard(a, &.{text(i18n.tr("Could not allocate locked password storage."), 13, true)});
     }
     const items = try a.alloc(W, 7);
-    items[0] = panel.sectionTitle("Add user");
-    items[1] = try textInputRow(cc, a, "Full name", "", "Full name", addFullNameChanged, &s.new_full_name);
-    items[2] = try textInputRow(cc, a, "Username", "", "lowercase username", addUsernameChanged, &s.new_username);
-    items[3] = try secretInputRowFocus(a, "Password", &s.password, "Enter password", &s.password_field);
-    items[4] = try secretInputRow(a, "Confirm", &s.confirm_password, "Confirm password");
-    items[5] = .{ .kind = .{ .checkbox = .{ .label = "Administrator", .checked = s.new_admin, .owner = cc, .on_change = addAdminChanged } } };
-    items[6] = try formButtons(a, cc, "Cancel", 0, cancelFormClicked, "Create user", 0, createUserClicked);
+    items[0] = panel.sectionTitle(i18n.tr("Add user"));
+    items[1] = try textInputRow(cc, a, i18n.tr("Full name"), "", i18n.tr("Full name"), addFullNameChanged, &s.new_full_name);
+    items[2] = try textInputRow(cc, a, i18n.tr("Username"), "", i18n.tr("lowercase username"), addUsernameChanged, &s.new_username);
+    items[3] = try secretInputRowFocus(a, i18n.tr("Password"), &s.password, i18n.tr("Enter password"), &s.password_field);
+    items[4] = try secretInputRow(a, i18n.tr("Confirm"), &s.confirm_password, i18n.tr("Confirm password"));
+    items[5] = .{ .kind = .{ .checkbox = .{ .label = i18n.tr("Administrator"), .checked = s.new_admin, .owner = cc, .on_change = addAdminChanged } } };
+    items[6] = try formButtons(a, cc, i18n.tr("Cancel"), 0, cancelFormClicked, i18n.tr("Create user"), 0, createUserClicked);
     return buildCard(a, items);
 }
 
@@ -284,19 +285,19 @@ fn buildDetailsForm(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator,
     populateGroupChoices(s, user, groups);
     const visible_count = visibleGroupCount(s);
     const items = try a.alloc(W, 9);
-    items[0] = panel.sectionTitle(try std.fmt.allocPrint(a, "Account details · {s}", .{user.name}));
+    items[0] = panel.sectionTitle(try i18n.allocPrint(a, i18n.tr("Account details · {name}"), .{ .name = user.name }));
     const displayed_full_name = if (s.details_name_dirty) s.details_name_draft[0..s.details_name_len] else user.full_name;
-    items[1] = try textInputRow(cc, a, "Full name", displayed_full_name, "Full name", detailsNameChanged, &s.details_full_name);
-    const type_labels = [_][]const u8{ "Standard", "Administrator" };
-    items[2] = try selectRow(cc, a, "Account type", "account_type", &type_labels, @intFromBool(user.admin), s.auth != null, accountTypeChanged);
+    items[1] = try textInputRow(cc, a, i18n.tr("Full name"), displayed_full_name, i18n.tr("Full name"), detailsNameChanged, &s.details_full_name);
+    const type_labels = comptime [_]i18n.Message{ i18n.msg("Standard"), i18n.msg("Administrator") };
+    items[2] = try selectRow(cc, a, i18n.tr("Account type"), "account_type", panel.translatedLabels(&type_labels), @intFromBool(user.admin), s.auth != null, accountTypeChanged);
     const actions = try a.alloc(W, 3);
-    actions[0] = actionButton(cc, "Save name", 0, saveFullNameClicked, s.auth != null);
-    actions[1] = actionButton(cc, "Change password…", 0, changePasswordClicked, s.auth != null);
-    actions[2] = actionButton(cc, "Delete user…", 0, beginDeleteClicked, s.auth != null);
+    actions[0] = actionButton(cc, i18n.tr("Save name"), 0, saveFullNameClicked, s.auth != null);
+    actions[1] = actionButton(cc, i18n.tr("Change password…"), 0, changePasswordClicked, s.auth != null);
+    actions[2] = actionButton(cc, i18n.tr("Delete user…"), 0, beginDeleteClicked, s.auth != null);
     items[3] = .{ .kind = .container, .direction = .row, .justify = .space_between, .gap = 8, .children = actions };
     const group_header = try a.alloc(W, 2);
-    group_header[0] = panel.sectionTitle("Groups");
-    group_header[1] = actionButton(cc, if (s.show_all_groups) "Show curated" else "Show all groups", 0, groupVisibilityClicked, s.auth != null);
+    group_header[0] = panel.sectionTitle(i18n.tr("Groups"));
+    group_header[1] = actionButton(cc, if (s.show_all_groups) i18n.tr("Show curated") else i18n.tr("Show all groups"), 0, groupVisibilityClicked, s.auth != null);
     items[4] = .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = group_header };
     const group_widgets = try a.alloc(W, visible_count);
     var row_count: usize = 0;
@@ -304,7 +305,7 @@ fn buildDetailsForm(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator,
         const name = s.group_names[i][0..s.group_name_lens[i]];
         if (!s.show_all_groups and !isCuratedGroup(name, s.group_admin[i])) continue;
         group_widgets[row_count] = .{ .name = name, .kind = .{ .checkbox = .{
-            .label = if (user.primary_gid == s.group_gids[i]) std.fmt.allocPrint(a, "{s} · primary", .{name}) catch name else name,
+            .label = if (user.primary_gid == s.group_gids[i]) i18n.allocPrint(a, i18n.tr("{name} · primary"), .{ .name = name }) catch name else name,
             .checked = s.group_checked[i],
             .disabled = s.auth != null or user.primary_gid == s.group_gids[i],
             .on_change = groupChecked,
@@ -314,28 +315,28 @@ fn buildDetailsForm(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator,
         row_count += 1;
     }
     items[5] = .{ .name = "user_groups", .kind = .container, .direction = .column, .gap = 4, .children = group_widgets[0..row_count] };
-    items[6] = text(if (s.groups_truncated) "Some groups cannot be safely shown; group changes are disabled." else "", 12, true);
-    items[7] = try formButtons(a, cc, "Save groups", 0, saveGroupsClicked, "Done", 0, cancelFormClicked);
+    items[6] = text(if (s.groups_truncated) i18n.tr("Some groups cannot be safely shown; group changes are disabled.") else "", 12, true);
+    items[7] = try formButtons(a, cc, i18n.tr("Save groups"), 0, saveGroupsClicked, i18n.tr("Done"), 0, cancelFormClicked);
     items[7].children[0].kind.button.state = if (s.auth != null or s.groups_truncated) .disabled else .idle;
     items[8] = text(user.home, 12, true);
     return buildCard(a, items);
 }
 
 fn buildPasswordForm(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
-    if (s.password_memory == null or s.confirm_memory == null) return buildCard(a, &.{text("Could not allocate locked password storage.", 13, true)});
+    if (s.password_memory == null or s.confirm_memory == null) return buildCard(a, &.{text(i18n.tr("Could not allocate locked password storage."), 13, true)});
     const items = try a.alloc(W, 4);
-    items[0] = panel.sectionTitle(try std.fmt.allocPrint(a, "Change password · {s}", .{s.target[0..s.target_len]}));
-    items[1] = try secretInputRowFocus(a, "New password", &s.password, "Enter new password", &s.password_field);
-    items[2] = try secretInputRow(a, "Confirm", &s.confirm_password, "Confirm new password");
-    items[3] = try formButtons(a, cc, "Cancel", 0, cancelFormClicked, "Save password", 0, changePasswordSubmit);
+    items[0] = panel.sectionTitle(try i18n.allocPrint(a, i18n.tr("Change password · {name}"), .{ .name = s.target[0..s.target_len] }));
+    items[1] = try secretInputRowFocus(a, i18n.tr("New password"), &s.password, i18n.tr("Enter new password"), &s.password_field);
+    items[2] = try secretInputRow(a, i18n.tr("Confirm"), &s.confirm_password, i18n.tr("Confirm new password"));
+    items[3] = try formButtons(a, cc, i18n.tr("Cancel"), 0, cancelFormClicked, i18n.tr("Save password"), 0, changePasswordSubmit);
     return buildCard(a, items);
 }
 
 fn buildDeleteForm(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
     const items = try a.alloc(W, 3);
-    items[0] = panel.sectionTitle(try std.fmt.allocPrint(a, "Delete {s}?", .{s.target[0..s.target_len]}));
-    items[1] = text("Choose whether to keep the home folder or remove its files.", 12, true);
-    items[2] = try formButtons(a, cc, "Keep home", 0, deleteKeepHomeClicked, "Delete files", 0, deleteFilesClicked);
+    items[0] = panel.sectionTitle(try i18n.allocPrint(a, i18n.tr("Delete {name}?"), .{ .name = s.target[0..s.target_len] }));
+    items[1] = text(i18n.tr("Choose whether to keep the home folder or remove its files."), 12, true);
+    items[2] = try formButtons(a, cc, i18n.tr("Keep home"), 0, deleteKeepHomeClicked, i18n.tr("Delete files"), 0, deleteFilesClicked);
     return buildCard(a, items);
 }
 
@@ -427,13 +428,13 @@ fn saveGroupsClicked(owner: ?*anyopaque, _: usize) void {
     for (0..cc.users.group_count) |i| {
         if (!cc.users.group_checked[i]) continue;
         groups.append(gpa, cc.users.group_names[i][0..cc.users.group_name_lens[i]]) catch {
-            cc.users.message = "Could not prepare the group update.";
+            cc.users.message = i18n.tr("Could not prepare the group update.");
             cc.refresh();
             return;
         };
     }
     startHelper(cc, .{ .op = "set-groups", .username = targetName(&cc.users), .groups = groups.items }, false) catch {
-        cc.users.message = "Could not start the request.";
+        cc.users.message = i18n.tr("Could not start the request.");
         cc.refresh();
     };
 }
@@ -456,7 +457,7 @@ fn addUserClicked(owner: ?*anyopaque, _: usize) void {
     const cc: *panel.ControlCenter = @ptrCast(@alignCast(owner orelse return));
     if (!cc.users.unlocked) return;
     openSecrets(&cc.users) catch {
-        cc.users.message = "Could not allocate locked password storage.";
+        cc.users.message = i18n.tr("Could not allocate locked password storage.");
         cc.refresh();
         return;
     };
@@ -587,17 +588,17 @@ fn createUserClicked(owner: ?*anyopaque, _: usize) void {
     const password = s.password.value();
     const confirmation = s.confirm_password.value();
     if (!validation.validUsername(username) or !validation.validFullName(full)) {
-        s.message = "Enter a valid username and full name.";
+        s.message = i18n.tr("Enter a valid username and full name.");
         cc.refresh();
         return;
     }
     if (!validation.validPassword(password) or !std.mem.eql(u8, password, confirmation)) {
-        s.message = "Enter matching passwords.";
+        s.message = i18n.tr("Enter matching passwords.");
         cc.refresh();
         return;
     }
     startHelper(cc, .{ .op = "create", .username = username, .fullname = full, .password = password, .administrator = s.new_admin }, false) catch {
-        s.message = "Could not start the request.";
+        s.message = i18n.tr("Could not start the request.");
         cc.refresh();
         return;
     };
@@ -609,12 +610,12 @@ fn saveFullNameClicked(owner: ?*anyopaque, _: usize) void {
     const cc: *panel.ControlCenter = @ptrCast(@alignCast(owner orelse return));
     const field = cc.users.details_full_name orelse return;
     if (field.kind != .text_input or !validation.validFullName(field.kind.text_input.value)) {
-        cc.users.message = "Enter a valid full name.";
+        cc.users.message = i18n.tr("Enter a valid full name.");
         cc.refresh();
         return;
     }
     startHelper(cc, .{ .op = "set-fullname", .username = targetName(&cc.users), .fullname = field.kind.text_input.value }, false) catch {
-        cc.users.message = "Could not start the request.";
+        cc.users.message = i18n.tr("Could not start the request.");
         cc.refresh();
     };
 }
@@ -623,7 +624,7 @@ fn accountTypeChanged(owner: ?*anyopaque, _: usize, index: usize) void {
     const cc: *panel.ControlCenter = @ptrCast(@alignCast(owner orelse return));
     if (index > 1) return;
     startHelper(cc, .{ .op = "set-type", .username = targetName(&cc.users), .administrator = index == 1 }, false) catch {
-        cc.users.message = "Could not start the request.";
+        cc.users.message = i18n.tr("Could not start the request.");
         cc.refresh();
     };
 }
@@ -631,7 +632,7 @@ fn accountTypeChanged(owner: ?*anyopaque, _: usize, index: usize) void {
 fn changePasswordClicked(owner: ?*anyopaque, _: usize) void {
     const cc: *panel.ControlCenter = @ptrCast(@alignCast(owner orelse return));
     openSecrets(&cc.users) catch {
-        cc.users.message = "Could not allocate locked password storage.";
+        cc.users.message = i18n.tr("Could not allocate locked password storage.");
         cc.refresh();
         return;
     };
@@ -644,12 +645,12 @@ fn changePasswordSubmit(owner: ?*anyopaque, _: usize) void {
     const s = &cc.users;
     const password = s.password.value();
     if (!validation.validPassword(password) or !std.mem.eql(u8, password, s.confirm_password.value())) {
-        s.message = "Enter matching passwords.";
+        s.message = i18n.tr("Enter matching passwords.");
         cc.refresh();
         return;
     }
     startHelper(cc, .{ .op = "set-password", .username = targetName(s), .password = password }, false) catch {
-        s.message = "Could not start the request.";
+        s.message = i18n.tr("Could not start the request.");
         cc.refresh();
         return;
     };
@@ -675,7 +676,7 @@ fn deleteUser(owner: ?*anyopaque, delete_home: bool) void {
     const cc: *panel.ControlCenter = @ptrCast(@alignCast(owner orelse return));
     const s = &cc.users;
     startHelper(cc, .{ .op = "delete", .username = targetName(s), .delete_home = delete_home }, false) catch {
-        s.message = "Could not start the request.";
+        s.message = i18n.tr("Could not start the request.");
         cc.refresh();
         return;
     };
@@ -692,7 +693,7 @@ fn lockClicked(owner: ?*anyopaque, _: usize) void {
         return;
     }
     startHelper(cc, .{ .op = "authorize" }, true) catch {
-        cc.users.message = "Could not start the authentication request.";
+        cc.users.message = i18n.tr("Could not start the authentication request.");
         cc.refresh();
     };
 }
@@ -705,7 +706,7 @@ fn autologinUserChanged(owner: ?*anyopaque, _: usize, index: usize) void {
     const snapshot = model.load(arena.allocator(), cc.server.io) catch return;
     if (index == 0) {
         startHelper(cc, .{ .op = "set-autologin", .username = "", .session = "" }, false) catch {
-            cc.users.message = "Could not start the request.";
+            cc.users.message = i18n.tr("Could not start the request.");
             cc.refresh();
         };
         return;
@@ -722,7 +723,7 @@ fn autologinUserChanged(owner: ?*anyopaque, _: usize, index: usize) void {
         break :blk snapshot.sessions[0].id;
     };
     startHelper(cc, .{ .op = "set-autologin", .username = user.name, .session = session }, false) catch {
-        cc.users.message = "Could not start the request.";
+        cc.users.message = i18n.tr("Could not start the request.");
         cc.refresh();
     };
 }
@@ -736,7 +737,7 @@ fn autologinSessionChanged(owner: ?*anyopaque, _: usize, index: usize) void {
     const username = snapshot.autologin_user orelse return;
     if (index >= snapshot.sessions.len) return;
     startHelper(cc, .{ .op = "set-autologin", .username = username, .session = snapshot.sessions[index].id }, false) catch {
-        cc.users.message = "Could not start the request.";
+        cc.users.message = i18n.tr("Could not start the request.");
         cc.refresh();
     };
 }
@@ -795,14 +796,14 @@ fn authReady(owner: ?*anyopaque, _: *Child, status: ?u32) void {
                     cc.users.unlocked = true;
                     cc.users.message = "";
                 } else {
-                    cc.users.message = "Changes saved.";
+                    cc.users.message = i18n.tr("Changes saved.");
                 }
             } else {
                 if (req.is_authorization) {
                     cc.users.unlocked = false;
-                    cc.users.message = "Authentication was cancelled or denied.";
+                    cc.users.message = i18n.tr("Authentication was cancelled or denied.");
                 } else {
-                    cc.users.message = "No changes were made. Authentication was cancelled or the request failed.";
+                    cc.users.message = i18n.tr("No changes were made. Authentication was cancelled or the request failed.");
                 }
             }
             cc.refresh();

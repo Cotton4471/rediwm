@@ -6,6 +6,7 @@
 //! Kernel power_supply uevents (plug, unplug, charge state) trigger an
 //! immediate read; capacity is re-read on the taskbar's minute tick, because
 //! many firmwares never announce percentage changes.
+const i18n = @import("i18n");
 const std = @import("std");
 const linux = std.os.linux;
 
@@ -19,10 +20,10 @@ pub const State = struct {
     cycles: ?u32 = null,
 
     pub fn status(self: State) []const u8 {
-        if (self.charging) return "Charging";
-        if (self.full) return "Fully Charged";
-        if (self.plugged) return "Plugged In";
-        return "On Battery";
+        if (self.charging) return i18n.tr("Charging");
+        if (self.full) return i18n.tr("Fully Charged");
+        if (self.plugged) return i18n.tr("Plugged In");
+        return i18n.tr("On Battery");
     }
 };
 

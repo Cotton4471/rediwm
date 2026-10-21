@@ -1,5 +1,7 @@
 //! Shared modal application picker for Open With and desktop shortcuts. Geometry is shared by painting and input.
 const std = @import("std");
+const i18n = @import("i18n");
+const tr = i18n.tr;
 const associations = @import("associations.zig");
 const c = @import("c.zig").api;
 const ui = @import("ui").cairo;
@@ -90,7 +92,7 @@ pub const State = struct {
         const catalog = self.shortcut_catalog orelse return null;
         var n: usize = 0;
         for (catalog) |entry| {
-            if (std.ascii.indexOfIgnoreCase(entry.name, self.query) == null) continue;
+            if (!@import("ui").fold.contains(entry.name, self.query, .{ .turkish = i18n.isTurkish() })) continue;
             if (n == index) return entry;
             n += 1;
         }
@@ -132,7 +134,7 @@ pub const State = struct {
         if (self.shortcut_catalog) |catalog| {
             var n: usize = 0;
             for (catalog) |entry| {
-                if (std.ascii.indexOfIgnoreCase(entry.name, self.query) != null) n += 1;
+                if (@import("ui").fold.contains(entry.name, self.query, .{ .turkish = i18n.isTurkish() })) n += 1;
             }
             return n;
         }
@@ -226,7 +228,7 @@ pub const State = struct {
         if (self.shortcut_catalog != null) return false;
         if (self.selected >= self.count()) return false;
         self.apps.launch(self.selected, self.remember) catch |err| {
-            self.message = if (err == error.DefaultFailed) "Opened, but could not save the default app" else "Could not open with this app. Choose another.";
+            self.message = if (err == error.DefaultFailed) tr("Opened, but could not save the default app") else tr("Could not open with this app. Choose another.");
             return err == error.DefaultFailed;
         };
         return true;
@@ -257,13 +259,13 @@ pub const State = struct {
         palette.button_font_size = ui.textSize();
         r.palette = palette;
         frame.paintWindowFrame(r, layer.local(), theme.global.app_toolbar);
-        frame.paintWindowTitle(r, layer.local(), if (self.shortcut_catalog != null) "Add Application Shortcut" else "Open With", .grid, null);
+        frame.paintWindowTitle(r, layer.local(), if (self.shortcut_catalog != null) tr("Add Application Shortcut") else tr("Open With"), .grid, null);
         var buffer: [256]u8 = undefined;
-        const subtitle = if (self.message.len > 0) self.message else if (self.shortcut_catalog != null) (if (self.query.len > 0) std.fmt.bufPrint(&buffer, "Search: {s}", .{self.query}) catch self.query else "Choose an application to add to the desktop") else if (self.apps.paths.len == 1) std.fs.path.basename(self.apps.paths[0]) else std.fmt.bufPrint(&buffer, "{d} selected files", .{self.apps.paths.len}) catch "Selected files";
+        const subtitle = if (self.message.len > 0) self.message else if (self.shortcut_catalog != null) (if (self.query.len > 0) i18n.fmt(&buffer, tr("Search: {query}"), .{ .query = self.query }) catch self.query else tr("Choose an application to add to the desktop")) else if (self.apps.paths.len == 1) std.fs.path.basename(self.apps.paths[0]) else i18n.fmt(&buffer, i18n.trn("{count} selected file", "{count} selected files", self.apps.paths.len), .{ .count = self.apps.paths.len }) catch tr("Selected files");
         if (g.list.y - @as(f32, @floatFromInt((chrome.Metrics{}).titlebarHeight())) > 50) r.drawText(16, g.list.y - 50, g.box.w - 32, 20, .{ .content = subtitle, .font_size = ui.textSize(), .color = palette.fg });
-        r.drawText(16, g.list.y - 26, g.box.w - 32, 20, .{ .content = if (self.all) "All Applications" else "Recommended Apps", .font_size = ui.headingSize(), .weight = 600, .color = palette.fg });
+        r.drawText(16, g.list.y - 26, g.box.w - 32, 20, .{ .content = if (self.all) tr("All Applications") else tr("Recommended Apps"), .font_size = ui.headingSize(), .weight = 600, .color = palette.fg });
         const hovered = self.hit(w, h, mx, my);
-        if (self.count() == 0) r.drawText(24, g.list.y, g.list.w - 16, row_height, .{ .content = "No applications available", .font_size = ui.textSize(), .color = palette.fg });
+        if (self.count() == 0) r.drawText(24, g.list.y, g.list.w - 16, row_height, .{ .content = tr("No applications available"), .font_size = ui.textSize(), .color = palette.fg });
         const end = @min(self.count(), self.offset + g.rows);
         for (self.offset..end) |i| {
             var shortcut_icons: [1][]const u8 = undefined;
@@ -288,7 +290,7 @@ pub const State = struct {
                 if (icon != null) break;
             }
             if (icon) |im| r.drawImageCover(24, y + 7, 18, 18, 0, .{ .pixels = im.pixels, .width = @intCast(im.size), .height = @intCast(im.size) }) else r.drawIcon(24, y + 7, 18, 18, .{ .id = .grid, .color = palette.fg });
-            const label = if (entry.is_default) std.fmt.bufPrint(&buffer, "{s} (default)", .{entry.name}) catch entry.name else entry.name;
+            const label = if (entry.is_default) i18n.fmt(&buffer, tr("{name} (default)"), .{ .name = entry.name }) catch entry.name else entry.name;
             r.drawText(52, y, g.list.w - 44, row_height - 2, .{ .content = label, .font_size = ui.textSize(), .color = palette.fg });
         }
         const strip = scrollbar.gutter(theme.global.scrollbar_width);
@@ -296,17 +298,17 @@ pub const State = struct {
             scrollbar.paint(r, scrollbar.look(bar, .{}, theme.global.scrollbar_width, palette));
         if (self.shortcut_catalog == null) {
             r.fillRect(16, g.divider, g.box.w - 32, 1, .{ .color = theme.global.app_divider });
-            button.paint(r, g.more, .{ .size = .sm, .variant = .ghost, .alignment = .left, .leading_icon = .plus, .label = if (self.all) "Back to recommended apps" else "Choose another app…" }, .{ .focused = self.focus == .more, .pointer = if (hovered == 4) .hover else .idle });
+            button.paint(r, g.more, .{ .size = .sm, .variant = .ghost, .alignment = .left, .leading_icon = .plus, .label = if (self.all) tr("Back to recommended apps") else tr("Choose another app…") }, .{ .focused = self.focus == .more, .pointer = if (hovered == 4) .hover else .idle });
             const extension = std.fs.path.extension(self.apps.paths[0]);
             const remember_label = if (extension.len > 0 and self.apps.paths.len == 1)
-                std.fmt.bufPrint(&buffer, "Always use this app for {s} files", .{extension}) catch "Always use this app for this file type"
+                i18n.fmt(&buffer, tr("Always use this app for {value} files"), .{ .value = extension }) catch tr("Always use this app for this file type")
             else
-                "Always use this app for this file type";
+                tr("Always use this app for this file type");
             checkbox.paint(r, g.remember, remember_label, .{ .checked = self.remember, .focused = self.focus == .remember, .disabled = !self.apps.same_type or self.count() == 0 });
         }
-        button.paint(r, g.cancel, .{ .size = .sm, .label = "Cancel" }, .{ .focused = self.focus == .cancel, .pointer = if (hovered == 2) .hover else .idle });
-        button.paint(r, g.open, .{ .size = .sm, .label = if (self.shortcut_catalog != null) "Add Shortcut" else "Open", .variant = .primary }, .{ .focused = self.focus == .open, .pointer = if (self.count() == 0) .disabled else if (hovered == 3) .hover else .idle });
-        button.paint(r, g.close, .{ .icon = .close, .variant = .chrome, .label = "Close" }, .{ .pointer = if (hovered == 1) .hover else .idle });
+        button.paint(r, g.cancel, .{ .size = .sm, .label = tr("Cancel") }, .{ .focused = self.focus == .cancel, .pointer = if (hovered == 2) .hover else .idle });
+        button.paint(r, g.open, .{ .size = .sm, .label = if (self.shortcut_catalog != null) tr("Add Shortcut") else tr("Open"), .variant = .primary }, .{ .focused = self.focus == .open, .pointer = if (self.count() == 0) .disabled else if (hovered == 3) .hover else .idle });
+        button.paint(r, g.close, .{ .icon = .close, .variant = .chrome, .label = tr("Close") }, .{ .pointer = if (hovered == 1) .hover else .idle });
     }
 };
 

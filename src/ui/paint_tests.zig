@@ -268,11 +268,12 @@ test "secret input widget never retains hidden or echo-on responses in run cache
 
 // A partially scrolled row must retain the same glyph positions as the full row.
 test "text clipping preserves layout at scroll edges" {
+    // The accented query expands/folds to original UTF-8 boundaries.
     for ([_]f32{ 1, 1.5 }) |scale| {
         var full: [240 * 90]u32 = @splat(0);
         var clipped: [240 * 90]u32 = @splat(0);
         var r = Renderer.init(&full, 240, 90, scale);
-        const style: TextStyle = .{ .content = "Transmission label", .highlight_query = "TRANS label", .font_size = 16, .color = .{ 1, 1, 1, 1 } };
+        const style: TextStyle = .{ .content = "Cámara Straße", .highlight_query = "CAMARA STRASSE", .font_size = 16, .color = .{ 1, 1, 1, 1 } };
         r.drawText(4, 4, 140, 34, style);
         r.pixels = &clipped;
         r.clip = .{ .x = 18, .y = 20, .w = 90, .h = 12 };

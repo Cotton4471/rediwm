@@ -1,6 +1,8 @@
 //! Files sidebar painting.
 
 const std = @import("std");
+const i18n = @import("i18n");
+const tr = i18n.tr;
 const App = @import("app.zig").App;
 const scrollbar = @import("ui").widgets.scrollbar;
 const c = @import("c.zig").api;
@@ -25,7 +27,7 @@ const deviceLabel = App.deviceLabel;
 pub fn renderDevices(self: *App, cr: *c.cairo_t, content_width: f64) void {
     if (self.device_list.items.len == 0) return;
     setSource(cr, ui_theme.global.sidebarForeground());
-    drawText(cr, "DEVICES", 24, @floatFromInt(self.placeY(self.deviceBase()) - 12), shell_ui.headingSize(), true);
+    drawText(cr, tr("DEVICES"), 24, @floatFromInt(self.placeY(self.deviceBase()) - 12), shell_ui.headingSize(), true);
     const hovered = self.hoverKey();
     for (self.device_list.items, 0..) |*volume, k| {
         const index = self.deviceBase() + k;
@@ -145,6 +147,7 @@ pub fn renderSidebar(self: *App, cr: *c.cairo_t) void {
     c.cairo_set_operator(cr, c.CAIRO_OPERATOR_SOURCE);
     c.cairo_paint(cr);
     c.cairo_set_operator(cr, c.CAIRO_OPERATOR_OVER);
+    self.renderTorrentSidebar(cr);
     self.renderGitSidebar(cr, content_width);
     // Under the labels: the glide passes over the PLACES heading.
     const glide = self.nav_hover.frame;
@@ -153,7 +156,7 @@ pub fn renderSidebar(self: *App, cr: *c.cairo_t) void {
         shell_ui.drawSidebarHover(cr, .{ .x = @floatCast(box.x), .y = @floatCast(box.y), .w = @floatCast(box.w), .h = @floatCast(box.h) }, glide.alpha);
     }
     setSource(cr, ui_theme.global.sidebarForeground());
-    drawText(cr, "PLACES", 24, @floatFromInt(self.placeY(places_start) - 12), shell_ui.headingSize(), true);
+    drawText(cr, tr("PLACES"), 24, @floatFromInt(self.placeY(places_start) - 12), shell_ui.headingSize(), true);
     for (0..self.deviceBase()) |i| {
         if (!self.placeVisible(i)) continue;
         const y: f64 = @floatFromInt(self.placeY(i));
@@ -161,13 +164,13 @@ pub fn renderSidebar(self: *App, cr: *c.cairo_t) void {
         const path = self.placePath(i, &buf) orelse continue;
         const pin: ?pins_mod.Pin = if (self.pinIndex(i)) |j| self.pins.items.items[j] else null;
         const label = switch (self.rowKind(i)) {
-            .builtin => |b| places[b],
+            .builtin => |b| App.place_labels[b].get(),
             .pin => pin.?.name(),
             .device => unreachable,
         };
         // A pin whose target is gone stays, dimmed, until it is removed.
         const alpha: f32 = if (pin != null and pin.?.kind == .missing) 0.5 else 1;
-        const active = std.mem.eql(u8, path, self.history.current);
+        const active = !self.transfer_view.active and std.mem.eql(u8, path, self.history.current);
         if (active) {
             const row = self.placeRect(i);
             shell_ui.drawSidebarSelected(cr, .{ .x = @floatCast(row.x), .y = @floatCast(row.y), .w = @floatCast(row.w), .h = @floatCast(row.h) });
@@ -233,7 +236,7 @@ pub fn renderPinDrop(self: *App, cr: *c.cairo_t) void {
 
 // Bottom of the sidebar content in scrolled coordinates: the Git card is the last section.
 pub fn sidebarExtent(self: *App) i32 {
-    return self.pinRowY(self.pins.items.items.len) + self.sidebar_scroll + 8 + self.deviceBlock() + self.gitSidebarHeight();
+    return self.pinRowY(self.pins.items.items.len) + self.sidebar_scroll + 8 + self.deviceBlock() + self.gitSidebarHeight() + self.torrentSidebarHeight();
 }
 
 pub fn renderSidebarScrollbar(self: *App, cr: *c.cairo_t) void {

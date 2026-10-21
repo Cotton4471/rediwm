@@ -1,21 +1,124 @@
 #!/usr/bin/env python3
 """MIME icons, app-icon fallback and real GIO opening with private associations."""
 import os
+import json
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import time
 from PIL import Image, ImageChops
 
 from files_browser import wait_for
-from ipc_client import IPCClient, spawn_compositor, stop_process
+from ipc_client import IPCClient, IPCError, spawn_compositor, stop_process
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def appimage_fixture(tmp):
+    """A real ELF with an appended SquashFS, never executed during registration."""
+    folder = tmp / 'portable'
+    folder.mkdir()
+    appdir = tmp / 'appdir'
+    appdir.mkdir()
+    (appdir / 'portable.desktop').write_text(
+        '[Desktop Entry]\nType=Application\nName=Portable Hub\nName[en_NZ]=Portable Hub NZ\n'
+        'Exec="AppRun" --fixture %U\nIcon=portable\nTerminal=false\n'
+        'Categories=Development;\nMimeType=x-scheme-handler/rediwm-appimage-test;x-scheme-handler/rediwm-existing-test;application/x-rediwm-specific;\n'
+        'TryExec=/nonexistent/appimage\nPath=/nonexistent/appdir\nDBusActivatable=true\n'
+        'Actions=unsafe;\n[Desktop Action unsafe]\nName=Unsafe\nExec=/bin/false\n')
+    icon = appdir / 'usr/share/icons/portable.png'
+    icon.parent.mkdir(parents=True)
+    Image.new('RGBA', (32, 32), (36, 120, 220, 255)).save(icon)
+    (appdir / '.DirIcon').symlink_to('usr/share/icons/portable.png')
+    squash = tmp / 'appimage.squashfs'
+    subprocess.run(['mksquashfs', str(appdir), str(squash), '-noappend', '-no-progress',
+                    '-processors', '1'], check=True, capture_output=True)
+    marker = tmp / 'appimage-opened'
+    source = tmp / 'appimage.c'
+    source.write_text('#include <stdio.h>\nint main(int argc, char **argv) {\n'
+        f'FILE *f = fopen({json.dumps(str(marker))}, "w"); if (!f) return 1;\n'
+        'for (int i = 1; i < argc; ++i) fprintf(f, "%s\\n", argv[i]); fclose(f); return 0; }\n')
+    # Exercise both Desktop Entry escaping layers, field-code escaping, and
+    # argv passing without letting shell punctuation become a shell command.
+    image = folder / 'Hub $`"\\100%.AppImage'
+    subprocess.run(['cc', str(source), '-o', str(image)], check=True, capture_output=True)
+    elf = bytearray(image.read_bytes())
+    elf[8:11] = b'AI\x02'
+    image.write_bytes(elf + squash.read_bytes())
+    image.chmod(0o600)
+    return folder, image, marker, icon.read_bytes()
+
+
+def check_appimage(ipc, key, click, portable, appimage, appimage_marker, appimage_icon, apps, data, config, env):
+    # The AppImage's third context action integrates it without
+    # executing it. All registrations remain in the private XDG dirs.
+    ipc.action('key', {"keycode": 29, "pressed": True})
+    key(38)  # Ctrl+L
+    ipc.action('key', {"keycode": 29, "pressed": False})
+    ipc.type_text(str(portable))
+    key(28)
+    wait_for(lambda: any(w['title'] == 'portable — RediWM Files' for w in ipc.get_windows()),
+             'AppImage folder did not open')
+    time.sleep(.3)
+
+    def add_appimage():
+        click(260, 160, 273)
+        key(108)
+        key(108)
+        key(28)
+
+    add_appimage()
+    registered = lambda: list(apps.glob('rediwm-appimage-*.desktop'))
+    wait_for(lambda: len(registered()) == 1, 'Add to applications did not create a launcher')
+    entry = registered()[0]
+    text = entry.read_text()
+    assert 'Name=Portable Hub\n' in text and 'Name[en_NZ]=Portable Hub NZ\n' in text, text
+    for unsafe in ('TryExec=', 'Path=', 'DBusActivatable=', 'Actions=', '[Desktop Action'):
+        assert unsafe not in text, text
+    assert not appimage_marker.exists(), 'registration executed the AppImage'
+    assert appimage.stat().st_mode & 0o777 == 0o700
+    installed_icon = next((data / 'icons').rglob('rediwm-appimage-*.png'))
+    assert installed_icon.read_bytes() == appimage_icon
+    uri = 'rediwm-appimage-test://login?code=private%20callback&state=a-b'
+    def callback_registered():
+        result = subprocess.run(['gio', 'mime', 'x-scheme-handler/rediwm-appimage-test'],
+                                env=env, capture_output=True, text=True)
+        return entry.name in result.stdout
+    wait_for(callback_registered, 'AppImage URL handler was not registered')
+    subprocess.run(['gio', 'open', uri], env=env, check=True, capture_output=True)
+    wait_for(appimage_marker.exists, 'browser callback did not launch the registered AppImage')
+    assert appimage_marker.read_text() == '--fixture\n' + uri + '\n'
+    assert 'application/x-rediwm-specific=openscad.desktop;' in (config / 'mimeapps.list').read_text()
+    existing = subprocess.run(['gio', 'mime', 'x-scheme-handler/rediwm-existing-test'], env=env,
+                              check=True, capture_output=True, text=True)
+    assert 'Default application for' in existing.stdout and 'existing-link.desktop' in existing.stdout.splitlines()[0], existing.stdout
+    appimage_marker.unlink()
+    time.sleep(.3)
+    add_appimage()
+    time.sleep(.5)
+    assert len(registered()) == 1 and entry.read_text() == text, 'repeated Add duplicated the launcher'
+    assert not appimage_marker.exists()
+    # The start menu's live catalogue and its own Exec parser must see the
+    # new launcher too, including the same punctuation-heavy image path.
+    def launch_from_catalogue():
+        try:
+            ipc.launch(entry.name)
+        except IPCError as error:
+            if 'UnknownDesktopId' in str(error):
+                return False
+            raise
+        return True
+    wait_for(launch_from_catalogue, 'the application catalogue did not discover the AppImage')
+    wait_for(appimage_marker.exists, 'the start menu launcher did not run the AppImage')
+    assert appimage_marker.read_text() == '--fixture\n'
+    appimage_marker.unlink()
 
 
 def run():
     with tempfile.TemporaryDirectory(prefix="rediwm-files-associations-") as directory:
         tmp = Path(directory)
+        portable, appimage, appimage_marker, appimage_icon = appimage_fixture(tmp)
         data, config, home = tmp / "data", tmp / "config", tmp / "home"
         apps = data / "applications"
         mime = data / "mime"
@@ -58,10 +161,12 @@ def run():
         for i in range(12):
             (apps / f"extra-{i}.desktop").write_text('[Desktop Entry]\nType=Application\n'
                 f'Name=Z Extra {i:02d}\nExec={launcher} extra-{i} %f\nTerminal=false\n')
+        (apps / 'existing-link.desktop').write_text('[Desktop Entry]\nType=Application\n'
+            'Name=Existing link handler\nExec=/bin/true %U\nMimeType=x-scheme-handler/rediwm-existing-test;\n')
         defaults = ["openscad", "openscad", "override", "missing", "", "celluloid"]
         (config / "mimeapps.list").write_text('[Default Applications]\n' + ''.join(
             f'{t[0]}={app}.desktop;\n' for t, app in zip(types, defaults) if app) +
-            'x-scheme-handler/file=thunar.desktop;\n')
+            'x-scheme-handler/file=thunar.desktop;\nx-scheme-handler/rediwm-existing-test=existing-link.desktop;\n')
         for name in ("a model #.scad", "b.specific", "c.override", "d.noicon"):
             (home / name).write_text('cube([1, 2, 3]);\n')
         env = dict(os.environ, HOME=str(home), XDG_DATA_HOME=str(data), XDG_DATA_DIRS=str(data),
@@ -88,8 +193,21 @@ def run():
                 ipc.action('set_window_size', {"id": win["id"], "width": 960, "height": 540})
                 ipc.action('move_window_to', {"id": win["id"], "x": 10, "y": 10})
                 ipc.focus_window(win["id"])
-                time.sleep(.6)
+                ipc.wait_for('window_geometry_settled', window_id=win['id'])
                 box = ipc.get_window_debug(win["id"])["client_box"]
+                def key(code):
+                    for pressed in (True, False):
+                        ipc.action('key', {"keycode": code, "pressed": pressed})
+
+                def click(x, y, button=272):
+                    ipc.move_cursor(int(box["x"] + x), int(box["y"] + y))
+                    for pressed in (True, False):
+                        ipc.action('pointer_button', {"button": button, "pressed": pressed})
+
+                if "--appimage-only" in sys.argv:
+                    check_appimage(ipc, key, click, portable, appimage, appimage_marker, appimage_icon, apps, data, config, env)
+                    print("PASS: AppImage context action, metadata, defaults, idempotence, browser callback and catalogue launch")
+                    return
                 screenshot = tmp / "icons.png"
                 expected = [(255, 0, 0), (0, 0, 255), (255, 0, 255), (0, 255, 0)]
                 def correct_icons():
@@ -109,15 +227,6 @@ def run():
                         ipc.action('key', {"keycode": 28, "pressed": pressed})
                     wait_for(lambda: marker.exists(), "associated application was not launched")
                     assert marker.read_text() == app + '\n' + str(home / name), marker.read_text()
-                def key(code):
-                    for pressed in (True, False):
-                        ipc.action('key', {"keycode": code, "pressed": pressed})
-
-                def click(x, y, button=272):
-                    ipc.move_cursor(int(box["x"] + x), int(box["y"] + y))
-                    for pressed in (True, False):
-                        ipc.action('pointer_button', {"button": button, "pressed": pressed})
-
                 def drag_title(x, y, dx, dy):
                     path = tmp / "dialog-drag.png"
                     path.unlink(missing_ok=True)
@@ -325,8 +434,9 @@ def run():
                 key(28)  # Open the selected folder; a modal would intercept this.
                 wait_for(lambda: any(w['title'] == '0-folder — RediWM Files' for w in ipc.get_windows()),
                          "folder context menu unexpectedly opened an app picker")
+                check_appimage(ipc, key, click, portable, appimage, appimage_marker, appimage_icon, apps, data, config, env)
                 assert client.poll() is None
-                print("PASS: MIME icons, Properties permissions and compact layout, Open With, video default on double-click, default persistence, cancellation and folder exclusion")
+                print("PASS: MIME icons, Properties, Open With, default persistence, AppImage registration and URL callbacks")
         except Exception:
             if (tmp / "compositor.log").exists():
                 print((tmp / "compositor.log").read_text()[-5000:])

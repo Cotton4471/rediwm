@@ -70,6 +70,10 @@ external terminal application are not automatically imported.
   shortcuts and Escape reach the terminal while it is focused, except for
   the explicitly reserved drawer toggle and existing compositor shortcuts.
   Modal Files dialogs take precedence and restore the prior focus on close.
+* **Drop paths:** drag selected files or folders onto the terminal body to
+  insert their absolute paths as shell-quoted arguments and focus the terminal.
+  Each path ends with a space; press Enter to execute the command. This also
+  works between Files windows. Paths containing control characters are refused.
 
 The drawer belongs to normal Files windows. Open/Save/folder chooser dialogs
 do not expose it. Include an Open external terminal action using the configured

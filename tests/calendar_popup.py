@@ -4,6 +4,7 @@ import argparse
 import json
 import locale
 import os
+import subprocess
 import sys
 from hardware_keys import wait
 from pathlib import Path
@@ -13,6 +14,69 @@ import tomllib
 from ui_driver import UIDriver
 from PIL import Image, ImageChops
 from ipc_client import IPCClient, spawn_compositor, stop_process
+
+
+def regional_names(scale):
+    """Private German LC_TIME data exercises formats independently of UI language."""
+    with tempfile.TemporaryDirectory(prefix="rediwm-calendar-locale-") as directory:
+        tmp = Path(directory)
+        locales = tmp / "locales"
+        locales.mkdir()
+        subprocess.run(["localedef", "--no-archive", "-i", "de_DE", "-f", "UTF-8",
+                        str(locales / "de_DE.UTF-8")], check=True, capture_output=True)
+        config = ('[compositor]\nxwayland = false\n[animations]\nenabled = false\n'
+                  '[region]\nlanguage = "C"\nformats = "C"\n')
+        process, log = spawn_compositor(tmp, scale=scale, config_content=config,
+                                       env_extra={"DBUS_SESSION_BUS_ADDRESS": "", "LOCPATH": str(locales),
+                                                  "LC_ALL": "C", "LANGUAGE": "en", "TZ": "UTC"})
+        try:
+            with IPCClient(tmp, timeout=15) as ipc:
+                ipc.wait_for("wallpaper_presented", timeout_ms=10000)
+                bar = ipc.get_shell_state()["taskbars"][0]
+                clock = next(i["box"] for i in bar["right_items"] if i["name"] == "clock")
+                ipc.click_at(clock["x"] + clock["width"] // 2, clock["y"] + clock["height"] // 2)
+                ipc.wait_for_frame()
+                # Some months have identical names in English and German.
+                # February/Februar makes the name assertion independent of date.
+                for _ in range((2 - time.gmtime().tm_mon) % 12):
+                    ipc.key_down_up(106)
+                ipc.wait_for_frame()
+
+                def capture_regions():
+                    taskbar = ipc.get_shell_state()["taskbars"][0]
+                    clock = next(i["box"] for i in taskbar["right_items"] if i["name"] == "clock")
+                    probe = (clock["x"] + clock["width"] // 2, taskbar["box"]["y"] - 50)
+                    hit = ipc.hit_test(*probe)
+                    assert hit["target_type"] == "calendar", hit
+                    left, top = probe[0] - hit["local_x"], probe[1] - hit["local_y"]
+                    path = tmp / f"regional-{time.monotonic_ns()}.png"
+                    ipc.wait_for_frame()
+                    ipc.screenshot(str(path))
+                    with Image.open(path) as image:
+                        return [image.convert("RGB").crop(tuple(round(v * float(scale)) for v in
+                                      (left + x, top + y, left + x + width, top + y + height)))
+                                for x, y, width, height in ((24, 65, 320, 25), (24, 116, 238, 32),
+                                                          (20, 158, 329, 30), (20, 190, 329, 180))]
+
+                english = capture_regions()
+                cfg_path = tmp / "rediwm-config.toml"
+                cfg_path.write_text(config.replace('formats = "C"', 'formats = "de_DE.UTF-8"'))
+                ipc.reload_config()
+                german = capture_regions()
+                for label, before, after in zip(("long date", "month title", "weekday names"), english, german):
+                    assert ImageChops.difference(before, after).getbbox(), f"calendar {label} ignored German formats"
+                assert not ImageChops.difference(english[3], german[3]).getbbox(), "regional names changed the date grid"
+                cfg_path.write_text(config)
+                ipc.reload_config()
+                for before, after in zip(english, capture_regions()):
+                    assert not ImageChops.difference(before, after).getbbox(), "calendar did not restore C formats"
+            print(f"PASS: private German calendar names and live formats reload at scale {scale}")
+        except Exception:
+            print((tmp / "compositor.log").read_text()[-5000:])
+            raise
+        finally:
+            stop_process(process)
+            log.close()
 
 
 def run(scale, gold=False, top=False, popup_only=False):
@@ -181,13 +245,21 @@ def run(scale, gold=False, top=False, popup_only=False):
                 assert any(w["label"] == "3:24 PM" for w in ui.widgets())
                 assert any("session only; system defaults are unchanged" in (w["label"] or "") for w in ui.widgets())
                 wait(lambda: not ui.find("language")["is_disabled"], "installed locales")
+                language_choice = None
                 for name in ("language", "formats"):
                     ui.click(ui.scroll_into_view(name), panel="control_center")
                     ipc.key_press("Home")
                     ipc.key_press("Down")
                     ipc.key_press("Return")
                     ui.wait_settled("control_center")
-                    assert tomllib.loads(cfg_path.read_text())["region"][name] == "C"
+                    selected = tomllib.loads(cfg_path.read_text())["region"][name]
+                    if name == "language":
+                        # Catalog languages are offered before installed glibc
+                        # locales, including drafts with English fallback.
+                        assert selected in {"de_DE.UTF-8", "es_ES.UTF-8", "fr_FR.UTF-8", "pt_BR.UTF-8", "ru_RU.UTF-8"}, selected
+                        language_choice = selected
+                    else:
+                        assert selected == "C"
                 # UTC is the last sorted zone. Changing it must refresh the
                 # existing clock without modifying the host's timezone files.
                 before_zone = capture()
@@ -207,7 +279,7 @@ def run(scale, gold=False, top=False, popup_only=False):
                 wait(marker.exists, "new app environment")
                 child_env = json.loads(marker.read_text())
                 assert child_env["TZ"] == "UTC", child_env
-                assert child_env["LANG"] == child_env["LC_MESSAGES"] == "C"
+                assert child_env["LANG"] == child_env["LC_MESSAGES"] == language_choice
                 assert child_env["LC_TIME"] == child_env["LC_NUMERIC"] == child_env["LC_MONETARY"] == "C"
                 assert "LC_ALL" not in child_env and "LANGUAGE" not in child_env
                 # Reopen Settings to prove that choices survive its arenas.
@@ -312,5 +384,8 @@ if __name__ == "__main__":
     parser.add_argument("--gold", action="store_true")
     parser.add_argument("--top", action="store_true")
     parser.add_argument("--popup-only", action="store_true")
+    parser.add_argument("--locale-only", action="store_true")
     args = parser.parse_args()
-    run(args.scale, args.gold, args.top, args.popup_only)
+    if not args.locale_only:
+        run(args.scale, args.gold, args.top, args.popup_only)
+    regional_names(args.scale)

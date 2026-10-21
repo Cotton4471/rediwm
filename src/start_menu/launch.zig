@@ -3,6 +3,7 @@
 // Complies with the Freedesktop.org Desktop Entry Specification for Exec keys:
 // handles quoting, escaping, field code expansions (%f, %u, %c, %i, %k, %%),
 // terminal wrapping ($TERMINAL -e / foot -e), working directory, and environment setup.
+const i18n = @import("i18n");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
@@ -250,7 +251,7 @@ fn launchRevalidated(
     const content = Io.Dir.cwd().readFileAlloc(server.io, entry.desktop_file_path, a, .limited(512 * 1024)) catch {
         return error.EntryNoLongerAvailable;
     };
-    const parsed = applications.parseDesktopFile(a, content, applications.Locale.fromEnv(server.environ)) orelse {
+    const parsed = applications.parseDesktopFile(a, content, applications.Locale.forLanguage(i18n.resolve(server.config.region.language, server.environ))) orelse {
         return error.EntryNoLongerAvailable;
     };
     if (!applications.checkDesktopVisibility(parsed, server.environ.getPosix("XDG_CURRENT_DESKTOP"))) {
@@ -426,7 +427,7 @@ pub const Pending = struct {
             launchExec(self.arena.allocator(), server, &self.entry, self.uris) catch |err| {
                 log.err("could not launch {s}: {}", .{ self.entry.id, err });
                 if (server.notifications) |manager| {
-                    _ = manager.postNotification("RediWM", 0, "dialog-error", "Application could not be started", self.entry.name, &.{}, 1, false, false, 8000, "", null) catch {};
+                    _ = manager.postNotification("RediWM", 0, "dialog-error", i18n.tr("Application could not be started"), self.entry.name, &.{}, 1, false, false, 8000, "", null) catch {};
                 }
             };
         }
@@ -651,7 +652,7 @@ fn launchNewWindowBytes(allocator: Allocator, server: *Server, entry: *const App
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const parsed = applications.parseDesktopFile(a, bytes, applications.Locale.fromEnv(server.environ)) orelse return error.EntryNoLongerAvailable;
+    const parsed = applications.parseDesktopFile(a, bytes, applications.Locale.forLanguage(i18n.resolve(server.config.region.language, server.environ))) orelse return error.EntryNoLongerAvailable;
     if (!applications.checkDesktopVisibility(parsed, server.environ.getPosix("XDG_CURRENT_DESKTOP"))) return error.EntryNoLongerAvailable;
     var live = entry.*;
     live.exec = parsed.exec orelse "";

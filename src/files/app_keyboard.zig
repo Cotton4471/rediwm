@@ -58,6 +58,12 @@ pub fn handleKey(self: *App, sym: u32, utf8: []const u8) void {
         self.terminalKey(sym, utf8);
         return;
     }
+    if (self.transfer_view.active) {
+        if (self.ctrl and (sym == c.XKB_KEY_l or sym == c.XKB_KEY_L)) self.leaveTransfers() else {
+            self.transferPaneKey(sym);
+            return;
+        }
+    }
     if (self.ctrl and (sym == c.XKB_KEY_f or sym == c.XKB_KEY_F)) {
         self.search_visible = true;
         self.focus = .search;
@@ -86,6 +92,13 @@ pub fn handleKey(self: *App, sym: u32, utf8: []const u8) void {
     if (self.focus == .location_bar) {
         self.handleLocationKey(sym, utf8);
         return;
+    }
+
+    if (!self.ctrl and !self.alt and sym == c.XKB_KEY_space) {
+        if (self.focused_index) |index| if (self.torrentForItem(index)) |t| {
+            self.toggleTorrent(t);
+            return;
+        };
     }
 
     // Navigation shortcuts with Alt
@@ -168,7 +181,7 @@ pub fn handleKey(self: *App, sym: u32, utf8: []const u8) void {
             const prog = runner.pollProgress();
             if (prog.state == .running or prog.state == .waiting_conflict) {
                 runner.cancel();
-                self.setStatusNotice("Cancelling operation...", false);
+                self.setStatusNotice(@import("i18n").tr("Cancelling operation..."), false);
                 self.invalidate();
                 return;
             }
@@ -270,7 +283,7 @@ pub fn handleLocationKey(self: *App, sym: u32, utf8: []const u8) void {
 
 pub fn activeEditor(self: *App) ?*Editor {
     if (self.dialog) |*dlg| return switch (dlg.kind) {
-        .new_folder, .new_file, .new_branch, .rename => &dlg.edit,
+        .new_folder, .new_file, .new_branch, .rename, .torrent_source, .torrent_destination => &dlg.edit,
         else => null,
     };
     return switch (self.focus) {
@@ -311,7 +324,7 @@ pub fn pasteText(self: *App, bytes: []const u8) void {
     const edit = self.activeEditor() orelse return;
     if (self.focus == .filename) self.overwrite_pending = false;
     edit.insert(self.allocator, bytes) catch {
-        self.setStatusNotice("Clipboard text is invalid or too long", true);
+        self.setStatusNotice(@import("i18n").tr("Clipboard text is invalid or too long"), true);
         return;
     };
     self.edit_revision += 1;

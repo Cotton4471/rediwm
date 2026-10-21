@@ -10,6 +10,8 @@ fn printUsage() void {
         \\
         \\Options:
         \\  -h, --help    Show this help message and exit
+        \\  --transfers   Show background downloads
+        \\  --torrent URI Open a torrent file or magnet link
         \\  --open        Choose a file (JSON result on stdout)
         \\  --save        Choose a save destination
         \\  --folder      Choose a folder
@@ -80,8 +82,11 @@ fn resolveTarget(allocator: std.mem.Allocator, environ: std.process.Environ, tar
 }
 
 pub fn main(init: std.process.Init) void {
+    @import("i18n").init(init.minimal.environ);
     const raw_args = init.minimal.args.vector;
     var target_arg: ?[]const u8 = null;
+    var torrent_source: ?[]const u8 = null;
+    var transfers = false;
     var chooser: ?@import("files/chooser.zig").Options = null;
     var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
     defer arena.deinit();
@@ -93,6 +98,11 @@ pub fn main(init: std.process.Init) void {
         if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
             printUsage();
             return;
+        } else if (std.mem.eql(u8, arg, "--transfers")) {
+            transfers = true;
+        } else if (std.mem.eql(u8, arg, "--torrent") and i + 1 < raw_args.len) {
+            i += 1;
+            torrent_source = std.mem.span(raw_args[i]);
         } else if (std.mem.eql(u8, arg, "--chooser-stdin")) {
             var bytes: std.ArrayList(u8) = .empty;
             while (true) {
@@ -117,6 +127,17 @@ pub fn main(init: std.process.Init) void {
         }
     }
 
+    if (torrent_source) |source| {
+        if (std.mem.startsWith(u8, source, "file://")) {
+            const Gio = struct {
+                extern fn g_filename_from_uri([*:0]const u8, ?*?[*:0]u8, ?*anyopaque) ?[*:0]u8;
+                extern fn g_free(?*anyopaque) void;
+            };
+            const raw = Gio.g_filename_from_uri(a.dupeZ(u8, source) catch return, null, null) orelse return;
+            defer Gio.g_free(raw);
+            torrent_source = a.dupe(u8, std.mem.span(raw)) catch return;
+        } else if (!std.mem.startsWith(u8, source, "magnet:?")) torrent_source = std.fs.path.resolve(a, &.{source}) catch return;
+    }
     const allocator = std.heap.c_allocator;
     const target = resolveTarget(allocator, init.minimal.environ, target_arg, chooser == null) catch |err| blk: {
         if (chooser != null) break :blk resolveTarget(allocator, init.minimal.environ, null, false) catch resolveTarget(allocator, init.minimal.environ, "/", false) catch std.process.exit(1);
@@ -132,7 +153,7 @@ pub fn main(init: std.process.Init) void {
     };
     defer allocator.free(target.path);
 
-    main_mod.run(init, target.directory, if (chooser == null) target.selected else null, chooser) catch |err| {
+    main_mod.run(init, target.directory, if (chooser == null) target.selected else null, chooser, torrent_source, transfers) catch |err| {
         std.log.err("rediwm-files: {}", .{err});
         std.process.exit(1);
     };

@@ -338,6 +338,10 @@ fn logKeybindDiff(old: Config, new: Config) void {
 /// Called by both Settings and config reload; no new clock timers.
 pub fn applyRegion(server: *Server) void {
     if (server.greeter_mode) return;
+    const locale_tag = @import("i18n").resolve(server.config.region.language, server.environ);
+    const language_changed = @import("i18n").setLanguage(locale_tag);
+    server.start_menu_catalog.setLocale(locale_tag) catch |err| log.warn("could not update application language: {}", .{err});
+    if (server.polkit) |agent| agent.setLocale(locale_tag) catch |err| log.warn("could not update authentication language: {}", .{err});
     @import("region.zig").applyTimezone(@import("../main.zig").gpa, server.config.region.timezone, server.environ.getPosix("TZ")) catch |err| {
         log.warn("could not apply personal timezone: {}", .{err});
     };
@@ -348,6 +352,22 @@ pub fn applyRegion(server: *Server) void {
     while (outputs.next()) |output| {
         if (output.taskbar) |bar| bar.refreshClockSettings();
         if (output.calendar) |calendar| calendar.refresh();
+        if (language_changed) {
+            if (output.start_menu) |menu| menu.refreshCatalog();
+            if (output.power_menu) |menu| menu.refreshCapabilities();
+            if (output.battery_popup) |popup| popup.refresh();
+            if (output.wifi_popup) |popup| popup.refresh();
+            output.dock.invalidate();
+        }
+    }
+    if (language_changed) {
+        var tops = server.world.toplevels.iterator(.forward);
+        while (tops.next()) |top| if (top.backend == .shell) {
+            top.syncChrome(true, @import("../Toplevel.zig").nowMs()) catch {};
+            top.syncForeign();
+            if (server.ipc) |ipc| @import("../ipc/events.zig").onWindowChanged(ipc, top);
+        };
+        server.refreshTaskbars();
     }
     if (server.locker) |lock| lock.themeChanged();
     if (server.input.open_control_center) |cc| cc.refresh();

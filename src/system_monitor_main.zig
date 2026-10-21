@@ -1,5 +1,6 @@
 const std = @import("std");
 pub fn main(init: std.process.Init) !void {
+    @import("i18n").init(init.minimal.environ);
     defer {
         if (@import("memory").deinit()) std.log.err("System Monitor memory leaks reported above", .{});
     }

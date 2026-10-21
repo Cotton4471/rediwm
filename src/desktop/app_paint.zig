@@ -1,5 +1,6 @@
 //! Desktop painting: icons, selection band, prompts and overlays.
 
+const i18n = @import("i18n");
 const std = @import("std");
 const App = @import("app.zig").App;
 const appearance_theme = @import("ui").theme;
@@ -229,7 +230,7 @@ pub fn paintOverlay(self: *App, cr: *c.cairo_t, now: i64) void {
         rounded(cr, px, py, 480, 360, 10);
         shell_cairo.setSource(cr, appearance_theme.global.desktop_dialog_bg);
         c.cairo_fill(cr);
-        label(cr, if (self.edit_text.items.len == 0) "Type to search applications — Enter chooses" else self.edit_text.items, px + 12, py + 12, 456, 40, false);
+        label(cr, if (self.edit_text.items.len == 0) i18n.tr("Type to search applications — Enter chooses") else self.edit_text.items, px + 12, py + 12, 456, 40, false);
         var row: usize = 0;
         while (row < 8) : (row += 1) {
             const index = (self.choice / 8) * 8 + row;
@@ -254,9 +255,9 @@ pub fn paintOverlay(self: *App, cr: *c.cairo_t, now: i64) void {
         shell_cairo.setSource(cr, appearance_theme.global.desktop_dialog_bg);
         c.cairo_fill(cr);
         const title: []const u8 = switch (self.edit) {
-            .properties => "Properties — Escape closes",
-            .rename => "Rename — Enter saves, Escape cancels",
-            .file => "New File — Enter creates",
+            .properties => i18n.tr("Properties — Escape closes"),
+            .rename => i18n.tr("Rename — Enter saves, Escape cancels"),
+            .file => i18n.tr("New File — Enter creates"),
             else => "",
         };
         label(cr, title, x + 12, y + 12, 396, 32, false);
@@ -266,7 +267,7 @@ pub fn paintOverlay(self: *App, cr: *c.cairo_t, now: i64) void {
         if (self.edit == .properties) for (self.icons.items) |ic| {
             if (ic.selected) {
                 property_path = ic.item.path;
-                details = std.fmt.bufPrint(&details_buf, "{s} · {d} bytes", .{ if (ic.item.folder) "Folder" else "File", ic.item.bytes }) catch "";
+                details = i18n.fmt(&details_buf, i18n.tr("{kind} · {bytes} bytes"), .{ .kind = if (ic.item.folder) i18n.tr("Folder") else i18n.tr("File"), .bytes = ic.item.bytes }) catch "";
                 break;
             }
         };

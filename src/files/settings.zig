@@ -68,6 +68,12 @@ pub const ThemeUpdate = struct {
 var applied_theme: ?ThemeUpdate = null;
 var region: config.RegionConfig = .{};
 
+/// Open With uses the same formats preference as directory names. Empty
+/// asks newlocale to inherit the process LC_COLLATE environment.
+pub fn formatsLocale() []const u8 {
+    return region.formats;
+}
+
 pub fn deinitTheme() void {
     @import("ui").shell_icons.deinitPack();
     theme.global = .{};
@@ -212,14 +218,14 @@ pub fn dateTime(timestamp: i64, buf: []u8) []const u8 {
 fn formatDateTime(timestamp: i64, buf: []u8, prefs: config.RegionConfig) []const u8 {
     var seconds: c.time_t = @intCast(timestamp);
     var tm: c.struct_tm = undefined;
-    if (c.localtime_r(&seconds, &tm) == null) return "Unavailable";
+    if (c.localtime_r(&seconds, &tm) == null) return @import("i18n").tr("Unavailable");
     const date_len = c.strftime(buf.ptr, buf.len, "%Y-%m-%d ", &tm);
-    if (date_len == 0) return "Unavailable";
+    if (date_len == 0) return @import("i18n").tr("Unavailable");
     var time_buf: [64]u8 = undefined;
     const time_len = c.strftime(&time_buf, time_buf.len, prefs.timeFormat(), &tm);
-    if (time_len == 0) return "Unavailable";
+    if (time_len == 0) return @import("i18n").tr("Unavailable");
     const time = std.mem.trimStart(u8, time_buf[0..time_len], " ");
-    if (date_len + time.len > buf.len) return "Unavailable";
+    if (date_len + time.len > buf.len) return @import("i18n").tr("Unavailable");
     @memcpy(buf[date_len..][0..time.len], time);
     return buf[0 .. date_len + time.len];
 }

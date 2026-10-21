@@ -1,4 +1,6 @@
 const std = @import("std");
+const i18n = @import("i18n");
+const tr = i18n.tr;
 const archive = @import("archive.zig");
 const c = @import("c.zig").api;
 const Allocator = std.mem.Allocator;
@@ -715,14 +717,19 @@ pub const JobRunner = struct {
         _ = c.pthread_mutex_lock(&self.mutex);
         defer _ = c.pthread_mutex_unlock(&self.mutex);
         const cancelled = self.cancel_flag.load(.acquire);
-        if (self.status_message.len == 0) self.status_message = std.fmt.allocPrint(self.allocator, "{s}{d} {s}, {d} skipped, {d} failed, {d} remaining", .{
-            if (cancelled) @as([]const u8, "Cancelled: ") else "",
-            self.success_count,
-            if (self.kind == .extract or self.kind == .open_archive_member) @as([]const u8, "extracted") else "transferred",
-            self.skipped_count,
-            self.failed_count,
-            self.total_items - self.processed_items,
-        }) catch "";
+        if (self.status_message.len == 0) {
+            const extracting = self.kind == .extract or self.kind == .open_archive_member;
+            const pattern = if (cancelled)
+                (if (extracting) tr("Cancelled. Extracted: {completed}. Skipped: {skipped}. Failed: {failed}. Remaining: {remaining}.") else tr("Cancelled. Transferred: {completed}. Skipped: {skipped}. Failed: {failed}. Remaining: {remaining}."))
+            else
+                (if (extracting) tr("Extracted: {completed}. Skipped: {skipped}. Failed: {failed}. Remaining: {remaining}.") else tr("Transferred: {completed}. Skipped: {skipped}. Failed: {failed}. Remaining: {remaining}."));
+            self.status_message = i18n.allocPrint(self.allocator, pattern, .{
+                .completed = self.success_count,
+                .skipped = self.skipped_count,
+                .failed = self.failed_count,
+                .remaining = self.total_items - self.processed_items,
+            }) catch "";
+        }
         self.is_error = cancelled or self.failed_count > 0;
         self.state = .finished;
         self.notify();

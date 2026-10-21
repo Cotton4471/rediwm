@@ -2,6 +2,7 @@
 //! choice, and the rediwm-dm conversation. The greeter runs unprivileged as
 //! rediwm-dm's greeter user; rediwm-dm owns PAM, credentials and starting the
 //! session, so nothing here can grant a login by itself.
+const i18n = @import("i18n");
 const std = @import("std");
 const wl = @import("wayland").server.wl;
 const dm_ipc = @import("dm_ipc.zig");
@@ -147,7 +148,7 @@ pub const Greeter = struct {
             self.disconnect();
             return err;
         };
-        return "Signing in…";
+        return i18n.tr("Signing in…");
     }
 
     /// Answers the question the daemon is waiting on.
@@ -288,11 +289,11 @@ pub const Greeter = struct {
         const session = self.selectedSession() orelse return self.fail("no session selected");
         self.phase = .starting;
         self.send(.{ .start = session.id }) catch return self.failSend();
-        return .{ .status = "Starting session…" };
+        return .{ .status = i18n.tr("Starting session…") };
     }
 
     fn fail(self: *Greeter, text: []const u8) Event {
-        const message = self.setMessage("Sign-in failed: ", text);
+        const message = i18n.fmt(&self.message, i18n.tr("Sign-in failed: {reason}"), .{ .reason = text }) catch i18n.tr("Sign-in failed");
         self.clearPending();
         self.phase = .cancelling;
         self.send(.cancel) catch self.disconnect();

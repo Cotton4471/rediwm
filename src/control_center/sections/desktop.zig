@@ -1,3 +1,4 @@
+const i18n = @import("i18n");
 // Desktop canvas settings. All tree storage belongs to the open panel.
 const std = @import("std");
 const panel = @import("../panel.zig");
@@ -8,9 +9,9 @@ const gpa = @import("../../main.zig").gpa;
 // Segmented callbacks carry no owner; the open panel's tree owns the widget.
 
 const map_delays = [_]u32{ 1000, 1500, 2000, 3000, 5000 };
-const map_delay_labels = [_][]const u8{ "1 second", "1.5 seconds", "2 seconds", "3 seconds", "5 seconds" };
+const map_delay_labels = [_]i18n.Message{ i18n.msg("1 second"), i18n.msg("1.5 seconds"), i18n.msg("2 seconds"), i18n.msg("3 seconds"), i18n.msg("5 seconds") };
 const map_positions = [_]@import("../../mini_map_geometry.zig").Position{ .bottom_right, .bottom_center, .bottom_left };
-const map_position_labels = [_][]const u8{ "Bottom right", "Bottom center", "Bottom left" };
+const map_position_labels = [_]i18n.Message{ i18n.msg("Bottom right"), i18n.msg("Bottom center"), i18n.msg("Bottom left") };
 
 const switch_ms = [_]u32{ 200, 400, 700, 1000, 1500, 2500 };
 const switch_labels = [_][]const u8{ "0.2 s", "0.4 s", "0.7 s", "1 s", "1.5 s", "2.5 s" };
@@ -68,9 +69,9 @@ fn dimension(a: std.mem.Allocator, cc: *panel.ControlCenter, vertical: bool, val
     row.@"align" = .center;
     row.justify = .center;
     return container(a, .column, &.{
-        text(if (vertical) "Vertical Pan" else "Horizontal Pan", 13, false),
+        text(if (vertical) i18n.tr("Vertical Pan") else i18n.tr("Horizontal Pan"), 13, false),
         row,
-        text(if (vertical) "Screens tall (1–10)" else "Screens wide (1–10)", 12, true),
+        text(if (vertical) i18n.tr("Screens tall (1–10)") else i18n.tr("Screens wide (1–10)"), 12, true),
     });
 }
 
@@ -108,24 +109,24 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
     // instead of floating in a padded box.
     const grid_height = cell_size * @as(f32, @floatFromInt(rows)) + gap * @as(f32, @floatFromInt(rows -| 1));
     const grid: W = .{ .kind = .container, .direction = .column, .justify = .center, .gap = gap, .width = .{ .percent = 1 }, .height = .{ .fixed = grid_height }, .children = grid_rows };
-    const preview = try card(a, &.{ panel.sectionTitle("Canvas Preview"), text("Your desktop panning area.", 12, true), grid, text("Highlighted: bottom-left screen", 12, true) });
+    const preview = try card(a, &.{ panel.sectionTitle(i18n.tr("Canvas Preview")), text(i18n.tr("Your desktop panning area."), 12, true), grid, text(i18n.tr("Highlighted: bottom-left screen"), 12, true) });
     const controls = try card(a, &.{
-        panel.sectionTitle("Canvas Size"),
+        panel.sectionTitle(i18n.tr("Canvas Size")),
         try dimension(a, cc, false, columns),
         try dimension(a, cc, true, rows),
-        text(try std.fmt.allocPrint(a, "{d} × {d}  ·  {d} screens total", .{ columns, rows, columns * rows }), 18, false),
-        button(cc, 4, "Reset to Default", columns == 3 and rows == 3),
+        text(try i18n.allocPrint(a, i18n.trn("{columns} × {rows}  ·  {n} screen total", "{columns} × {rows}  ·  {n} screens total", columns * rows), .{ .columns = columns, .rows = rows, .n = columns * rows }), 18, false),
+        button(cc, 4, i18n.tr("Reset to Default"), columns == 3 and rows == 3),
     });
     var body = try container(a, if (cc.panel_box.width < 760) .column else .row, &.{ preview, controls });
     body.width = .{ .percent = 1 };
     const switching = try card(a, &.{
-        panel.sectionTitle("Desktop Switching"),
-        text("How long Super + arrow keys take to slide to the next desktop.", 12, true),
+        panel.sectionTitle(i18n.tr("Desktop Switching")),
+        text(i18n.tr("How long Super + arrow keys take to slide to the next desktop."), 12, true),
         .{ .name = "desktop_switch_ms", .kind = .{ .segmented = .{ .labels = &switch_labels, .selected = nearestSwitch(cfg.desktop_switch_ms), .owner = cc, .on_change = &switchChanged } }, .width = .{ .percent = 1 } },
     });
     const map_on = cfg.mini_map_enabled;
     var map_toggle = try container(a, .row, &.{
-        text("Show mini map", 13, false),
+        text(i18n.tr("Show mini map"), 13, false),
         .{ .name = "mini_map_enabled", .kind = .{ .toggle = .{ .on = map_on, .owner = cc, .on_change = &mapEnabledChanged } } },
     });
     map_toggle.justify = .space_between;
@@ -139,22 +140,22 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
         if (@abs(@as(i64, delay) - cfg.mini_map_hide_ms) < @abs(@as(i64, map_delays[delay_index]) - cfg.mini_map_hide_ms)) delay_index = i;
     }
     const mini_map = try card(a, &.{
-        panel.sectionTitle("Mini Map"),
-        text("See your position while navigating. Drag the highlighted view to pan.", 12, true),
+        panel.sectionTitle(i18n.tr("Mini Map")),
+        text(i18n.tr("See your position while navigating. Drag the highlighted view to pan."), 12, true),
         map_toggle,
-        try mapSelect(cc, a, "Position", "mini_map_position", &map_position_labels, position_index, !map_on, &mapPositionChanged),
-        try mapSelect(cc, a, "Hide after", "mini_map_hide_ms", &map_delay_labels, delay_index, !map_on, &mapDelayChanged),
+        try mapSelect(cc, a, i18n.tr("Position"), "mini_map_position", panel.translatedLabels(&map_position_labels), position_index, !map_on, &mapPositionChanged),
+        try mapSelect(cc, a, i18n.tr("Hide after"), "mini_map_hide_ms", panel.translatedLabels(&map_delay_labels), delay_index, !map_on, &mapDelayChanged),
     });
     var fixed_row = try container(a, .row, &.{
-        text("Keep desktop icons in place", 13, false),
+        text(i18n.tr("Keep desktop icons in place"), 13, false),
         .{ .name = "desktop_icons_fixed", .kind = .{ .toggle = .{ .on = cfg.desktop_icons_fixed, .owner = cc, .on_change = &fixedChanged } } },
     });
     fixed_row.justify = .space_between;
     fixed_row.@"align" = .center;
     const mode_card = try card(a, &.{
-        panel.sectionTitle("Desktop mode"),
-        .{ .name = "desktop_mode", .kind = .{ .segmented = .{ .labels = &.{ "Canvas", "Workspaces" }, .selected = @intFromEnum(cfg.desktop_mode), .owner = cc, .on_change = modeChanged } }, .width = .{ .percent = 1 } },
-        text(if (cfg.desktop_mode == .workspaces) "Automatic tiles with a fixed view and Hyprland-style shortcuts. Drag tiles to rearrange; Super+V toggles floating." else "Pan and zoom the canvas. Switching back restores your canvas positions and zoom.", 12, true),
+        panel.sectionTitle(i18n.tr("Desktop mode")),
+        .{ .name = "desktop_mode", .kind = .{ .segmented = .{ .labels = panel.translatedLabels(&.{ i18n.msg("Canvas"), i18n.msg("Workspaces") }), .selected = @intFromEnum(cfg.desktop_mode), .owner = cc, .on_change = modeChanged } }, .width = .{ .percent = 1 } },
+        text(if (cfg.desktop_mode == .workspaces) i18n.tr("Automatic tiles with a fixed view and Hyprland-style shortcuts. Drag tiles to rearrange; Super+V toggles floating.") else i18n.tr("Pan and zoom the canvas. Switching back restores your canvas positions and zoom."), 12, true),
     });
     if (cfg.desktop_mode == .workspaces) return workspaceTree(s, cc, a, mode_card);
     var root = try container(a, .column, &.{
@@ -162,9 +163,9 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
         body,
         switching,
         mini_map,
-        try card(a, &.{ fixed_row, text("Keep icons fixed on screen while panning and zooming.", 12, true) }),
-        text("Dragging stops on release. Edges settle with a short animation.", 12, true),
-        text("Existing windows outside a smaller canvas stay reachable.", 12, true),
+        try card(a, &.{ fixed_row, text(i18n.tr("Keep icons fixed on screen while panning and zooming."), 12, true) }),
+        text(i18n.tr("Dragging stops on release. Edges settle with a short animation."), 12, true),
+        text(i18n.tr("Existing windows outside a smaller canvas stay reachable."), 12, true),
         text(s.message, 12, true),
     });
     if (s.message.len == 0) root.children = root.children[0 .. root.children.len - 1];
@@ -185,7 +186,7 @@ fn mapSelect(cc: *panel.ControlCenter, a: std.mem.Allocator, label: []const u8, 
 fn saveMap(owner: ?*anyopaque, comptime key: []const u8, value: @FieldType(@import("config").loader.CompositorConfig, key)) void {
     const cc: *panel.ControlCenter = @ptrCast(@alignCast(owner orelse return));
     @import("config").setting_save.saveCompositor(gpa, cc.server.io, cc.server.config.path, key, value) catch {
-        cc.desktop.message = "Could not save. Check the configuration file and try again.";
+        cc.desktop.message = i18n.tr("Could not save. Check the configuration file and try again.");
         cc.refresh();
         return;
     };
@@ -208,7 +209,7 @@ fn mapDelayChanged(owner: ?*anyopaque, _: usize, index: usize) void {
 fn fixedChanged(owner: ?*anyopaque, _: usize, on: bool) void {
     const cc: *panel.ControlCenter = @ptrCast(@alignCast(owner orelse return));
     @import("config").setting_save.saveCompositor(gpa, cc.server.io, cc.server.config.path, "desktop_icons_fixed", on) catch {
-        cc.desktop.message = "Could not save. Check the configuration file and try again.";
+        cc.desktop.message = i18n.tr("Could not save. Check the configuration file and try again.");
         cc.refresh();
         return;
     };
@@ -222,7 +223,7 @@ fn switchChanged(owner: ?*anyopaque, _: usize, index: usize) void {
     const ms = switch_ms[index];
     // The config watcher's reload rebuilds the camera_desktop curve.
     @import("config").setting_save.saveCompositor(gpa, cc.server.io, cc.server.config.path, "desktop_switch_ms", ms) catch {
-        cc.desktop.message = "Could not save. Check the configuration file and try again.";
+        cc.desktop.message = i18n.tr("Could not save. Check the configuration file and try again.");
         cc.refresh();
         return;
     };
@@ -251,7 +252,7 @@ fn change(owner: ?*anyopaque, id: usize) void {
     columns = std.math.clamp(columns, 1, 10);
     rows = std.math.clamp(rows, 1, 10);
     @import("config").setting_save.saveCanvas(gpa, cc.server.io, cc.server.config.path, columns, rows) catch {
-        cc.desktop.message = "Could not save. Check the configuration file and try again.";
+        cc.desktop.message = i18n.tr("Could not save. Check the configuration file and try again.");
         cc.refresh();
         return;
     };
@@ -267,7 +268,7 @@ fn modeChanged(owner: ?*anyopaque, _: usize, index: usize) void {
     if (index > 1) return;
     const mode: @import("config").loader.DesktopMode = @enumFromInt(index);
     @import("../../config_runtime/workspace_controls.zig").mode(cc.server, mode, true) catch {
-        cc.desktop.message = "Could not save desktop mode.";
+        cc.desktop.message = i18n.tr("Could not save desktop mode.");
         cc.refresh();
     };
 }
@@ -279,14 +280,14 @@ fn workspaceTree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator, mo
     const id = if (s.selected_workspace > 0) s.selected_workspace else if (cc.server.getDefaultOutput()) |out| @max(1, out.workspace_id) else 1;
     s.selected_workspace = id;
     const labels = try a.alloc([]const u8, 32);
-    for (labels, 0..) |*label, i| label.* = try std.fmt.allocPrint(a, "Workspace {d}", .{i + 1});
+    for (labels, 0..) |*label, i| label.* = try i18n.allocPrint(a, i18n.tr("Workspace {n}"), .{ .n = i + 1 });
     const slot = manager.slots[id - 1];
     const workspace_card = try card(a, &.{
-        panel.sectionTitle("Workspace layout"),
-        try mapSelect(cc, a, "Workspace", "workspace_select", labels, id - 1, false, workspaceSelected),
-        try mapSelect(cc, a, "Placement", "workspace_layout", &.{ "Automatic tiling", "Floating" }, if (slot.automatic) 0 else 1, false, layoutChanged),
-        text(if (slot.output) |out| try std.fmt.allocPrint(a, "Output: {s}", .{std.mem.span(out.wlr_output.name)}) else "Assigned to the current output when first used.", 12, true),
-        text("Layouts and split sizes are saved for your next session.", 12, true),
+        panel.sectionTitle(i18n.tr("Workspace layout")),
+        try mapSelect(cc, a, i18n.tr("Workspace"), "workspace_select", labels, id - 1, false, workspaceSelected),
+        try mapSelect(cc, a, i18n.tr("Placement"), "workspace_layout", panel.translatedLabels(&.{ i18n.msg("Automatic tiling"), i18n.msg("Floating") }), if (slot.automatic) 0 else 1, false, layoutChanged),
+        text(if (slot.output) |out| try i18n.allocPrint(a, i18n.tr("Output: {name}"), .{ .name = std.mem.span(out.wlr_output.name) }) else i18n.tr("Assigned to the current output when first used."), 12, true),
+        text(i18n.tr("Layouts and split sizes are saved for your next session."), 12, true),
     });
     var gap_index: usize = 0;
     const value = cc.server.config.compositor.windowGap();
@@ -294,9 +295,9 @@ fn workspaceTree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator, mo
         gap_index = i;
     };
     const spacing = try card(a, &.{
-        panel.sectionTitle("Window spacing"),
-        try mapSelect(cc, a, try std.fmt.allocPrint(a, "Gap ({d} px)", .{value}), "workspace_gap", &gap_labels, gap_index, false, gapChanged),
-        text("Applies to output edges and the space between automatic tiles.", 12, true),
+        panel.sectionTitle(i18n.tr("Window spacing")),
+        try mapSelect(cc, a, try i18n.allocPrint(a, i18n.tr("Gap ({n} px)"), .{ .n = value }), "workspace_gap", &gap_labels, gap_index, false, gapChanged),
+        text(i18n.tr("Applies to output edges and the space between automatic tiles."), 12, true),
     });
     var choices: std.ArrayList([]const u8) = .empty;
     for (cc.server.config.compositor.floating_apps) |app| try choices.append(a, try a.dupe(u8, app));
@@ -323,10 +324,10 @@ fn workspaceTree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator, mo
         item.* = .{ .id = i, .name = try std.fmt.allocPrint(a, "floating_app:{s}", .{app}), .label = app, .checked = checked };
     }
     const rules = try card(a, &.{
-        panel.sectionTitle("Floating apps"),
-        text("Checked apps open floating. Super+V can override placement for a window. Dialogs and fixed-size windows float automatically.", 12, true),
+        panel.sectionTitle(i18n.tr("Floating apps")),
+        text(i18n.tr("Checked apps open floating. Super+V can override placement for a window. Dialogs and fixed-size windows float automatically."), 12, true),
         try list.build(a, items, cc, floatingChanged, .{}),
-        text("Open an app to add it here. Advanced title, backend and glob matches use [[window_rules]] floating in your config.", 12, true),
+        text(i18n.tr("Open an app to add it here. Advanced title, backend and glob matches use [[window_rules]] floating in your config."), 12, true),
     });
     return container(a, .column, &.{ mode_card, workspace_card, spacing, rules, text(s.message, 12, true) });
 }
@@ -345,7 +346,7 @@ fn gapChanged(owner: ?*anyopaque, _: usize, index: usize) void {
     const cc: *panel.ControlCenter = @ptrCast(@alignCast(owner orelse return));
     if (index >= gaps.len) return;
     @import("../../config_runtime/workspace_controls.zig").gap(cc.server, gaps[index], true) catch {
-        cc.desktop.message = "Could not save window spacing.";
+        cc.desktop.message = i18n.tr("Could not save window spacing.");
         cc.refresh();
     };
 }
@@ -362,7 +363,7 @@ fn floatingChanged(owner: ?*anyopaque, index: usize, checked: bool) void {
     };
     if (checked) apps.append(a, selected) catch return;
     @import("../../config_runtime/workspace_controls.zig").floatingApps(cc.server, apps.items, true) catch {
-        cc.desktop.message = "Could not save floating apps.";
+        cc.desktop.message = i18n.tr("Could not save floating apps.");
         cc.refresh();
     };
 }

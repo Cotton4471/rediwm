@@ -449,8 +449,8 @@ def run(scale):
                 scheduler.release.set()
                 refresh()
 
-                # Global search replaces the body while Printers stays selected.
-                # Its worker and CUPS activity must stop until results are cleared.
+                # Global search navigates to Audio. Clearing it keeps that page;
+                # the printer worker stays stopped until Printers is selected again.
                 click('settings_search')
                 ipc.type_text('volume')
                 ui.wait_settled('control_center')
@@ -460,8 +460,11 @@ def run(scale):
                 assert len(scheduler.calls()) == count, 'global search must not retain CUPS activity'
                 ipc.key_press('Escape')
                 ui.wait_settled('control_center')
+                assert named('audio')['selected'], 'clearing search must keep the current page'
+                assert not printer_workers(process), 'clearing search must not restart a hidden printer worker'
+                click('printers')
                 ready()
-                wait_for(lambda: len(printer_workers(process)) == 1, 'printer worker after clearing search')
+                wait_for(lambda: len(printer_workers(process)) == 1, 'printer worker after returning to Printers')
 
                 # Leaving the page must cancel an outstanding socket deadline.
                 scheduler.release.clear()

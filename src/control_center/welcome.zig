@@ -1,4 +1,5 @@
 //! First-session welcome, using the Settings host and shared controls.
+const i18n = @import("i18n");
 const std = @import("std");
 const wl = @import("wayland").server.wl;
 const ui = @import("ui");
@@ -16,7 +17,7 @@ pub const State = struct {
     scale: ?f32 = null,
     browsers: []const []const u8 = &.{},
     terminals: []const []const u8 = &.{},
-    message: []const u8 = "You can change these later in Settings.",
+    message: []const u8 = "",
 
     pub fn deinit(s: *State) void {
         if (s.idle) |source| source.remove();
@@ -72,8 +73,8 @@ fn choice(cc: *panel.ControlCenter, a: A, tiling: bool) !W {
     const selected = (cc.server.config.compositor.desktop_mode == .workspaces) == tiling;
     var result = try group(a, .column, &.{
         .{ .kind = .container, .height = .{ .fixed = if (compact(cc)) 76 else 126 }, .underlay = .{ .owner = cc, .paint = if (tiling) paintTiles else paintStack } },
-        text(if (tiling) "Tiling" else "Classic (stacking)", 18, false),
-        text(if (tiling) "Arrange windows automatically." else "Move, resize and overlap windows.", 13, true),
+        text(if (tiling) i18n.tr("Tiling") else i18n.tr("Classic (stacking)"), 18, false),
+        text(if (tiling) i18n.tr("Arrange windows automatically.") else i18n.tr("Move, resize and overlap windows."), 13, true),
     });
     result.name = if (tiling) "welcome_tiling" else "welcome_classic";
     result.kind = .{ .row = .{
@@ -101,13 +102,13 @@ fn tree(cc: *panel.ControlCenter, a: A) !W {
     if (@import("../icon_cache.zig").get(cc.server.icon_theme_cfg, cc.server.io, "builtin:redi-logo", @intFromFloat(@ceil(52 * cc.toplevel.render_scale)))) |entry| {
         logo.kind = .{ .image = .{ .pixels = entry.pixels, .width = entry.size, .height = entry.size, .fallback_icon = null } };
     }
-    var heading = try group(a, .row, &.{ logo, try group(a, .column, &.{ text("Welcome to RediWM", if (narrow) 24 else if (small) 26 else 30, false), text("Choose how your desktop works.", 14, true) }) });
+    var heading = try group(a, .row, &.{ logo, try group(a, .column, &.{ text(i18n.tr("Welcome to RediWM"), if (narrow) 24 else if (small) 26 else 30, false), text(i18n.tr("Choose how your desktop works."), 14, true) }) });
     heading.@"align" = .center;
     heading.gap = 20;
     heading.children[1].gap = if (small) 4 else 12;
     var apps = try group(a, if (narrow) .column else .row, &.{ try appSelect(cc, a, true), try appSelect(cc, a, false) });
     apps.gap = 20;
-    const scale_labels = &.{ "System default", "100%", "125%", "150%", "175%", "200%", "250%", "300%" };
+    const scale_labels = panel.translatedLabels(&.{ i18n.msg("System default"), i18n.msg("100%"), i18n.msg("125%"), i18n.msg("150%"), i18n.msg("175%"), i18n.msg("200%"), i18n.msg("250%"), i18n.msg("300%") });
     var scale_index: ?usize = 0;
     for (cc.server.config.outputs) |config| {
         if (!std.mem.eql(u8, config.name, std.mem.span(cc.wlr_output.name))) continue;
@@ -120,26 +121,26 @@ fn tree(cc: *panel.ControlCenter, a: A) !W {
         }
     }
     var scale = try group(a, .column, &.{
-        text("Interface scale", 13, true),
-        .{ .name = "welcome_scale", .kind = .{ .select = .{ .labels = scale_labels, .selected = scale_index, .placeholder = "Custom", .disabled = cc.server.scale_override != null, .owner = cc, .on_change = scaleChanged } }, .width = .{ .percent = 1 }, .height = .{ .fixed = 38 } },
+        text(i18n.tr("Interface scale"), 13, true),
+        .{ .name = "welcome_scale", .kind = .{ .select = .{ .labels = scale_labels, .selected = scale_index, .placeholder = i18n.tr("Custom"), .disabled = cc.server.scale_override != null, .owner = cc, .on_change = scaleChanged } }, .width = .{ .percent = 1 }, .height = .{ .fixed = 38 } },
     });
     scale.gap = if (small) 6 else 12;
     scale.width = .{ .percent = if (narrow) 1 else 0.48 };
     var footer = try group(a, if (narrow) .column else .row, &.{
-        .{ .name = "welcome_settings", .kind = .{ .button = .{ .label = "More settings", .leading_icon = .settings, .variant = .ghost, .owner = cc, .id = 1, .on_click = finishClicked } }, .width = .{ .fixed = 170 }, .height = .{ .fixed = 42 } },
-        .{ .name = "welcome_start", .kind = .{ .button = .{ .label = "Start using RediWM", .variant = .primary, .owner = cc, .on_click = finishClicked } }, .width = .{ .fixed = 218 }, .height = .{ .fixed = 42 } },
+        .{ .name = "welcome_settings", .kind = .{ .button = .{ .label = i18n.tr("More settings"), .leading_icon = .settings, .variant = .ghost, .owner = cc, .id = 1, .on_click = finishClicked } }, .width = .{ .fixed = 170 }, .height = .{ .fixed = 42 } },
+        .{ .name = "welcome_start", .kind = .{ .button = .{ .label = i18n.tr("Start using RediWM"), .variant = .primary, .owner = cc, .on_click = finishClicked } }, .width = .{ .fixed = 218 }, .height = .{ .fixed = 42 } },
     });
     footer.justify = .space_between;
-    cc.welcome.footer = try group(a, .column, &.{ text(cc.welcome.message, 13, true), footer });
+    cc.welcome.footer = try group(a, .column, &.{ text(if (cc.welcome.message.len > 0) cc.welcome.message else i18n.tr("You can change these later in Settings."), 13, true), footer });
     cc.welcome.footer.width = .{ .percent = 1 };
     cc.welcome.footer.gap = if (small) 8 else 12;
     cc.welcome.footer.padding = .{ .left = if (small) 20 else 28, .right = if (small) 20 else 28, .top = 8, .bottom = if (small) 16 else 24 };
     var root = try group(a, .column, &.{
         heading,
-        text("Choose your window layout", 18, false),
+        text(i18n.tr("Choose your window layout"), 18, false),
         try group(a, if (narrow) .column else .row, &.{ try choice(cc, a, false), try choice(cc, a, true) }),
         .{ .kind = .{ .rect = .{ .color = panel.palette().border_soft } }, .height = .{ .fixed = 1 } },
-        text("Default apps", 18, false),
+        text(i18n.tr("Default apps"), 18, false),
         apps,
         scale,
         .{ .kind = .{ .rect = .{ .color = panel.palette().border_soft } }, .height = .{ .fixed = 1 } },
@@ -166,7 +167,7 @@ fn appSelect(cc: *panel.ControlCenter, a: A, browser: bool) !W {
     var values: std.ArrayList([]const u8) = .empty;
     // Keep the inherited browser as an explicit choice: selecting a browser
     // really changes the system's HTTP/HTTPS associations.
-    try labels.append(a, if (current_app) |app| try a.dupe(u8, std.mem.span(g_app_info_get_display_name(app))) else "System default");
+    try labels.append(a, if (current_app) |app| try a.dupe(u8, std.mem.span(g_app_info_get_display_name(app))) else i18n.tr("System default"));
     try values.append(a, try a.dupe(u8, if (browser) selected else ""));
     var selected_index: usize = 0;
     for (snapshot.entries) |entry| {
@@ -182,13 +183,13 @@ fn appSelect(cc: *panel.ControlCenter, a: A, browser: bool) !W {
         if (std.mem.eql(u8, entry.id, selected)) selected_index = values.items.len - 1;
     }
     if (!browser and selected.len > 0 and selected_index == 0) {
-        try labels.append(a, try std.fmt.allocPrint(a, "Unavailable: {s}", .{selected}));
+        try labels.append(a, try i18n.allocPrint(a, i18n.tr("Unavailable: {name}"), .{ .name = selected }));
         try values.append(a, try a.dupe(u8, selected));
         selected_index = values.items.len - 1;
     }
     if (browser) cc.welcome.browsers = values.items else cc.welcome.terminals = values.items;
     var field = try group(a, .column, &.{
-        text(if (browser) "Browser" else "Terminal", 13, true),
+        text(if (browser) i18n.tr("Browser") else i18n.tr("Terminal"), 13, true),
         .{ .name = if (browser) "welcome_browser" else "welcome_terminal", .kind = .{ .select = .{ .labels = labels.items, .selected = selected_index, .owner = cc, .id = @intFromBool(browser), .on_change = appChanged } }, .width = .{ .percent = 1 }, .height = .{ .fixed = 38 } },
     });
     field.gap = if (compact(cc)) 6 else 12;
@@ -198,11 +199,11 @@ fn appChanged(owner: ?*anyopaque, id: usize, index: usize) void {
     const cc: *panel.ControlCenter = @ptrCast(@alignCast(owner orelse return));
     saveApp(cc, id == 1, index) catch |err| {
         std.log.warn("could not save welcome application: {}", .{err});
-        cc.welcome.message = "Could not save the default app. Please try again.";
+        cc.welcome.message = i18n.tr("Could not save the default app. Please try again.");
         cc.refresh();
         return;
     };
-    cc.welcome.message = "Saved. You can change these later in Settings.";
+    cc.welcome.message = i18n.tr("Saved. You can change these later in Settings.");
     cc.refresh();
 }
 fn saveApp(cc: *panel.ControlCenter, browser: bool, index: usize) !void {
@@ -247,7 +248,7 @@ fn finishClicked(owner: ?*anyopaque, id: usize) void {
 fn schedule(cc: *panel.ControlCenter) void {
     if (cc.welcome.idle != null) return;
     cc.welcome.idle = cc.server.wl_server.getEventLoop().addIdle(*panel.ControlCenter, apply, cc) catch {
-        cc.welcome.message = "Could not apply this choice. Please try again.";
+        cc.welcome.message = i18n.tr("Could not apply this choice. Please try again.");
         cc.refresh();
         return;
     };
@@ -267,13 +268,13 @@ fn apply(cc: *panel.ControlCenter) void {
         },
         .classic, .tiling => @import("../config_runtime/workspace_controls.zig").mode(cc.server, if (cc.welcome.action == .tiling) .workspaces else .canvas, true) catch |err| {
             std.log.warn("could not save welcome layout: {}", .{err});
-            cc.welcome.message = "Could not save your layout. Please try again.";
+            cc.welcome.message = i18n.tr("Could not save your layout. Please try again.");
         },
         .scale => {
             const output = @import("../Output.zig").fromWlr(cc.wlr_output) orelse return;
             output.applyAndPersist(.{ .scale = cc.welcome.scale, .auto_scale = cc.welcome.scale == null }) catch |err| {
                 std.log.warn("could not save welcome scale: {}", .{err});
-                cc.welcome.message = "Could not apply or save the display scale.";
+                cc.welcome.message = i18n.tr("Could not apply or save the display scale.");
             };
         },
     }

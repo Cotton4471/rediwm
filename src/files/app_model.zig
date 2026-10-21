@@ -1,6 +1,8 @@
 //! Files view model: the enums and records the App and its parts share.
 
 const std = @import("std");
+const i18n = @import("i18n");
+const tr = i18n.tr;
 const anim = @import("ui").anim;
 const c = @import("c.zig").api;
 const git = @import("git.zig");
@@ -27,20 +29,21 @@ pub const PlaceAction = enum {
 
     pub fn label(self: PlaceAction) []const u8 {
         return switch (self) {
-            .open => "Open",
-            .open_window => "Open in New Window",
-            .empty_trash => "Empty Trash…",
-            .unpin => "Unpin",
-            .remove_pin => "Remove from Places",
-            .properties => "Properties",
-            .mount => "Mount",
-            .eject => "Eject",
+            .open => tr("Open"),
+            .open_window => tr("Open in New Window"),
+            .empty_trash => tr("Empty Trash…"),
+            .unpin => tr("Unpin"),
+            .remove_pin => tr("Remove from Places"),
+            .properties => tr("Properties"),
+            .mount => tr("Mount"),
+            .eject => tr("Eject"),
         };
     }
 };
 pub const FileAction = enum {
     open,
     open_with,
+    add_application,
     extract,
     extract_to,
     cut,
@@ -52,23 +55,25 @@ pub const FileAction = enum {
     properties,
     pub fn label(self: FileAction) []const u8 {
         return switch (self) {
-            .open => "Open",
-            .open_with => "Open With…",
-            .extract => "Extract",
-            .extract_to => "Extract to…",
-            .cut => "Cut",
-            .copy => "Copy",
-            .paste => "Paste",
-            .rename => "Rename",
-            .trash => "Move to Trash",
-            .size => "Calculate size",
-            .properties => "Properties",
+            .open => tr("Open"),
+            .open_with => tr("Open With…"),
+            .add_application => tr("Add to applications"),
+            .extract => tr("Extract"),
+            .extract_to => tr("Extract to…"),
+            .cut => tr("Cut"),
+            .copy => tr("Copy"),
+            .paste => tr("Paste"),
+            .rename => tr("Rename"),
+            .trash => tr("Move to Trash"),
+            .size => tr("Calculate size"),
+            .properties => tr("Properties"),
         };
     }
     pub fn icon(self: FileAction) IconId {
         return switch (self) {
             .open => .chevron_right,
             .open_with => .grid,
+            .add_application => .plus,
             .extract, .extract_to => .folder,
             .cut => .cut,
             .copy => .copy,
@@ -129,11 +134,13 @@ pub const ToolbarHover = struct {
 pub const ViewItem = struct {
     git_status: git.Status = .clean,
     git_lines: ?git.LineCounts = null,
+    transfer_stub: bool = false,
     missing: bool = false,
     name: []const u8,
     /// Path from the listed folder, shown instead of `name` in the Git view's
     /// flat list. `name` stays the file's own name: renaming and opening use it.
     label: []const u8 = "",
+    sort_key: ?[]const u8 = null,
     path: []const u8,
     is_dir: bool,
     is_symlink: bool,
@@ -177,6 +184,9 @@ pub const Focus = enum {
 };
 
 pub const DialogKind = enum {
+    transfers,
+    torrent_source,
+    torrent_destination,
     terminal_close,
     new_folder,
     new_file,

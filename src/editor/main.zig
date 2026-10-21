@@ -68,7 +68,6 @@ pub const Client = struct {
     xkb_state: ?*c.xkb_state = null,
     key_repeat: key_repeat.KeyRepeat = .{},
     app: app_mod.App,
-    caret: @import("caret.zig").Blink = .{},
     caret_state: ?app_mod.App.CaretState = null,
     clipboard: @import("clipboard.zig").Clipboard = undefined,
     ime: @import("ime.zig").Ime = undefined,
@@ -650,6 +649,7 @@ pub const Client = struct {
         self.surface.commit();
         self.app.dirty = false;
         self.app.caret_dirty = false;
+        self.app.caret_painted = self.app.caret.box;
     }
 
     fn renderTitlebar(self: *Client, cr: *c.cairo_t, w: i32, h: i32) void {
@@ -695,7 +695,7 @@ pub const Client = struct {
                 var layer = l;
                 layer.renderer.palette = ui_theme.shellPalette();
                 button_widget.paint(&layer.renderer, layer.local(), .{
-                    .label = if (control == .menu) "Menu" else "",
+                    .label = if (control == .menu) @import("i18n").tr("Menu") else "",
                     .icon = switch (control) {
                         .menu => IconId.more,
                         .minimize => IconId.minimize,
@@ -783,6 +783,17 @@ pub fn run(init: std.process.Init, paths: []const [:0]const u8, instance: *@impo
     const force_csd = init.minimal.environ.getPosix("REDIWM_EDITOR_FORCE_CSD") != null;
     @import("../files/settings.zig").loadTheme(init.gpa, init.io, init.minimal.environ);
     defer @import("../files/settings.zig").deinitTheme();
+    // Use the same persisted caret and motion preferences as shell fields.
+    if (@import("config").loader.loadDefault(init.gpa, init.io, init.minimal.environ)) |loaded| {
+        var cfg = loaded;
+        defer cfg.deinit();
+        @import("ui").input.caret_config = .{
+            .blink_ms = cfg.input.caret_blink_ms,
+            .blink_timeout_s = cfg.input.caret_blink_timeout,
+            .motion_ms = cfg.input.caret_motion_ms,
+        };
+        @import("ui").anim.applySettings(cfg.animations);
+    } else |_| {}
     const display = try wl.Display.connect(null);
     defer display.disconnect();
     var self = Client{ .display = display, .app = try app_mod.App.init(init.io) };
@@ -883,11 +894,11 @@ pub fn run(init: std.process.Init, paths: []const [:0]const u8, instance: *@impo
         const now = key_repeat.nowMs();
         const caret_state = self.app.caretState();
         const restart = self.caret_state == null or !std.meta.eql(self.caret_state.?, caret_state);
+        const snap = if (self.caret_state) |before| !before.active or before.tab != caret_state.tab or before.find != caret_state.find or
+            before.top != caret_state.top or before.dy != caret_state.dy or before.scroll_x != caret_state.scroll_x or
+            before.width != caret_state.width or before.height != caret_state.height or before.scale != caret_state.scale else true;
         self.caret_state = caret_state;
-        if (self.caret.update(now, caret_state.active, restart)) {
-            self.app.caret_visible = self.caret.visible;
-            self.app.caret_dirty = true;
-        }
+        self.app.stepCaret(now, caret_state.active, restart, snap);
         try self.render();
         if (self.configured and self.applied_scale > 0 and pending_token.len > 0) {
             if (self.activation) |activation| activation.activate(pending_token, self.surface);
@@ -917,7 +928,7 @@ pub fn run(init: std.process.Init, paths: []const [:0]const u8, instance: *@impo
         const poll_now = key_repeat.nowMs();
         var timeout: c_int = if (self.key_repeat.timeoutMs(poll_now)) |wait| @intCast(@min(wait, 60_000)) else -1;
         if (self.app.barTimeout(poll_now)) |wait| timeout = if (timeout < 0) @intCast(wait) else @min(timeout, @as(c_int, @intCast(wait)));
-        const result = c.poll(&fds, fd_count, self.caret.timeout(poll_now, self.clipboard.timeout(timeout)));
+        const result = c.poll(&fds, fd_count, self.app.caret.timeout(poll_now, self.clipboard.timeout(timeout)));
         if (result > 0 and (fds[0].revents & c.POLLIN != 0)) {
             if (display.readEvents() != .SUCCESS) return error.DisplayFailed;
         } else {

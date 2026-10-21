@@ -20,6 +20,10 @@ text and colours, secrets) are in the root `AGENTS.md` ("Shared UI").
   dragging and the scroll hold brighten it. `Appearance.illumination` shares
   the existing frame/deadline scheduling (no idle animation). Cairo uses the
   shared raster for the lit thumb, preserving its fractional device position.
+* **Text fields with child accessories** reserve text/caret room with
+  `field.trailing = .accessory`. Place a shared button in the field's children
+  (Settings search uses a ghost clear button), so normal pointer and keyboard
+  dispatch handles it inside the field frame.
 * **Scroll containers** (`.scroll_container`) give widget trees all of the
   above: hosts call `scroll_container.stepBars` beside `stepGlides` and carry
   `ScrollState.bar` across rebuilds. It scrolls along its `direction`, which
@@ -50,6 +54,13 @@ text and colours, secrets) are in the root `AGENTS.md` ("Shared UI").
   switches' knobs across with `toggle.capture`/`restore` (by name hash: arena
   names don't outlive the rebuild). A host that builds `.toggle` widgets must
   call `stepBars` or its switches never leave their first position.
+* **Dropdowns survive unrelated page updates.** On a rebuild of the same page,
+  use `select.capture`/`restore` and restore input focus to the returned widget.
+  The saved state owns its bounded name copy: the old tree's arena can be freed.
+  Changed options, disabled choices, owner/id, or backend selection invalidate
+  the saved menu; restoration never replaces the new backend value. Settings
+  does this beside its slider and switch capture, so a live Services update
+  cannot discard an in-progress Notify choice.
 * **The battery badge** (`widgets/battery.zig`: frame, glyph, percentage,
   charging bolt) is the taskbar's artwork. `sample` is the pixel math (per
   device pixel, badge-local units); the taskbar's per-pixel raster calls it and

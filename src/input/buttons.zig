@@ -80,6 +80,11 @@ pub fn processButton(
         if (state == .pressed) {
             input.tray_buttons |= screenshot_bit;
             input.window_menu.press(input.cursor.x, input.cursor.y, button);
+        } else if (input.active_buttons > 0) {
+            // A dock picker opens during the icon's left press, after that
+            // press was counted below. Its release still ends the button grab.
+            input.active_buttons -= 1;
+            input.pointer_constraints.sync();
         }
         return;
     }

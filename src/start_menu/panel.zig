@@ -1,6 +1,7 @@
 // Compositor-drawn start menu panel.
 //
 // Taskbar menu and centered keyboard launcher, using the same themed widgets.
+const i18n = @import("i18n");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const glass = @import("../glass.zig");
@@ -434,7 +435,7 @@ pub const StartMenu = struct {
         sw_children[0] = .{
             .name = "search_input",
             .kind = .{ .text_input = .{
-                .placeholder = if (menu.mode == .launcher) "Search applications…" else "Type to search…",
+                .placeholder = if (menu.mode == .launcher) i18n.tr("Search applications…") else i18n.tr("Type to search…"),
                 .field = .{ .leading_icon = .search, .leading_icon_size = 24, .leading_icon_color = t.window_fg },
                 .value = query_val,
                 .cursor_pos = @min(menu.query_cursor, query_val.len),
@@ -467,7 +468,7 @@ pub const StartMenu = struct {
         const heading_label = a.create(Widget) catch return;
         heading_label.* = .{
             .kind = .{ .text = .{
-                .content = "Applications",
+                .content = i18n.tr("Applications"),
                 .font_size = 12,
                 .weight = 600,
                 .color = t.dim,
@@ -580,11 +581,14 @@ pub const StartMenu = struct {
             } else if (is_sel) {
                 const hint_widget = a.create(Widget) catch return;
                 hint_widget.* = .{
-                    .kind = .{ .text = .{
-                        .content = "↵",
-                        .font_size = 14,
-                        .color = t.accent,
-                    } },
+                    .kind = .{
+                        .text = .{
+                            // i18n: raw — Enter key glyph.
+                            .content = "↵",
+                            .font_size = 14,
+                            .color = t.accent,
+                        },
+                    },
                 };
                 row_kids = a.alloc(Widget, 3) catch return;
                 row_kids[0] = img_widget.*;
@@ -661,7 +665,7 @@ pub const StartMenu = struct {
         all_btn.* = .{
             .name = "all",
             .kind = .{ .button = .{
-                .label = "All",
+                .label = i18n.tr("All"),
                 .variant = if (all_sel) .primary else .secondary,
                 .owner = menu,
                 .on_click = onCategoryAll,
@@ -674,7 +678,7 @@ pub const StartMenu = struct {
         apps_btn.* = .{
             .name = "apps",
             .kind = .{ .button = .{
-                .label = "Apps",
+                .label = i18n.tr("Apps"),
                 .variant = if (apps_sel) .primary else .secondary,
                 .owner = menu,
                 .on_click = onCategoryApps,
@@ -703,7 +707,7 @@ pub const StartMenu = struct {
                 .variant = .ghost,
                 .icon = .power,
                 .icon_scale = 0.585,
-                .label = "Power",
+                .label = i18n.tr("Power"),
                 .owner = menu,
                 .on_click = onPowerButtonClick,
             } },
@@ -718,7 +722,7 @@ pub const StartMenu = struct {
                 .variant = .ghost,
                 .icon = .settings,
                 .icon_scale = 0.585,
-                .label = "Settings",
+                .label = i18n.tr("Settings"),
                 .owner = menu,
                 .on_click = onSettingsButtonClick,
             } },
@@ -777,7 +781,7 @@ pub const StartMenu = struct {
             launcher_kids.append(a, scroll_widget.*) catch return;
             if (row_count == 0) launcher_kids.append(a, .{
                 .name = "no_results",
-                .kind = .{ .text = .{ .content = "No applications found", .font_size = t.app_text_size, .color = t.dim } },
+                .kind = .{ .text = .{ .content = i18n.tr("No applications found"), .font_size = t.app_text_size, .color = t.dim } },
                 .margin = layout.Edges.xy(24, 16),
             }) catch return;
             children = launcher_kids.toOwnedSlice(a) catch return;
@@ -816,7 +820,7 @@ pub const StartMenu = struct {
         return .{
             .name = "pin_app",
             .kind = .{ .button = .{
-                .label = if (pinned) "Unpin application" else if (full) "Five applications already pinned" else "Pin application",
+                .label = if (pinned) i18n.tr("Unpin application") else if (full) i18n.tr("Five applications already pinned") else i18n.tr("Pin application"),
                 .icon = if (pinned) .checkmark else .plus,
                 .variant = if (pinned) .primary else .ghost,
                 .size = .sm,
@@ -898,7 +902,7 @@ pub const StartMenu = struct {
         }
         return .{
             .{ .name = "recent_heading", .kind = .container, .direction = .row, .@"align" = .center, .padding = layout.Edges.xy(24, 6), .height = .{ .fixed = 34 }, .children = try a.dupe(Widget, &.{.{ .kind = .{ .text = .{
-                .content = if (have_history) "Pinned & Recent" else "Quick Launch",
+                .content = if (have_history) i18n.tr("Pinned & Recent") else i18n.tr("Quick Launch"),
                 .font_size = t.app_heading_size,
                 .weight = 600,
                 .color = t.dim,
@@ -920,7 +924,7 @@ pub const StartMenu = struct {
         const scroll = menu.currentScrollOffset();
         const history = &menu.server.launcher_history;
         if (!history.pinned(result.id) and history.pinCount() >= 5) {
-            menu.model.error_msg = "Unpin an application first (five pins maximum).";
+            menu.model.error_msg = i18n.tr("Unpin an application first (five pins maximum).");
         } else {
             menu.model.error_msg = null;
             history.togglePin(menu.server, result.id);
@@ -1150,7 +1154,7 @@ pub const StartMenu = struct {
             launch.launch(gpa, menu.server, entry) catch |err| {
                 menu.model.launching = false;
                 log.err("launch failed: {s}", .{@errorName(err)});
-                menu.model.error_msg = "Launch failed. The application may have been removed.";
+                menu.model.error_msg = i18n.tr("Launch failed. The application may have been removed.");
                 menu.buildTree();
                 menu.requestRepaint();
                 return;

@@ -317,6 +317,14 @@ pub const Port = struct {
 
     /// The byte offset nearest (x, y), both relative to the view's text origin.
     pub fn indexAt(s: Port, x: f64, y: f64) usize {
+        return s.hitAt(x, y, true);
+    }
+    /// The character under a word-selection click, including its trailing
+    /// half. An insertion hit there would select the following separator.
+    pub fn characterAt(s: Port, x: f64, y: f64) usize {
+        return s.hitAt(x, y, false);
+    }
+    fn hitAt(s: Port, x: f64, y: f64, insertion: bool) usize {
         var cur = s.topLine() orelse return 0;
         var top = -s.dy.*;
         var guard: usize = 0;
@@ -334,7 +342,7 @@ pub const Port = struct {
         var trailing: c_int = 0;
         _ = p.pango_layout_xy_to_index(cur.layout, @intFromFloat(std.math.clamp(x * 1024, -1e9, 1e9)), @intFromFloat(local * 1024), &idx, &trailing);
         var offset = cur.seg.start + @as(usize, @intCast(@max(0, idx)));
-        while (trailing > 0 and offset < cur.seg.text_end) : (trailing -= 1) offset += std.unicode.utf8ByteSequenceLength(s.text()[offset]) catch 1;
+        while (insertion and trailing > 0 and offset < cur.seg.text_end) : (trailing -= 1) offset += std.unicode.utf8ByteSequenceLength(s.text()[offset]) catch 1;
         return @min(offset, cur.seg.text_end);
     }
 
@@ -489,4 +497,22 @@ test "small documents measure exactly and seek by pixels" {
     port.clamp();
     e = port.extent(&memo);
     try std.testing.expectApproxEqAbs(e.content - 40, e.offset, 0.01);
+}
+
+test "word hits use the character under either half of a glyph" {
+    var doc = try Document.init("word next");
+    defer doc.deinit();
+    var layouts = testLayouts();
+    defer layouts.deinit();
+    var dy: f64 = 0;
+    const port: Port = .{ .doc = &doc, .layouts = &layouts, .height = 100, .dy = &dy };
+    const row = port.locate(0).?;
+    var before: p.Rectangle = undefined;
+    var after: p.Rectangle = undefined;
+    p.pango_layout_get_cursor_pos(row.line.layout, 3, &before, null);
+    p.pango_layout_get_cursor_pos(row.line.layout, 4, &after, null);
+    const x = (@as(f64, @floatFromInt(before.x)) * 0.2 + @as(f64, @floatFromInt(after.x)) * 0.8) / 1024;
+    const y = @as(f64, @floatFromInt(before.height)) / 2048;
+    try std.testing.expectEqual(@as(usize, 4), port.indexAt(x, y));
+    try std.testing.expectEqual(@as(usize, 3), port.characterAt(x, y));
 }

@@ -1,3 +1,4 @@
+const i18n = @import("i18n");
 // Editable output modes, including backend-tested lower resolutions. Apply
 // selections after input dispatch: a modeset rebuilds output-local trees.
 const std = @import("std");
@@ -43,8 +44,8 @@ const xwayland_labels = blk: {
 };
 const LidAction = @import("config").loader.LidAction;
 /// In `LidAction` order.
-const lid_labels = [_][]const u8{ "Turn off screen", "Lock", "Sleep", "Do nothing" };
-const transform_labels = [_][]const u8{ "Normal", "90°", "180°", "270°", "Flipped", "Flipped 90°", "Flipped 180°", "Flipped 270°" };
+const lid_labels = [_]i18n.Message{ i18n.msg("Turn off screen"), i18n.msg("Lock"), i18n.msg("Sleep"), i18n.msg("Do nothing") };
+const transform_labels = [_]i18n.Message{ i18n.msg("Normal"), i18n.msg("90°"), i18n.msg("180°"), i18n.msg("270°"), i18n.msg("Flipped"), i18n.msg("Flipped 90°"), i18n.msg("Flipped 180°"), i18n.msg("Flipped 270°") };
 const row_height: f32 = 40;
 const nl_temp_min: f32 = 1700;
 const nl_temp_max: f32 = 10000;
@@ -154,24 +155,24 @@ pub fn build(out: *Section, cc: *panel.ControlCenter, wlr_output: *wlr.Output) v
     out.initial_monitor = null;
     const name = std.mem.span(wlr_output.name);
     // Plain-text fallback; buildMonitors replaces it unless it bails early.
-    setRow(out, row_monitor, "Monitor", "{s}", .{name});
+    setRow(out, row_monitor, i18n.tr("Monitor"), "{s}", .{name});
     buildMonitors(out, name);
     if (wlr_output.current_mode) |mode| {
-        setRow(out, row_resolution, "Resolution", "{d} × {d}", .{ mode.width, mode.height });
-        setRow(out, row_refresh, "Refresh rate", "{d:.3} Hz", .{@as(f64, @floatFromInt(mode.refresh)) / 1000});
+        setRow(out, row_resolution, i18n.tr("Resolution"), "{d} × {d}", .{ mode.width, mode.height });
+        setRow(out, row_refresh, i18n.tr("Refresh rate"), "{d:.3} Hz", .{@as(f64, @floatFromInt(mode.refresh)) / 1000});
     } else {
-        setRow(out, row_resolution, "Resolution", "{d} × {d}", .{ wlr_output.width, wlr_output.height });
-        setRow(out, row_refresh, "Refresh rate", "{d:.3} Hz", .{@as(f64, @floatFromInt(wlr_output.refresh)) / 1000});
+        setRow(out, row_resolution, i18n.tr("Resolution"), "{d} × {d}", .{ wlr_output.width, wlr_output.height });
+        setRow(out, row_refresh, i18n.tr("Refresh rate"), "{d:.3} Hz", .{@as(f64, @floatFromInt(wlr_output.refresh)) / 1000});
     }
     if (wlr_output.scale == @round(wlr_output.scale)) {
-        setRow(out, row_scale, "Display scale", "{d}×", .{@as(i32, @intFromFloat(wlr_output.scale))});
+        setRow(out, row_scale, i18n.tr("Display scale"), "{d}×", .{@as(i32, @intFromFloat(wlr_output.scale))});
     } else {
-        setRow(out, row_scale, "Display scale", "{d:.2}×", .{wlr_output.scale});
+        setRow(out, row_scale, i18n.tr("Display scale"), "{d:.2}×", .{wlr_output.scale});
     }
-    setRow(out, row_xwayland, "Xwayland scale (global)", "", .{});
+    setRow(out, row_xwayland, i18n.tr("Xwayland scale (global)"), "", .{});
     const current_transform = transformFromWl(wlr_output.transform);
-    setRow(out, row_transform, "Transform", "{s}", .{output_transform.name(current_transform)});
-    setRow(out, row_name, "Output name", "{s}", .{name});
+    setRow(out, row_transform, i18n.tr("Transform"), "{s}", .{output_transform.name(current_transform)});
+    setRow(out, row_name, i18n.tr("Output name"), "{s}", .{name});
     buildScales(out, wlr_output);
 
     buildChoices(out, wlr_output) catch {
@@ -181,9 +182,9 @@ pub fn build(out: *Section, cc: *panel.ControlCenter, wlr_output: *wlr.Output) v
     buildTransforms(out, current_transform);
     const pal = panel.palette();
     out.top_children = .{
-        .{ .kind = .{ .text = .{ .content = "DISPLAY", .font_size = 12, .weight = 700, .color = pal.dim } } },
+        .{ .kind = .{ .text = .{ .content = i18n.tr("DISPLAY"), .font_size = 12, .weight = 700, .color = pal.dim } } },
         .{ .kind = .container, .direction = .column, .gap = 12, .children = &out.row_storage },
-        .{ .kind = .{ .text = .{ .content = if (out.failed) "Could not apply that display setting." else if (out.save_failed) "Could not save the display setting." else if (wlr_output.modes.empty()) "This output does not advertise editable display modes." else "Changes are saved automatically. Scroll the lists for more modes.", .font_size = 12, .color = pal.dim } } },
+        .{ .kind = .{ .text = .{ .content = if (out.failed) i18n.tr("Could not apply that display setting.") else if (out.save_failed) i18n.tr("Could not save the display setting.") else if (wlr_output.modes.empty()) i18n.tr("This output does not advertise editable display modes.") else i18n.tr("Changes are saved automatically. Scroll the lists for more modes."), .font_size = 12, .color = pal.dim } } },
     };
     out.root = .{ .kind = .container, .direction = .column, .gap = 8, .children = &out.top_children };
     buildNightLight(out);
@@ -250,22 +251,22 @@ fn buildArrangement(out: *Section, selected_name: []const u8) void {
     }
     const canvas_height: f32 = if (3 * (max_y - min_y) > 2 * (max_x - min_x)) 280 else 220;
 
-    var hint = valueWidget("Drag displays to match your desk. Click one to edit it.");
+    var hint = valueWidget(i18n.tr("Drag displays to match your desk. Click one to edit it."));
     hint.kind.text.font_size = 12;
     hint.width = .{ .flex = 1 };
     out.main_text_children = .{
-        labelWidget("Main display"),
-        valueWidget(if (selected_is_main) "Desktop icons appear on this display." else "Where desktop icons appear."),
+        labelWidget(i18n.tr("Main display")),
+        valueWidget(if (selected_is_main) i18n.tr("Desktop icons appear on this display.") else i18n.tr("Where desktop icons appear.")),
     };
     out.main_text_children[1].kind.text.font_size = 12;
     out.main_row_children = .{
         .{ .kind = .container, .direction = .column, .gap = 4, .width = .{ .flex = 1 }, .children = &out.main_text_children },
-        .{ .name = "make_main", .kind = .{ .button = .{ .label = "Make main display", .owner = out, .on_click = &onMakeMain } }, .height = .{ .fixed = 32 } },
+        .{ .name = "make_main", .kind = .{ .button = .{ .label = i18n.tr("Make main display"), .owner = out, .on_click = &onMakeMain } }, .height = .{ .fixed = 32 } },
     };
     // The selected display is already main: nothing to offer.
     out.main_row_count = if (selected_is_main or out.arrangement_selected == null) 1 else 2;
     out.arrangement_children = .{
-        panel.sectionTitle("Arrangement"),
+        panel.sectionTitle(i18n.tr("Arrangement")),
         hint,
         .{ .name = "arrangement", .kind = .{ .arrangement = .{ .items = out.arrangement_items, .selected = out.arrangement_selected } }, .width = .{ .percent = 1 }, .height = .{ .fixed = canvas_height } },
         .{ .kind = .container, .direction = .row, .@"align" = .center, .gap = 12, .children = out.main_row_children[0..out.main_row_count] },
@@ -337,14 +338,14 @@ fn buildLid(out: *Section) void {
     const action = server.config.compositor.lid_close;
     out.initial_lid = @intFromEnum(action);
     out.lid_row_children = .{
-        labelWidget("When the lid is closed"),
-        .{ .name = "lid_close", .kind = .{ .select = .{ .labels = &lid_labels, .selected = out.initial_lid } }, .width = .{ .fixed = 190 }, .height = .{ .fixed = row_height } },
+        labelWidget(i18n.tr("When the lid is closed")),
+        .{ .name = "lid_close", .kind = .{ .select = .{ .labels = panel.translatedLabels(&lid_labels), .selected = out.initial_lid } }, .width = .{ .fixed = 190 }, .height = .{ .fixed = row_height } },
     };
     var hint = valueWidget(switch (action) {
-        .display_off => "The built-in screen turns off while another display is connected.",
-        .lock => "Locks, and turns off the built-in screen while another display is connected.",
-        .@"suspend" => "Locks and sleeps, even with another display connected.",
-        .ignore => "The built-in screen stays on.",
+        .display_off => i18n.tr("The built-in screen turns off while another display is connected."),
+        .lock => i18n.tr("Locks, and turns off the built-in screen while another display is connected."),
+        .@"suspend" => i18n.tr("Locks and sleeps, even with another display connected."),
+        .ignore => i18n.tr("The built-in screen stays on."),
     });
     hint.kind.text.font_size = 12;
     hint.width = .{ .flex = 1 };
@@ -383,7 +384,7 @@ fn buildMonitors(out: *Section, selected_name: []const u8) void {
     }
     if (out.initial_monitor == null) out.initial_monitor = 0;
     out.row_children[row_monitor] = .{
-        labelWidget("Monitor"),
+        labelWidget(i18n.tr("Monitor")),
         .{ .name = "monitor", .kind = .{ .select = .{ .labels = out.monitor_labels, .selected = out.initial_monitor, .owner = out, .on_change = &onMonitorChanged } }, .width = .{ .fixed = 190 }, .height = .{ .fixed = row_height } },
     };
     out.row_storage[row_monitor] = .{
@@ -438,13 +439,13 @@ fn buildScales(out: *Section, output: *wlr.Output) void {
         .disabled = !server.config.compositor.xwayland,
     } }, .width = .{ .fixed = 190 }, .height = .{ .fixed = row_height } };
     const hint = if (server.xwaylandScalePending()) |pending|
-        std.fmt.bufPrint(&out.xwayland_hint_buf, "Xwayland: {d}× active. Restart the compositor to apply {d}×.", .{ server.xwaylandScale(), pending }) catch ""
+        i18n.fmt(&out.xwayland_hint_buf, i18n.tr("Xwayland: {active}× active. Restart the compositor to apply {pending}×."), .{ .active = server.xwaylandScale(), .pending = pending }) catch ""
     else
-        std.fmt.bufPrint(&out.xwayland_hint_buf, "Xwayland: {d}× active. Changes require a compositor restart.", .{server.xwaylandScale()}) catch "";
+        i18n.fmt(&out.xwayland_hint_buf, i18n.tr("Xwayland: {active}× active. Changes require a compositor restart."), .{ .active = server.xwaylandScale() }) catch "";
     out.xwayland_hint = labelWidget(hint);
     out.xwayland_hint.kind.text.font_size = 12;
     if (server.scale_override != null) {
-        out.xwayland_hint.kind.text.content = "Display scale is overridden by REDIWM_SCALE. Xwayland changes require a restart.";
+        out.xwayland_hint.kind.text.content = i18n.tr("REDIWM_SCALE sets scaling; restart to apply Xwayland changes.");
     }
 }
 
@@ -455,7 +456,7 @@ fn scaleFactor(index: usize) f32 {
 fn buildTransforms(out: *Section, current_transform: output_transform.Transform) void {
     out.initial_transform = transformIndex(current_transform);
     out.row_children[row_transform][1] = .{ .name = "transform", .kind = .{ .select = .{
-        .labels = &transform_labels,
+        .labels = panel.translatedLabels(&transform_labels),
         .selected = out.initial_transform,
     } }, .width = .{ .fixed = 190 }, .height = .{ .fixed = row_height } };
 }
@@ -491,15 +492,15 @@ fn buildNightLight(out: *Section) void {
     const t = panel.palette();
     const nl_cfg: @import("config").loader.NightLightConfig = out.cc.server.config.night_light;
     out.nl_label_children = .{
-        .{ .kind = .{ .text = .{ .content = "Night light", .font_size = 13, .weight = 600, .color = t.fg } } },
-        .{ .kind = .{ .text = .{ .content = "Reduce blue light with a warm tint", .font_size = 12, .color = t.dim } } },
+        .{ .kind = .{ .text = .{ .content = i18n.tr("Night light"), .font_size = 13, .weight = 600, .color = t.fg } } },
+        .{ .kind = .{ .text = .{ .content = i18n.tr("Reduce blue light with a warm tint"), .font_size = 12, .color = t.dim } } },
     };
     out.nl_toggle_row_children = .{
         .{ .kind = .container, .direction = .column, .gap = 2, .width = .{ .flex = 1 }, .children = &out.nl_label_children },
         .{ .name = "night_light", .kind = .{ .toggle = .{ .style = .settings, .on = nl_cfg.enabled, .owner = out, .on_change = &onNightLightToggled } } },
     };
     const temp_str = std.fmt.bufPrint(&out.nl_temp_value_buf, "{d} K", .{nl_cfg.temperature}) catch "5000 K";
-    out.nl_temp_header_children = .{ labelWidget("Color temperature"), ui_slider.valuePill(temp_str, 13, panel.palette().dim) };
+    out.nl_temp_header_children = .{ labelWidget(i18n.tr("Color temperature")), ui_slider.valuePill(temp_str, 13, panel.palette().dim) };
     const temp_header: Widget = .{ .kind = .container, .direction = .row, .justify = .space_between, .children = &out.nl_temp_header_children };
     out.nl_temp_slider = .{ .name = "night_light_temperature", .kind = .{ .slider = .{ .style = .settings, .value = @floatFromInt(nl_cfg.temperature), .min = nl_temp_min, .max = nl_temp_max, .step = 100, .owner = out, .on_change = &onNightLightTemperatureChanged } } };
     out.nl_group_children = .{

@@ -53,15 +53,18 @@ pub fn cachePath(arena: Allocator, environ: std.process.Environ) ![]const u8 {
     return "";
 }
 
-pub fn envKeys(arena: Allocator, environ: std.process.Environ) !struct {
+pub const EnvKeys = struct {
     locale_tag: []const u8,
     current_desktop: []const u8,
     app_dirs: []const []const u8,
     path_env: []const u8,
-} {
-    const locale_tag = environ.getPosix("LC_ALL") orelse
-        environ.getPosix("LC_MESSAGES") orelse
-        environ.getPosix("LANG") orelse "";
+};
+
+pub fn envKeys(arena: Allocator, environ: std.process.Environ) !EnvKeys {
+    return envKeysWithLocale(arena, environ, @import("i18n").resolve("", environ));
+}
+
+pub fn envKeysWithLocale(arena: Allocator, environ: std.process.Environ, locale_tag: []const u8) !EnvKeys {
     const current_desktop = environ.getPosix("XDG_CURRENT_DESKTOP") orelse "";
     const path_env = environ.getPosix("PATH") orelse "";
     const app_dirs = try applications.resolveApplicationDirs(arena, environ);
@@ -115,6 +118,10 @@ pub fn statPath(io: Io, path: []const u8) ?SourceIdent {
 }
 
 pub fn read(arena: Allocator, io: Io, environ: std.process.Environ) ?Payload {
+    return readWithLocale(arena, io, environ, @import("i18n").resolve("", environ));
+}
+
+pub fn readWithLocale(arena: Allocator, io: Io, environ: std.process.Environ, locale_tag: []const u8) ?Payload {
     const path = cachePath(arena, environ) catch return null;
     if (path.len == 0) return null;
     const bytes = Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(max_bytes)) catch return null;
@@ -122,7 +129,7 @@ pub fn read(arena: Allocator, io: Io, environ: std.process.Environ) ?Payload {
         log.warn("ignoring catalog cache {s}: {}", .{ path, err });
         return null;
     };
-    const keys = envKeys(arena, environ) catch return null;
+    const keys = envKeysWithLocale(arena, environ, locale_tag) catch return null;
     if (!keysMatch(payload, keys.locale_tag, keys.current_desktop, keys.app_dirs, keys.path_env)) {
         return null;
     }

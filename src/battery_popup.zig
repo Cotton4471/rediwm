@@ -1,4 +1,5 @@
 //! Battery details from the taskbar snapshot; no hardware reads or timers here.
+const i18n = @import("i18n");
 const std = @import("std");
 const popup_style = @import("popup_style.zig");
 const glass = @import("glass.zig");
@@ -105,21 +106,26 @@ pub const Popup = struct {
         var capacity: [24]u8 = undefined;
         var cycles: [16]u8 = undefined;
         const values = [_][]const u8{
-            if (state.health) |h| std.fmt.bufPrint(&health, "{d}%", .{h}) catch "" else "Unavailable",
-            if (state.full_wh) |wh| std.fmt.bufPrint(&capacity, "{d:.1} Wh", .{wh}) catch "" else "Unavailable",
-            if (state.cycles) |c| std.fmt.bufPrint(&cycles, "{d}", .{c}) catch "" else "Unavailable",
+            if (state.health) |h| std.fmt.bufPrint(&health, "{d}%", .{h}) catch "" else i18n.tr("Unavailable"),
+            if (state.full_wh) |wh| std.fmt.bufPrint(&capacity, "{d:.1} Wh", .{wh}) catch "" else i18n.tr("Unavailable"),
+            if (state.cycles) |c| std.fmt.bufPrint(&cycles, "{d}", .{c}) catch "" else i18n.tr("Unavailable"),
         };
-        for ([_][]const u8{ "Health", "Full capacity", "Cycles" }, values, 0..) |name, value, i| {
+        for ([_][]const u8{ i18n.tr("Health"), i18n.tr("Full capacity"), i18n.tr("Cycles") }, values, 0..) |name, value, i| {
             const x: f32 = 20 + @as(f32, @floatFromInt(i)) * 112;
             if (t.popup_card_bg != null) popup_style.card(&r, x, 274, 104, 70) else r.fillRect(x, 274, 104, 70, .{ .color = t.surface_hover, .radius = 9 });
             label(&r, x + 10, 284, 90, 22, name, 12, card_t.window_dim, false);
-            label(&r, x + 10, 307, 90, 28, value, if (std.mem.eql(u8, value, "Unavailable")) 11 else 19, card_t.window_fg, true);
+            label(&r, x + 10, 307, 90, 28, value, if (std.mem.eql(u8, value, i18n.tr("Unavailable"))) 11 else 19, card_t.window_fg, true);
         }
         r.fillRect(20, 356, 328, 1, .{ .color = t.border });
         if (t.popup_card_bg != null) popup_style.card(&r, 20, 366, 328, 96);
         r.palette = card_t;
         const manager = self.output.server.power_profiles;
-        for (0..3) |i| {
+        const service_up = if (manager) |m| m.isAvailable() else false;
+        if (!service_up) {
+            label(&r, 28, 378, 310, 28, i18n.tr("Power profiles unavailable"), t.font_size, card_t.fg, true);
+            label(&r, 28, 408, 310, 40, i18n.tr("No power profile service is running."), t.font_size - 1, card_t.faint, false);
+        }
+        for (0..if (service_up) 3 else 0) |i| {
             const profile: Profile = @enumFromInt(i);
             const enabled = if (manager) |m| m.supports(profile) else false;
             const selected = if (manager) |m| m.active == profile else false;

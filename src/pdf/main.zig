@@ -613,7 +613,7 @@ pub const Client = struct {
             if (c.api.write(self.print_fd, &request, 1) == 1) return;
             self.closePrint();
         }
-        self.app.showMessage("Printing is not available.");
+        self.app.showMessage(@import("i18n").tr("Printing is not available."));
     }
 
     fn readPrintReplies(self: *Client) void {
@@ -624,8 +624,8 @@ pub const Client = struct {
             return self.closePrint();
         }
         for (buf[0..@intCast(n)]) |reply| switch (reply) {
-            'u' => self.app.showMessage("No print service answered (xdg-desktop-portal)."),
-            'f' => self.app.showMessage("The document could not be printed."),
+            'u' => self.app.showMessage(@import("i18n").tr("No print service answered (xdg-desktop-portal).")),
+            'f' => self.app.showMessage(@import("i18n").tr("The document could not be printed.")),
             else => {},
         };
     }

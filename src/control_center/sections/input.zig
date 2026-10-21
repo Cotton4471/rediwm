@@ -1,3 +1,4 @@
+const i18n = @import("i18n");
 // Control center "Input" section: mouse/touchpad pointer accel speed, natural
 // scroll, tap-to-click (all via libinput device config, applied immediately
 // to every pointer device) and keyboard repeat delay/rate (design doc Part 3,
@@ -175,7 +176,7 @@ pub fn build(out: *Section, input: *Input) void {
     var row_count: usize = 0;
 
     const mouse_speed_str = std.fmt.bufPrint(&out.speed_value_buf, "{d:.1}", .{mouse_speed}) catch "0.0";
-    out.mouse_speed_header_children = .{ fgLabel("Mouse speed"), ui_slider.valuePill(mouse_speed_str, 13, panel.palette().dim) };
+    out.mouse_speed_header_children = .{ fgLabel(i18n.tr("Mouse speed")), ui_slider.valuePill(mouse_speed_str, 13, panel.palette().dim) };
     const mouse_speed_header: Widget = .{ .kind = .container, .direction = .row, .justify = .space_between, .children = &out.mouse_speed_header_children };
     const mouse_speed_slider: Widget = .{ .name = "mouse_speed", .kind = .{ .slider = .{ .value = mouse_speed, .min = -1, .max = 1, .step = default_speed_step, .owner = out, .on_change = &onMouseSpeedChanged } } };
     out.mouse_speed_group_children = .{ mouse_speed_header, mouse_speed_slider };
@@ -184,7 +185,7 @@ pub fn build(out: *Section, input: *Input) void {
     if (show_touchpad) {
         const touchpad_speed_str = std.fmt.bufPrint(&out.touchpad_speed_value_buf, "{d:.1}", .{touchpad_speed}) catch "0.0";
         out.touchpad_speed_header_children = .{
-            fgLabel("Touchpad speed"),
+            fgLabel(i18n.tr("Touchpad speed")),
             ui_slider.valuePill(touchpad_speed_str, 13, panel.palette().dim),
         };
         const touchpad_speed_header: Widget = .{ .kind = .container, .direction = .row, .justify = .space_between, .children = &out.touchpad_speed_header_children };
@@ -193,23 +194,23 @@ pub fn build(out: *Section, input: *Input) void {
         layout.appendRow(&out.row_storage, &row_count, .{ .kind = .container, .direction = .column, .gap = 8, .children = &out.touchpad_speed_group_children });
 
         out.touchpad_dwt_row_children = .{
-            fgLabel("Disable touchpad while typing"),
+            fgLabel(i18n.tr("Disable touchpad while typing")),
             .{ .name = "touchpad_disable_while_typing", .kind = .{ .toggle = .{ .on = touchpad_disable_while_typing, .owner = out, .on_change = &onTouchpadDisableWhileTypingChanged } } },
         };
         const touchpad_dwt_row: Widget = .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.touchpad_dwt_row_children };
         layout.appendRow(&out.row_storage, &row_count, touchpad_dwt_row);
     }
 
-    out.natural_row_children = .{ fgLabel("Natural scroll"), .{ .name = "natural_scroll", .kind = .{ .toggle = .{ .on = natural, .owner = out, .on_change = &onNaturalScrollChanged } } } };
+    out.natural_row_children = .{ fgLabel(i18n.tr("Natural scroll")), .{ .name = "natural_scroll", .kind = .{ .toggle = .{ .on = natural, .owner = out, .on_change = &onNaturalScrollChanged } } } };
     const natural_row: Widget = .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.natural_row_children };
     layout.appendRow(&out.row_storage, &row_count, natural_row);
 
-    out.tap_row_children = .{ fgLabel("Tap to click"), .{ .name = "tap_to_click", .kind = .{ .toggle = .{ .on = tap, .owner = out, .on_change = &onTapToClickChanged } } } };
+    out.tap_row_children = .{ fgLabel(i18n.tr("Tap to click")), .{ .name = "tap_to_click", .kind = .{ .toggle = .{ .on = tap, .owner = out, .on_change = &onTapToClickChanged } } } };
     const tap_row: Widget = .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.tap_row_children };
     layout.appendRow(&out.row_storage, &row_count, tap_row);
 
     out.pan_speed_row_children = .{
-        fgLabel("Pan speed"),
+        fgLabel(i18n.tr("Pan speed")),
         .{
             .name = "pan_speed",
             .kind = .{ .segmented = .{ .labels = &pan_speed_labels, .selected = indexOfNearest(&pan_speed_values, input.server.config.input.pan_speed), .owner = out, .on_change = &onPanSpeedChanged } },
@@ -220,14 +221,14 @@ pub fn build(out: *Section, input: *Input) void {
     layout.appendRow(&out.row_storage, &row_count, pan_speed_row);
 
     out.delay_row_children = .{
-        fgLabel("Repeat delay"),
+        fgLabel(i18n.tr("Repeat delay")),
         .{ .name = "repeat_delay", .kind = .{ .stepper = .{ .value = repeat.delay, .min = 100, .max = 2000, .step = default_delay_step, .unit = "ms", .owner = out, .on_change = &onRepeatDelayChanged } } },
     };
     const delay_row: Widget = .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.delay_row_children };
     layout.appendRow(&out.row_storage, &row_count, delay_row);
 
     out.rate_row_children = .{
-        fgLabel("Repeat rate"),
+        fgLabel(i18n.tr("Repeat rate")),
         .{ .name = "repeat_rate", .kind = .{ .stepper = .{ .value = repeat.rate, .min = 1, .max = 100, .step = default_rate_step, .unit = "/s", .owner = out, .on_change = &onRepeatRateChanged } } },
     };
     const rate_row: Widget = .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.rate_row_children };
@@ -236,7 +237,7 @@ pub fn build(out: *Section, input: *Input) void {
     out.row_count = row_count;
     const pal = panel.palette();
     out.top_children = .{
-        .{ .kind = .{ .text = .{ .content = "INPUT", .font_size = 12, .weight = 700, .color = pal.dim } } },
+        .{ .kind = .{ .text = .{ .content = i18n.tr("INPUT"), .font_size = 12, .weight = 700, .color = pal.dim } } },
         .{ .name = "input", .kind = .container, .direction = .column, .gap = 12, .children = out.row_storage[0..row_count] },
     };
     out.root = .{ .name = "input", .kind = .container, .direction = .column, .gap = 8, .children = &out.top_children };

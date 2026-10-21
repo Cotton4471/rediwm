@@ -8,6 +8,7 @@
 //! Every confirmed change shows the OSD, including ones nothing here asked
 //! for: asus-wmi's Fn+F5 cycles platform_profile inside the kernel, and asusd
 //! and the shim relay it here.
+const i18n = @import("i18n");
 const std = @import("std");
 
 const dbus = @import("dbus");
@@ -46,9 +47,9 @@ pub const Profile = enum {
 
     pub fn label(self: Profile) []const u8 {
         return switch (self) {
-            .power_saver => "Power Saver",
-            .balanced => "Balanced",
-            .performance => "Performance",
+            .power_saver => i18n.tr("Power Saver"),
+            .balanced => i18n.tr("Balanced"),
+            .performance => i18n.tr("Performance"),
         };
     }
 };

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Calculator
+Comment=Simple arithmetic calculator
+Exec=rediwm-calculator
+Icon=rediwm-calculator
+Terminal=false
+Categories=Utility;Calculator;
+Keywords=arithmetic;math;calculate;
+StartupWMClass=rediwm-calculator

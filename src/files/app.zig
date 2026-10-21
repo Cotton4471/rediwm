@@ -1,4 +1,6 @@
 const std = @import("std");
+const i18n = @import("i18n");
+const tr = i18n.tr;
 const scrollbar = @import("ui").widgets.scrollbar;
 const splitter = @import("ui").widgets.splitter;
 const anim = @import("ui").anim;
@@ -28,6 +30,8 @@ const app_folder_size = @import("app_folder_size.zig");
 const app_places = @import("app_places.zig");
 const app_sidebar_paint = @import("app_sidebar_paint.zig");
 const app_scroll = @import("app_scroll.zig");
+const app_torrents = @import("app_torrents.zig");
+const app_torrent_rows = @import("app_torrent_rows.zig");
 const app_git_sidebar = @import("app_git_sidebar.zig");
 const app_opening = @import("app_opening.zig");
 const app_pointer = @import("app_pointer.zig");
@@ -63,6 +67,8 @@ pub const measureText = app_draw.measureText;
 pub const App = struct {
     terminal: app_terminal.Drawer = .{},
     closed: bool = false,
+    torrents: @import("torrents.zig").Client = .{},
+    transfer_view: app_torrents.View = .{},
     children: @import("../child_set.zig") = .{},
     chooser: ?chooser_mod.Options = null,
     filename: Editor = .{},
@@ -132,6 +138,8 @@ pub const App = struct {
     menu_y: f64 = 0,
     menu_selected: usize = 0,
     file_menu_labels: [12][]const u8 = undefined,
+    menu_label_text: [8][]const u8 = undefined,
+    column_label_text: [5][]const u8 = undefined,
     place_menu_labels: [4][]const u8 = undefined,
     menu_place: usize = 0,
     unpinned_places: u8 = 0,
@@ -320,6 +328,7 @@ pub const App = struct {
     }
 
     pub fn deinit(self: *App) void {
+        self.torrents.deinit();
         self.terminal.deinit(self.allocator);
         self.children.deinit(self.allocator);
         self.closeExtractPicker();
@@ -371,9 +380,9 @@ pub const App = struct {
     pub fn updateTitle(self: *App) void {
         if (self.chooser) |opts| {
             const title = if (opts.title.len > 0) opts.title else switch (opts.mode) {
-                .open => "Open File",
-                .save => "Save As",
-                .folder => "Choose Folder",
+                .open => tr("Open File"),
+                .save => tr("Save As"),
+                .folder => tr("Choose Folder"),
             };
             const len = @min(title.len, self.title_z.len - 1);
             @memcpy(self.title_z[0..len], title[0..len]);
@@ -382,10 +391,9 @@ pub const App = struct {
             return;
         }
         const cur = self.history.current;
-        const name = if (self.isRecent()) "Recent" else if (self.trash_dir != null and std.mem.eql(u8, cur, self.trash_dir.?)) "Trash" else if (std.mem.eql(u8, cur, "/")) "/" else std.fs.path.basename(cur);
-        _ = std.fmt.bufPrintZ(&self.title_z, "{s} — RediWM Files", .{name}) catch {
-            @memcpy(self.title_z[0..12], "RediWM Files");
-            self.title_z[12] = 0;
+        const name = if (self.transfer_view.active) tr("Transfers") else if (self.isRecent()) tr("Recent") else if (self.trash_dir != null and std.mem.eql(u8, cur, self.trash_dir.?)) tr("Trash") else if (std.mem.eql(u8, cur, "/")) "/" else std.fs.path.basename(cur);
+        _ = i18n.fmtZ(&self.title_z, tr("{name} — RediWM Files"), .{ .name = name }) catch {
+            _ = i18n.fmtZ(&self.title_z, tr("RediWM Files"), .{}) catch unreachable;
         };
         self.title_changed = true;
     }
@@ -454,12 +462,12 @@ pub const App = struct {
     pub fn savePreferences(self: *App) void {
         const path = self.preferences_path orelse return;
         (Preferences{ .list = self.non_git_list_view orelse self.list_view, .sort = @intFromEnum(self.sort_mode), .unpinned_places = self.unpinned_places, .git_view = self.git_view, .terminal_height = @intCast(self.terminal.requested_height) }).save(self.allocator, self.io, path) catch {
-            self.setStatusNotice("Could not save view preferences", true);
+            self.setStatusNotice(tr("Could not save view preferences"), true);
         };
     }
 
     pub fn rememberView(self: *App) void {
-        if (self.loading) return;
+        if (self.loading or self.transfer_view.active) return;
         var view: history_mod.View = .{ .scroll = self.scroll_y };
         for (self.items.items, 0..) |item, i| {
             if (item.selected) {
@@ -641,6 +649,7 @@ pub const App = struct {
     pub const setSort = app_listing.setSort;
 
     pub const places = [_][]const u8{ "Home", "Trash", "Recent", "Desktop", "Documents", "Downloads", "Pictures", "Music", "Videos", "Projects" };
+    pub const place_labels = [_]i18n.Message{ i18n.msg("Home"), i18n.msg("Trash"), i18n.msg("Recent"), i18n.msg("Desktop"), i18n.msg("Documents"), i18n.msg("Downloads"), i18n.msg("Pictures"), i18n.msg("Music"), i18n.msg("Videos"), i18n.msg("Projects") };
 
     pub const places_start = 3;
 
@@ -716,6 +725,35 @@ pub const App = struct {
     // app_sidebar_paint.zig
     pub const sidebarExtent = app_sidebar_paint.sidebarExtent;
 
+    pub const startTorrents = app_torrents.startTorrents;
+    pub const stepTorrents = app_torrents.stepTorrents;
+    pub const torrentForItem = app_torrent_rows.torrentForItem;
+    pub const hasFolderTransfers = app_torrent_rows.hasFolderTransfers;
+    pub const appendTorrentRows = app_torrent_rows.appendTorrentRows;
+    pub const inlineTorrentWidth = app_torrent_rows.inlineTorrentWidth;
+    pub const renderInlineTorrent = app_torrent_rows.renderInlineTorrent;
+    pub const inlineTorrentHit = app_torrent_rows.inlineTorrentHit;
+    pub const inlineTorrentClick = app_torrent_rows.inlineTorrentClick;
+    pub const renderTorrentTip = app_torrent_rows.renderTorrentTip;
+    pub const toggleTorrent = app_torrents.toggleTorrent;
+    pub const openTorrentDetails = app_torrents.openTorrentDetails;
+    pub const openTransfers = app_torrents.openTransfers;
+    pub const leaveTransfers = app_torrents.leaveTransfers;
+    pub const renderTransferToolbar = app_torrents.renderTransferToolbar;
+    pub const renderTransferList = app_torrents.renderTransferList;
+    pub const transferPaneClick = app_torrents.transferPaneClick;
+    pub const transferPaneKey = app_torrents.transferPaneKey;
+    pub const transferPaneHover = app_torrents.transferPaneHover;
+    pub const torrentSource = app_torrents.torrentSource;
+    pub const confirmTorrent = app_torrents.confirmTorrent;
+    pub const torrentSidebarHeight = app_torrents.torrentSidebarHeight;
+    pub const torrentSidebarHit = app_torrents.torrentSidebarHit;
+    pub const renderTorrentSidebar = app_torrents.renderTorrentSidebar;
+    pub const transfersHover = app_torrents.transfersHover;
+    pub const transfersClick = app_torrents.transfersClick;
+    pub const transfersKey = app_torrents.transfersKey;
+    pub const renderTransfers = app_torrents.renderTransfers;
+
     // app_git_sidebar.zig
     pub const gitSidebarHeight = app_git_sidebar.gitSidebarHeight;
     pub const gitHeadExtra = app_git_sidebar.gitHeadExtra;
@@ -740,6 +778,7 @@ pub const App = struct {
     pub const revealIndex = app_scroll.revealIndex;
 
     // app_opening.zig
+    pub const addApplication = app_opening.addApplication;
     pub const previewSelected = app_opening.previewSelected;
     pub const launchEditor = app_opening.launchEditor;
     pub const launchPreview = app_opening.launchPreview;
@@ -785,6 +824,8 @@ pub const App = struct {
     pub const terminalMaximum = app_terminal.terminalMaximum;
     pub const terminalRect = app_terminal.terminalRect;
     pub const terminalBody = app_terminal.terminalBody;
+    pub const terminalDropAt = app_terminal.terminalDropAt;
+    pub const terminalDropPaths = app_terminal.terminalDropPaths;
     pub const terminalControl = app_terminal.terminalControl;
     pub const terminalHit = app_terminal.terminalHit;
     pub const terminalRestartable = app_terminal.terminalRestartable;
@@ -834,6 +875,7 @@ pub const App = struct {
     pub const menuHint = app_menu.menuHint;
     pub const hasSizeSelection = app_menu.hasSizeSelection;
     pub const selectedArchive = app_menu.selectedArchive;
+    pub const selectedAppImage = app_menu.selectedAppImage;
     pub const fileActions = app_menu.fileActions;
     pub const placeActions = app_menu.placeActions;
     pub const menuLabels = app_menu.menuLabels;

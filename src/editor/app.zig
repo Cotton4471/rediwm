@@ -1,4 +1,6 @@
 const std = @import("std");
+const i18n = @import("i18n");
+const tr = i18n.tr;
 const c = @import("../files/c.zig").api;
 const ui = @import("ui").cairo;
 const theme = @import("ui").theme;
@@ -8,6 +10,8 @@ const field = @import("ui").widgets.field;
 const dialog = @import("ui").widgets.dialog;
 const menu = @import("ui").context_menu;
 const p = @import("pango.zig");
+const caret_mod = @import("caret.zig");
+const input = @import("ui").input;
 const Document = @import("document.zig").Document;
 const view = @import("view.zig");
 const lines = @import("lines.zig");
@@ -25,7 +29,7 @@ const Status = struct {
 /// Stand-in for the position of a cursor too far from the view to measure.
 const far: c_int = 1_000_000 * 1024;
 const Action = enum { new, open, save, save_as, find, wrap };
-const labels = [_][]const u8{ "New", "Open", "Save", "Save As", "Find", "Word Wrap" };
+const labels = [_]i18n.Message{ i18n.msg("New"), i18n.msg("Open"), i18n.msg("Save"), i18n.msg("Save As"), i18n.msg("Find"), i18n.msg("Word Wrap") };
 const Tab = struct {
     id: usize,
     doc: Document = .{},
@@ -43,7 +47,7 @@ const Tab = struct {
         a.destroy(t);
     }
     fn name(t: *Tab) []const u8 {
-        return if (t.path) |path| std.fs.path.basename(path) else "Untitled";
+        return if (t.path) |path| std.fs.path.basename(path) else tr("Untitled");
     }
 };
 pub const App = struct {
@@ -61,7 +65,9 @@ pub const App = struct {
     shift: bool = false,
     alt: bool = false,
     focused: bool = false,
-    caret_visible: bool = true,
+    caret: caret_mod.Caret = .{},
+    caret_painted: caret_mod.Rect = .{},
+    caret_snap: bool = true,
     caret_dirty: bool = false,
     caret_activity: usize = 0,
     menu_open: bool = false,
@@ -69,6 +75,8 @@ pub const App = struct {
     menu_anchor: f64 = 0,
     has_titlebar: bool = true,
     dragging: bool = false,
+    drag_word: ?[2]usize = null,
+    last_text_click: ?struct { time: i64, x: f64, y: f64, tab: usize } = null,
     scroll_drag: scrollbar.Drag = .{},
     bar_appearance: scrollbar.Appearance = .{},
     /// The scroll position and tab the scrollbar last saw: only a scroll within
@@ -143,9 +151,9 @@ pub const App = struct {
         self.dirty = true;
         if (self.tabs.items.len == 0) return;
         const t = self.current();
-        const name = if (std.unicode.utf8ValidateSlice(t.name())) t.name() else "Text file";
+        const name = if (std.unicode.utf8ValidateSlice(t.name())) t.name() else tr("Text file");
         var title: [1024:0]u8 = undefined;
-        const value = std.fmt.bufPrintZ(&title, "{s}{s} — Text Editor ({d}/{d})", .{ if (t.doc.modified()) "* " else "", name, self.selected + 1, self.tabs.items.len }) catch "Text Editor";
+        const value = i18n.fmtZ(&title, tr("{modified}{name} — Text Editor ({tab}/{tabs})"), .{ .modified = if (t.doc.modified()) "* " else "", .name = name, .tab = self.selected + 1, .tabs = self.tabs.items.len }) catch "";
         // Resizing and moving the caret do not change the window title. Avoid
         // sending a redundant set_title alongside every resize buffer commit.
         if (!std.mem.eql(u8, std.mem.span(self.getTitle()), value)) {
@@ -166,6 +174,12 @@ pub const App = struct {
         find: bool,
         query_hash: u64,
         activity: usize,
+        top: usize,
+        dy: f64,
+        scroll_x: f64,
+        width: i32,
+        height: i32,
+        scale: i32,
     };
     pub fn caretState(self: *App) CaretState {
         const d = self.document();
@@ -179,17 +193,49 @@ pub const App = struct {
             .anchor = if (self.find_open) self.query.anchor else d.anchor,
             .find = self.find_open,
             .activity = self.caret_activity,
+            .top = d.top,
+            .dy = self.current().dy,
+            .scroll_x = self.current().scroll_x,
+            .width = self.w,
+            .height = self.h,
+            .scale = self.scale,
             .query_hash = if (self.find_open) std.hash.Wyhash.hash(0, self.query.text.items) else 0,
         };
     }
+    pub fn stepCaret(self: *App, now: i64, active: bool, restart: bool, snap: bool) void {
+        const r = self.caretRect();
+        var target: caret_mod.Rect = .{
+            .x = @floatCast(@as(f64, @floatFromInt(r.x)) / 1024 + 16 - self.current().scroll_x),
+            .y = @floatCast(@as(f64, @floatFromInt(r.y)) / 1024 + self.viewTop()),
+            .h = @as(f32, @floatFromInt(r.height)) / 1024,
+        };
+        if (self.find_open) {
+            if (self.layouts.cr) |cr| target = .{
+                .x = @floatCast(22 + ui.measureText(cr, self.query.text.items[0..@min(self.query.cursor, self.query.text.items.len)], ui.textSize(), false)),
+                .y = 48,
+                .w = 1,
+                .h = 18,
+            };
+        }
+        if (self.caret.update(now, active, restart, target, snap or self.caret_snap)) self.caret_dirty = true;
+        self.caret_snap = false;
+    }
     pub fn caretDamage(self: *App) p.Rectangle {
-        if (self.find_open) return .{ .x = 12, .y = 43, .width = self.w - 24, .height = 30 };
-        var r = self.inputRectangle();
-        r.x -= 1;
-        r.y -= 1;
-        r.width += 3;
-        r.height += 2;
-        return r;
+        const before = self.caret_painted;
+        const after = self.caret.box;
+        const x: i32 = @intFromFloat(@floor(@min(before.x, after.x)) - 1);
+        const y: i32 = @intFromFloat(@floor(@min(before.y, after.y)) - 1);
+        return .{
+            .x = x,
+            .y = y,
+            .width = @as(i32, @intFromFloat(@ceil(@max(before.x + before.w, after.x + after.w)) + 1)) - x,
+            .height = @as(i32, @intFromFloat(@ceil(@max(before.y + before.h, after.y + after.h)) + 1)) - y,
+        };
+    }
+    fn paintCaret(self: *App, cr: *c.cairo_t) void {
+        if (!self.caret.visible) return;
+        const r = self.caret.box;
+        fill(cr, r.x, r.y, r.w, r.h, theme.global.window_fg);
     }
     pub fn getTitle(self: *App) [*:0]const u8 {
         return &self.title;
@@ -201,14 +247,14 @@ pub const App = struct {
     }
     fn failure(self: *App, err: anyerror) void {
         self.message(switch (err) {
-            error.FileChanged => "File changed on disk. Use Save As to keep your edits in another file.",
-            error.BinaryFile => "This file contains binary data and cannot be edited as text.",
-            error.UnsupportedEncoding => "This file is not valid UTF-8 text.",
-            error.FileTooLarge => "Text files are limited to 4 GiB.",
-            error.OutOfMemory => "Not enough free memory to hold this file.",
-            error.Busy => "Saving a large file. Editing resumes when it is written.",
-            error.PermissionDenied => "Permission denied. Try Save As in a writable folder.",
-            error.HardLinkedFile => "This file has multiple hard links. Use Save As to create a separate copy.",
+            error.FileChanged => tr("File changed on disk. Use Save As to keep your edits in another file."),
+            error.BinaryFile => tr("This file contains binary data and cannot be edited as text."),
+            error.UnsupportedEncoding => tr("This file is not valid UTF-8 text."),
+            error.FileTooLarge => tr("Text files are limited to 4 GiB."),
+            error.OutOfMemory => tr("Not enough free memory to hold this file."),
+            error.Busy => tr("Saving a large file. Editing resumes when it is written."),
+            error.PermissionDenied => tr("Permission denied. Try Save As in a writable folder."),
+            error.HardLinkedFile => tr("This file has multiple hard links. Use Save As to create a separate copy."),
             else => @errorName(err),
         });
     }
@@ -272,14 +318,14 @@ pub const App = struct {
                     t.path = path;
                     t.stamp = job.stamp;
                     if (t.doc.revision == job.revision) t.doc.saved = t.doc.position;
-                    self.message("Saved");
+                    self.message(tr("Saved"));
                     self.changed();
                     if (self.close_tab == t.id and !t.doc.modified()) self.finishClose();
                 },
                 .open_dialog => self.open(job.path),
                 .save_dialog => if (self.findTab(job.tab_id)) |i| {
                     for (self.tabs.items) |other| if (other.id != job.tab_id and other.path != null and std.mem.eql(u8, other.path.?, job.path)) {
-                        self.message("That file is open in another tab. Choose a different name.");
+                        self.message(tr("That file is open in another tab. Choose a different name."));
                         return;
                     };
                     self.startSave(self.tabs.items[i], job.path, job.stamp);
@@ -293,7 +339,7 @@ pub const App = struct {
                 self.failure(err);
                 return;
             };
-            self.message("Opening…");
+            self.message(tr("Opening…"));
         }
     }
     fn choose(self: *App, saving: bool) void {
@@ -315,7 +361,7 @@ pub const App = struct {
         };
         self.operation.?.revision = t.doc.revision;
         t.doc.locked = borrow;
-        self.message("Saving…");
+        self.message(tr("Saving…"));
     }
     fn save(self: *App, as: bool) void {
         if (self.operation != null) return;
@@ -324,7 +370,7 @@ pub const App = struct {
     }
     pub fn requestClose(self: *App) void {
         if (self.operation != null) {
-            self.message("Finish the file dialog or operation before closing.");
+            self.message(tr("Finish the file dialog or operation before closing."));
             return;
         }
         self.close_all = true;
@@ -381,6 +427,7 @@ pub const App = struct {
     }
     pub fn cancelDrag(self: *App) void {
         self.dragging = false;
+        self.drag_word = null;
         self.scroll_drag.end();
     }
     pub fn cursorName(self: *App) [*:0]const u8 {
@@ -498,7 +545,13 @@ pub const App = struct {
         if (self.dragging) {
             const t = self.current();
             if (y < self.viewTop()) self.port().scrollBy(-18) else if (y > self.viewTop() + self.viewHeight()) self.port().scrollBy(18);
-            t.doc.move(self.indexAt(x - 16 + t.scroll_x, y - self.viewTop()), true);
+            const pos = self.indexAt(x - 16 + t.scroll_x, y - self.viewTop());
+            if (self.drag_word) |initial| {
+                const range = t.doc.wordRange(self.port().characterAt(x - 16 + t.scroll_x, y - self.viewTop()));
+                const backwards = pos < initial[0];
+                t.doc.anchor = if (backwards) initial[1] else initial[0];
+                t.doc.cursor = if (backwards) range[0] else @max(initial[1], range[1]);
+            } else t.doc.move(pos, true);
             self.changed();
         }
         if (self.scroll_drag.active) {
@@ -514,6 +567,9 @@ pub const App = struct {
             self.cancelDrag();
             return;
         }
+        const last_click = self.last_text_click;
+        self.last_text_click = null;
+        self.caret_snap = true;
         if (self.close_tab != null) {
             const x = (@as(f64, @floatFromInt(self.w)) - 420) / 2;
             const y = (@as(f64, @floatFromInt(self.h)) - 170) / 2;
@@ -566,7 +622,19 @@ pub const App = struct {
             }
             self.find_open = false;
             const t = self.current();
-            t.doc.move(self.indexAt(self.px - 16 + t.scroll_x, self.py - self.viewTop()), self.shift);
+            const pos = self.indexAt(self.px - 16 + t.scroll_x, self.py - self.viewTop());
+            const now = @import("ui").key_repeat.nowMs();
+            const double = if (last_click) |last| last.tab == t.id and now - last.time <= input.multi_click_ms and
+                @abs(self.px - last.x) <= input.multi_click_slop and @abs(self.py - last.y) <= input.multi_click_slop else false;
+            if (double and !self.shift) {
+                const range = t.doc.wordRange(self.port().characterAt(self.px - 16 + t.scroll_x, self.py - self.viewTop()));
+                t.doc.anchor = range[0];
+                t.doc.cursor = range[1];
+                self.drag_word = range;
+            } else {
+                t.doc.move(pos, self.shift);
+                self.last_text_click = .{ .time = now, .x = self.px, .y = self.py, .tab = t.id };
+            }
             self.dragging = true;
             self.changed();
         }
@@ -596,10 +664,18 @@ pub const App = struct {
             d.anchor = pos;
             d.cursor = pos + q.len;
             self.reveal();
-        } else self.message("Text not found");
+        } else self.message(tr("Text not found"));
     }
     pub fn keyRepeats(self: *App, sym: u32, utf8: []const u8) bool {
-        if (self.close_tab != null or self.menu_open or self.ctrl or self.alt) return false;
+        if (self.close_tab != null or self.menu_open or self.alt) return false;
+        if (self.ctrl) return switch (sym) {
+            c.XKB_KEY_Left, c.XKB_KEY_Right, c.XKB_KEY_BackSpace, c.XKB_KEY_Delete => !self.find_open,
+            else => false,
+        };
+        if (!self.find_open) switch (sym) {
+            c.XKB_KEY_Return, c.XKB_KEY_KP_Enter, c.XKB_KEY_Tab, c.XKB_KEY_Home, c.XKB_KEY_End, c.XKB_KEY_Page_Up, c.XKB_KEY_Page_Down => return true,
+            else => {},
+        };
         return @import("ui").key_repeat.editingKey(switch (sym) {
             c.XKB_KEY_Left, c.XKB_KEY_Right, c.XKB_KEY_Up, c.XKB_KEY_Down, c.XKB_KEY_BackSpace, c.XKB_KEY_Delete => true,
             else => false,
@@ -607,6 +683,7 @@ pub const App = struct {
     }
     pub fn handleKey(self: *App, sym: u32, utf8: []const u8) void {
         self.caret_activity +%= 1;
+        self.last_text_click = null;
         if (self.close_tab != null) {
             if (sym == c.XKB_KEY_Escape and self.operation == null) {
                 self.close_tab = null;
@@ -708,7 +785,7 @@ pub const App = struct {
             c.XKB_KEY_c, c.XKB_KEY_C, c.XKB_KEY_x, c.XKB_KEY_X => {
                 if (sel[0] == sel[1]) return;
                 if (sel[1] - sel[0] > @import("../files/transfer.zig").limit) {
-                    self.message("Clipboard selections are limited to 1 MiB.");
+                    self.message(tr("Clipboard selections are limited to 1 MiB."));
                     return;
                 }
                 self.clipboard.clearRetainingCapacity();
@@ -801,7 +878,7 @@ pub const App = struct {
         const icons = [_]?IconId{ .plus, .open, .save, .save, .search, if (self.wrap) .checkmark else null };
         const hints = [_]?[]const u8{ "CTRL+N", "CTRL+O", "CTRL+S", "CTRL+SHIFT+S", "CTRL+F", null };
         for (labels, 0..) |label, i| menu.row(cr, self.menuRow(i), .{
-            .label = label,
+            .label = label.get(),
             .hint = hints[i],
             .icon = icons[i],
             .selected = self.menu_selected == i,
@@ -828,7 +905,7 @@ pub const App = struct {
                 fill(cr, x + 8, 35, tab_w - 16, 2, theme.shellPalette().accent);
             }
             var buf: [512]u8 = undefined;
-            const label = std.fmt.bufPrint(&buf, "{s}{s}", .{ tab.name(), if (tab.doc.modified()) " •" else "" }) catch "Text file";
+            const label = std.fmt.bufPrint(&buf, "{s}{s}", .{ tab.name(), if (tab.doc.modified()) " •" else "" }) catch tr("Text file");
             c.cairo_save(cr);
             c.cairo_rectangle(cr, x + 12, 2, tab_w - 42, 32);
             c.cairo_clip(cr);
@@ -859,10 +936,10 @@ pub const App = struct {
             var ink = t.window_fg;
             if (bytes.len == 0) ink[3] *= 0.5;
             ui.setSource(cr, ink);
-            ui.drawText(cr, if (bytes.len == 0) "Find…" else bytes, 22, 64, ui.textSize(), false);
-            if (self.focused and self.caret_visible) fill(cr, 22 + ui.measureText(cr, bytes[0..@min(self.query.cursor, bytes.len)], ui.textSize(), false), 48, 1, 18, t.window_fg);
+            ui.drawText(cr, if (bytes.len == 0) tr("Find…") else bytes, 22, 64, ui.textSize(), false);
+            self.paintCaret(cr);
             c.cairo_restore(cr);
-            self.paintButton(cr, .{ .x = @floatFromInt(self.w - 90), .y = 43, .w = 78, .h = 30 }, "Next", false);
+            self.paintButton(cr, .{ .x = @floatFromInt(self.w - 90), .y = 43, .w = 78, .h = 30 }, tr("Next"), false);
         }
         self.layouts.beginFrame();
         const pt = self.port();
@@ -874,6 +951,7 @@ pub const App = struct {
         c.cairo_rectangle(cr, 12, self.viewTop(), @floatFromInt(self.w - 30), self.viewHeight());
         c.cairo_clip(cr);
         for (self.rows.items) |row| self.paintLine(cr, tab, row, sel);
+        if (!self.find_open) self.paintCaret(cr);
         c.cairo_restore(cr);
         if (self.scrollbarGeometry()) |bar| ui.drawScrollbar(cr, scrollbar.look(bar, self.bar_appearance, theme.global.scrollbar_width, theme.shellPalette()));
         fill(cr, 0, @as(f64, @floatFromInt(self.h)) - status_h, @floatFromInt(self.w), status_h, t.app_bar);
@@ -887,13 +965,13 @@ pub const App = struct {
                 .column = (std.unicode.utf8CountCodepoints(d.text.items[d.lineStart(d.cursor)..d.cursor]) catch 0) + 1,
             };
         }
-        const text = if (self.notice_len > 0) self.notice[0..self.notice_len] else std.fmt.bufPrint(&info, "Line {d}, Column {d}    ·    UTF-8{s}    ·    {s}", .{ tab.status.line, tab.status.column, if (tab.doc.bom) " BOM" else "", if (tab.doc.crlf) "CRLF" else "LF" }) catch "";
+        const text = if (self.notice_len > 0) self.notice[0..self.notice_len] else i18n.fmt(&info, tr("Line {line}, Column {column}    ·    UTF-8{bom}    ·    {ending}"), .{ .line = tab.status.line, .column = tab.status.column, .bom = if (tab.doc.bom) " BOM" else "", .ending = if (tab.doc.crlf) "CRLF" else "LF" }) catch "";
         ui.setSource(cr, t.window_fg);
         ui.drawText(cr, text, 12, @floatFromInt(self.h - 8), ui.statusSize(), false);
         if (self.menu_open) self.paintMenu(cr);
         if (self.close_tab != null) self.paintClose(cr);
     }
-    /// Draws one segment: its selection, text and, if the cursor is in it, the caret.
+    /// Draws one segment's selection, text and any preedit at the cursor.
     fn paintLine(self: *App, cr: *c.cairo_t, tab: *Tab, row: view.Row, sel: [2]usize) void {
         const t = theme.global;
         const l = row.line;
@@ -953,7 +1031,6 @@ pub const App = struct {
         if (self.focused and !self.find_open and self.close_tab == null and lines.holds(seg, tab.doc.cursor, tab.doc.text.items.len)) {
             var r: p.Rectangle = undefined;
             p.pango_layout_get_cursor_pos(l.layout, l.index(tab.doc.cursor), &r, null);
-            if (self.caret_visible) fill(cr, @as(f64, @floatFromInt(r.x)) / 1024, @as(f64, @floatFromInt(r.y)) / 1024, 1.5, @as(f64, @floatFromInt(r.height)) / 1024, t.window_fg);
             if (self.preedit.items.len > 0) {
                 const x = @as(f64, @floatFromInt(r.x)) / 1024;
                 const py = @as(f64, @floatFromInt(r.y + r.height)) / 1024;
@@ -973,11 +1050,11 @@ pub const App = struct {
             layer.finish();
         }
         ui.setSource(cr, theme.global.window_fg);
-        ui.drawText(cr, "Save changes before closing?", x + 20, y + 36, ui.textSize(), true);
-        ui.drawText(cr, "Your unsaved changes will be lost if you discard them.", x + 20, y + 72, ui.textSize(), false);
-        self.paintButton(cr, .{ .x = x + 20, .y = y + 112, .w = 115, .h = 38 }, "Cancel", self.close_choice == 0);
-        self.paintButton(cr, .{ .x = x + 145, .y = y + 112, .w = 125, .h = 38 }, "Discard", self.close_choice == 1);
-        self.paintButton(cr, .{ .x = x + 280, .y = y + 112, .w = 120, .h = 38 }, "Save", self.close_choice == 2);
+        ui.drawText(cr, tr("Save changes before closing?"), x + 20, y + 36, ui.textSize(), true);
+        ui.drawText(cr, tr("Your unsaved changes will be lost if you discard them."), x + 20, y + 72, ui.textSize(), false);
+        self.paintButton(cr, .{ .x = x + 20, .y = y + 112, .w = 115, .h = 38 }, tr("Cancel"), self.close_choice == 0);
+        self.paintButton(cr, .{ .x = x + 145, .y = y + 112, .w = 125, .h = 38 }, tr("Discard"), self.close_choice == 1);
+        self.paintButton(cr, .{ .x = x + 280, .y = y + 112, .w = 120, .h = 38 }, tr("Save"), self.close_choice == 2);
     }
 };
 fn fill(cr: *c.cairo_t, x: f64, y: f64, w: f64, h: f64, color: [4]f32) void {

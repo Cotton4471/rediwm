@@ -34,6 +34,7 @@ pub const client_cursor = @import("client_cursor.zig");
 pub const compose = @import("compose.zig");
 pub const context_menu = @import("context_menu.zig");
 pub const font_fallback = @import("font_fallback.zig");
+pub const fold = @import("fold.zig");
 pub const hover_glide = @import("hover_glide.zig");
 pub const key_repeat = @import("key_repeat.zig");
 pub const sdf = @import("sdf.zig");

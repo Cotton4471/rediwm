@@ -15,7 +15,7 @@ def run():
     with tempfile.TemporaryDirectory(prefix="editor-visuals-") as directory:
         tmp = Path(directory)
         config = tmp / "config.toml"
-        config.write_text('[compositor]\nxwayland = false\n')
+        config.write_text('[compositor]\nxwayland = false\n[input]\ncaret_motion_ms = 400\n')
         env = dict(os.environ, HOME=directory, XDG_RUNTIME_DIR=directory,
                    XDG_CONFIG_HOME=str(tmp / 'config'), XDG_DATA_HOME=str(tmp / 'data'),
                    XDG_STATE_HOME=str(tmp / 'state'), XDG_CACHE_HOME=str(tmp / 'cache'),
@@ -183,6 +183,30 @@ def run():
                 time.sleep(.7)
                 assert switches()==before, 'caret timer keeps waking the idle editor'
                 print('caret becomes solid and makes no idle wakeups',flush=True)
+                # A longer configured glide makes intermediate rendered
+                # positions observable without relying on screenshot latency.
+                ipc.type_text('m')
+                time.sleep(.45)
+                def caret_x():
+                    shot=capture()
+                    factor=shot.width/ipc.get_outputs()[0]['logical_width']
+                    text_top=box['y']+40+(46 if csd else 0)
+                    y=round((text_top+1)*factor)
+                    pixels=[x for x in range(round((box['x']+13)*factor), round((box['x']+45)*factor))
+                            if min(shot.getpixel((x,y))) > 155]
+                    assert pixels, 'moving caret disappeared'
+                    assert max(pixels)-min(pixels) <= 3*factor, f'caret left a trail: {pixels}'
+                    return sum(pixels)/len(pixels)
+                right=caret_x()
+                ipc.key_down_up(105)  # Left by one character.
+                time.sleep(.05)
+                middle=caret_x()
+                time.sleep(.4)
+                ipc.key_down_up(105)  # Stay at the start and restart blinking.
+                left=caret_x()
+                assert left < middle < right, (left,middle,right)
+                ipc.key_down_up(111)  # Delete the probe character.
+                print('caret glides through intermediate pixels without trails',flush=True)
                 # A selection between the middle rows must leave the rows
                 # above and below it untouched, whichever way it is dragged.
                 for row in range(5):

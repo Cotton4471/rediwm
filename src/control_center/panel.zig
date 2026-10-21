@@ -1,3 +1,4 @@
+const i18n = @import("i18n");
 // Compositor-drawn settings window, opened by the start-menu cog or IPC.
 // It is an ordinary window (`Toplevel` backend `.shell`): the toplevel owns
 // chrome, stacking, focus, minimize/maximize/resize and the taskbar chip;
@@ -50,16 +51,38 @@ const default_height = 640;
 const theme = @import("ui").theme;
 
 pub const Page = @import("search_index.zig").Page;
-pub const page_labels = [_][]const u8{ "General", "Input", "Displays", "Audio", "Network", "Appearance", "Keyboard Shortcuts", "Desktop", "Bluetooth", "Region & Language", "Users", "Printers", "Services" };
+pub const page_labels = [_]i18n.Message{ i18n.msg("General"), i18n.msg("Input"), i18n.msg("Displays"), i18n.msg("Audio"), i18n.msg("Network"), i18n.msg("Appearance"), i18n.msg("Keyboard Shortcuts"), i18n.msg("Desktop"), i18n.msg("Bluetooth"), i18n.msg("Region & Language"), i18n.msg("Users"), i18n.msg("Printers"), i18n.msg("Services") };
+/// Refreshed when a page rebuilds; storage outlives retained widget trees.
+/// Each comptime descriptor list owns its own stable slice.
+pub fn translatedLabels(comptime messages: []const i18n.Message) []const []const u8 {
+    const Storage = struct {
+        var labels: [messages.len][]const u8 = undefined;
+    };
+    inline for (messages, 0..) |message, i| Storage.labels[i] = message.get();
+    return &Storage.labels;
+}
+
+/// Keep the default width in English, and reserve room for translated nav names.
+pub fn sidebarWidth(cc: *const ControlCenter) f32 {
+    if (cc.panel_box.width < 660) return 70;
+    var width: f32 = 238;
+    for (page_labels) |message| width = @max(width, ui.measure.textNatural(message.get(), .sans, 600, 14).w + 94);
+    return @min(width, 340);
+}
+
+pub fn pageLabel(id: usize) []const u8 {
+    return page_labels[id].get();
+}
+
 const page_names = [_][]const u8{ "general", "input", "displays", "audio", "network", "appearance", "shortcuts", "desktop", "bluetooth", "region", "users", "printers", "services" };
-const page_descriptions = [_][]const u8{
-    "Everyday controls, all in one place.",                "Make your mouse and keyboard feel right.",
-    "Arrangement, resolution, refresh rate and scaling.",  "Volume, microphones and output devices.",
-    "Wired and wireless connections.",                     "Make your desktop your own.",
-    "Choose the keys for your everyday actions.",          "Configure your desktop canvas and panning area.",
-    "Connect and manage your Bluetooth devices.",          "Your language, regional formats and calendar preferences.",
-    "Review login accounts and automatic-login settings.", "Printer status, jobs and connection diagnostics.",
-    "Manage and analyze systemd services.",
+const page_descriptions = [_]i18n.Message{
+    i18n.msg("Everyday controls, all in one place."),                i18n.msg("Make your mouse and keyboard feel right."),
+    i18n.msg("Arrangement, resolution, refresh rate and scaling."),  i18n.msg("Volume, microphones and output devices."),
+    i18n.msg("Wired and wireless connections."),                     i18n.msg("Make your desktop your own."),
+    i18n.msg("Choose the keys for your everyday actions."),          i18n.msg("Configure your desktop canvas and panning area."),
+    i18n.msg("Connect and manage your Bluetooth devices."),          i18n.msg("Your language, regional formats and calendar preferences."),
+    i18n.msg("Review login accounts and automatic-login settings."), i18n.msg("Printer status, jobs and connection diagnostics."),
+    i18n.msg("Manage and analyze systemd services."),
 };
 const page_icons = [_]layout.IconId{ .settings, .mouse, .display, .music, .wifi, .settings, .keyboard, .squares, .bluetooth, .globe, .users, .print, .settings };
 const max_devices = 16;
@@ -85,6 +108,30 @@ fn label(value: []const u8, size: f32, dim: bool) Widget {
     return .{ .kind = .{ .text = .{ .content = value, .font_size = size, .weight = if (dim) 400 else 600, .color = if (dim) t.dim else t.fg } } };
 }
 
+/// Build description lines once, with a UTF-8 fallback for an unbroken word.
+/// Children belong to the host's rebuild arena, just like its other widgets.
+pub fn paragraph(a: std.mem.Allocator, value: []const u8, width: f32, size: f32, dim: bool) !Widget {
+    var lines: std.ArrayList(Widget) = .empty;
+    var start: usize = 0;
+    while (start < value.len) {
+        var end = start;
+        var last_space: ?usize = null;
+        while (end < value.len) {
+            const next = @min(value.len, end + (std.unicode.utf8ByteSequenceLength(value[end]) catch 1));
+            if (ui.measure.textNatural(value[start..next], .sans, if (dim) 400 else 600, size).w > @max(64, width) and end > start) break;
+            if (value[end] == ' ') last_space = end;
+            end = next;
+        }
+        if (end < value.len) if (last_space) |space| {
+            if (space > start) end = space;
+        };
+        try lines.append(a, label(value[start..end], size, dim));
+        start = end;
+        while (start < value.len and value[start] == ' ') : (start += 1) {}
+    }
+    return .{ .kind = .container, .direction = .column, .gap = 3, .width = .{ .percent = 1 }, .children = try lines.toOwnedSlice(a) };
+}
+
 /// A card or group title: larger and bolder than the semibold row labels.
 pub fn sectionTitle(value: []const u8) Widget {
     const t = palette();
@@ -94,7 +141,7 @@ pub fn sectionTitle(value: []const u8) Widget {
 /// Stands in for a section whose widget tree could not be allocated; it
 /// allocates nothing itself.
 pub fn outOfMemory() Widget {
-    return label("Not enough memory to show this page.", 13, true);
+    return label(i18n.tr("Not enough memory to show this page."), 13, true);
 }
 
 fn card(children: []Widget) Widget {
@@ -440,8 +487,8 @@ pub const ControlCenter = struct {
             return;
         }
         cc.search.capture();
-        if (cc.search.active != cc.search.built_active) {
-            if (cc.search.active) {
+        if (cc.search.empty() != cc.search.built_empty) {
+            if (cc.search.empty()) {
                 if (cc.body_children[1].kind == .scroll_container) cc.search.saved_scroll = cc.body_children[1].kind.scroll_container;
                 cc.shortcuts.cancel();
                 if (cc.page == .services) if (cc.systemd_client) |client| client.hide();
@@ -460,10 +507,8 @@ pub const ControlCenter = struct {
         ui.input.reset();
         const has_services = if (cc.systemd_client) |client| client.available() else false;
         if (cc.page == .services and !has_services) cc.page = .general;
-        const selected_row: f32 = @floatFromInt(@intFromEnum(cc.page));
-        if (cc.nav_selection.to != selected_row) cc.nav_selection.cancel(selected_row);
         const t = palette();
-        if (!cc.search.active) {
+        if (!cc.search.empty()) {
             if (cc.page == .displays) {
                 const selected = cc.selectedDisplayOutput() orelse cc.wlr_output;
                 display_section.build(&cc.display, cc, selected);
@@ -487,18 +532,33 @@ pub const ControlCenter = struct {
             }
         }
         const narrow = cc.panel_box.width < 660;
-        const nav_count = page_names.len - @as(usize, @intFromBool(!has_services));
+        var nav_count: usize = 0;
+        for (page_names, 0..) |_, i| {
+            const page: Page = @enumFromInt(i);
+            if (page == .services and !has_services) continue;
+            if (cc.search.active and cc.search.firstInPage(page) == null) continue;
+            nav_count += 1;
+        }
         const nav_gap: f32 = if (cc.panel_box.height < 550) 2 else 5;
-        const nav_height = @min(52, @max(24, (@as(f32, @floatFromInt(cc.panel_box.height)) - 92 - (if (narrow and cc.search.expanded) @as(f32, 46) else 0) - nav_gap * @as(f32, @floatFromInt(nav_count - 1))) / @as(f32, @floatFromInt(nav_count))));
+        const nav_height = @min(52, @max(24, (@as(f32, @floatFromInt(cc.panel_box.height)) - 92 - (if (narrow and cc.search.expanded) @as(f32, 46) else 0) - nav_gap * @as(f32, @floatFromInt(nav_count -| 1))) / @as(f32, @floatFromInt(@max(1, nav_count)))));
         const nav_fg = theme.global.sidebarForeground();
-        for (cc.nav_rows[0..nav_count], 0..) |*row, i| {
-            const selected = i == @intFromEnum(cc.page);
-            cc.nav_children[i] = .{
+        var nav_index: usize = 0;
+        for (page_names, 0..) |_, i| {
+            const page: Page = @enumFromInt(i);
+            if (page == .services and !has_services) continue;
+            if (cc.search.active and cc.search.firstInPage(page) == null) continue;
+            const row = &cc.nav_rows[nav_index];
+            const selected = page == cc.page;
+            if (selected) {
+                const position: f32 = @floatFromInt(nav_index);
+                if (cc.nav_selection.to != position) cc.nav_selection.cancel(position);
+            }
+            cc.nav_children[nav_index] = .{
                 .{ .kind = .{ .icon = .{ .id = page_icons[i], .color = if (selected) t.accent else nav_fg } }, .width = .{ .fixed = 22 }, .height = .{ .fixed = 22 } },
-                label(page_labels[i], 14, false),
+                label(page_labels[i].get(), 14, false),
             };
-            cc.nav_children[i][1].kind.text.color = nav_fg;
-            cc.nav_children[i][1].width = .{ .flex = 1 };
+            cc.nav_children[nav_index][1].kind.text.color = nav_fg;
+            cc.nav_children[nav_index][1].width = .{ .flex = 1 };
             row.* = .{
                 .name = page_names[i],
                 .kind = .{ .row = .{ .owner = cc, .id = i, .selected = selected, .underlay = true, .on_click = pageClicked } },
@@ -507,18 +567,19 @@ pub const ControlCenter = struct {
                 .padding = layout.Edges.xy(16, 0),
                 .gap = 14,
                 .@"align" = .center,
-                .children = cc.nav_children[i][0..if (narrow) @as(usize, 1) else 2],
+                .children = cc.nav_children[nav_index][0..if (narrow) @as(usize, 1) else 2],
             };
+            nav_index += 1;
         }
-        if (!cc.search.active) {
+        if (!cc.search.empty()) {
             cc.content_count = 0;
-            var heading = label(page_labels[@intFromEnum(cc.page)], 24, false);
+            var heading = label(page_labels[@intFromEnum(cc.page)].get(), 24, false);
             heading.kind.text.weight = 600;
             if (cc.page != .bluetooth) {
                 cc.append(heading);
-                cc.append(label(page_descriptions[@intFromEnum(cc.page)], 13, true));
+                cc.append(label(page_descriptions[@intFromEnum(cc.page)].get(), 13, true));
             }
-            if (cc.search.unavailable) cc.append(label("This setting is unavailable on this device or in the current mode.", t.settings_description_size, true));
+            if (cc.search.unavailable) cc.append(label(i18n.tr("This setting is unavailable on this device or in the current mode."), t.settings_description_size, true));
             switch (cc.page) {
                 .desktop => {
                     desktop_section.build(&cc.desktop, cc);
@@ -584,7 +645,7 @@ pub const ControlCenter = struct {
                     cc.append(audio_card);
                     cc.buildDevices();
                     if (cc.device_count > 0) {
-                        cc.device_title = .{ sectionTitle("Audio output"), .{ .kind = .container, .direction = .column, .gap = 4, .children = cc.device_rows[0..cc.device_count] } };
+                        cc.device_title = .{ sectionTitle(i18n.tr("Audio output")), .{ .kind = .container, .direction = .column, .gap = 4, .children = cc.device_rows[0..cc.device_count] } };
                         var dev_card = card(&cc.device_title);
                         dev_card.name = "sound";
                         cc.append(dev_card);
@@ -601,21 +662,21 @@ pub const ControlCenter = struct {
             }
         } else {
             cc.content_count = 0;
-            cc.append(cc.search.build(cc));
+            cc.append(cc.search.noResults());
         }
         cc.search.buildToolbar(cc);
         cc.sidebar_children = .{
             if (narrow)
-                .{ .name = "settings_search_open", .kind = .{ .button = .{ .icon = .search, .label = "Search settings", .owner = cc, .on_click = settings_search.focusClicked } }, .height = .{ .fixed = 36 }, .width = .{ .percent = 1 } }
+                .{ .name = "settings_search_open", .kind = .{ .button = .{ .icon = .search, .label = i18n.tr("Search settings"), .owner = cc, .on_click = settings_search.focusClicked } }, .height = .{ .fixed = 36 }, .width = .{ .percent = 1 } }
             else
                 .{ .kind = .container, .height = .{ .fixed = 36 }, .width = .{ .percent = 1 }, .children = (&cc.search.toolbar)[0..1] },
             .{ .name = "nav", .kind = if (cc.panel_box.height < (if (narrow and cc.search.expanded) @as(i32, 486) else 440)) .{ .scroll_container = .{} } else .container, .direction = .column, .width = .{ .percent = 1 }, .height = .{ .flex = 1 }, .gap = nav_gap, .underlay = .{ .owner = cc, .paint = paintNavHighlights }, .children = cc.nav_rows[0..nav_count] },
         };
         cc.body_children = .{
-            .{ .name = "settings_sidebar", .kind = .{ .rect = .{ .color = t.app_sidebar, .replace = t.app_sidebar[3] < 1, .radius = t.settings_sidebar_radius, .border_width = 1, .border_color = t.app_item_border } }, .direction = .column, .width = .{ .fixed = if (narrow) 70 else 238 }, .height = .{ .percent = 1 }, .padding = layout.Edges.all(8), .gap = 8, .children = &cc.sidebar_children },
+            .{ .name = "settings_sidebar", .kind = .{ .rect = .{ .color = t.app_sidebar, .replace = t.app_sidebar[3] < 1, .radius = t.settings_sidebar_radius, .border_width = 1, .border_color = t.app_item_border } }, .direction = .column, .width = .{ .fixed = sidebarWidth(cc) }, .height = .{ .percent = 1 }, .padding = layout.Edges.all(8), .gap = 8, .children = &cc.sidebar_children },
             .{ .kind = .{ .scroll_container = .{} }, .direction = .column, .@"align" = .stretch, .width = .{ .flex = 1 }, .height = .{ .percent = 1 }, .padding = layout.Edges.all(12), .gap = 14, .children = cc.content_children[0..cc.content_count] },
         };
-        if (cc.page == .services and !cc.search.active) {
+        if (cc.page == .services and !cc.search.empty()) {
             cc.body_children[1].kind = .container;
         } else {
             // Keep the scrollbar's full hover/drag gutter outside the cards.
@@ -634,10 +695,10 @@ pub const ControlCenter = struct {
             .children = cc.root_children[if (narrow and cc.search.expanded) @as(usize, 0) else 1..2],
         };
         cc.root.linkParents();
-        if (!cc.search.active and cc.page == .services and cc.services.search_focus) {
+        if (!cc.search.empty() and cc.page == .services and cc.services.search_focus) {
             if (cc.services.search) |field| ui.input.current.focus(&cc.root, field);
         }
-        if (!cc.search.active and cc.page == .users) {
+        if (!cc.search.empty() and cc.page == .users) {
             if (users_section.initialFormFocus(&cc.users)) |field| ui.input.current.focus(&cc.root, field);
         }
         if (cc.search.focused or cc.search.request_focus) {
@@ -645,7 +706,7 @@ pub const ControlCenter = struct {
             cc.search.request_focus = false;
         }
         cc.search.reset_scroll = false;
-        cc.search.built_active = cc.search.active;
+        cc.search.built_empty = cc.search.empty();
         cc.built_page = cc.page;
         cc.refresh_pending = false;
     }
@@ -661,11 +722,11 @@ pub const ControlCenter = struct {
     fn buildGeneral(cc: *ControlCenter) void {
         portal_section.build(&cc.portals, cc);
         cc.append(cc.portals.root);
-        cc.general_volume = .{ sectionTitle("Master volume"), if (cc.server.audio != null) cc.sound.body_children[1] else label("Audio unavailable", 13, true) };
+        cc.general_volume = .{ sectionTitle(i18n.tr("Master volume")), if (cc.server.audio != null) cc.sound.body_children[1] else label(i18n.tr("Audio unavailable"), 13, true) };
         var vol_card = card(&cc.general_volume);
         vol_card.name = "sound";
         cc.append(vol_card);
-        cc.brightness_children = .{ sectionTitle("Brightness"), label(if (cc.server.brightness.failed) "No supported backlight" else "Checking backlight…", 13, true) };
+        cc.brightness_children = .{ sectionTitle(i18n.tr("Brightness")), label(if (cc.server.brightness.failed) i18n.tr("No supported backlight") else i18n.tr("Checking backlight…"), 13, true) };
         if (cc.server.brightness.level) |level| {
             cc.brightness_row = .{
                 .{ .kind = .{ .icon = .{ .id = .brightness, .color = palette().fg } }, .width = .{ .fixed = 24 }, .height = .{ .fixed = 24 } },
@@ -677,21 +738,21 @@ pub const ControlCenter = struct {
         }
         cc.append(card(&cc.brightness_children));
         cc.general_output_text = .{
-            sectionTitle("Audio output"),
-            label(if (cc.sound.output_desc_len > 0) cc.sound.output_desc_buf[0..cc.sound.output_desc_len] else "No audio device available", 13, true),
+            sectionTitle(i18n.tr("Audio output")),
+            label(if (cc.sound.output_desc_len > 0) cc.sound.output_desc_buf[0..cc.sound.output_desc_len] else i18n.tr("No audio device available"), 13, true),
         };
         cc.general_output = .{
             .{ .kind = .container, .direction = .column, .@"align" = .stretch, .width = .{ .flex = 1 }, .gap = 5, .children = &cc.general_output_text },
-            .{ .kind = .{ .button = .{ .label = "Audio settings", .owner = cc, .id = @intFromEnum(Page.audio), .on_click = pageClicked } }, .height = .{ .fixed = 32 } },
+            .{ .kind = .{ .button = .{ .label = i18n.tr("Audio settings"), .owner = cc, .id = @intFromEnum(Page.audio), .on_click = pageClicked } }, .height = .{ .fixed = 32 } },
         };
         var output_card = card(&cc.general_output);
         output_card.direction = .row;
         output_card.@"align" = .center;
         cc.append(output_card);
-        cc.general_display_text = .{ sectionTitle("Display"), label(std.mem.span(cc.wlr_output.name), 13, true) };
+        cc.general_display_text = .{ sectionTitle(i18n.tr("Display")), label(std.mem.span(cc.wlr_output.name), 13, true) };
         cc.general_display = .{
             .{ .kind = .container, .direction = .column, .@"align" = .stretch, .width = .{ .flex = 1 }, .gap = 5, .children = &cc.general_display_text },
-            .{ .kind = .{ .button = .{ .label = "Display settings", .owner = cc, .id = @intFromEnum(Page.displays), .on_click = pageClicked } }, .height = .{ .fixed = 32 } },
+            .{ .kind = .{ .button = .{ .label = i18n.tr("Display settings"), .owner = cc, .id = @intFromEnum(Page.displays), .on_click = pageClicked } }, .height = .{ .fixed = 32 } },
         };
         var display_card = card(&cc.general_display);
         display_card.direction = .row;
@@ -700,8 +761,8 @@ pub const ControlCenter = struct {
         default_apps_section.build(&cc.default_apps, cc);
         cc.append(cc.default_apps.root);
         cc.general_files_text = .{
-            label("Single-click file and folder icons", 14, false),
-            label("In Files, click an icon to open it in list or icons view. Click the name to select.", 12, true),
+            label(i18n.tr("Single-click file and folder icons"), 14, false),
+            label(i18n.tr("In Files, click an icon to open it in list or icons view. Click the name to select."), 12, true),
         };
         cc.general_files = .{
             .{ .kind = .container, .direction = .column, .gap = 5, .width = .{ .flex = 1 }, .children = &cc.general_files_text },
@@ -739,11 +800,14 @@ pub const ControlCenter = struct {
     }
 
     pub fn selectPage(cc: *ControlCenter, page: Page) void {
-        if (cc.search.active) {
-            settings_search.clear(cc);
-            cc.search.built_active = false;
-            cc.search.restore_scroll = false;
-        }
+        if (cc.search.query().len > 0) settings_search.clear(cc);
+        cc.search.built_empty = false;
+        cc.search.restore_scroll = false;
+        cc.selectSearchPage(page);
+    }
+
+    /// Search and filtered sidebar navigation keep the query and its focus.
+    pub fn selectSearchPage(cc: *ControlCenter, page: Page) void {
         cc.shortcuts.cancel();
         // The service list is only kept live while its page is on screen.
         if (cc.page == .services and page != .services) if (cc.systemd_client) |client| client.hide();
@@ -753,7 +817,7 @@ pub const ControlCenter = struct {
             if (cc.server.bluetooth) |m| m.closed();
             cc.bluetooth.clearPin();
         }
-        if (cc.page != page) cc.nav_selection.retargetTo(anim.nowMs(), @floatFromInt(@intFromEnum(page)), anim.curveFor(.start_glide));
+        if (cc.page != page) if (cc.navIndex(page)) |row| cc.nav_selection.retargetTo(anim.nowMs(), @floatFromInt(row), anim.curveFor(.start_glide));
         cc.page = page;
         if (page == .bluetooth and !cc.server.greeter_mode) {
             if (cc.panel_box.width == default_width) _ = cc.toplevel.requestSize(1120, cc.panel_box.height);
@@ -791,10 +855,9 @@ pub const ControlCenter = struct {
         return cc.wlr_output;
     }
 
-    /// Route select keys before panel-level Escape. Tab cycles display fields.
-    /// Global search replaces the page body without selecting another category.
+    /// A search only covers the current page when there are no matches.
     pub fn showingPage(cc: *const ControlCenter, page: Page) bool {
-        return !cc.is_welcome and !cc.search.active and cc.page == page;
+        return !cc.is_welcome and !cc.search.empty() and cc.page == page;
     }
 
     pub fn focusSearch(cc: *ControlCenter) void {
@@ -1019,27 +1082,33 @@ pub const ControlCenter = struct {
     /// rebuilds the page the moment the button is released, under a pointer that
     /// is still on it, and a switch's change rebuilds before its knob has moved.
     fn rebuildTree(cc: *ControlCenter) void {
-        const hovered_nav = cc.nav_hover.target;
+        const hovered_nav = if (cc.nav_hover.target) |cell| blk: {
+            const row: usize = @intCast(cell.row);
+            break :blk if (row < cc.sidebar_children[1].children.len) cc.nav_rows[row].kind.row.id else null;
+        } else null;
         const same_page = cc.built_page == cc.page;
-        const bluetooth_scroll: ?layout.ScrollState = if (same_page and cc.page == .bluetooth and !cc.search.active and !cc.search.built_active) cc.body_children[1].kind.scroll_container else null;
+        const bluetooth_scroll: ?layout.ScrollState = if (same_page and cc.page == .bluetooth and !cc.search.empty() and !cc.search.built_empty) cc.body_children[1].kind.scroll_container else null;
         var saved: ui.widgets.slider.Saved = .{};
         var knobs: ui.widgets.toggle.Saved = .{};
+        var menu: ui.widgets.select.Saved = .{};
         if (same_page) {
             ui.widgets.slider.capture(&cc.root, &saved);
             ui.widgets.toggle.capture(&cc.root, &knobs);
+            if (!cc.search.request_focus) ui.widgets.select.capture(&cc.root, &menu, ui.input.current.focused);
         }
         cc.buildTree();
-        if (hovered_nav) |cell| {
-            const index: usize = @intCast(cell.row);
-            if (index < cc.sidebar_children[1].children.len) {
-                cc.nav_rows[index].kind.row.state = .hover;
-                ui.input.adoptHover(&cc.root, &cc.nav_rows[index]);
+        if (hovered_nav) |id| {
+            if (cc.navIndex(@enumFromInt(id))) |row| {
+                cc.nav_hover.setTarget(anim.nowMs(), .{ .col = 0, .row = @intCast(row) });
+                cc.nav_rows[row].kind.row.state = .hover;
+                ui.input.adoptHover(&cc.root, &cc.nav_rows[row]);
             } else cc.nav_hover.setTarget(anim.nowMs(), null);
         }
         if (bluetooth_scroll) |state| cc.body_children[1].kind.scroll_container = state;
         if (same_page) {
             if (ui.widgets.slider.restore(&cc.root, &saved)) |hovered| ui.input.adoptHover(&cc.root, hovered);
             ui.widgets.toggle.restore(&cc.root, &knobs);
+            if (ui.widgets.select.restore(&cc.root, &menu)) |widget| ui.input.current.focus(&cc.root, widget);
         }
     }
 
@@ -1061,7 +1130,7 @@ pub const ControlCenter = struct {
         }
         ui.measure.measure(&cc.root, width, height);
         ui.arrange.arrange(&cc.root, 0, 0, width, height);
-        if (!cc.search.active and ui.input.current.focused != &cc.search.field) {
+        if (!cc.search.empty() and ui.input.current.focused != &cc.search.field) {
             if (cc.page == .appearance) appearance_section.restoreItemFocus(&cc.appearance);
             if (cc.page == .network) network_section.restoreFocus(&cc.network, cc);
             if (cc.page == .bluetooth) bluetooth_section.restoreFocus(&cc.bluetooth, cc);
@@ -1103,8 +1172,8 @@ pub const ControlCenter = struct {
         const narrow = cc.panel_box.width < 660;
         const nav_count = cc.sidebar_children[1].children.len;
         const gap: f32 = if (cc.panel_box.height < 550) 2 else 5;
-        const height = @min(52, @max(24, (@as(f32, @floatFromInt(cc.panel_box.height)) - 92 - (if (narrow and cc.search.expanded) @as(f32, 46) else 0) - gap * @as(f32, @floatFromInt(nav_count - 1))) / @as(f32, @floatFromInt(nav_count))));
-        cc.body_children[0].width = .{ .fixed = if (narrow) 70 else 238 };
+        const height = @min(52, @max(24, (@as(f32, @floatFromInt(cc.panel_box.height)) - 92 - (if (narrow and cc.search.expanded) @as(f32, 46) else 0) - gap * @as(f32, @floatFromInt(nav_count -| 1))) / @as(f32, @floatFromInt(@max(1, nav_count)))));
+        cc.body_children[0].width = .{ .fixed = sidebarWidth(cc) };
         cc.sidebar_children[1].gap = gap;
         for (cc.nav_rows[0..nav_count], 0..) |*row, i| {
             row.height = .{ .fixed = height };
@@ -1121,13 +1190,25 @@ pub const ControlCenter = struct {
         cc.root.linkParents();
     }
 
+    fn navIndex(cc: *const ControlCenter, page: Page) ?usize {
+        if (cc.is_welcome) return null;
+        for (cc.sidebar_children[1].children, 0..) |row, i| {
+            if (row.kind.row.id == @intFromEnum(page)) return i;
+        }
+        return null;
+    }
+
     /// Runs once per frame of `wlr_output` while anything is pending.
     /// Returns whether another frame should be scheduled.
     pub fn tick(cc: *ControlCenter, now_ms: i64) bool {
-        const rebuild = cc.refresh_pending and !cc.pointer_down and ui.input.openSelect(&cc.root) == null;
+        cc.search.syncAvailability(cc);
+        if (cc.search.pending_result != null) settings_search.apply(cc);
+        // A live update must not wait for an open dropdown: that leaves the
+        // page permanently unsettled. rebuildTree preserves compatible menus.
+        const rebuild = cc.refresh_pending and !cc.pointer_down;
         if ((cc.layout_pending or rebuild) and cc.panel_box.width > 0 and cc.panel_box.height > 0) {
             cc.layout_pending = false;
-            const body = if (!cc.search.reset_scroll and cc.search.active == cc.search.built_active and cc.body_children[1].kind == .scroll_container) cc.body_children[1].kind.scroll_container else null;
+            const body = if (!cc.search.reset_scroll and cc.search.empty() == cc.search.built_empty and cc.body_children[1].kind == .scroll_container) cc.body_children[1].kind.scroll_container else null;
             if (rebuild or cc.resizeNeedsTree()) cc.rebuildTree();
             cc.resizeLayout();
             // Keep a wheel glide going across the rebuild.
@@ -1162,7 +1243,7 @@ pub const ControlCenter = struct {
     fn syncNavHover(cc: *ControlCenter) void {
         const cell: ?ui.hover_glide.Cell = if (ui.input.current.hovered) |widget| switch (widget.kind) {
             .row => |data| if (data.owner == @as(?*anyopaque, cc) and data.on_click == pageClicked)
-                .{ .col = 0, .row = @intCast(data.id) }
+                .{ .col = 0, .row = @intCast(cc.navIndex(@enumFromInt(data.id)) orelse return) }
             else
                 null,
             else => null,
@@ -1366,9 +1447,10 @@ pub fn bodyColor() [4]f32 {
 
 fn pageClicked(owner: ?*anyopaque, id: usize) void {
     const cc: *ControlCenter = @ptrCast(@alignCast(owner orelse return));
-    if (cc.search.query().len > 0) settings_search.clear(cc);
-    cc.search.built_active = false;
-    cc.search.restore_scroll = false;
+    if (cc.search.active) {
+        cc.search.pending_result = cc.search.firstInPage(@enumFromInt(id));
+        return;
+    }
     cc.search.unavailable = false;
     cc.search.destination = null;
     cc.search.focused = false;
@@ -1394,7 +1476,7 @@ fn filesSingleClickChanged(owner: ?*anyopaque, _: usize, on: bool) void {
     const cc: *ControlCenter = @ptrCast(@alignCast(owner orelse return));
     @import("config").setting_save.saveCompositor(gpa, cc.server.io, cc.server.config.path, "files_single_click_open", on) catch |err| {
         std.log.warn("could not save Files single-click setting: {}", .{err});
-        cc.default_apps.message = "Could not save the Files setting.";
+        cc.default_apps.message = i18n.tr("Could not save the Files setting.");
         cc.refresh();
         return;
     };

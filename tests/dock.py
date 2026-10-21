@@ -15,6 +15,19 @@ from ipc_client import IPCClient, spawn_compositor, stop_process
 from ui_driver import UIDriver
 
 
+def count_badge(ipc, ui, name, scale, path):
+    """The icon's top-right corner, clear of its running/focus pill."""
+    ipc.move_cursor(5, 5)
+    ipc.wait_for_frame()
+    box = next(w['global_box'] for w in ui.widgets('dock') if w['name'] == name)
+    path.unlink(missing_ok=True)
+    ipc.screenshot(str(path))
+    with Image.open(path) as image:
+        return image.convert('RGB').crop(tuple(round(v * scale) for v in
+            (box['x'] + box['width'] / 2, box['y'] + box['height'] / 8,
+             box['x'] + box['width'] * 7 / 8, box['y'] + box['height'] / 2)))
+
+
 def run():
     scale = float(os.environ.get('REDIWM_TEST_SCALE', '1'))
     with tempfile.TemporaryDirectory(prefix='rediwm-dock-') as directory:
@@ -293,17 +306,74 @@ enabled = false
                     assert len(ipc.get_windows()) == 1
                     assert ipc.get_focused_window()['id'] == wid
                     if desktop_id:
+                        single = count_badge(ipc, ui, shortcut, scale, tmp / 'badge-single.png')
                         ipc.action('launch_app', {'desktop_id': desktop_id})
                         second = wait_for(lambda: next((w for w in ipc.get_windows() if w['id'] != wid), None), 'second instance')
                         wait_for(shortcuts_only, 'multiple windows share one shortcut')
-                        ipc.action('close_window', {'id': second['id']})
+                        double = count_badge(ipc, ui, shortcut, scale, tmp / 'badge-double.png')
+                        assert ImageChops.difference(single, double).getbbox(), 'two windows have no count badge'
+                        click(button(shortcut))
+                        wait_for(lambda: len([w for w in ui.widgets('window_picker') if w['role'] == 'row']) == 2, 'two-window picker')
+                        picker = ui.widgets('window_picker')
+                        rows = [w for w in picker if w['role'] == 'row']
+                        assert {w['name'] for w in rows} == {f'window_{wid}', f'window_{second["id"]}'}
+                        assert all(w['global_box']['height'] == 40 for w in rows), 'window rows should be compact'
+                        assert len([w for w in picker if w['role'] == 'text' and w['label']]) == 2, 'window titles missing'
+                        assert {w['name'] for w in picker if w['role'] == 'button'} == {f'close_window_{wid}', f'close_window_{second["id"]}'}, 'window close buttons missing'
+                        ipc.key(1, True)
+                        ipc.key(1, False)
+                        wait_for(lambda: not ui.widgets('window_picker'), 'Escape closes window picker')
+                        ipc.action('minimize_window', {'id': second['id']})
+                        minimized = count_badge(ipc, ui, shortcut, scale, tmp / 'badge-minimized.png')
+                        assert not ImageChops.difference(double, minimized).getbbox(), 'minimized window missing from count'
+                        click(button(shortcut))
+                        wait_for(lambda: bool(ui.widgets('window_picker')), 'picker includes minimized window')
+                        click(ui.find(f'window_{second["id"]}', panel='window_picker'))
+                        wait_for(lambda: not next(w for w in ipc.get_windows() if w['id'] == second['id'])['is_minimized'], 'picker restores chosen window')
+                        assert ipc.get_focused_window()['id'] == second['id']
+                        assert not ui.widgets('window_picker'), 'selection left picker open'
+                        click(button(shortcut))
+                        ipc.click_at(5, 5)
+                        wait_for(lambda: not ui.widgets('window_picker'), 'outside click closes picker')
+                        click(button(shortcut))
+                        ipc.key(108, True)  # Down selects the first window.
+                        ipc.key(108, False)
+                        ipc.key(28, True)
+                        ipc.key(28, False)
+                        wait_for(lambda: not ui.widgets('window_picker'), 'keyboard selection closes picker')
+                        assert ipc.get_focused_window()['id'] == wid, 'keyboard chose the wrong window'
+                        ipc.action('launch_app', {'desktop_id': desktop_id})
+                        third = wait_for(lambda: next((w for w in ipc.get_windows() if w['id'] not in (wid, second['id'])), None), 'third instance')
+                        triple = count_badge(ipc, ui, shortcut, scale, tmp / 'badge-triple.png')
+                        assert ImageChops.difference(double, triple).getbbox(), 'count did not change from two to three'
+                        click(button(shortcut))
+                        close = ui.find(f'close_window_{third["id"]}', panel='window_picker')
+                        ipc.move_cursor(*center(ui.find(f'window_{third["id"]}', panel='window_picker')))
+                        ipc.wait_for_frame()
+                        box = close['global_box']
+                        close_box = tuple(round(v * scale) for v in (box['x'], box['y'], box['x'] + box['width'], box['y'] + box['height']))
+                        resting = shot(f'{shortcut}-close-rest').crop(close_box)
+                        ipc.move_cursor(*center(close))
+                        ipc.wait_for_frame()
+                        assert ImageChops.difference(resting, shot(f'{shortcut}-close-hover').crop(close_box)).getbbox(), 'close button has no hover feedback'
+                        click(close)
+                        wait_for(lambda: len(ipc.get_windows()) == 2, 'third window closed')
+                        assert not ui.widgets('window_picker'), 'close button left picker open'
+                        assert not ImageChops.difference(double, count_badge(ipc, ui, shortcut, scale, tmp / 'badge-two-left.png')).getbbox(), 'count did not return to two'
+                        ipc.action('focus_window', {'id': wid})
+                        ipc.action('minimize_window', {'id': second['id']})
+                        click(button(shortcut))
+                        click(ui.find(f'close_window_{second["id"]}', panel='window_picker'))
                         wait_for(lambda: len(ipc.get_windows()) == 1, 'second window closed')
+                        assert ipc.get_focused_window()['id'] == wid, 'closing a minimized window changed focus'
+                        assert not ImageChops.difference(single, count_badge(ipc, ui, shortcut, scale, tmp / 'badge-one-left.png')).getbbox(), 'badge survived with one window left'
                         assert ImageChops.difference(idle, pill(shortcut, f'{app_id}-one-left')).getbbox(), 'pill disappeared with a window left'
                     if shortcut == 'files':
                         before_removal = cfg.read_text()
                         ipc.move_cursor(*center(button(shortcut)))
                         ipc.pointer_button(273, True)
                         ipc.pointer_button(273, False)
+                        assert not ui.widgets('window_picker'), 'right click opened a window picker'
                         for code in (103, 28):  # Up selects Remove from dock.
                             ipc.key(code, True)
                             ipc.key(code, False)
@@ -333,6 +403,21 @@ enabled = false
                 click(button(name))
                 wait_for(lambda: not next(w for w in ipc.get_windows() if w['id'] == wid)['is_minimized'], 'dock restore')
                 assert ipc.get_focused_window()['id'] == wid
+                single = count_badge(ipc, ui, name, scale, tmp / 'window-badge-single.png')
+                clients.append(subprocess.Popen([str(tmp / 'client'), '--app-id', 'dock.test'],
+                    env=dict(os.environ, XDG_RUNTIME_DIR=str(tmp), WAYLAND_DISPLAY=display),
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+                second = wait_for(lambda: next((w for w in ipc.get_windows() if w['id'] != wid), None), 'second unpinned window')
+                double = count_badge(ipc, ui, name, scale, tmp / 'window-badge-double.png')
+                assert ImageChops.difference(single, double).getbbox(), 'unpinned app has no window count'
+                click(button(name))
+                wait_for(lambda: len([w for w in ui.widgets('window_picker') if w['role'] == 'row']) == 2, 'unpinned window picker')
+                ipc.action('close_window', {'id': second['id']})
+                wait_for(lambda: len(ipc.get_windows()) == 1, 'second unpinned window closed')
+                assert not ui.widgets('window_picker'), 'closing a listed window left a stale picker'
+                assert not ImageChops.difference(single, count_badge(ipc, ui, name, scale, tmp / 'window-badge-one-left.png')).getbbox(), 'unpinned count survived with one window'
+                ipc.action('focus_window', {'id': wid})
+                ipc.wait_for_frame()
                 # The focused app's rectangle is off by default; the setting draws it.
                 # A strip beside the icon, inside the button, shows it.
                 ipc.move_cursor(5, 5)
@@ -703,6 +788,8 @@ def pill_animation():
                         ipc.reload_config()
                         advance(1000)
 
+                # Include a count badge in the retained/whole repaint comparison.
+                zoom_windows = [launch('foot'), launch('foot')]
                 ipc.move_cursor(5, 5)
                 advance(1000)
                 repaint_whole()
@@ -715,6 +802,10 @@ def pill_animation():
                 assert ImageChops.difference(at_rest, animated).getbbox(), 'hover did not repaint'
                 repaint_whole()
                 assert ImageChops.difference(animated, dock_image('whole')).getbbox() is None, 'animated repaint differs from a whole one'
+                for window_id in zoom_windows:
+                    ipc.action('close_window', {'id': window_id})
+                wait_for(lambda: not ipc.get_windows(), 'hover badge windows closed')
+                advance(1000)
                 cfg.write_text(cfg.read_text().replace('dock_hover_zoom = 1.5', 'dock_hover_zoom = 1.0'))
                 ipc.reload_config()
                 ipc.wait_for_frame(output=primary)
@@ -1025,8 +1116,16 @@ def pinning():
                 ipc.click_at(*centre(box('pin_pin-one.desktop')))
                 wait_for(lambda: len(ipc.get_windows()) == 1, 'pinned app launched')
                 assert not any(n.startswith('window_') for n in names()), 'a pinned app also got a window button'
+                single = count_badge(ipc, ui, 'pin_pin-one.desktop', scale, tmp / 'pin-badge-single.png')
                 second, second_id = launch('dock.pin.one')
                 assert not any(n.startswith('window_') for n in names())
+                double = count_badge(ipc, ui, 'pin_pin-one.desktop', scale, tmp / 'pin-badge-double.png')
+                assert ImageChops.difference(single, double).getbbox(), 'pinned app has no window count'
+                ipc.click_at(*centre(box('pin_pin-one.desktop')))
+                wait_for(lambda: len([w for w in ui.widgets('window_picker') if w['role'] == 'row']) == 2, 'pinned window picker')
+                ipc.key(1, True)
+                ipc.key(1, False)
+                wait_for(lambda: not ui.widgets('window_picker'), 'pinned picker dismissed')
                 other, other_id = launch('dock.pin.free')
                 wait_for(lambda: f'window_{other_id}' in names(), 'unpinned app window')
 
@@ -1073,6 +1172,12 @@ def positions():
         (theme / 'index.theme').write_text('[Icon Theme]\nName=DockAnchorTest\nDirectories=64x64/apps\n'
                                          '[64x64/apps]\nSize=64\nType=Fixed\nContext=Applications\n')
         Image.new('RGBA', (64, 64), (248, 16, 128, 255)).save(icons / 'rediwm-settings.png')
+        Image.new('RGBA', (64, 64), (16, 224, 248, 255)).save(icons / 'transmission-artwork.png')
+        applications = tmp / 'data/applications'
+        applications.mkdir(parents=True)
+        (applications / 'transmission-gtk.desktop').write_text(
+            '[Desktop Entry]\nType=Application\nName=Transmission\n'
+            'Exec=transmission-gtk %U\nIcon=transmission-artwork\n')
         env_extra = {'DBUS_SESSION_BUS_ADDRESS': '', 'DBUS_SYSTEM_BUS_ADDRESS': 'unix:path=/nonexistent',
                      'XDG_CONFIG_HOME': str(tmp / 'config'), 'XDG_DATA_HOME': str(tmp / 'data'),
                      'XDG_CACHE_HOME': str(tmp / 'cache'), 'REDIWM_ICON_THEME': 'DockAnchorTest'}
@@ -1090,10 +1195,13 @@ def positions():
                 ui = UIDriver(ipc)
                 display = wait_for(lambda: next((p.name for p in tmp.glob('wayland-*')
                     if not p.name.endswith('.lock')), None), 'display')
-                client = subprocess.Popen([str(tmp / 'client'), '--app-id', 'dock.position'],
+                # Transmission uses a per-instance GTK ID, unlike its desktop
+                # file and Icon= name. The dock must still show that artwork.
+                app_id = 'com.transmissionbt.transmission_1000_12345'
+                client = subprocess.Popen([str(tmp / 'client'), '--app-id', app_id],
                     env=dict(os.environ, XDG_RUNTIME_DIR=str(tmp), WAYLAND_DISPLAY=display),
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                wid = wait_for(lambda: next((w['id'] for w in ipc.get_windows() if w['app_id'] == 'dock.position'), None), 'position client')
+                wid = wait_for(lambda: next((w['id'] for w in ipc.get_windows() if w['app_id'] == app_id), None), 'position client')
                 ipc.wait_for('window_geometry_settled', window_id=wid)
                 cfg = tmp / 'rediwm-config.toml'
                 def root():
@@ -1110,6 +1218,13 @@ def positions():
                         return image.convert('RGB')
                 def crop(image, box):
                     return image.crop(tuple(round(v * scale) for v in box))
+                def running_icon_ready():
+                    box = item(f'window_{wid}')
+                    image = crop(shot('running-icon'), (box['x'], box['y'],
+                                 box['x'] + box['width'], box['y'] + box['height']))
+                    return sum(count for count, (r, g, b) in image.getcolors(image.width * image.height)
+                               if r < 32 and g > 200 and b > 224) > 200 * scale * scale
+                wait_for(running_icon_ready, 'running Transmission icon did not use desktop artwork')
                 def icon_bounds(image, region):
                     icon = crop(image, region)
                     red, green, blue = icon.split()

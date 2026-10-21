@@ -127,6 +127,7 @@ root: ui.layout.Widget = .{ .kind = .container },
 input_root: ui.layout.Widget = .{ .kind = .container },
 buttons: [max_items]ui.layout.Widget = undefined,
 ids: [max_items]u64 = @splat(0),
+window_counts: [max_items]usize = @splat(0),
 shortcuts: [max_items]?Shortcut = @splat(null),
 /// Index into `pins` for the buttons that show a pinned application.
 pin_of: [max_items]?u8 = @splat(null),
@@ -487,6 +488,43 @@ fn prefer(current: ?*Toplevel, top: *Toplevel, focused: ?*Toplevel) bool {
     return held != focused and (top == focused or (held.minimized and !top.minimized));
 }
 
+fn showsWindow(self: *const Self, top: *Toplevel) bool {
+    const output = self.output.?;
+    return top.in_world and !top.closing and !top.backend_gone and !top.tab_hidden and
+        @import("workspaces.zig").visible(top) and !(top.live_rules.skip_taskbar orelse false) and
+        (!output.server.world.workspaces.active or top.currentOutput() == output);
+}
+
+/// Use the same membership as the badge, including minimized windows.
+fn openWindowPicker(self: *Self, index: usize) bool {
+    const output = self.output.?;
+    const target = self.topAt(index) orelse return false;
+    if (self.pin_of[index] == null and self.shortcuts[index] == null and target.appId().len == 0) return false;
+    const snapshot = output.server.start_menu_catalog.retainSnapshot();
+    defer snapshot.release();
+    var scratch = std.heap.ArenaAllocator.init(gpa);
+    defer scratch.deinit();
+    const matches = self.shortcutApps(snapshot.entries, scratch.allocator());
+    var ids: std.ArrayList(u64) = .empty;
+    defer ids.deinit(gpa);
+    var it = output.server.world.toplevels.iterator(.forward);
+    while (it.next()) |top| {
+        if (!self.showsWindow(top)) continue;
+        const same = if (self.pin_of[index]) |pin|
+            self.pinFor(top) == pin
+        else if (self.shortcuts[index]) |shortcut|
+            self.pinFor(top) == null and matches[@intFromEnum(shortcut)].matches(top)
+        else
+            std.mem.eql(u8, @import("window_tabs.zig").identity(top.appId()), @import("window_tabs.zig").identity(target.appId()));
+        if (same) ids.append(gpa, top.id) catch return false;
+    }
+    if (ids.items.len < 2) return false;
+    std.mem.sort(u64, ids.items, {}, std.sort.asc(u64));
+    const button = &self.buttons[index];
+    output.server.input.window_menu.openDockWindows(self, ids.items, self.shortcuts[index], self.box.x + @as(i32, @intFromFloat(button.computed_x + button.computed_width / 2)), self.box.y + @as(i32, @intFromFloat(button.computed_y + button.computed_height / 2)));
+    return output.server.input.window_menu.node != null;
+}
+
 /// Where the dock rests in `area`: centred along its edge, `edge_margin` in.
 fn place(self: *Self, area: wlr.Box) void {
     self.box.x = area.x + @divTrunc(area.width - self.box.width, 2);
@@ -559,16 +597,18 @@ fn rebuild(self: *Self, capacity: usize, area: wlr.Box) !void {
     const matches = self.shortcutApps(snapshot.entries, scratch.allocator());
     var targets: [shortcut_count]?*Toplevel = @splat(null);
     var pin_targets: [max_pins]?*Toplevel = @splat(null);
+    var shortcut_counts: [shortcut_count]usize = @splat(0);
+    var pin_counts: [max_pins]usize = @splat(0);
+    var app_counts = std.StringHashMap(usize).init(scratch.allocator());
     const focused = @import("ipc/handlers.zig").findFocusedToplevel(output.server);
     var tops: std.ArrayList(*Toplevel) = .empty;
     defer tops.deinit(gpa);
     var it = output.server.world.toplevels.iterator(.forward);
     windows: while (it.next()) |top| {
-        if (!top.in_world or top.closing or top.backend_gone or top.tab_hidden or
-            !@import("workspaces.zig").visible(top) or (top.live_rules.skip_taskbar orelse false) or
-            (output.server.world.workspaces.active and top.currentOutput() != output)) continue;
+        if (!self.showsWindow(top)) continue;
         // Every running app shows: on its pin, on its shortcut, or as a window.
         if (self.pinFor(top)) |pin| {
+            pin_counts[pin] += 1;
             if (prefer(pin_targets[pin], top, focused)) pin_targets[pin] = top;
             continue;
         }
@@ -576,11 +616,18 @@ fn rebuild(self: *Self, capacity: usize, area: wlr.Box) !void {
             // A removed shortcut is only a launcher gone: its app, once
             // running, is an ordinary window button.
             if (!self.shortcutShown(shortcut) or !matches[@intFromEnum(shortcut)].matches(top)) continue;
+            shortcut_counts[@intFromEnum(shortcut)] += 1;
             const target = &targets[@intFromEnum(shortcut)];
             if (prefer(target.*, top, focused)) target.* = top;
             continue :windows;
         }
         try tops.append(gpa, top);
+        const app_id = @import("window_tabs.zig").identity(top.appId());
+        if (app_id.len > 0) {
+            const entry = try app_counts.getOrPut(app_id);
+            if (!entry.found_existing) entry.value_ptr.* = 0;
+            entry.value_ptr.* += 1;
+        }
     }
     std.mem.sort(*Toplevel, tops.items, {}, struct {
         fn less(_: void, a: *Toplevel, b: *Toplevel) bool {
@@ -605,23 +652,28 @@ fn rebuild(self: *Self, capacity: usize, area: wlr.Box) !void {
     self.input_root = .{ .kind = .container, .children = self.buttons[0..self.count], .computed_x = @floatFromInt(raster.x), .computed_y = @floatFromInt(raster.y), .computed_width = @floatFromInt(raster.width), .computed_height = @floatFromInt(raster.height) };
     var index: usize = 0;
     self.pin_of = @splat(null);
+    self.window_counts = @splat(0);
     for ([_]Shortcut{ .applications, .files, .terminal }) |shortcut| {
         if (!self.shortcutShown(shortcut)) continue;
         self.setButton(index, shortcut, if (targets[@intFromEnum(shortcut)]) |top| top.id else 0);
+        self.window_counts[index] = shortcut_counts[@intFromEnum(shortcut)];
         index += 1;
     }
     self.pin_base = index;
     for (pin_targets[0..self.pin_count], 0..) |target, pin| {
         self.pin_of[index] = @intCast(pin);
         self.setButton(index, null, if (target) |top| top.id else 0);
+        self.window_counts[index] = pin_counts[pin];
         index += 1;
     }
     for (tops.items[self.offset .. self.offset + window_count]) |top| {
         self.setButton(index, null, top.id);
+        self.window_counts[index] = app_counts.get(@import("window_tabs.zig").identity(top.appId())) orelse 1;
         index += 1;
     }
     if (self.shortcutShown(.settings)) {
         self.setButton(index, .settings, if (targets[@intFromEnum(Shortcut.settings)]) |top| top.id else 0);
+        self.window_counts[index] = shortcut_counts[@intFromEnum(Shortcut.settings)];
         index += 1;
     }
     // The trash is the dock's last item, past a divider; no window is its.
@@ -727,14 +779,14 @@ fn rasterBox(self: *const Self) wlr.Box {
 
 fn label(self: *Self, index: usize) []const u8 {
     if (self.shortcuts[index]) |shortcut| return switch (shortcut) {
-        .applications => "Applications",
-        .files => "Files",
-        .terminal => "Terminal",
-        .settings => "Settings",
-        .trash => "Trash",
+        .applications => @import("i18n").tr("Applications"),
+        .files => @import("i18n").tr("Files"),
+        .terminal => @import("i18n").tr("Terminal"),
+        .settings => @import("i18n").tr("Settings"),
+        .trash => @import("i18n").tr("Trash"),
     };
     if (self.pin_of[index]) |p| return self.pins[p].name;
-    return if (self.topAt(index)) |top| top.title() else "Application";
+    return if (self.topAt(index)) |top| top.title() else @import("i18n").tr("Application");
 }
 
 /// Hashes a value field by field; floats by their bits, slices by contents.
@@ -756,6 +808,7 @@ fn hashValue(hasher: *std.hash.Wyhash, value: anytype) void {
 /// What one button shows.
 const Look = struct {
     focused: bool,
+    window_count: usize,
     icon: ?IconEntry,
     pill_width: f32,
     pill_opacity: f32,
@@ -807,6 +860,7 @@ fn paint(self: *Self, now_ms: i64) !void {
         self.animating = self.animating or !pill.width.settled(now_ms) or !pill.opacity.settled(now_ms) or !pill.zoom.settled(now_ms);
         look.* = .{
             .focused = active,
+            .window_count = self.window_counts[index],
             .icon = if (lookup == .ready) lookup.ready else null,
             .pill_width = @max(0, pill.width.last_quantised),
             .pill_opacity = std.math.clamp(pill.opacity.last_quantised, 0, 1),
@@ -817,7 +871,7 @@ fn paint(self: *Self, now_ms: i64) !void {
         self.setButtonZoom(index, look.zoom);
         const icon_id: ?u64 = if (look.icon) |icon| icon.id else null;
         var item_hasher = std.hash.Wyhash.init(0);
-        hashValue(&item_hasher, .{ self.shortcuts[index], self.pin_of[index], button.kind.button.state, look.focused, icon_id, look.pill_width, look.pill_opacity, look.zoom });
+        hashValue(&item_hasher, .{ self.shortcuts[index], self.pin_of[index], button.kind.button.state, look.focused, look.window_count, icon_id, look.pill_width, look.pill_opacity, look.zoom });
         item_keys[index] = item_hasher.final();
         hasher.update(std.mem.asBytes(&item_keys[index]));
     }
@@ -972,7 +1026,7 @@ fn paintDock(self: *Self, pal: ui.theme.Theme, bg: [4]f32, looks: []const Look, 
     self.glass_anchor.?.setDestSize(self.box.width, self.box.height);
 }
 
-/// One button: its backdrop, icon and running pill.
+/// One button: its backdrop, icon, window count and running pill.
 fn paintItem(self: *Self, r: *ui.paint.Renderer, pal: ui.theme.Theme, m: Metrics, index: usize, look: Look, ox: f32, oy: f32) void {
     const zooms = self.output.?.server.config.compositor.dock_hover_zoom > 1;
     const button = &self.buttons[index];
@@ -996,6 +1050,26 @@ fn paintItem(self: *Self, r: *ui.paint.Renderer, pal: ui.theme.Theme, m: Metrics
             .settings => .settings,
             .trash => .trash_can,
         } else .generic, .color = pal.window_fg });
+    }
+    if (look.window_count >= 2) {
+        // Stay inside the icon's square, hence inside itemCell even at the
+        // spring's largest overshoot. A count change only repaints this cell.
+        const rect = self.iconBox(index, look.zoom, 36);
+        const diameter = m.size(18) * look.zoom;
+        const bx = rect.x + rect.w - diameter + ox;
+        const by = rect.y + oy;
+        var label_buf: [3]u8 = undefined;
+        const count_text = if (look.window_count > 99) "99+" else std.fmt.bufPrint(&label_buf, "{d}", .{look.window_count}) catch unreachable;
+        const font_size = m.size(if (count_text.len > 2) 8 else 10) * look.zoom;
+        const text_width = ui.text.measureWidthF(count_text, .manrope_heavy, font_size, self.scale) catch diameter;
+        const text_x = bx + @max(0, (diameter - text_width) / 2);
+        r.fillRect(bx, by, diameter, diameter, .{ .color = pal.accent, .radius = diameter / 2 });
+        r.drawText(text_x, by, bx + diameter - text_x, diameter, .{
+            .content = count_text,
+            .font_size = font_size,
+            .weight = 700,
+            .color = pal.on_accent,
+        });
     }
     if (look.pill_width > 0 and look.pill_opacity > 0) {
         var accent = pal.accent;
@@ -1397,6 +1471,7 @@ fn clicked(owner: ?*anyopaque, index: usize) void {
     const output = self.output.?;
     const server = output.server;
     if (server.locker != null) return;
+    if (self.openWindowPicker(index)) return;
     if (self.topAt(index)) |top| {
         const focused = @import("ipc/handlers.zig").findFocusedToplevel(server) == top;
         if (!top.minimized and focused and server.world.isWindowVisible(top, output)) {

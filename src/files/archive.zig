@@ -1,6 +1,7 @@
 //! Read-only archive indexing and extraction. No process cwd changes and no
 //! archive-controlled programs. All output walks are relative to an owned dirfd.
 const std = @import("std");
+const tr = @import("i18n").tr;
 const c = @import("c.zig").api;
 const a = @cImport({
     @cInclude("archive.h");
@@ -18,16 +19,16 @@ pub fn candidate(path: []const u8) bool {
 
 pub fn message(err: anyerror) []const u8 {
     return switch (err) {
-        error.Cancelled => "Extraction cancelled",
-        error.EncryptedArchive => "Password-protected archives are not supported yet",
-        error.UnsafeArchivePath => "Archive contains an unsafe path",
-        error.UnsupportedArchiveEntry => "Archive contains unsupported links or special files",
-        error.ArchiveTooLarge => "Archive has too many entries",
-        error.OpenArchiveFailed => "Could not open archive",
-        error.InvalidArchive => "Archive is corrupt or unsupported",
-        error.WriteFailed => "Could not write extracted file (check space and permissions)",
-        error.MemberNotFound => "File no longer exists in the archive",
-        else => "Could not extract archive",
+        error.Cancelled => tr("Extraction cancelled"),
+        error.EncryptedArchive => tr("Password-protected archives are not supported yet"),
+        error.UnsafeArchivePath => tr("Archive contains an unsafe path"),
+        error.UnsupportedArchiveEntry => tr("Archive contains unsupported links or special files"),
+        error.ArchiveTooLarge => tr("Archive has too many entries"),
+        error.OpenArchiveFailed => tr("Could not open archive"),
+        error.InvalidArchive => tr("Archive is corrupt or unsupported"),
+        error.WriteFailed => tr("Could not write extracted file (check space and permissions)"),
+        error.MemberNotFound => tr("File no longer exists in the archive"),
+        else => tr("Could not extract archive"),
     };
 }
 

@@ -13,6 +13,15 @@ const panel_registry = @import("handlers_panels.zig").panel_registry;
 const findToplevelById = @import("handlers_data.zig").findToplevelById;
 const findFocusedToplevel = @import("handlers_data.zig").findFocusedToplevel;
 
+fn widgetTextWidth(w: *const ui.layout.Widget, label: []const u8) f64 {
+    return switch (w.kind) {
+        .text => |style| if (style.sensitive) 0 else ui.measure.textNatural(label, style.family, style.weight, style.font_size).w,
+        .button => |data| if (data.icon != null) 0 else ui.measure.textNatural(label, .sans, 600, ui.widgets.button.metrics(ui.widgets.button.optionsOf(data).size, ui.theme.global).font_size).w,
+        .select, .segmented => ui.measure.textNatural(label, .sans, 600, ui.theme.global.font_size).w,
+        else => ui.measure.textNatural(label, .sans, 400, ui.theme.global.font_size).w,
+    };
+}
+
 pub fn walkWidgetTree(
     w: *ui.layout.Widget,
     list: *std.ArrayList(protocol.WidgetNodeData),
@@ -180,6 +189,7 @@ pub fn walkWidgetTree(
         .open = open,
         .selected = selected,
         .text_length = text_length,
+        .text_width = if (label) |value_text| widgetTextWidth(w, value_text) else null,
         .scroll_offset = scroll_offset,
         .content_size = content_size,
     });

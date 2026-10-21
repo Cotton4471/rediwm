@@ -1,3 +1,4 @@
+const i18n = @import("i18n");
 // Control center sound controls. Each callback carries its owning Section.
 const std = @import("std");
 
@@ -159,7 +160,7 @@ fn volumeRow(
 
 fn unavailableRow(out: *Section) Widget {
     out.unavailable_children = .{
-        .{ .kind = .{ .text = .{ .content = "Audio unavailable", .font_size = 13, .color = panel.palette().dim } } },
+        .{ .kind = .{ .text = .{ .content = i18n.tr("Audio unavailable"), .font_size = 13, .color = panel.palette().dim } } },
     };
     return .{ .kind = .container, .height = .{ .fixed = row_height }, .children = &out.unavailable_children };
 }
@@ -170,7 +171,7 @@ pub fn build(out: *Section, audio_mgr: ?*audio.AudioManager) void {
     out.input_desc_len = 0;
     out.app_count = 0;
 
-    out.top_children[0] = .{ .kind = .{ .text = .{ .content = "SOUND", .font_size = 12, .weight = 700, .color = panel.palette().dim } } };
+    out.top_children[0] = .{ .kind = .{ .text = .{ .content = i18n.tr("SOUND"), .font_size = 12, .weight = 700, .color = panel.palette().dim } } };
 
     const mgr = audio_mgr orelse {
         out.body_children[0] = unavailableRow(out);
@@ -215,14 +216,14 @@ pub fn build(out: *Section, audio_mgr: ?*audio.AudioManager) void {
     mgr.unlock();
 
     out.balance_children = .{
-        dimLabel("Balance"),
-        valueWidget(if (can_balance) "Left" else "Unavailable"),
+        dimLabel(i18n.tr("Balance")),
+        valueWidget(if (can_balance) i18n.tr("Left") else i18n.tr("Unavailable")),
         if (can_balance) .{
             .name = "output_balance",
             .kind = .{ .slider = .{ .style = .settings, .value = balance, .min = -1, .max = 1, .step = 0.05, .owner = out, .on_change = onBalanceChanged } },
             .width = .{ .flex = 2 },
         } else valueWidget(""),
-        valueWidget("Right"),
+        valueWidget(i18n.tr("Right")),
         pillWidget(if (can_balance) formatBalance(&out.balance_value_buf, balance) else "", 13),
     };
     out.balance_children[4].width = .{ .fixed = 76 };
@@ -230,30 +231,30 @@ pub fn build(out: *Section, audio_mgr: ?*audio.AudioManager) void {
 
     const bass = mgr.getBass();
     out.bass_children = .{
-        dimLabel("Bass Boost"),
+        dimLabel(i18n.tr("Bass Boost")),
         if (bass.available) .{
             .name = "bass_boost",
             .kind = .{ .slider = .{ .style = .settings, .value = bass.gain, .min = 0, .max = 12, .step = 0.5, .owner = out, .on_change = onBassChanged } },
             .width = .{ .flex = 2 },
-        } else valueWidget("Unavailable"),
+        } else valueWidget(i18n.tr("Unavailable")),
         pillWidget(if (bass.available) formatBass(&out.bass_value_buf, bass) else "", 13),
     };
     out.bass_children[2].width = .{ .fixed = 76 };
     out.body_children[3] = .{ .kind = .container, .direction = .row, .gap = 10, .@"align" = .center, .height = .{ .fixed = row_height }, .children = &out.bass_children };
 
     out.treble_children = .{
-        dimLabel("Treble"),
+        dimLabel(i18n.tr("Treble")),
         if (bass.available) .{
             .name = "treble",
             .kind = .{ .slider = .{ .style = .settings, .value = bass.treble, .min = -6, .max = 6, .step = 0.5, .owner = out, .on_change = onTrebleChanged } },
             .width = .{ .flex = 2 },
-        } else valueWidget("Unavailable"),
+        } else valueWidget(i18n.tr("Unavailable")),
         pillWidget(if (bass.available) formatTreble(&out.treble_value_buf, bass) else "", 13),
     };
     out.treble_children[2].width = .{ .fixed = 76 };
     out.body_children[4] = .{ .kind = .container, .direction = .row, .gap = 10, .@"align" = .center, .height = .{ .fixed = row_height }, .children = &out.treble_children };
 
-    out.body_children[0] = deviceRow(&out.output_row_children, "Output", out.output_desc_buf[0..out.output_desc_len]);
+    out.body_children[0] = deviceRow(&out.output_row_children, i18n.tr("Output"), out.output_desc_buf[0..out.output_desc_len]);
     out.body_children[1] = volumeRow(
         out,
         &out.master_children,
@@ -265,7 +266,7 @@ pub fn build(out: *Section, audio_mgr: ?*audio.AudioManager) void {
         0,
         &onMasterVolumeChanged,
     );
-    out.body_children[5] = deviceRow(&out.input_row_children, "Input", out.input_desc_buf[0..out.input_desc_len]);
+    out.body_children[5] = deviceRow(&out.input_row_children, i18n.tr("Input"), out.input_desc_buf[0..out.input_desc_len]);
     out.body_children[6] = volumeRow(
         out,
         &out.input_vol_children,
@@ -300,7 +301,7 @@ pub fn build(out: *Section, audio_mgr: ?*audio.AudioManager) void {
         };
     }
 
-    out.apps_block_children[0] = .{ .kind = .{ .text = .{ .content = "App streams", .font_size = 13, .weight = 600, .color = panel.palette().fg } } };
+    out.apps_block_children[0] = .{ .kind = .{ .text = .{ .content = i18n.tr("App streams"), .font_size = 13, .weight = 600, .color = panel.palette().fg } } };
     if (out.app_count > 0) {
         out.apps_block_children[1] = .{
             .kind = .container,
@@ -309,7 +310,7 @@ pub fn build(out: *Section, audio_mgr: ?*audio.AudioManager) void {
             .children = out.apps_list[0..out.app_count],
         };
     } else {
-        out.apps_empty_text = .{ .kind = .{ .text = .{ .content = "No active audio streams", .font_size = 12, .color = panel.palette().dim } } };
+        out.apps_empty_text = .{ .kind = .{ .text = .{ .content = i18n.tr("No active audio streams"), .font_size = 12, .color = panel.palette().dim } } };
         out.apps_block_children[1] = out.apps_empty_text;
     }
     out.body_children[7] = .{ .kind = .container, .direction = .column, .gap = 8, .children = &out.apps_block_children };
@@ -331,8 +332,8 @@ fn onAppVolumeChanged(owner: ?*anyopaque, index: usize, value: f32) void {
 
 fn formatBalance(buf: []u8, balance: f32) []const u8 {
     const percent: u32 = @intFromFloat(@round(@abs(balance) * 100));
-    if (percent == 0) return "Centre";
-    return std.fmt.bufPrint(buf, "{s} {d}%", .{ if (balance < 0) "L" else "R", percent }) catch "?";
+    if (percent == 0) return i18n.tr("Centre");
+    return std.fmt.bufPrint(buf, "{s} {d}%", .{ if (balance < 0) i18n.trc("balance", "L") else i18n.trc("balance", "R"), percent }) catch "?";
 }
 
 fn onBalanceChanged(owner: ?*anyopaque, _: usize, value: f32) void {
@@ -344,8 +345,8 @@ fn onBalanceChanged(owner: ?*anyopaque, _: usize, value: f32) void {
 }
 
 fn formatBass(buf: []u8, bass: audio.BassState) []const u8 {
-    if (bass.save_failed) return "Not saved";
-    if (bass.gain == 0) return "Off";
+    if (bass.save_failed) return i18n.tr("Not saved");
+    if (bass.gain == 0) return i18n.tr("Off");
     return std.fmt.bufPrint(buf, "+{d:.1} dB", .{bass.gain}) catch "?";
 }
 
@@ -356,13 +357,13 @@ fn onBassChanged(owner: ?*anyopaque, _: usize, value: f32) void {
     const bass = mgr.getBass();
     s.bass_children[1].kind.slider.value = bass.gain;
     s.bass_children[1].markDirty();
-    s.bass_children[2].kind.text.content = if (applied) formatBass(&s.bass_value_buf, bass) else "Unavailable";
+    s.bass_children[2].kind.text.content = if (applied) formatBass(&s.bass_value_buf, bass) else i18n.tr("Unavailable");
     s.bass_children[2].markDirty();
 }
 
 fn formatTreble(buf: []u8, bass: audio.BassState) []const u8 {
-    if (bass.save_failed) return "Not saved";
-    if (bass.treble == 0) return "Off";
+    if (bass.save_failed) return i18n.tr("Not saved");
+    if (bass.treble == 0) return i18n.tr("Off");
     return std.fmt.bufPrint(buf, "{s}{d:.1} dB", .{ if (bass.treble > 0) "+" else "", bass.treble }) catch "?";
 }
 
@@ -373,7 +374,7 @@ fn onTrebleChanged(owner: ?*anyopaque, _: usize, value: f32) void {
     const bass = mgr.getBass();
     s.treble_children[1].kind.slider.value = bass.treble;
     s.treble_children[1].markDirty();
-    s.treble_children[2].kind.text.content = if (applied) formatTreble(&s.treble_value_buf, bass) else "Unavailable";
+    s.treble_children[2].kind.text.content = if (applied) formatTreble(&s.treble_value_buf, bass) else i18n.tr("Unavailable");
     s.treble_children[2].markDirty();
 }
 

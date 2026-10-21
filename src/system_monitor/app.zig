@@ -1,4 +1,6 @@
 const std = @import("std");
+const i18n = @import("i18n");
+const tr = i18n.tr;
 const ui = @import("ui");
 const cairo = ui.cairo;
 const theme = ui.theme;
@@ -12,7 +14,7 @@ const actions = @import("actions.zig");
 const scrollbar = ui.widgets.scrollbar;
 const a = std.heap.c_allocator;
 const row_h: f64 = 32;
-const titles = [_][]const u8{ "Name", "PID", "User", "CPU %", "Memory (resident)", "State" };
+const titles = [_]i18n.Message{ i18n.msg("Name"), i18n.msg("PID"), i18n.msg("User"), i18n.msg("CPU %"), i18n.msg("Memory (resident)"), i18n.msg("State") };
 const proportions = [_]f32{ 0.28, 0.10, 0.15, 0.12, 0.21, 0.14 };
 const Pending = enum { none, end, confirm, cancel, force };
 const Confirmation = struct { identity: proc.Identity, name: [256]u8 = undefined, len: usize };
@@ -68,7 +70,7 @@ pub const App = struct {
         self.selections.deinit(a);
     }
     pub fn getTitle(_: *App) [*:0]const u8 {
-        return "System Monitor";
+        return i18n.trZ("System Monitor");
     }
     pub fn requestClose(self: *App) void {
         self.closed = true;
@@ -93,7 +95,7 @@ pub const App = struct {
             }
             self.history.append(snap);
             self.model.update(snap) catch {
-                self.notice = "Not enough memory to display every process";
+                self.notice = tr("Not enough memory to display every process");
             };
             self.clampScroll();
             self.dirty = true;
@@ -106,19 +108,19 @@ pub const App = struct {
         if (self.initialized) return;
         self.initialized = true;
         self.toolbar = .{
-            .{ .kind = .{ .text_input = .{ .owner = self, .placeholder = "Search name, PID or user", .value = a.dupe(u8, "") catch unreachable, .on_change = searchChanged, .field = .{ .leading_icon = .search } } }, .width = .{ .flex = 1 }, .height = .{ .fixed = 34 } },
-            self.button("My processes", 0, 148),
-            self.button("Pause updates", 1, 130),
+            .{ .kind = .{ .text_input = .{ .owner = self, .placeholder = tr("Search name, PID or user"), .value = a.dupe(u8, "") catch unreachable, .on_change = searchChanged, .field = .{ .leading_icon = .search } } }, .width = .{ .flex = 1 }, .height = .{ .fixed = 34 } },
+            self.button(tr("My processes"), 0, 148),
+            self.button(tr("Pause updates"), 1, 130),
         };
         for (&self.headers, titles, proportions, 0..) |*header, title, width, i| {
-            header.* = self.button(title, 10 + i, 0);
+            header.* = self.button(title.get(), 10 + i, 0);
             header.width = .{ .percent = width };
             header.kind.button.variant = .ghost;
         }
         self.footer = .{
             .{ .kind = .container, .width = .{ .flex = 1 } },
-            self.button("End process", 2, 124),
-            self.button("Force quit…", 3, 124),
+            self.button(tr("End process"), 2, 124),
+            self.button(tr("Force quit…"), 3, 124),
         };
         self.sections = .{
             .{ .kind = .container, .height = .{ .fixed = 150 } },
@@ -129,7 +131,7 @@ pub const App = struct {
             .{ .kind = .container, .height = .{ .fixed = 28 } },
         };
         self.root = .{ .kind = .container, .direction = .column, .children = &self.sections, .@"align" = .stretch };
-        self.modal_buttons = .{ self.button("Cancel", 20, 120), self.button("Force quit", 21, 120) };
+        self.modal_buttons = .{ self.button(tr("Cancel"), 20, 120), self.button(tr("Force quit"), 21, 120) };
         self.modal_buttons[1].kind.button.variant = .primary;
         self.modal = .{ .kind = .container, .gap = 12, .children = &self.modal_buttons };
         self.root.linkParents();
@@ -201,7 +203,7 @@ pub const App = struct {
             self.send(confirmation.identity, .force);
         } else {
             const row = self.model.selectedProcess() orelse {
-                self.notice = "Select a process first";
+                self.notice = tr("Select a process first");
                 return;
             };
             if (!self.manageable()) {
@@ -231,7 +233,7 @@ pub const App = struct {
             self.dirty = true;
             return;
         };
-        self.notice = if (kind == .end) "Termination requested" else "Force quit requested";
+        self.notice = if (kind == .end) tr("Termination requested") else tr("Force quit requested");
         self.dirty = true;
     }
     pub fn cancelDrag(self: *App) void {
@@ -458,10 +460,10 @@ pub const App = struct {
         c.cairo_paint(cr);
         self.paintSummary(cr);
         self.paintRows(cr);
-        self.toolbar[1].kind.button.label = if (self.model.mine) "My processes" else "All processes";
-        self.toolbar[2].kind.button.label = if (self.paused) "Resume updates" else "Pause updates";
+        self.toolbar[1].kind.button.label = if (self.model.mine) tr("My processes") else tr("All processes");
+        self.toolbar[2].kind.button.label = if (self.paused) tr("Resume updates") else tr("Pause updates");
         for (&self.headers, titles, 0..) |*header, title, i| {
-            header.kind.button.label = std.fmt.bufPrint(&self.header_labels[i], "{s}{s}", .{ title, if (@intFromEnum(self.model.sort) == i) if (self.model.descending) " ↓" else " ↑" else "" }) catch title;
+            header.kind.button.label = std.fmt.bufPrint(&self.header_labels[i], "{s}{s}", .{ title.get(), if (@intFromEnum(self.model.sort) == i) if (self.model.descending) " ↓" else " ↑" else "" }) catch title.get();
         }
         for (self.footer[1..]) |*control| {
             if (!self.manageable()) control.kind.button.state = .disabled else if (control.kind.button.state == .disabled) control.kind.button.state = .idle;
@@ -476,13 +478,13 @@ pub const App = struct {
         const foot = self.sections[4];
         var status_buf: [256]u8 = undefined;
         const status = if (self.notice.len > 0) self.notice else blk: {
-            const snap = self.model.snapshot orelse break :blk "Collecting processes…";
+            const snap = self.model.snapshot orelse break :blk tr("Collecting processes…");
             var swap_buf: [80]u8 = undefined;
-            const swap = if (snap.memory) |mem| if (mem.swap_total != null and mem.swap_free != null) bytesPair(&swap_buf, mem.swap_total.? -| mem.swap_free.?, mem.swap_total.?) else "Unavailable" else "Unavailable";
-            break :blk std.fmt.bufPrint(&status_buf, "{d} processes · Swap {s}{s}", .{ self.model.rows.items.len, swap, if (self.paused) " · Paused" else if (snap.failed) " · /proc unavailable" else if (snap.truncated) " · List limited" else if (snap.unavailable > 0) " · Some processes unavailable" else "" }) catch "Processes";
+            const swap = if (snap.memory) |mem| if (mem.swap_total != null and mem.swap_free != null) bytesPair(&swap_buf, mem.swap_total.? -| mem.swap_free.?, mem.swap_total.?) else tr("Unavailable") else tr("Unavailable");
+            break :blk i18n.fmt(&status_buf, i18n.trn("{n} process · Swap {swap}{status}", "{n} processes · Swap {swap}{status}", self.model.rows.items.len), .{ .n = self.model.rows.items.len, .swap = swap, .status = if (self.paused) tr(" · Paused") else if (snap.failed) tr(" · /proc unavailable") else if (snap.truncated) tr(" · List limited") else if (snap.unavailable > 0) tr(" · Some processes unavailable") else "" }) catch tr("Processes");
         };
         textBox(cr, status, .{ .x = 16, .y = foot.computed_y + 8, .w = @max(0, foot.computed_width - 308), .h = 28 }, cairo.statusSize(), false, theme.global.window_fg);
-        textBox(cr, "CPU: 100% = one core · Memory: resident · Ctrl+F search · Delete end · Shift+Delete force quit", .{ .x = 16, .y = @floatFromInt(self.h - 26), .w = @floatFromInt(self.w - 32), .h = 24 }, cairo.statusSize(), false, theme.global.window_fg);
+        textBox(cr, tr("CPU: 100% = one core · Memory: resident · Ctrl+F search · Delete end · Shift+Delete force quit"), .{ .x = 16, .y = @floatFromInt(self.h - 26), .w = @floatFromInt(self.w - 32), .h = 24 }, cairo.statusSize(), false, theme.global.window_fg);
         if (self.confirmation) |confirmation| self.paintConfirmation(cr, confirmation);
     }
     fn paintSummary(self: *App, cr: *c.cairo_t) void {
@@ -498,7 +500,7 @@ pub const App = struct {
                 break :blk std.fmt.bufPrint(&buf, "RAM  {s}", .{bytesPair(&pair_buf, mem.used(), mem.total)}) catch "RAM";
             } else "RAM  —";
             textBox(cr, label, .{ .x = box.x, .y = box.y, .w = box.w, .h = 30 }, cairo.headingSize(), true, theme.global.window_fg);
-            textBox(cr, "60 seconds", .{ .x = box.x, .y = box.y + 30, .w = box.w, .h = 20 }, cairo.statusSize(), false, theme.global.window_fg);
+            textBox(cr, tr("60 seconds"), .{ .x = box.x, .y = box.y + 30, .w = box.w, .h = 20 }, cairo.statusSize(), false, theme.global.window_fg);
             const graph: Rect = .{ .x = box.x, .y = box.y + 56, .w = box.w, .h = 64 };
             cairo.setSource(cr, theme.global.app_divider);
             c.cairo_set_line_width(cr, 1);
@@ -551,10 +553,10 @@ pub const App = struct {
             const pid = std.fmt.bufPrint(&pid_buf, "{d}", .{row.identity.pid}) catch "—";
             const cpu = if (row.cpu_percent) |v| std.fmt.bufPrint(&cpu_buf, "{d:.1}%", .{v}) catch "—" else "—";
             const memory = if (row.resident_bytes) |v| bytesLabel(&mem_buf, v) else "—";
-            const values = [_][]const u8{ row.name, pid, row.user, cpu, memory, model.stateName(row.state) };
+            const values = [_][]const u8{ row.name, pid, row.user, cpu, memory, stateName(row.state) };
             for (values, self.headers) |value, header| textBox(cr, value, .{ .x = header.computed_x + 8, .y = y, .w = @max(0, header.computed_width - 16), .h = row_h }, cairo.textSize(), false, theme.global.window_fg);
         }
-        if (self.model.rows.items.len == 0) textBox(cr, if (snap.failed) "Process data unavailable" else "No matching processes", .{ .x = list.x + 8, .y = list.y + 12, .w = list.w - 16, .h = 32 }, cairo.textSize(), false, theme.global.window_fg);
+        if (self.model.rows.items.len == 0) textBox(cr, if (snap.failed) tr("Process data unavailable") else tr("No matching processes"), .{ .x = list.x + 8, .y = list.y + 12, .w = list.w - 16, .h = 32 }, cairo.textSize(), false, theme.global.window_fg);
         if (self.barGeometry()) |g| cairo.drawScrollbar(cr, scrollbar.look(g, self.bar, theme.global.scrollbar_width, theme.global));
     }
     fn dialogBox(self: *const App) Rect {
@@ -567,11 +569,11 @@ pub const App = struct {
         if (cairo.Layer.begin(cr, box)) |value| {
             var layer = value;
             ui.widgets.dialog.paintFrame(&layer.renderer, layer.local());
-            ui.widgets.dialog.paintHeader(&layer.renderer, 24, 24, box.w - 48, .{ .icon = .close, .title = "Force quit this process?", .subtitle = "Unsaved work will be lost." });
+            ui.widgets.dialog.paintHeader(&layer.renderer, 24, 24, box.w - 48, .{ .icon = .close, .title = tr("Force quit this process?"), .subtitle = tr("Unsaved work will be lost.") });
             layer.finish();
         }
         var buf: [512]u8 = undefined;
-        const label = std.fmt.bufPrint(&buf, "{s} (PID {d})", .{ confirmation.name[0..confirmation.len], confirmation.identity.pid }) catch "Selected process";
+        const label = std.fmt.bufPrint(&buf, "{s} (PID {d})", .{ confirmation.name[0..confirmation.len], confirmation.identity.pid }) catch tr("Selected process");
         textBox(cr, label, .{ .x = box.x + 24, .y = box.y + 112, .w = box.w - 48, .h = 32 }, cairo.textSize(), true, theme.global.window_fg);
         if (cairo.Layer.begin(cr, .{ .x = 0, .y = 0, .w = @floatFromInt(self.w), .h = @floatFromInt(self.h) })) |value| {
             var layer = value;
@@ -602,4 +604,17 @@ fn bytesPair(buf: []u8, used: u64, total: u64) []const u8 {
     var left: [32]u8 = undefined;
     var right: [32]u8 = undefined;
     return std.fmt.bufPrint(buf, "{s} / {s}", .{ bytesLabel(&left, used), bytesLabel(&right, total) }) catch "—";
+}
+
+fn stateName(state: u8) []const u8 {
+    return switch (state) {
+        'R' => tr("Running"),
+        'S' => tr("Sleeping"),
+        'D' => tr("Disk wait"),
+        'T', 't' => tr("Stopped"),
+        'Z' => tr("Zombie"),
+        'I' => tr("Idle"),
+        'X', 'x' => tr("Exited"),
+        else => tr("Unknown"),
+    };
 }

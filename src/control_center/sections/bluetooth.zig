@@ -1,4 +1,5 @@
 //! Bluetooth device list and details, using the shared settings widgets.
+const i18n = @import("i18n");
 const std = @import("std");
 const ui = @import("ui");
 const panel = @import("../panel.zig");
@@ -115,10 +116,10 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: A) !W {
     const enabled = if (ad) |adapter| adapter.powered else false;
     const busy = if (m) |manager| manager.busy else false;
     const scanning = if (m) |manager| manager.scan_path.len > 0 else false;
-    var radio_label = try group(a, .column, &.{ text("Bluetooth", 24, false), text("Connect and manage your Bluetooth devices.", 13, true) });
+    var radio_label = try group(a, .column, &.{ text(i18n.tr("Bluetooth"), 24, false), text(i18n.tr("Connect and manage your Bluetooth devices."), 13, true) });
     radio_label.width = .{ .flex = 1 };
     radio_label.gap = 6;
-    var pair = button(cc, "bluetooth_scan", if (scanning) "Stop Searching" else "Pair New Device", 0, !enabled or busy);
+    var pair = button(cc, "bluetooth_scan", if (scanning) i18n.tr("Stop Searching") else i18n.tr("Pair New Device"), 0, !enabled or busy);
     pair.kind.button.variant = .primary;
     pair.kind.button.leading_icon = if (scanning) .close else .plus;
     var controls = try group(a, .row, &.{ radio_label, toggle(cc, "bluetooth_enabled", 0, enabled, ad == null or busy), pair });
@@ -152,11 +153,11 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: A) !W {
 }
 fn deviceList(s: *Section, cc: *panel.ControlCenter, a: A, enabled: bool) !W {
     const m = cc.server.bluetooth;
-    if (s.search_data == null) s.search_data = .{ .placeholder = "Search devices…", .value = try gpa.dupe(u8, ""), .field = .{ .leading_icon = .search }, .owner = cc, .on_change = searchChanged };
+    if (s.search_data == null) s.search_data = .{ .placeholder = i18n.tr("Search devices…"), .value = try gpa.dupe(u8, ""), .field = .{ .leading_icon = .search }, .owner = cc, .on_change = searchChanged };
     var items: std.ArrayList(W) = .empty;
-    try items.append(a, panel.sectionTitle(if (s.nearby) "Available Devices" else "Paired Devices"));
+    try items.append(a, panel.sectionTitle(if (s.nearby) i18n.tr("Available Devices") else i18n.tr("Paired Devices")));
     try items.append(a, .{ .name = "bluetooth_search", .kind = .{ .text_input = s.search_data.? }, .height = .{ .fixed = 36 }, .width = .{ .percent = 1 } });
-    if (s.nearby) try items.append(a, button(cc, "bluetooth_paired", "Show Paired Devices", 1, false));
+    if (s.nearby) try items.append(a, button(cc, "bluetooth_paired", i18n.tr("Show Paired Devices"), 1, false));
     var rows: std.ArrayList(W) = .empty;
     var count: usize = 0;
     if (m) |manager| for (manager.devices[0..manager.count]) |*d| {
@@ -164,7 +165,7 @@ fn deviceList(s: *Section, cc: *panel.ControlCenter, a: A, enabled: bool) !W {
         if (s.search_data.?.value.len > 0 and std.ascii.indexOfIgnoreCase(d.title(), s.search_data.?.value) == null and std.ascii.indexOfIgnoreCase(d.address.slice(), s.search_data.?.value) == null) continue;
         const selected = eq(u8, d.path.slice(), s.selected.slice());
         s.rows[count] = d.path;
-        const state = if (d.connected) "Connected" else if (d.blocked) "Blocked" else if (d.paired) "Not connected" else "Ready to pair";
+        const state = if (d.connected) i18n.tr("Connected") else if (d.blocked) i18n.tr("Blocked") else if (d.paired) i18n.tr("Not connected") else i18n.tr("Ready to pair");
         const subtitle = if (d.battery) |pct| try std.fmt.allocPrint(a, "{s} · {d}%", .{ state, pct }) else state;
         var labels = try group(a, .column, &.{ text(try a.dupe(u8, d.title()), 14, false), try status(a, subtitle, d.connected) });
         labels.width = .{ .flex = 1 };
@@ -173,7 +174,7 @@ fn deviceList(s: *Section, cc: *panel.ControlCenter, a: A, enabled: bool) !W {
         count += 1;
     };
     if (count == 0) {
-        const message: []const u8 = if (m == null or !m.?.available) "Bluetooth service is unavailable" else if (m.?.adapter_count == 0) "No Bluetooth adapter found" else if (!enabled) "Bluetooth is turned off" else if (s.search_data.?.value.len > 0) "No matching devices" else if (s.nearby) "Put your device in pairing mode. Nearby devices appear here." else "No paired devices. Choose Pair New Device to get started.";
+        const message: []const u8 = if (m == null or !m.?.available) i18n.tr("Bluetooth service is unavailable") else if (m.?.adapter_count == 0) i18n.tr("No Bluetooth adapter found") else if (!enabled) i18n.tr("Bluetooth is turned off") else if (s.search_data.?.value.len > 0) i18n.tr("No matching devices") else if (s.nearby) i18n.tr("Put your device in pairing mode. Nearby devices appear here.") else i18n.tr("No paired devices. Choose Pair New Device to get started.");
         try rows.append(a, text(message, 13, true));
     }
     var list = try group(a, .column, rows.items);
@@ -198,12 +199,16 @@ fn setting(cc: *panel.ControlCenter, a: A, title: []const u8, description: []con
 fn deviceDetails(s: *Section, cc: *panel.ControlCenter, a: A) !W {
     const m = cc.server.bluetooth;
     const d = if (m) |manager| manager.find(s.selected) else null;
-    if (d == null) return card(a, &.{ icon(.bluetooth, 48), panel.sectionTitle("Select a device"), text("View its connection, battery and device settings.", 13, true) });
+    if (d == null) {
+        const available_width = @as(f32, @floatFromInt(cc.panel_box.width)) - panel.sidebarWidth(cc) - 100;
+        const description_width = if (cc.panel_box.width < 1000) available_width else (available_width - 16) * 1.25 / 2.25 - 32;
+        return card(a, &.{ icon(.bluetooth, 48), panel.sectionTitle(i18n.tr("Select a device")), try panel.paragraph(a, i18n.tr("View its connection, battery and device settings."), description_width, 13, true) });
+    }
     const dev = d.?;
     const manager = m.?;
     const ad = manager.adapter(dev.adapter);
     const disabled = manager.busy or ad == null or !ad.?.powered;
-    var name = try group(a, .column, &.{ text(try a.dupe(u8, dev.title()), 20, false), text(try a.dupe(u8, dev.address.slice()), 12, true), try status(a, if (dev.connected) "Connected" else "Not connected", dev.connected) });
+    var name = try group(a, .column, &.{ text(try a.dupe(u8, dev.title()), 20, false), text(try a.dupe(u8, dev.address.slice()), 12, true), try status(a, if (dev.connected) i18n.tr("Connected") else i18n.tr("Not connected"), dev.connected) });
     name.width = .{ .flex = 1 };
     name.gap = 7;
     var badge: W = .{ .kind = .container, .width = .{ .fixed = 0 } };
@@ -212,27 +217,27 @@ fn deviceDetails(s: *Section, cc: *panel.ControlCenter, a: A) !W {
     var items: std.ArrayList(W) = .empty;
     try items.append(a, header);
     if (dev.battery != null) try items.append(a, badge);
-    if (dev.rssi) |rssi| try items.append(a, try card(a, &.{ panel.sectionTitle("Connection"), text(try std.fmt.allocPrint(a, "Last reported signal: {d} dBm", .{rssi}), 13, true) }));
+    if (dev.rssi) |rssi| try items.append(a, try card(a, &.{ panel.sectionTitle(i18n.tr("Connection")), text(try i18n.allocPrint(a, i18n.tr("Last reported signal: {signal} dBm"), .{ .signal = rssi }), 13, true) }));
     if (manager.pairing != null and eq(u8, manager.pairing.?.slice(), dev.path.slice())) {
         try items.append(a, try pairing(s, cc, a));
     } else {
-        var connect = button(cc, "bluetooth_connect", if (!dev.paired) "Pair Device" else if (dev.connected) "Disconnect" else "Connect", 2, disabled or dev.blocked or (!dev.paired and !manager.agent_ready));
+        var connect = button(cc, "bluetooth_connect", if (!dev.paired) i18n.tr("Pair Device") else if (dev.connected) i18n.tr("Disconnect") else i18n.tr("Connect"), 2, disabled or dev.blocked or (!dev.paired and !manager.agent_ready));
         connect.kind.button.variant = .primary;
         try items.append(a, connect);
     }
     var profiles: std.ArrayList(W) = .empty;
-    try profiles.append(a, panel.sectionTitle("Profiles"));
-    if (dev.audio) try profiles.append(a, try group(a, .row, &.{ icon(.music, 20), text("Audio (A2DP) · High quality audio", 13, true) }));
-    if (dev.microphone) try profiles.append(a, try group(a, .row, &.{ icon(.mic_outline, 20), text("Headset · Audio and microphone", 13, true) }));
-    if (dev.input) try profiles.append(a, try group(a, .row, &.{ icon(.keyboard, 20), text("Input · Keyboard, mouse or controller", 13, true) }));
-    if (profiles.items.len == 1) try profiles.append(a, text(if (dev.paired) "No supported profiles reported" else "Profiles appear after pairing", 12, true));
-    if (dev.audio or dev.microphone) try profiles.append(a, button(cc, "bluetooth_audio", "Audio Settings", 3, false));
+    try profiles.append(a, panel.sectionTitle(i18n.tr("Profiles")));
+    if (dev.audio) try profiles.append(a, try group(a, .row, &.{ icon(.music, 20), text(i18n.tr("Audio (A2DP) · High quality audio"), 13, true) }));
+    if (dev.microphone) try profiles.append(a, try group(a, .row, &.{ icon(.mic_outline, 20), text(i18n.tr("Headset · Audio and microphone"), 13, true) }));
+    if (dev.input) try profiles.append(a, try group(a, .row, &.{ icon(.keyboard, 20), text(i18n.tr("Input · Keyboard, mouse or controller"), 13, true) }));
+    if (profiles.items.len == 1) try profiles.append(a, text(if (dev.paired) i18n.tr("No supported profiles reported") else i18n.tr("Profiles appear after pairing"), 12, true));
+    if (dev.audio or dev.microphone) try profiles.append(a, button(cc, "bluetooth_audio", i18n.tr("Audio Settings"), 3, false));
     try items.append(a, try card(a, profiles.items));
-    try items.append(a, try card(a, &.{ panel.sectionTitle("Device Settings"), try setting(cc, a, "Trusted Device", "Allow connections from this device without asking.", "bluetooth_trusted", 1, dev.trusted, manager.busy or !dev.paired), try setting(cc, a, "Blocked", "Prevent this device from connecting.", "bluetooth_blocked", 2, dev.blocked, manager.busy) }));
+    try items.append(a, try card(a, &.{ panel.sectionTitle(i18n.tr("Device Settings")), try setting(cc, a, i18n.tr("Trusted Device"), i18n.tr("Allow connections from this device without asking."), "bluetooth_trusted", 1, dev.trusted, manager.busy or !dev.paired), try setting(cc, a, i18n.tr("Blocked"), i18n.tr("Prevent this device from connecting."), "bluetooth_blocked", 2, dev.blocked, manager.busy) }));
     if (s.forgetting) {
-        try items.append(a, text("Forget this device? Pair it again to reconnect.", 13, true));
-        try items.append(a, try group(a, .row, &.{ button(cc, "bluetooth_forget_confirm", "Forget Device", 5, manager.busy), button(cc, "bluetooth_forget_cancel", "Cancel", 6, false) }));
-    } else try items.append(a, button(cc, "bluetooth_forget", "Forget Device", 4, manager.busy));
+        try items.append(a, text(i18n.tr("Forget this device? Pair it again to reconnect."), 13, true));
+        try items.append(a, try group(a, .row, &.{ button(cc, "bluetooth_forget_confirm", i18n.tr("Forget Device"), 5, manager.busy), button(cc, "bluetooth_forget_cancel", i18n.tr("Cancel"), 6, false) }));
+    } else try items.append(a, button(cc, "bluetooth_forget", i18n.tr("Forget Device"), 4, manager.busy));
     var result = try card(a, items.items);
     result.name = "bluetooth_details";
     return result;
@@ -240,29 +245,29 @@ fn deviceDetails(s: *Section, cc: *panel.ControlCenter, a: A) !W {
 fn pairing(s: *Section, cc: *panel.ControlCenter, a: A) !W {
     const m = cc.server.bluetooth.?;
     var items: std.ArrayList(W) = .empty;
-    try items.append(a, panel.sectionTitle("Pairing"));
+    try items.append(a, panel.sectionTitle(i18n.tr("Pairing")));
     switch (m.prompt) {
-        .none => try items.append(a, text("Waiting for the device…", 13, true)),
+        .none => try items.append(a, text(i18n.tr("Waiting for the device…"), 13, true)),
         .confirm => {
-            try items.append(a, text("Does this code match the code on your device?", 13, true));
+            try items.append(a, text(i18n.tr("Does this code match the code on your device?"), 13, true));
             try items.append(a, text(try a.dupe(u8, m.code.slice()), 24, false));
         },
-        .authorize => try items.append(a, text("Allow pairing with this device?", 13, true)),
+        .authorize => try items.append(a, text(i18n.tr("Allow pairing with this device?"), 13, true)),
         .display => {
-            try items.append(a, text("Enter this code on your device, then press Enter.", 13, true));
+            try items.append(a, text(i18n.tr("Enter this code on your device, then press Enter."), 13, true));
             try items.append(a, text(try a.dupe(u8, m.code.slice()), 24, false));
         },
         .pin, .passkey => {
             if (s.pin_data == null) {
-                s.pin_data = .{ .placeholder = "Pairing code", .value = try gpa.dupe(u8, ""), .owner = cc, .on_change = pinChanged };
+                s.pin_data = .{ .placeholder = i18n.tr("Pairing code"), .value = try gpa.dupe(u8, ""), .owner = cc, .on_change = pinChanged };
                 s.focus_name.set("bluetooth_pin");
             }
-            try items.append(a, text(if (m.prompt == .pin) "Enter the device's PIN" else "Enter the device's six-digit passkey", 13, true));
+            try items.append(a, text(if (m.prompt == .pin) i18n.tr("Enter the device's PIN") else i18n.tr("Enter the device's six-digit passkey"), 13, true));
             try items.append(a, .{ .name = "bluetooth_pin", .kind = .{ .text_input = s.pin_data.? }, .width = .{ .percent = 1 }, .height = .{ .fixed = 36 } });
         },
     }
-    if (m.reply != null) try items.append(a, button(cc, "bluetooth_pair_accept", "Confirm Pairing", 7, false));
-    try items.append(a, button(cc, "bluetooth_pair_cancel", "Cancel Pairing", 8, false));
+    if (m.reply != null) try items.append(a, button(cc, "bluetooth_pair_accept", i18n.tr("Confirm Pairing"), 7, false));
+    try items.append(a, button(cc, "bluetooth_pair_cancel", i18n.tr("Cancel Pairing"), 8, false));
     var result = try card(a, items.items);
     result.name = "bluetooth_pairing";
     for (result.children) |*w| if (w.kind == .text_input) {

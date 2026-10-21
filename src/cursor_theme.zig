@@ -5,6 +5,7 @@
 //! path. `init` prepends it to XCURSOR_PATH for this process (wlroots' and
 //! Xwayland's loaders) and remembers the value for children.
 const std = @import("std");
+const i18n = @import("i18n");
 
 /// The config value that follows the system cursor theme.
 pub const system_theme = "default";
@@ -70,7 +71,7 @@ pub const Theme = struct {
 /// wins for a duplicate name, as for the loaders. Allocated in `arena`.
 pub fn list(arena: std.mem.Allocator, io: std.Io) ![]Theme {
     var themes: std.ArrayList(Theme) = .empty;
-    try themes.append(arena, .{ .id = system_theme, .label = "System default" });
+    try themes.append(arena, .{ .id = system_theme, .label = i18n.tr("System default") });
     const path = if (std.c.getenv("XCURSOR_PATH")) |p| std.mem.span(p) else default_path;
     const home = if (std.c.getenv("HOME")) |h| std.mem.span(h) else "";
     var dirs = std.mem.splitScalar(u8, path, ':');

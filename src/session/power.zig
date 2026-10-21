@@ -11,6 +11,7 @@
 //! login (REDIWM_LOGIN_SESSION) also follows logind's Lock request and keeps
 //! the session's LockedHint current. logind's Unlock is deliberately ignored:
 //! only the lock screen's own authentication ends a lock.
+const i18n = @import("i18n");
 const std = @import("std");
 const Child = @import("child.zig");
 const wl = @import("wayland").server.wl;
@@ -43,9 +44,9 @@ pub const Kind = enum {
 
     fn label(self: Kind) []const u8 {
         return switch (self) {
-            .poweroff => "Power off",
-            .reboot => "Restart",
-            .@"suspend" => "Suspend",
+            .poweroff => i18n.tr("Power off"),
+            .reboot => i18n.tr("Restart"),
+            .@"suspend" => i18n.tr("Suspend"),
         };
     }
     fn canMethod(self: Kind) []const u8 {
@@ -454,8 +455,8 @@ pub const Manager = struct {
             .@"suspend" => self.can_suspend,
         };
         return switch (cap) {
-            .no => "Denied by policy",
-            .na => "Not supported",
+            .no => i18n.tr("Denied by policy"),
+            .na => i18n.tr("Not supported"),
             else => null,
         };
     }
@@ -578,7 +579,7 @@ pub const Manager = struct {
     fn beginRequest(self: *Manager, req: Request) void {
         if (self.pending != null) {
             log.warn("{s}: rejected, {s} is already pending", .{ req.kind.label(), self.pending.?.kind.label() });
-            self.report(req.kind, "Another power action is already in progress.");
+            self.report(req.kind, i18n.tr("Another power action is already in progress."));
             return;
         }
         self.pending = req;
@@ -588,7 +589,7 @@ pub const Manager = struct {
         }
         const conn = self.connection() catch |err| {
             self.pending = null;
-            self.failed(req.kind, "Could not reach the system's power service.", err);
+            self.failed(req.kind, i18n.tr("Could not reach the system's power service."), err);
             return;
         };
         // A freshly opened connection queries once its Hello + Introspect
@@ -609,14 +610,14 @@ pub const Manager = struct {
             // session log. Completion is delivered by the pidfd watcher.
         }) catch |err| {
             self.pending = null;
-            self.failed(req.kind, "Could not start the power command.", err);
+            self.failed(req.kind, i18n.tr("Could not start the power command."), err);
             return;
         };
         self.command_tool = argv[0];
         self.command_child = Child.watch(self.allocator, self.server.wl_server.getEventLoop(), child.id.?, self, commandExited) catch |err| {
             child.kill(self.server.io);
             self.pending = null;
-            self.failed(req.kind, "Could not watch the power command.", err);
+            self.failed(req.kind, i18n.tr("Could not watch the power command."), err);
             return;
         };
     }
@@ -630,7 +631,7 @@ pub const Manager = struct {
             log.info("{s} requested via {s}", .{ req.kind.label(), self.command_tool });
         } else {
             log.warn("{s}: {s} failed (wait status {?d})", .{ req.kind.label(), self.command_tool, status });
-            self.report(req.kind, "Power request failed. Check permissions and applications blocking shutdown.");
+            self.report(req.kind, i18n.tr("Power request failed. Check permissions and applications blocking shutdown."));
         }
     }
 
@@ -663,7 +664,7 @@ pub const Manager = struct {
             const req = self.pending orelse return;
             if (req.kind != .@"suspend") return;
             self.pending = null;
-            self.failed(req.kind, "Could not reach the system's power service.", err);
+            self.failed(req.kind, i18n.tr("Could not reach the system's power service."), err);
             return;
         };
         self.hello_done = true;
@@ -786,7 +787,7 @@ pub const Manager = struct {
         const body: wire.Writer = .{ .allocator = self.allocator };
         _ = conn.call(bus_name, bus_path, bus_interface, req.kind.canMethod(), "", &body, self, onCapability, call_timeout_ms) catch |err| {
             self.pending = null;
-            self.failed(req.kind, "Could not query logind.", err);
+            self.failed(req.kind, i18n.tr("Could not query logind."), err);
         };
     }
 
@@ -796,17 +797,17 @@ pub const Manager = struct {
         const req = self.pending orelse return;
         var msg = result catch |err| {
             self.pending = null;
-            self.failed(req.kind, "Could not query logind.", err);
+            self.failed(req.kind, i18n.tr("Could not query logind."), err);
             return;
         };
         if (msg.kind != .method_return) {
             self.pending = null;
-            self.failedMsg(req.kind, "Could not query logind.", msg);
+            self.failedMsg(req.kind, i18n.tr("Could not query logind."), msg);
             return;
         }
         const cap = msg.body.string() catch {
             self.pending = null;
-            self.failed(req.kind, "Logind returned a malformed reply.", error.InvalidReply);
+            self.failed(req.kind, i18n.tr("Logind returned a malformed reply."), error.InvalidReply);
             return;
         };
         self.setCapability(req.kind, Capability.parse(cap));
@@ -815,19 +816,19 @@ pub const Manager = struct {
         if (std.mem.eql(u8, cap, "no")) {
             self.pending = null;
             log.warn("{s}: denied by system policy", .{req.kind.label()});
-            self.report(req.kind, "Denied by system policy.");
+            self.report(req.kind, i18n.tr("Denied by system policy."));
             return;
         }
         if (std.mem.eql(u8, cap, "na")) {
             self.pending = null;
             log.warn("{s}: not available on this system", .{req.kind.label()});
-            self.report(req.kind, "Not available on this system.");
+            self.report(req.kind, i18n.tr("Not available on this system."));
             return;
         }
         if (!std.mem.eql(u8, cap, "yes") and !std.mem.eql(u8, cap, "challenge")) {
             self.pending = null;
             log.warn("{s}: unrecognized logind capability '{s}'", .{ req.kind.label(), cap });
-            self.report(req.kind, "Logind returned an unrecognized reply.");
+            self.report(req.kind, i18n.tr("Logind returned an unrecognized reply."));
             return;
         }
 
@@ -835,7 +836,7 @@ pub const Manager = struct {
         if (std.mem.eql(u8, cap, "challenge") and !req.interactive) {
             self.pending = null;
             log.warn("{s}: automatic request denied, interactive authorization required", .{req.kind.label()});
-            self.report(req.kind, "Interactive authorization required.");
+            self.report(req.kind, i18n.tr("Interactive authorization required."));
             return;
         }
 
@@ -850,22 +851,22 @@ pub const Manager = struct {
         if (self.has_with_flags) {
             body.uint64(SD_LOGIND_ROOT_CHECK_INHIBITORS) catch |err| {
                 self.pending = null;
-                self.failed(req.kind, "Could not build the request.", err);
+                self.failed(req.kind, i18n.tr("Could not build the request."), err);
                 return;
             };
             _ = conn.callWithFlags(bus_name, bus_path, bus_interface, req.kind.withFlagsMethod(), "t", &body, self, onAction, call_timeout_ms, msg_flags) catch |err| {
                 self.pending = null;
-                self.failed(req.kind, "Could not reach logind.", err);
+                self.failed(req.kind, i18n.tr("Could not reach logind."), err);
             };
         } else {
             body.boolean(req.interactive) catch |err| {
                 self.pending = null;
-                self.failed(req.kind, "Could not build the request.", err);
+                self.failed(req.kind, i18n.tr("Could not build the request."), err);
                 return;
             };
             _ = conn.callWithFlags(bus_name, bus_path, bus_interface, req.kind.actionMethod(), "b", &body, self, onAction, call_timeout_ms, msg_flags) catch |err| {
                 self.pending = null;
-                self.failed(req.kind, "Could not reach logind.", err);
+                self.failed(req.kind, i18n.tr("Could not reach logind."), err);
             };
         }
     }
@@ -876,7 +877,7 @@ pub const Manager = struct {
         const req = self.pending orelse return;
         const msg = result catch |err| {
             self.pending = null;
-            self.failed(req.kind, "Logind request failed.", err);
+            self.failed(req.kind, i18n.tr("Logind request failed."), err);
             return;
         };
         if (msg.kind == .method_return) {
@@ -904,7 +905,7 @@ pub const Manager = struct {
             }
             self.pending = null;
             log.warn("{s}: blocked by an active inhibitor lock", .{req.kind.label()});
-            self.report(req.kind, "Blocked by an active inhibitor lock.");
+            self.report(req.kind, i18n.tr("Blocked by an active inhibitor lock."));
             return;
         }
 
@@ -912,7 +913,7 @@ pub const Manager = struct {
 
         if (std.mem.eql(u8, err_name, "org.freedesktop.DBus.Error.InteractiveAuthorizationRequired")) {
             log.warn("{s}: interactive authorization required", .{req.kind.label()});
-            self.report(req.kind, "Interactive authorization required.");
+            self.report(req.kind, i18n.tr("Interactive authorization required."));
             return;
         }
 
@@ -920,11 +921,11 @@ pub const Manager = struct {
             std.mem.eql(u8, err_name, "org.freedesktop.login1.NotEnoughPrivileges"))
         {
             log.warn("{s}: denied by system policy ({s})", .{ req.kind.label(), err_name });
-            self.report(req.kind, "Denied by system policy.");
+            self.report(req.kind, i18n.tr("Denied by system policy."));
             return;
         }
 
-        self.failedMsg(req.kind, "Logind refused the request.", msg);
+        self.failedMsg(req.kind, i18n.tr("Logind refused the request."), msg);
     }
 
     fn queryInhibitors(self: *Manager, conn: *dbus.Connection) void {
@@ -933,7 +934,7 @@ pub const Manager = struct {
             const req = self.pending orelse return;
             self.pending = null;
             log.warn("{s}: blocked by an active inhibitor lock", .{req.kind.label()});
-            self.report(req.kind, "Blocked by an active inhibitor lock.");
+            self.report(req.kind, i18n.tr("Blocked by an active inhibitor lock."));
         };
     }
 
@@ -945,12 +946,12 @@ pub const Manager = struct {
 
         var msg = result catch {
             log.warn("{s}: blocked by an active inhibitor lock", .{req.kind.label()});
-            self.report(req.kind, "Blocked by an active inhibitor lock.");
+            self.report(req.kind, i18n.tr("Blocked by an active inhibitor lock."));
             return;
         };
         if (msg.kind != .method_return) {
             log.warn("{s}: blocked by an active inhibitor lock", .{req.kind.label()});
-            self.report(req.kind, "Blocked by an active inhibitor lock.");
+            self.report(req.kind, i18n.tr("Blocked by an active inhibitor lock."));
             return;
         }
         self.handleInhibitors(req.kind, &msg.body);
@@ -960,7 +961,7 @@ pub const Manager = struct {
         const target = kind.inhibitorType();
         var array = body.array(8) catch {
             log.warn("{s}: blocked by an active inhibitor lock", .{kind.label()});
-            self.report(kind, "Blocked by an active inhibitor lock.");
+            self.report(kind, i18n.tr("Blocked by an active inhibitor lock."));
             return;
         };
         while (array.offset < array.bytes.len) {
@@ -975,20 +976,20 @@ pub const Manager = struct {
                 log.warn("{s}: blocked by inhibitor from '{s}' (pid {d}, uid {d}): {s}", .{ kind.label(), who, pid, uid, why });
                 if (who.len > 0 and why.len > 0) {
                     var buf: [128]u8 = undefined;
-                    const text = std.fmt.bufPrint(&buf, "Blocked by {s}: {s}", .{ who, why }) catch "Blocked by an application.";
+                    const text = i18n.fmt(&buf, i18n.tr("Blocked by {application}: {reason}"), .{ .application = who, .reason = why }) catch i18n.tr("Blocked by an application.");
                     self.report(kind, text);
                 } else if (who.len > 0) {
                     var buf: [128]u8 = undefined;
-                    const text = std.fmt.bufPrint(&buf, "Blocked by {s}.", .{who}) catch "Blocked by an application.";
+                    const text = i18n.fmt(&buf, i18n.tr("Blocked by {application}."), .{ .application = who }) catch i18n.tr("Blocked by an application.");
                     self.report(kind, text);
                 } else {
-                    self.report(kind, "Blocked by an application.");
+                    self.report(kind, i18n.tr("Blocked by an application."));
                 }
                 return;
             }
         }
         log.warn("{s}: blocked by an active inhibitor lock", .{kind.label()});
-        self.report(kind, "Blocked by an active inhibitor lock.");
+        self.report(kind, i18n.tr("Blocked by an active inhibitor lock."));
     }
 
     fn failed(self: *Manager, kind: Kind, why: []const u8, err: anyerror) void {
@@ -1004,8 +1005,8 @@ pub const Manager = struct {
     fn report(self: *Manager, kind: Kind, why: []const u8) void {
         if (self.server.notifications) |nm| {
             var buf: [64]u8 = undefined;
-            const title = std.fmt.bufPrint(&buf, "{s} failed", .{kind.label()}) catch "Power action failed";
-            _ = nm.postNotification("Power", 0, "", title, why, &.{}, 1, false, true, 4000, "", null) catch {};
+            const title = i18n.fmt(&buf, i18n.tr("{action} failed"), .{ .action = kind.label() }) catch i18n.tr("Power action failed");
+            _ = nm.postNotification(i18n.tr("Power"), 0, "", title, why, &.{}, 1, false, true, 4000, "", null) catch {};
         }
     }
 };

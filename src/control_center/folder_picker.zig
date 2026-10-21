@@ -1,6 +1,7 @@
 //! Settings' file and folder pickers: runs Files in chooser mode (the
 //! same process and JSON contract the FileChooser portal uses) and hands the
 //! picked path to a callback. The event loop only reads the child's pipe.
+const i18n = @import("i18n");
 const std = @import("std");
 const wl = @import("wayland").server.wl;
 const Server = @import("../Server.zig");
@@ -94,7 +95,7 @@ pub fn cancel() void {
 /// Opens the chooser at `start_dir`; `on_done` gets the chosen folder's path
 /// (valid only during the call), or null. One chooser at a time.
 pub fn start(server: *Server, title: []const u8, start_dir: []const u8, owner: ?*anyopaque, on_done: *const fn (?*anyopaque, ?[]const u8) void) !void {
-    return startWithOptions(server, .{ .mode = .folder, .title = title, .accept_label = "Use folder", .current_folder = start_dir }, owner, on_done);
+    return startWithOptions(server, .{ .mode = .folder, .title = title, .accept_label = i18n.tr("Use folder"), .current_folder = start_dir }, owner, on_done);
 }
 
 pub fn startWithOptions(server: *Server, opts: chooser.Options, owner: ?*anyopaque, on_done: *const fn (?*anyopaque, ?[]const u8) void) !void {

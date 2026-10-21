@@ -231,6 +231,21 @@ pub const Document = struct {
         const end = if (std.mem.indexOfScalarPos(u8, d.text.items, pos, '\n')) |n| n else d.text.items.len;
         return if (end > pos and d.text.items[end - 1] == '\r') end - 1 else end;
     }
+    /// Pango word boundaries around a hit, bounded like keyboard movement.
+    /// At EOF select the preceding word; at a word start select that word.
+    pub fn wordRange(d: *const Document, at: usize) [2]usize {
+        const text = d.text.items;
+        if (text.len == 0) return .{ 0, 0 };
+        var pos = @min(at, text.len - 1);
+        while (pos > 0 and text[pos] & 0xc0 == 0x80) pos -= 1;
+        var probe = d.*;
+        probe.cursor = pos;
+        const end = probe.boundary(true, true);
+        // Starting just inside this range makes the reverse lookup include
+        // a boundary exactly at the hit rather than the preceding separator.
+        probe.cursor = pos + (std.unicode.utf8ByteSequenceLength(text[pos]) catch 1);
+        return .{ probe.boundary(false, true), end };
+    }
     pub fn boundary(d: *const Document, right: bool, word: bool) usize {
         const pos = d.cursor;
         const text = d.text.items;
@@ -373,4 +388,20 @@ test "moving by character or word inside an enormous line looks only nearby" {
     // The next word boundary is found without scanning the line.
     const word = d.boundary(true, true);
     try std.testing.expect(word > d.cursor and word - d.cursor < 16);
+}
+
+test "double-click word ranges include Unicode and exclude neighbouring words" {
+    var d = try Document.init("hello café, snow 雪!\r\n");
+    defer d.deinit();
+    for ([_]usize{ 0, 2, 4 }) |pos| try std.testing.expectEqualStrings("hello", d.text.items[d.wordRange(pos)[0]..d.wordRange(pos)[1]]);
+    for ([_]usize{ 6, 8, 10 }) |pos| try std.testing.expectEqualStrings("café", d.text.items[d.wordRange(pos)[0]..d.wordRange(pos)[1]]);
+    const snow = d.wordRange(18);
+    try std.testing.expectEqualStrings("雪", d.text.items[snow[0]..snow[1]]);
+    const punctuation = d.wordRange(11);
+    try std.testing.expectEqualStrings(",", d.text.items[punctuation[0]..punctuation[1]]);
+    var empty: Document = .{};
+    try std.testing.expectEqual([2]usize{ 0, 0 }, empty.wordRange(0));
+    var eof = try Document.init("last");
+    defer eof.deinit();
+    try std.testing.expectEqual([2]usize{ 0, 4 }, eof.wordRange(4));
 }

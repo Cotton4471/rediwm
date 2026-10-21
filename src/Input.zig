@@ -475,7 +475,7 @@ pub fn detachOutput(input: *Input, output: *Output) void {
 }
 
 pub fn detachToplevel(input: *Input, toplevel: *Toplevel) void {
-    if (input.window_menu.target == toplevel) input.window_menu.close();
+    if (input.window_menu.references(toplevel)) input.window_menu.close();
     if (input.hovered_toplevel == toplevel) input.hovered_toplevel = null;
     if (input.glow_toplevel == toplevel) input.glow_toplevel = null;
     input.drag_dodge.detach(toplevel);

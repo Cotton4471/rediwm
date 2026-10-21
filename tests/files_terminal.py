@@ -472,6 +472,86 @@ def ui_tests(tmp, home, env):
         log.close()
 
 
+def terminal_drop_test(tmp, home, env, list_view=False):
+    source = home / ('drop-list' if list_view else 'drop-grid')
+    source.mkdir()
+    folder = source / "folder with ' quotes"
+    folder.mkdir()
+    file = source / 'file 雪 \"$()`;\\.txt'
+    file.write_text('drag payload')
+    output = home / (source.name + '-args')
+    comp, log = spawn_compositor(tmp, binary=BIN / 'rediwm', scale=os.environ.get('REDIWM_TEST_SCALE', '1'), env_extra=env,
+                                 config_content='[compositor]\nxwayland = false\ndodge_file_drags = false\n')
+    proc = None
+    try:
+        with IPCClient(tmp).connect() as ipc:
+            display = next(p.name for p in tmp.glob('wayland-*') if not p.name.endswith('.lock'))
+            with (tmp / 'files.log').open('w') as files_log:
+                proc = subprocess.Popen([str(BIN / 'rediwm-files'), str(source)],
+                                        env=dict(env, WAYLAND_DISPLAY=display), stdout=files_log, stderr=files_log)
+            window = wait_for(lambda: next((w for w in ipc.get_windows() if w['app_id'] == 'rediwm-files'), None), 'drop Files window')
+            ident = window['id']
+            ipc.focus_window(ident)
+            ipc.wait_for('window_geometry_settled', window_id=ident)
+            def key(code, modifiers=()):
+                for modifier in modifiers:
+                    ipc.key(modifier, True)
+                ipc.key_down_up(code)
+                for modifier in reversed(modifiers):
+                    ipc.key(modifier, False)
+            def move(x, y):
+                box = ipc.get_window_debug(ident)['client_box']
+                ipc.move_cursor(round(box['x'] + x), round(box['y'] + y))
+            def click(x, y):
+                move(x, y)
+                ipc.pointer_button(272, True)
+                ipc.pointer_button(272, False)
+            if list_view:
+                width = ipc.get_window_debug(ident)['client_box']['width']
+                click(width - 232, 80)
+            key(62)
+            ready = home / (source.name + '-ready')
+            ipc.type_text('printf ready > ' + shlex.quote(str(ready)))
+            key(28)
+            wait_for(lambda: ready.exists(), 'drop terminal ready')
+            # Build a command before giving focus to the list. The drop must
+            # insert arguments, preserve that command and return keyboard focus.
+            ipc.type_text("printf '%s\\0' > " + shlex.quote(str(output)) + ' ')
+            sx, sy = 250, (178 if list_view else 158)
+            click(500, 300)  # Focus empty space so single-click opening cannot navigate.
+            key(30, (29,))
+            move(sx, sy)
+            ipc.pointer_button(272, True)
+            height = ipc.get_window_debug(ident)['client_box']['height']
+            for step in range(1, 17):
+                move(sx + 80 * step / 16, sy + (height - 55 - sy) * step / 16)
+                time.sleep(.04)
+            ipc.pointer_button(272, False)
+            ipc.wait_for_frame()
+            time.sleep(.2)  # Allow the asynchronous Wayland URI pipe to finish.
+            assert not output.exists(), 'drop executed the command'
+            key(28)
+            expected = [os.fsencode(folder), os.fsencode(file)]
+            wait_for(lambda: output.exists() and output.read_bytes().split(b'\0') == expected + [b''], 'quoted drop arguments and terminal focus')
+            assert file.read_text() == 'drag payload' and folder.is_dir(), 'terminal drop changed source files'
+            assert sorted(p.name for p in source.iterdir()) == sorted([file.name, folder.name])
+            assert proc.poll() is None
+        print(f'Files: multi-file/folder terminal drop, quoting, focus and preserved sources ({"list" if list_view else "grid"})', flush=True)
+    except Exception:
+        for path in tmp.glob('*.log'):
+            print(path.name, path.read_text()[-6000:])
+        print('Dropped arguments:', output.read_bytes() if output.exists() else None, flush=True)
+        if proc is not None and comp.poll() is None:
+            with IPCClient(tmp).connect() as ipc:
+                ipc.screenshot(path=f'/tmp/rediwm-files-terminal-drop-failure-{os.getpid()}.png')
+        raise
+    finally:
+        if proc is not None:
+            stop_process(proc)
+        stop_process(comp)
+        log.close()
+
+
 def run():
     os.umask(0o077)
     with tempfile.TemporaryDirectory(prefix='rediwm-files-terminal-') as directory:
@@ -497,6 +577,12 @@ def run():
             # Use one configuration for the compositor and Files.
             env['REDIWM_CONFIG'] = str(tmp / 'rediwm-config.toml')
             ui_tests(tmp, home, env)
+            for list_view in (False, True):
+                drop_tmp = tmp / ('drop-list' if list_view else 'drop-grid')
+                drop_tmp.mkdir(mode=0o700)
+                drop_env = dict(env, XDG_RUNTIME_DIR=str(drop_tmp), XDG_STATE_HOME=str(drop_tmp / 'state'),
+                                REDIWM_CONFIG=str(drop_tmp / 'rediwm-config.toml'))
+                terminal_drop_test(drop_tmp, home, drop_env, list_view)
         finally:
             os.environ.clear()
             os.environ.update(original)

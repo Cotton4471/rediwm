@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Power-menu selection motion and cancellation in an isolated headless session.
+"""Power-menu blur dismissal, selection motion and cancellation in isolation.
 
 Only Log Out is exercised: completing it terminates this test's compositor.
 No host lock, restart or shutdown actions are invoked.
@@ -13,11 +13,77 @@ from PIL import Image, ImageChops
 from ipc_client import IPCClient, spawn_compositor, stop_process
 
 
+def closing_blur(scale):
+    with tempfile.TemporaryDirectory(prefix="rediwm-power-blur-") as directory:
+        tmp = Path(directory)
+        wallpaper = tmp / "checker.png"
+        image = Image.new("RGB", (256, 256))
+        image.putdata([(220,) * 3 if (x // 4 + y // 4) % 2 else (40,) * 3
+                       for y in range(256) for x in range(256)])
+        image.save(wallpaper)
+        process, log = spawn_compositor(tmp, scale=scale,
+            config_content=f'[compositor]\nwallpaper = "{wallpaper}"\n',
+            env_extra={"DBUS_SESSION_BUS_ADDRESS": "", "XDG_CACHE_HOME": directory})
+        try:
+            with IPCClient(tmp, timeout=15) as ipc:
+                ipc.wait_for("wallpaper_presented", timeout_ms=10000)
+                ipc.move_cursor(2, 2)
+
+                def at(ms):
+                    ipc.action('set_anim_time', {"ms": ms})
+                    ipc.wait_for_frame()
+
+                def capture(name):
+                    path = tmp / f"{name}.png"
+                    ipc.screenshot(str(path))
+                    with Image.open(path) as image:
+                        return image.convert("RGB")
+
+                at(1000)
+                closed = capture("closed")
+                ipc.action('open_power_menu')
+                at(2000)
+                box = ipc.get_shell_state()["power_menu"]["box"]
+                s = float(scale)
+                patch = tuple(round(v * s) for v in (
+                    box["x"] + box["width"] / 2 - 50,
+                    box["y"] + box["height"] / 2 - 30,
+                    box["x"] + box["width"] / 2 + 50,
+                    box["y"] + box["height"] / 2 + 30))
+                reference = closed.crop(patch)
+                assert ImageChops.difference(reference, capture("open").crop(patch)).getbbox()
+                ipc.key_down_up(1)
+                # The panel spring is nearly transparent after 300 ms, but
+                # still alive. Its blur must fade too, rather than remaining
+                # solid until the menu is destroyed at the spring's endpoint.
+                at(2300)
+                assert ipc.get_shell_state()["power_menu"] is not None
+                diff = ImageChops.difference(reference, capture("closing").crop(patch))
+                assert max(hi for lo, hi in diff.getextrema()) <= 3, "blur outlived panel fade"
+                at(3000)
+                assert ipc.get_shell_state()["power_menu"] is None
+                diff = ImageChops.difference(reference, capture("dismissed").crop(patch))
+                assert max(hi for lo, hi in diff.getextrema()) <= 1, "dismissal left stale pixels"
+            print(f"PASS: power-menu blur fades with the panel at scale {scale}")
+        except Exception:
+            log.flush()
+            print(Path(log.name).read_text()[-3000:])
+            raise
+        finally:
+            stop_process(process)
+            log.close()
+
+
 def run(scale):
     with tempfile.TemporaryDirectory(prefix="rediwm-power-test-") as directory:
         tmp = Path(directory)
+        # A neutral backdrop keeps the tint checks independent of blur and
+        # saturation changing the default wallpaper's colors.
+        wallpaper = tmp / "wallpaper.png"
+        Image.new("RGB", (64, 64), (128, 128, 128)).save(wallpaper)
         process, log = spawn_compositor(tmp, scale=scale,
-            config_content='[theme]\nwindow_bg = "rgba(24,30,40,0.70)"\n', env_extra={
+            config_content=f'[compositor]\nwallpaper = "{wallpaper}"\n'
+                           '[theme]\nwindow_bg = "rgba(24,30,40,0.70)"\n', env_extra={
             "DBUS_SESSION_BUS_ADDRESS": "", "XDG_CACHE_HOME": directory,
         })
         try:
@@ -154,4 +220,6 @@ def run(scale):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scale", default="1")
-    run(parser.parse_args().scale)
+    scale = parser.parse_args().scale
+    closing_blur(scale)
+    run(scale)

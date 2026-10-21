@@ -181,15 +181,15 @@ pub fn deinit(a: A, groups: []Group) void {
     a.free(groups);
 }
 
-const Definition = struct { name: []const u8, supported: []const u8, default: []const u8, label: []const u8 };
+const Definition = struct { name: []const u8, supported: []const u8, default: []const u8, label: @import("i18n").Message };
 const definitions = [_]Definition{
-    .{ .name = "media", .supported = "media-supported", .default = "media-default", .label = "Paper size" },
-    .{ .name = "printer-resolution", .supported = "printer-resolution-supported", .default = "printer-resolution-default", .label = "Resolution" },
-    .{ .name = "sides", .supported = "sides-supported", .default = "sides-default", .label = "Two-sided printing" },
-    .{ .name = "print-color-mode", .supported = "print-color-mode-supported", .default = "print-color-mode-default", .label = "Colour" },
-    .{ .name = "print-quality", .supported = "print-quality-supported", .default = "print-quality-default", .label = "Quality" },
-    .{ .name = "print-darkness", .supported = "print-darkness-supported", .default = "print-darkness-default", .label = "Darkness" },
-    .{ .name = "print-speed", .supported = "print-speed-supported", .default = "print-speed-default", .label = "Speed" },
+    .{ .name = "media", .supported = "media-supported", .default = "media-default", .label = @import("i18n").msg("Paper size") },
+    .{ .name = "printer-resolution", .supported = "printer-resolution-supported", .default = "printer-resolution-default", .label = @import("i18n").msg("Resolution") },
+    .{ .name = "sides", .supported = "sides-supported", .default = "sides-default", .label = @import("i18n").msg("Two-sided printing") },
+    .{ .name = "print-color-mode", .supported = "print-color-mode-supported", .default = "print-color-mode-default", .label = @import("i18n").msg("Colour") },
+    .{ .name = "print-quality", .supported = "print-quality-supported", .default = "print-quality-default", .label = @import("i18n").msg("Quality") },
+    .{ .name = "print-darkness", .supported = "print-darkness-supported", .default = "print-darkness-default", .label = @import("i18n").msg("Darkness") },
+    .{ .name = "print-speed", .supported = "print-speed-supported", .default = "print-speed-default", .label = @import("i18n").msg("Speed") },
 };
 
 fn safeText(a: A, value: []const u8) ![]u8 {
@@ -234,17 +234,17 @@ fn attributeValue(a: A, attr: ipp.Attribute) !?[]const u8 {
 }
 fn choiceLabel(name: []const u8, value: []const u8) []const u8 {
     if (eq(u8, name, "sides")) {
-        if (eq(u8, value, "one-sided")) return "One-sided";
-        if (eq(u8, value, "two-sided-long-edge")) return "Two-sided, long edge";
-        if (eq(u8, value, "two-sided-short-edge")) return "Two-sided, short edge";
+        if (eq(u8, value, "one-sided")) return @import("i18n").tr("One-sided");
+        if (eq(u8, value, "two-sided-long-edge")) return @import("i18n").tr("Two-sided, long edge");
+        if (eq(u8, value, "two-sided-short-edge")) return @import("i18n").tr("Two-sided, short edge");
     } else if (eq(u8, name, "print-color-mode")) {
-        if (eq(u8, value, "monochrome")) return "Black and white";
-        if (eq(u8, value, "color")) return "Colour";
-        if (eq(u8, value, "auto")) return "Automatic";
+        if (eq(u8, value, "monochrome")) return @import("i18n").tr("Black and white");
+        if (eq(u8, value, "color")) return @import("i18n").tr("Colour");
+        if (eq(u8, value, "auto")) return @import("i18n").tr("Automatic");
     } else if (eq(u8, name, "print-quality")) {
-        if (eq(u8, value, "3")) return "Draft";
-        if (eq(u8, value, "4")) return "Normal";
-        if (eq(u8, value, "5")) return "High";
+        if (eq(u8, value, "3")) return @import("i18n").tr("Draft");
+        if (eq(u8, value, "4")) return @import("i18n").tr("Normal");
+        if (eq(u8, value, "5")) return @import("i18n").tr("High");
     }
     return value;
 }
@@ -293,14 +293,14 @@ pub fn parseAttributes(a: A, attributes: []const ipp.Attribute) ![]Group {
         }
         if (choices.items.len != 0 or range != null) try options.append(mem, .{
             .name = definition.name,
-            .label = definition.label,
+            .label = definition.label.get(),
             .choices = choices.items,
             .default = default,
             .range = range,
         });
     }
     if (options.items.len == 0) return a.alloc(Group, 0);
-    return clone(a, &.{.{ .name = "general", .label = "Printer settings", .options = options.items }});
+    return clone(a, &.{.{ .name = "general", .label = @import("i18n").tr("Printer settings"), .options = options.items }});
 }
 
 fn clone(a: A, source: []const Group) ![]Group {
@@ -358,7 +358,7 @@ pub fn parsePpd(a: A, bytes: []const u8) ![]Group {
     defer arena.deinit();
     const mem = arena.allocator();
     var groups: std.ArrayList(BuildGroup) = .empty;
-    try groups.append(mem, .{ .name = "general", .label = "General" });
+    try groups.append(mem, .{ .name = "general", .label = @import("i18n").tr("General") });
     var group: usize = 0;
     var parents: [8]usize = undefined;
     var depth: usize = 0;

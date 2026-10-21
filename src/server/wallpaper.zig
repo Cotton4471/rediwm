@@ -177,6 +177,7 @@ pub fn handleIconWake(fd: c_int, mask: wl.EventMask, server: *Server) c_int {
         if (output.start_menu) |sm| sm.iconsReady();
     }
     if (server.notifications) |mgr| mgr.iconsReady();
+    server.input.window_menu.iconsReady();
     if (server.input.open_control_center) |cc| @import("../control_center/sections/appearance.zig").iconsReady(&cc.appearance);
     if (server.tray) |tray| tray.changed();
     server.scheduleFrames();

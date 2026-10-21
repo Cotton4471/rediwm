@@ -37,6 +37,7 @@ const Options = struct {
 };
 
 pub fn main(init: std.process.Init) void {
+    @import("i18n").init(init.minimal.environ);
     run(init) catch |err| {
         std.debug.print("rediwm-share-picker: {}\n", .{err});
         std.process.exit(1);

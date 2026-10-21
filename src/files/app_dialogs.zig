@@ -1,6 +1,8 @@
 //! Files dialogs: opening, confirming and keyboard handling of the modal cards.
 
 const std = @import("std");
+const i18n = @import("i18n");
+const tr = i18n.tr;
 const App = @import("app.zig").App;
 const c = @import("c.zig").api;
 const git = @import("git.zig");
@@ -29,11 +31,11 @@ pub fn closeDialog(self: *App) void {
 
 pub fn openProperties(self: *App, path: []const u8, preview: ?icons.Entry) void {
     const state = properties.State.init(self.allocator, path, preview) catch {
-        self.setStatusNotice("Could not read file properties", true);
+        self.setStatusNotice(tr("Could not read file properties"), true);
         return;
     };
     self.closeDialog();
-    self.dialog = .{ .kind = .properties, .title = "Properties", .properties = state };
+    self.dialog = .{ .kind = .properties, .title = tr("Properties"), .properties = state };
     self.invalidate();
 }
 
@@ -43,7 +45,7 @@ pub fn openSelectedProperties(self: *App) void {
     for (self.items.items) |item| {
         if (!item.selected or item.missing) continue;
         if (selected != null) {
-            self.setStatusNotice("Select one item to view its properties", false);
+            self.setStatusNotice(tr("Select one item to view its properties"), false);
             return;
         }
         selected = item;
@@ -94,11 +96,11 @@ pub fn openWithDialog(self: *App) void {
         if (item.selected) paths.append(self.allocator, item.path) catch return;
     }
     const state = open_with.State.init(self.allocator, paths.items) catch {
-        self.setStatusNotice("Could not load applications", true);
+        self.setStatusNotice(tr("Could not load applications"), true);
         return;
     };
     self.closeDialog();
-    self.dialog = .{ .kind = .open_with, .title = "Open With", .applications = state };
+    self.dialog = .{ .kind = .open_with, .title = tr("Open With"), .applications = state };
     self.invalidate();
 }
 
@@ -126,9 +128,9 @@ pub fn openNewFolderDialog(self: *App) void {
     self.closeDialog();
     var dlg = Dialog{
         .kind = .new_folder,
-        .title = "New Folder",
+        .title = tr("New Folder"),
     };
-    dlg.edit.text.appendSlice(self.allocator, "New Folder") catch return;
+    dlg.edit.text.appendSlice(self.allocator, tr("New Folder")) catch return;
     dlg.edit.cursor = dlg.edit.text.items.len;
     dlg.edit.select_all = true;
     self.dialog = dlg;
@@ -137,7 +139,7 @@ pub fn openNewFolderDialog(self: *App) void {
 
 pub fn openNewBranchDialog(self: *App) void {
     self.closeDialog();
-    self.dialog = Dialog{ .kind = .new_branch, .title = "New Branch" };
+    self.dialog = Dialog{ .kind = .new_branch, .title = tr("New Branch") };
     self.invalidate();
 }
 
@@ -145,7 +147,7 @@ pub fn switchBranch(self: *App, repo: git.Repository, name: []const u8, create: 
     const outcome = git.switchBranch(self.allocator, self.io, self.environ, repo.directory, name, create);
     var buf: [256]u8 = undefined;
     if (outcome.ok) {
-        const msg = std.fmt.bufPrint(&buf, "{s} {s}", .{ if (create) "Created and switched to" else "Switched to", name }) catch "Switched branch";
+        const msg = i18n.fmt(&buf, if (create) tr("Created and switched to {name}") else tr("Switched to {name}"), .{ .name = name }) catch tr("Switched branch");
         self.setStatusNotice(msg, false);
     } else {
         self.setStatusNotice(outcome.text(), true);
@@ -158,9 +160,9 @@ pub fn openNewFileDialog(self: *App) void {
     self.closeDialog();
     var dlg = Dialog{
         .kind = .new_file,
-        .title = "New File",
+        .title = tr("New File"),
     };
-    dlg.edit.text.appendSlice(self.allocator, "New File.txt") catch return;
+    dlg.edit.text.appendSlice(self.allocator, tr("New File.txt")) catch return;
     dlg.edit.cursor = dlg.edit.text.items.len;
     dlg.edit.select_all = true;
     self.dialog = dlg;
@@ -183,7 +185,7 @@ pub fn openRenameDialog(self: *App) void {
     const target_path = self.allocator.dupe(u8, item.path) catch return;
     var dlg = Dialog{
         .kind = .rename,
-        .title = "Rename",
+        .title = tr("Rename"),
         .target_path = target_path,
     };
     dlg.edit.text.appendSlice(self.allocator, item.name) catch {
@@ -204,7 +206,7 @@ pub fn openEmptyTrashDialog(self: *App) void {
     self.closeDialog();
     self.dialog = .{
         .kind = .trash_confirm,
-        .title = "Empty Trash?",
+        .title = tr("Empty Trash?"),
         .deletion = .{ .permanent = true, .empty_trash = true },
     };
     self.invalidate();
@@ -229,14 +231,14 @@ pub fn openTrashConfirmDialog(self: *App) void {
     self.closeDialog();
     self.dialog = Dialog{
         .kind = .trash_confirm,
-        .title = "Move to Trash?",
+        .title = tr("Move to Trash?"),
     };
     for (self.items.items) |it| {
         if (!it.selected or it.missing) continue;
         const preview = if (self.dialog.?.deletion.paths.items.len == 0) self.itemIcon(it, 64 * self.scale) else null;
         self.dialog.?.deletion.add(it.path, it.name, it.is_dir and !it.is_symlink, it.bytes, preview) catch {
             self.closeDialog();
-            self.setStatusNotice("Unable to prepare deletion", true);
+            self.setStatusNotice(tr("Unable to prepare deletion"), true);
             return;
         };
     }
@@ -247,7 +249,7 @@ pub fn openConflictDialog(self: *App, conflict_name: []const u8) void {
     self.closeDialog();
     self.dialog = Dialog{
         .kind = .conflict,
-        .title = "File Conflict",
+        .title = tr("File Conflict"),
         .conflict_name = self.allocator.dupe(u8, conflict_name) catch null,
     };
     self.invalidate();
@@ -256,6 +258,8 @@ pub fn openConflictDialog(self: *App, conflict_name: []const u8) void {
 pub fn confirmDialog(self: *App) void {
     const dlg = self.dialog orelse return;
     switch (dlg.kind) {
+        .transfers => {},
+        .torrent_source, .torrent_destination => self.confirmTorrent(),
         .terminal_close => self.terminalConfirmClose(),
         .open_with => self.openWithAction(.open),
         .properties => {},
@@ -263,19 +267,19 @@ pub fn confirmDialog(self: *App) void {
             const name = std.mem.trim(u8, dlg.edit.text.items, " \t\r\n");
             ops_mod.createFolder(self.allocator, self.history.current, name) catch |err| {
                 const msg = switch (err) {
-                    error.PathAlreadyExists => "Folder already exists",
-                    error.AccessDenied => "Permission denied",
-                    error.EmptyName => "Name cannot be empty",
-                    error.InvalidCharacter => "Invalid characters in name",
-                    error.ReservedName => "Reserved folder name",
-                    else => "Failed to create folder",
+                    error.PathAlreadyExists => tr("Folder already exists"),
+                    error.AccessDenied => tr("Permission denied"),
+                    error.EmptyName => tr("Name cannot be empty"),
+                    error.InvalidCharacter => tr("Invalid characters in name"),
+                    error.ReservedName => tr("Reserved folder name"),
+                    else => tr("Failed to create folder"),
                 };
                 self.setStatusNotice(msg, true);
                 self.closeDialog();
                 return;
             };
             self.closeDialog();
-            self.setStatusNotice("Folder created", false);
+            self.setStatusNotice(tr("Folder created"), false);
             self.refresh();
         },
         .new_branch => {
@@ -288,19 +292,19 @@ pub fn confirmDialog(self: *App) void {
             const name = std.mem.trim(u8, dlg.edit.text.items, " \t\r\n");
             ops_mod.createFile(self.allocator, self.history.current, name) catch |err| {
                 const msg = switch (err) {
-                    error.PathAlreadyExists => "File already exists",
-                    error.AccessDenied => "Permission denied",
-                    error.EmptyName => "Name cannot be empty",
-                    error.InvalidCharacter => "Invalid characters in name",
-                    error.ReservedName => "Reserved file name",
-                    else => "Failed to create file",
+                    error.PathAlreadyExists => tr("File already exists"),
+                    error.AccessDenied => tr("Permission denied"),
+                    error.EmptyName => tr("Name cannot be empty"),
+                    error.InvalidCharacter => tr("Invalid characters in name"),
+                    error.ReservedName => tr("Reserved file name"),
+                    else => tr("Failed to create file"),
                 };
                 self.setStatusNotice(msg, true);
                 self.closeDialog();
                 return;
             };
             self.closeDialog();
-            self.setStatusNotice("File created", false);
+            self.setStatusNotice(tr("File created"), false);
             self.refresh();
         },
         .rename => {
@@ -308,18 +312,18 @@ pub fn confirmDialog(self: *App) void {
             const target = dlg.target_path orelse "";
             ops_mod.renameItem(self.allocator, target, name) catch |err| {
                 const msg = switch (err) {
-                    error.PathAlreadyExists => "Target name already exists",
-                    error.AccessDenied => "Permission denied",
-                    error.EmptyName => "Name cannot be empty",
-                    error.InvalidCharacter => "Invalid characters in name",
-                    else => "Failed to rename",
+                    error.PathAlreadyExists => tr("Target name already exists"),
+                    error.AccessDenied => tr("Permission denied"),
+                    error.EmptyName => tr("Name cannot be empty"),
+                    error.InvalidCharacter => tr("Invalid characters in name"),
+                    else => tr("Failed to rename"),
                 };
                 self.setStatusNotice(msg, true);
                 self.closeDialog();
                 return;
             };
             self.closeDialog();
-            self.setStatusNotice("Renamed successfully", false);
+            self.setStatusNotice(tr("Renamed successfully"), false);
             self.refresh();
         },
         .trash_confirm => {
@@ -337,6 +341,10 @@ pub fn confirmDialog(self: *App) void {
 
 pub fn handleDialogKey(self: *App, sym: u32, utf8: []const u8) void {
     var dlg = &(self.dialog orelse return);
+    if (dlg.kind == .transfers) {
+        self.transfersKey(sym);
+        return;
+    }
 
     if (dlg.kind == .properties) {
         const action = self.dialog.?.properties.?.key(sym, self.shift, self.w, self.h);

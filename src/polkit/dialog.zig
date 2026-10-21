@@ -1,5 +1,6 @@
 //! Compositor-owned authentication surface. Sensitive input never enters the
 //! generic widget tree, clipboard, text cache or IPC inspection payloads.
+const i18n = @import("i18n");
 const std = @import("std");
 const wlr = @import("wlroots");
 const sn = @import("../node.zig");
@@ -103,10 +104,10 @@ pub const Dialog = struct {
         self.* = .{ .server = server, .output = output, .scrim = scrim, .node = node, .caret = caret, .memory = memory, .input = .{ .storage = @as([*]u8, @ptrCast(memory))[0..510] }, .action = owned_action, .message = owned_message, .account = agent.active.?.account };
         self.attempt = agent.active.?.attempt;
         if (self.attempt > 1) {
-            set(&self.status, "Authentication failed. Please try again.");
+            set(&self.status, i18n.tr("Authentication failed. Please try again."));
             self.message_pending = true;
             self.status_error = true;
-        } else set(&self.status, "Waiting for authentication service…");
+        } else set(&self.status, i18n.tr("Waiting for authentication service…"));
         return self;
     }
     pub fn destroy(self: *Dialog) void {
@@ -146,7 +147,7 @@ pub const Dialog = struct {
                 self.waiting = true;
                 self.ended = true;
                 self.focus = .cancel;
-                set(&self.status, if (e == .failure) "Authentication failed." else "Authentication service unavailable.");
+                set(&self.status, if (e == .failure) i18n.tr("Authentication failed.") else i18n.tr("Authentication service unavailable."));
             },
             .prompt_hidden, .prompt_visible => |prompt| {
                 self.input.clear();
@@ -155,7 +156,7 @@ pub const Dialog = struct {
                 self.focus = .input;
                 set(&self.prompt, prompt);
                 if (!self.message_pending) {
-                    set(&self.status, "Administrator privileges are required to continue.");
+                    set(&self.status, i18n.tr("Administrator privileges are required to continue."));
                     self.status_error = false;
                 }
                 self.message_pending = false;
@@ -187,13 +188,13 @@ pub const Dialog = struct {
         const agent = self.server.polkit orelse return;
         agent.respond(self.input.value()) catch {
             self.input.clear();
-            set(&self.status, "Could not send response. Please try again.");
+            set(&self.status, i18n.tr("Could not send response. Please try again."));
             self.paint();
             return;
         };
         self.input.clear();
         self.waiting = true;
-        set(&self.status, "Authenticating…");
+        set(&self.status, i18n.tr("Authenticating…"));
         self.paint();
     }
     /// Only the response field repeats; a held Return must not answer twice.
@@ -275,8 +276,8 @@ pub const Dialog = struct {
         dialog.paintFrameWithBackground(&r, .{ .x = 0, .y = 0, .w = 560, .h = 480 }, background);
         dialog.paintHeader(&r, 28, 28, 504, .{
             .icon = .lock,
-            .title = if (self.hidden) "Enter Password" else "Authentication",
-            .subtitle = "Authentication required",
+            .title = if (self.hidden) i18n.tr("Enter Password") else i18n.tr("Authentication"),
+            .subtitle = i18n.tr("Authentication required"),
         });
         label(&r, self.message, 28, 100, 504, 28, 15, t.fg);
         if (self.focus == .action) r.fillRect(26, 129, 508, 24, .{ .color = .{ t.accent[0], t.accent[1], t.accent[2], 0.16 }, .radius = 4 });
@@ -292,17 +293,17 @@ pub const Dialog = struct {
             .disabled = self.waiting,
             .revealed = !self.hidden,
             .external_caret = true,
-        }, &self.input, if (self.waiting) "Waiting…" else "Enter your response");
+        }, &self.input, if (self.waiting) i18n.tr("Waiting…") else i18n.tr("Enter your response"));
         label(&r, std.mem.sliceTo(&self.status, 0), 28, 350, 504, 28, 13, if (self.ended or self.status_error) t.danger else t.dim);
         var attempt_text: [32]u8 = undefined;
-        const attempt = std.fmt.bufPrint(&attempt_text, "Attempt {d} of 3", .{self.attempt}) catch unreachable;
+        const attempt = i18n.fmt(&attempt_text, i18n.tr("Attempt {attempt} of 3"), .{ .attempt = self.attempt }) catch "";
         label(&r, attempt, 28, 379, 504, 20, 11, t.dim);
         const buttons = ui.widgets.button;
-        buttons.paint(&r, cancel_box, .{ .size = .lg, .label = if (self.ended) "Close" else "Cancel" }, .{
+        buttons.paint(&r, cancel_box, .{ .size = .lg, .label = if (self.ended) i18n.tr("Close") else i18n.tr("Cancel") }, .{
             .pointer = if (self.pressed == .cancel) .press else .idle,
             .focused = self.focus == .cancel,
         });
-        buttons.paint(&r, unlock_box, .{ .variant = .primary, .size = .lg, .label = "Authenticate" }, .{
+        buttons.paint(&r, unlock_box, .{ .variant = .primary, .size = .lg, .label = i18n.tr("Authenticate") }, .{
             .pointer = if (self.waiting) .disabled else if (self.pressed == .unlock) .press else .idle,
             .focused = self.focus == .unlock,
         });

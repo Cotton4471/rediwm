@@ -39,8 +39,9 @@ apply again after selecting or editing a theme, then restart the apps.
 
 GTK colors are written to `gtk-3.0/rediwm-colors.css` and
 `gtk-4.0/rediwm-colors.css` under `$XDG_CONFIG_HOME` (otherwise `~/.config`).
-A marked import is added to each `gtk.css`, preserving existing rules and
-their precedence. GTK3 includes common widget color overrides; GTK4 also
+A marked import is added at the *end* of each `gtk.css`, so it wins over palettes
+imported there by other generators (matugen, DMS) while the rest of the file is
+preserved. Applying again moves an older block that sits first. GTK3 includes common widget color overrides; GTK4 also
 gets the CSS variables used by recent libadwaita. No theme package is patched
 and the dark-mode preference is never briefly flipped to force a refresh.
 
@@ -50,6 +51,11 @@ and the palette-aware Fusion style. Other preferences are preserved.
 RediWM launches receive the selected platform theme and style immediately;
 sign in again to update the environment for apps activated by D-Bus or
 launched elsewhere. This opt-in is recorded in `rediwm/app-colors.conf`.
+KDE apps such as Dolphin read `kdeglobals` rather than the qt6ct palette, so
+the Qt export also rewrites the `[Colors:*]` groups there (Window, View,
+Button, Selection, Tooltip, Complementary, Header). Other keys are kept, and
+the first copy is saved as `kdeglobals.rediwm-backup`. The file is shared with
+any Plasma session, which will see the same palette.
 Bundled Qt runtimes, sandboxed apps, and apps with their own styles may need
 their own configuration.
 
@@ -61,7 +67,7 @@ contents plus the RediWM block; the link target is not modified. A config
 *folder* that is a symlink is refused and reported in Settings. To undo GTK colors,
 remove the marked RediWM import blocks from both `gtk.css` files (or restore
 their backups). To undo Qt colors, restore the qt5ct/qt6ct configuration
-backups (or delete configurations created by the export if no backup exists),
+and `kdeglobals` backups (or delete configurations created by the export if no backup exists),
 remove `rediwm/app-colors.conf`, and sign in again.
 
 ## Color tokens

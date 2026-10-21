@@ -530,14 +530,20 @@ def config_conversations(authority):
             begin('A'); status(child, 'prompt'); begin('B')
             call(authority.conn, name, AGENT_PATH, AGENT_IFACE, 'CancelAuthentication', '(s)', ('unknown',))
             child.stdin.write(b't'); status(child, 'configured')
+            language_mark = len(events)
+            child.stdin.write(b'l'); status(child, 'locale')
+            assert not any(e['method'] == 'UnregisterAuthenticationAgent' and e['sender'] == name for e in events[language_mark:])
             child.stdin.write(b'a'); status(child, 'error-message'); status(child, 'prompt')
             child.stdin.write(b'a'); done('A'); status(child, 'success'); status(child, 'prompt')
             child.stdin.write(b'a'); done('B'); status(child, 'success')
             old.finish()
+            assert wait_event('RegisterAuthenticationAgent', language_mark)['args'][1] == 'de_DE.UTF-8'
+            status(child, 'registered')
             begin('C'); status(child, 'prompt')
+            disable_mark = len(events)
             child.stdin.write(b'x'); status(child, 'configured')
             expect_error(authority.conn, name, 'BeginAuthentication', BEGIN_SIGNATURE, begin_args(), AUTH + '.Error.Cancelled')
-            assert not any(e['method'] == 'UnregisterAuthenticationAgent' and e['sender'] == name for e in events[start:])
+            assert not any(e['method'] == 'UnregisterAuthenticationAgent' and e['sender'] == name for e in events[disable_mark:])
             mark = len(events)
             child.stdin.write(b'a'); done('C'); status(child, 'success'); new.finish()
             assert wait_event('UnregisterAuthenticationAgent', mark)['sender'] == name
@@ -566,6 +572,15 @@ def main():
         assert registration['args'] == (('unix-session', {'session-id': 'test-session'}), 'C', AGENT_PATH)
         status(child, 'registered')
         name = registration['sender']
+        # A language change re-registers this same unprivileged connection.
+        mark = len(events)
+        child.stdin.write(b'l')
+        status(child, 'locale')
+        assert wait_event('UnregisterAuthenticationAgent', mark)['sender'] == name
+        changed = wait_event('RegisterAuthenticationAgent', mark)
+        assert changed['sender'] == name
+        assert changed['args'][1] == 'de_DE.UTF-8'
+        status(child, 'registered')
         names = call(observer, BUS, BUS_PATH, BUS, 'ListNames').unpack()[0]
         for owned in names:
             if owned.startswith(':') or owned == BUS:

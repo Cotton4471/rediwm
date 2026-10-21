@@ -12,27 +12,31 @@ umask 022
 install -d /usr/local/bin
 stage=$(mktemp -d /usr/local/bin/.rediwm-install.XXXXXX)
 trap 'rm -rf -- "$stage"' EXIT HUP INT TERM
-for binary in rediwm rediwm-msg rediwm-theme rediwm-files rediwm-files-terminal rediwm-images rediwm-monitor rediwm-editor rediwm-pdf rediwm-share-picker rediwm-session rediwm-dm rediwm-accounts-helper; do
+for binary in rediwm rediwm-msg rediwm-theme rediwm-files rediwm-files-terminal rediwm-transfers rediwm-images rediwm-monitor rediwm-calculator rediwm-editor rediwm-pdf rediwm-share-picker rediwm-session rediwm-dm rediwm-accounts-helper; do
     install -m755 "$release_dir/bin/$binary" "$stage/$binary"
 done
-install -Dm644 "$repo_dir/data/rediwm-theme.desktop" /usr/local/share/applications/rediwm-theme.desktop
+install -Dm644 "$release_dir/share/applications/rediwm-theme.desktop" /usr/local/share/applications/rediwm-theme.desktop
 install -Dm644 "$repo_dir/data/rediwm-theme.xml" /usr/local/share/mime/packages/rediwm-theme.xml
-install -Dm644 "$repo_dir/data/rediwm-files.desktop" /usr/local/share/applications/rediwm-files.desktop
+install -Dm644 "$release_dir/share/applications/rediwm-files.desktop" /usr/local/share/applications/rediwm-files.desktop
+install -Dm644 "$release_dir/share/applications/rediwm-transfers.desktop" /usr/local/share/applications/rediwm-transfers.desktop
 install -Dm644 "$release_dir/share/licenses/rediwm/libvterm-LICENSE" /usr/local/share/licenses/rediwm/libvterm-LICENSE
+install -Dm644 "$release_dir/share/licenses/rediwm/libtorrent-LICENSE" /usr/local/share/licenses/rediwm/libtorrent-LICENSE
 install -Dm644 "$release_dir/share/icons/hicolor/256x256/apps/redi-fm-icon.png" /usr/local/share/icons/hicolor/256x256/apps/redi-fm-icon.png
-install -Dm644 "$repo_dir/data/rediwm-images.desktop" /usr/local/share/applications/rediwm-images.desktop
-install -Dm644 "$repo_dir/data/rediwm-monitor.desktop" /usr/local/share/applications/rediwm-monitor.desktop
+install -Dm644 "$release_dir/share/applications/rediwm-images.desktop" /usr/local/share/applications/rediwm-images.desktop
+install -Dm644 "$release_dir/share/applications/rediwm-monitor.desktop" /usr/local/share/applications/rediwm-monitor.desktop
 install -Dm644 "$release_dir/share/icons/hicolor/scalable/apps/rediwm-monitor.svg" /usr/local/share/icons/hicolor/scalable/apps/rediwm-monitor.svg
-install -Dm644 "$repo_dir/data/rediwm-editor.desktop" /usr/local/share/applications/rediwm-editor.desktop
-install -Dm644 "$repo_dir/data/rediwm-pdf.desktop" /usr/local/share/applications/rediwm-pdf.desktop
+install -Dm644 "$release_dir/share/applications/rediwm-calculator.desktop" /usr/local/share/applications/rediwm-calculator.desktop
+install -Dm644 "$release_dir/share/icons/hicolor/scalable/apps/rediwm-calculator.svg" /usr/local/share/icons/hicolor/scalable/apps/rediwm-calculator.svg
+install -Dm644 "$release_dir/share/applications/rediwm-editor.desktop" /usr/local/share/applications/rediwm-editor.desktop
+install -Dm644 "$release_dir/share/applications/rediwm-pdf.desktop" /usr/local/share/applications/rediwm-pdf.desktop
 if command -v update-mime-database >/dev/null 2>&1; then update-mime-database /usr/local/share/mime; fi
 if command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database /usr/local/share/applications; fi
 install -Dm644 "$repo_dir/data/rediwm-portals.conf" /usr/local/share/xdg-desktop-portal/rediwm-portals.conf
 # xdg-desktop-portal reads backend descriptors only from its own datadir.
 install -Dm644 "$repo_dir/data/rediwm.portal" /usr/share/xdg-desktop-portal/portals/rediwm.portal
-install -Dm644 "$repo_dir/data/org.rediwm.accounts.policy" /usr/share/polkit-1/actions/org.rediwm.accounts.policy
+install -Dm644 "$release_dir/share/polkit-1/actions/org.rediwm.accounts.policy" /usr/share/polkit-1/actions/org.rediwm.accounts.policy
 install -Dm644 "$repo_dir/data/xdg-desktop-portal-wlr.ini" /usr/local/share/xdg-desktop-portal-wlr/config
-install -Dm644 "$repo_dir/data/rediwm-release-safe.desktop" /usr/share/wayland-sessions/rediwm-release-safe.desktop
+install -Dm644 "$release_dir/share/wayland-sessions/rediwm-release-safe.desktop" /usr/share/wayland-sessions/rediwm-release-safe.desktop
 # The bass boost's LADSPA plugin, and on Debian/Ubuntu builds the private
 # wlroots 0.20 and dependencies found through the binaries' $ORIGIN/../lib/rediwm
 # RUNPATH. Replaced as a whole right before the binaries so they stay in step.
@@ -73,7 +77,7 @@ for pack in "$release_dir"/share/rediwm/themes/*/; do
     rm -rf "/usr/local/share/rediwm/themes/$name"
     mv -T "/usr/local/share/rediwm/themes/.$name-new" "/usr/local/share/rediwm/themes/$name"
 done
-for binary in rediwm rediwm-msg rediwm-theme rediwm-files rediwm-files-terminal rediwm-images rediwm-monitor rediwm-editor rediwm-pdf rediwm-share-picker rediwm-session rediwm-dm rediwm-accounts-helper; do
+for binary in rediwm rediwm-msg rediwm-theme rediwm-files rediwm-files-terminal rediwm-transfers rediwm-images rediwm-monitor rediwm-calculator rediwm-editor rediwm-pdf rediwm-share-picker rediwm-session rediwm-dm rediwm-accounts-helper; do
     mv -fT "$stage/$binary" "/usr/local/bin/$binary"
 done
 # The compositor draws the desktop itself; the old client is retired.

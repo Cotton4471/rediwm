@@ -74,6 +74,7 @@ pub const Client = struct {
     drop_offer: ?*Offer = null,
     drop_receiving: ?transfer.Receive = null,
     drop_slot: ?usize = null,
+    drop_terminal: bool = false,
     drop_move: bool = false,
     clipboard_source: ?*ClipboardSource = null,
     drag_source: ?*ClipboardSource = null,
@@ -187,7 +188,7 @@ pub const Client = struct {
     fn pollTimeout(self: *Client) c_int {
         if (self.app.wheel_glide.active() or self.app.selectionNeedsScroll() or self.app.hover_active or self.app.layout_active or self.app.scroll_appearance.active or self.app.sidebar_scroll_appearance.active or self.app.horizontal_appearance.active or self.app.terminal.active or self.app.terminal.bar.active) return 16;
         if (self.app.hasRunningFolderSize()) return 33;
-        var deadline: ?i64 = null;
+        var deadline: ?i64 = self.app.torrents.retry_at;
         if (self.app.terminal.close_at) |at| deadline = earlier(deadline, at);
         if (self.app.terminal.visible) if (self.app.terminal.bar.deadline) |at| {
             deadline = earlier(deadline, at);
@@ -496,7 +497,7 @@ pub const Client = struct {
         defer {
             if (self.app.drag_ready) {
                 self.app.drag_ready = false;
-                self.startFileDrag() catch self.app.setStatusNotice("Could not start file drag", true);
+                self.startFileDrag() catch self.app.setStatusNotice(@import("i18n").tr("Could not start file drag"), true);
             }
         }
 
@@ -708,9 +709,10 @@ pub const Client = struct {
         self.drag_y = y - @as(f64, @floatFromInt(self.titlebarHeight()));
         const available = offer.uri and self.drop_receiving == null;
         const pin = available and self.app.dropMotion(x, self.drag_y);
-        const folder = available and !pin and self.app.dropDirectoryAt(x, self.drag_y) != null;
+        const terminal = available and !pin and self.app.terminalDropAt(x, self.drag_y);
+        const folder = available and !pin and !terminal and self.app.dropDirectoryAt(x, self.drag_y) != null;
         self.app.highlightDrop(x, self.drag_y, folder);
-        const wanted = pin or folder;
+        const wanted = pin or folder or terminal;
         const moving = folder and offer.files;
         if (!entered and wanted == self.drag_accepting and moving == self.drag_moving) return;
         self.drag_accepting = wanted;
@@ -718,7 +720,8 @@ pub const Client = struct {
         offer.proxy.accept(self.drag_enter_serial, if (wanted) "text/uri-list" else null);
         if (offer.proxy.getVersion() >= 3) {
             // Files performs filesystem moves in the receiving job, never in
-            // the source's finished callback. Other sources and pins copy.
+            // the source's finished callback. Other sources, pins and terminal
+            // path insertion use copy only.
             offer.proxy.setActions(.{ .copy = wanted, .move = moving }, if (moving) .{ .move = true } else .{ .copy = wanted });
         }
     }
@@ -730,7 +733,8 @@ pub const Client = struct {
         const accepted = self.drag_accepting;
         self.drag_accepting = false;
         const slot = self.app.takePinDrop();
-        const directory = if (slot != null) "" else self.app.dropDirectoryAt(self.drag_x, self.drag_y) orelse {
+        const terminal = slot == null and self.app.terminalDropAt(self.drag_x, self.drag_y);
+        const directory = if (slot != null or terminal) "" else self.app.dropDirectoryAt(self.drag_x, self.drag_y) orelse {
             self.discardOffer(offer);
             return;
         };
@@ -738,23 +742,29 @@ pub const Client = struct {
             self.discardOffer(offer);
             return;
         }
-        self.startDropReceive(offer, slot, directory) catch {
-            self.app.setStatusNotice("Could not read the dropped items", true);
+        self.startDropReceive(offer, slot, directory, terminal) catch {
+            self.app.setStatusNotice(@import("i18n").tr("Could not read the dropped items"), true);
             self.discardOffer(offer);
         };
     }
 
-    fn startDropReceive(self: *Client, offer: *Offer, slot: ?usize, target: []const u8) !void {
+    fn startDropReceive(self: *Client, offer: *Offer, slot: ?usize, target: []const u8, terminal: bool) !void {
         var fds: [2]c_int = undefined;
         if (c.pipe2(&fds, c.O_CLOEXEC) != 0) return error.PipeFailed;
         defer _ = c.close(fds[1]);
         errdefer _ = c.close(fds[0]);
         if (c.fcntl(fds[0], c.F_SETFL, @as(c_int, c.O_NONBLOCK)) < 0) return error.NonblockingFailed;
         const directory = try a.dupe(u8, target);
-        self.drop_receiving = .{ .fd = fds[0], .text = false, .revision = 0, .directory = directory, .started = app_mod.nowMs() };
+        if (terminal) {
+            self.app.focus = .terminal;
+            self.app.edit_revision += 1;
+            self.app.terminalDamage();
+        }
+        self.drop_receiving = .{ .fd = fds[0], .text = false, .revision = self.app.edit_revision, .directory = directory, .started = app_mod.nowMs() };
         self.drop_offer = offer;
         self.drop_slot = slot;
-        self.drop_move = slot == null and offer.action.move;
+        self.drop_terminal = terminal;
+        self.drop_move = slot == null and !terminal and offer.action.move;
         offer.proxy.receive("text/uri-list", fds[1]);
     }
 
@@ -769,27 +779,31 @@ pub const Client = struct {
     fn receiveDrop(self: *Client) void {
         const receive = if (self.drop_receiving) |*r| r else return;
         if (app_mod.nowMs() - receive.started > transfer.timeout_ms) {
-            self.app.setStatusNotice("The drop timed out", true);
+            self.app.setStatusNotice(@import("i18n").tr("The drop timed out"), true);
             self.finishDrop();
             return;
         }
         const done = receive.read() catch {
-            self.app.setStatusNotice("The dropped list failed or exceeded 1 MiB", true);
+            self.app.setStatusNotice(@import("i18n").tr("The dropped list failed or exceeded 1 MiB"), true);
             self.finishDrop();
             return;
         };
         if (!done) return;
         defer self.finishDrop();
         const decoded = clipboard_mod.decodeUris(a, receive.bytes.items) catch {
-            self.app.setStatusNotice("Invalid dropped list", true);
+            self.app.setStatusNotice(@import("i18n").tr("Invalid dropped list"), true);
             return;
         };
         defer decoded.deinit(a);
-        if (self.drop_slot) |slot| {
+        if (self.drop_terminal) {
+            // Like clipboard paste, an asynchronous drop must not type into a
+            // different editor or a restarted session after focus changes.
+            if (receive.revision == self.app.edit_revision and self.app.focus == .terminal) self.app.terminalDropPaths(decoded.paths);
+        } else if (self.drop_slot) |slot| {
             self.app.pinDropped(slot, decoded.paths);
         } else {
             const destination = canonicalPath(receive.directory) catch {
-                self.app.setStatusNotice("The destination folder is unavailable", true);
+                self.app.setStatusNotice(@import("i18n").tr("The destination folder is unavailable"), true);
                 return;
             };
             defer a.free(destination);
@@ -799,7 +813,7 @@ pub const Client = struct {
                 const resolved = canonicalPath(path) catch continue;
                 defer a.free(resolved);
                 if (@import("ops.zig").isDescendantOrSame(resolved, destination)) {
-                    self.app.setStatusNotice("Cannot drop a folder into itself", true);
+                    self.app.setStatusNotice(@import("i18n").tr("Cannot drop a folder into itself"), true);
                     return;
                 }
                 const parent = std.fs.path.dirname(path) orelse continue;
@@ -949,12 +963,12 @@ pub const Client = struct {
     fn receiveClipboard(self: *Client) void {
         const receive = if (self.receiving) |*r| r else return;
         if (app_mod.nowMs() - receive.started > transfer.timeout_ms) {
-            self.app.setStatusNotice("Clipboard transfer timed out", true);
+            self.app.setStatusNotice(@import("i18n").tr("Clipboard transfer timed out"), true);
             self.cancelReceive();
             return;
         }
         const done = receive.read() catch {
-            self.app.setStatusNotice("Clipboard transfer failed or exceeded 1 MiB", true);
+            self.app.setStatusNotice(@import("i18n").tr("Clipboard transfer failed or exceeded 1 MiB"), true);
             self.cancelReceive();
             return;
         };
@@ -966,7 +980,7 @@ pub const Client = struct {
             // A delayed reply must not paste into a folder navigated to meanwhile.
             if (!std.mem.eql(u8, receive.directory, self.app.history.current)) return;
             const decoded = clipboard_mod.decodeUris(a, receive.bytes.items) catch {
-                self.app.setStatusNotice("Invalid file clipboard", true);
+                self.app.setStatusNotice(@import("i18n").tr("Invalid file clipboard"), true);
                 return;
             };
             defer decoded.deinit(a);
@@ -1262,7 +1276,7 @@ const Buffer = struct {
     }
 };
 
-pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]const u8, chooser: ?@import("chooser.zig").Options) !void {
+pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]const u8, chooser: ?@import("chooser.zig").Options, torrent_source: ?[]const u8, transfers: bool) !void {
     _ = c.signal(c.SIGPIPE, c.SIG_IGN);
 
     const home_dir = init.minimal.environ.getPosix("HOME") orelse "/";
@@ -1301,6 +1315,9 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
     if (chooser) |options| try self.app.configureChooser(options);
     if (selected_file) |path| self.app.selectOnLoad(path);
     self.app.startDevices();
+    if (chooser == null) self.app.startTorrents();
+    if (transfers) self.app.openTransfers();
+    if (torrent_source) |source| self.app.torrentSource(source);
     defer {
         self.clearDragIcon();
         self.cancelReceive();
@@ -1375,6 +1392,7 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
     while (self.running and !self.app.closed and !self.app.chooser_done) {
         self.openEditor();
         try self.handleClipboard();
+        self.app.stepTorrents();
         self.app.sync();
         self.app.stepThumbs();
         self.app.stepWheel(app_mod.nowMs());
@@ -1409,7 +1427,7 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
             return error.DisplayFailed;
         }
 
-        var fds: [22]c.struct_pollfd = @splat(.{ .fd = -1, .events = c.POLLIN, .revents = 0 });
+        var fds: [23]c.struct_pollfd = @splat(.{ .fd = -1, .events = c.POLLIN, .revents = 0 });
         fds[0] = .{ .fd = display.getFd(), .events = @intCast(c.POLLIN | @as(c_int, if (flushed == .AGAIN) c.POLLOUT else 0)), .revents = 0 };
         fds[1].fd = self.app.preview_return_fd orelse -1;
         fds[2].fd = if (self.receiving) |receive| receive.fd else -1;
@@ -1427,6 +1445,7 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
             fds[20] = .{ .fd = terminal_c.ft_channel(session), .events = @intCast(c.POLLIN | @as(c_int, if (terminal_c.ft_wants_request(session)) c.POLLOUT else 0)), .revents = 0 };
             fds[21].fd = terminal_c.ft_pidfd(session);
         }
+        fds[22].fd = self.app.torrents.fd;
         const send_count = self.sends.items.len;
         for (self.sends.items, 0..) |send, i| fds[i + 6] = .{ .fd = send.fd, .events = c.POLLOUT, .revents = 0 };
 
@@ -1439,6 +1458,10 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
 
         if ((fds[0].revents & (c.POLLERR | c.POLLHUP)) != 0) return error.DisplayFailed;
         if (self.app.terminal.session) |session| terminal_c.ft_io(session, fds[19].revents & (c.POLLIN | c.POLLHUP | c.POLLERR) != 0, fds[19].revents & c.POLLOUT != 0, fds[20].revents != 0, fds[21].revents != 0);
+        if (fds[22].revents != 0) {
+            self.app.torrents.drain();
+            self.app.invalidate();
+        }
         if (fds[3].revents & c.POLLIN != 0) self.app.worker.drainMain();
         if (fds[4].revents & c.POLLIN != 0) {
             if (self.app.dirsize_pool) |p| p.drainDone();

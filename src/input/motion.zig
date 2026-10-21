@@ -8,6 +8,7 @@ const control_center = @import("../control_center/panel.zig");
 const ui_input = @import("ui").input;
 const Pointer = @import("../Pointer.zig");
 const chrome = @import("../chrome.zig");
+const Output = @import("../Output.zig");
 const geometry = @import("../geometry.zig");
 const resize = @import("../resize.zig");
 const snap = @import("../snap.zig");
@@ -489,11 +490,29 @@ pub fn processMove(input: *Input) void {
     // space. Convert to world before computing the new frame position.
     const wx = input.server.world.toWorld(input.cursor.x, input.cursor.y).x;
     const wy = input.server.world.toWorld(input.cursor.x, input.cursor.y).y;
-    const pos = geometry.Vec2.toI32(.{
+    var pos = geometry.Vec2.toI32(.{
         .x = wx - input.grab_x,
         .y = wy - input.grab_y,
     });
+    // A bar reserved along the top edge stops the frame at its lower edge, so
+    // the titlebar can't be dragged out of reach behind it.
+    if (topBarLimit(input)) |limit| {
+        const layout = input.server.world.toLayout(@floatFromInt(pos.x), @floatFromInt(pos.y));
+        if (layout.y < limit) pos.y = @intFromFloat(@round(input.server.world.toWorld(layout.x, limit).y));
+    }
     toplevel.setPosition(pos.x, pos.y);
+}
+
+/// Layout y a dragged frame's top may not pass: the usable area's top on the
+/// output under the cursor, unless another output lies above it.
+fn topBarLimit(input: *Input) ?f64 {
+    const output = Output.atLayout(input.server, input.cursor.x, input.cursor.y) orelse return null;
+    var full: wlr.Box = undefined;
+    input.server.output_layout.getBox(output.wlr_output, &full);
+    const usable = output.usableBox();
+    if (usable.y <= full.y) return null;
+    if (Output.atLayout(input.server, input.cursor.x, @as(f64, @floatFromInt(full.y)) - 1) != null) return null;
+    return @floatFromInt(usable.y);
 }
 
 pub fn processResize(input: *Input) void {

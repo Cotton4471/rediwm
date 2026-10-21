@@ -1,6 +1,8 @@
 //! Files painting: header, toolbar, location bar, rename card and the frame.
 
 const std = @import("std");
+const i18n = @import("i18n");
+const tr = i18n.tr;
 const App = @import("app.zig").App;
 const c = @import("c.zig").api;
 const recent = @import("recent.zig");
@@ -38,6 +40,10 @@ pub fn renderHeader(self: *App, cr: *c.cairo_t) void {
     c.cairo_move_to(cr, 0, @as(f64, @floatFromInt(self.contentTop())) - 0.5);
     c.cairo_line_to(cr, width, @as(f64, @floatFromInt(self.contentTop())) - 0.5);
     c.cairo_stroke(cr);
+    if (self.transfer_view.active) {
+        self.renderTransferToolbar(cr);
+        return;
+    }
     const in_repo = self.inRepository();
     for ([_]bool{ false, true }) |content| {
         if (content) self.renderToolbarHover(cr);
@@ -48,14 +54,14 @@ pub fn renderHeader(self: *App, cr: *c.cairo_t) void {
             const active = (action == .grid and !self.list_view) or (action == .list and self.list_view) or
                 (action == .filter and (self.folders_only or self.show_hidden or self.changedOnly())) or (action == .search and self.search_visible);
             const opts: ui_button.Options = switch (action) {
-                .new => .{ .leading_icon = .plus, .label = "New" },
+                .new => .{ .leading_icon = .plus, .label = tr("New") },
                 .sort => .{ .leading_icon = .sort, .label = switch (self.effectiveSort()) {
-                    .name, .name_desc => "Name",
-                    .size, .size_asc => "Size",
-                    .modified, .modified_asc => "Date",
-                    .type, .type_desc => "Type",
+                    .name, .name_desc => tr("Name"),
+                    .size, .size_asc => tr("Size"),
+                    .modified, .modified_asc => tr("Date"),
+                    .type, .type_desc => tr("Type"),
                 } },
-                .filter => .{ .leading_icon = .filter, .label = "Filter" },
+                .filter => .{ .leading_icon = .filter, .label = tr("Filter") },
                 else => .{ .variant = .ghost, .icon = header.glyph(action), .icon_scale = 0.56, .label = @tagName(action) },
             };
             var layer = shell_ui.Layer.begin(cr, .{ .x = @floatCast(r.x), .y = @floatCast(r.y), .w = @floatCast(r.w), .h = @floatCast(r.h) }) orelse continue;
@@ -93,7 +99,7 @@ pub fn renderGitViewToggle(self: *App, cr: *c.cairo_t) void {
     c.cairo_stroke(cr);
     const r = header.rect(self.w, true, .git_view);
     var layer = shell_ui.Layer.begin(cr, .{ .x = @floatCast(r.x), .y = @floatCast(r.y), .w = @floatCast(r.w), .h = @floatCast(r.h) }) orelse return;
-    ui_checkbox.paint(&layer.renderer, layer.local(), "Git View", .{
+    ui_checkbox.paint(&layer.renderer, layer.local(), tr("Git View"), .{
         .checked = self.git_view,
         .focused = r.contains(self.mouse_x, self.mouse_y),
     });
@@ -120,28 +126,32 @@ pub fn render(self: *App, cr: *c.cairo_t) void {
     c.cairo_rectangle(cr, @floatFromInt(self.sidebarWidth()), @floatFromInt(self.viewTop()), w_f - @as(f64, @floatFromInt(self.sidebarWidth() + self.scrollbarGutter())), @as(f64, @floatFromInt(viewport_h)));
     c.cairo_clip(cr);
 
-    if (self.list_view) {
-        const column = self.listColumn(if (self.repository() != null) 0 else self.sortColumn());
-        setSource(cr, ui_theme.global.surface);
-        c.cairo_rectangle(cr, column.x, @floatFromInt(self.viewTop()), column.w, @floatFromInt(viewport_h));
-        c.cairo_fill(cr);
-        self.paintSortFeedback(cr, .{ .x = column.x, .y = @floatFromInt(self.viewTop()), .w = column.w, .h = @floatFromInt(viewport_h) });
-    }
-
-    if (self.error_message) |err| {
-        setSource(cr, ui_theme.global.file_broken);
-        drawText(cr, err, @floatFromInt(self.sidebarWidth() + 24), @floatFromInt(self.viewTop() + 36), shell_ui.textSize(), true);
-    } else if (self.loading and self.items.items.len == 0) {
-        // A quick listing never shows this; see `scan_notice_delay_ms`.
-        if (self.scan_notice_shown) {
-            setSource(cr, ui_theme.global.window_fg);
-            drawText(cr, "Scanning folder...", @floatFromInt(self.sidebarWidth() + 24), @floatFromInt(self.viewTop() + 36), shell_ui.textSize(), false);
-        }
-    } else if (self.items.items.len == 0) {
-        setSource(cr, ui_theme.global.window_fg);
-        drawText(cr, if (self.search.text.items.len > 0 or self.folders_only) "No matching items" else if (self.changedOnly()) "No changed files" else if (self.isRecent()) "No recent files" else "This folder is empty", @floatFromInt(self.sidebarWidth() + 24), @floatFromInt(self.viewTop() + 36), shell_ui.textSize(), false);
+    if (self.transfer_view.active) {
+        self.renderTransferList(cr);
     } else {
-        self.renderFileItems(cr, viewport_h);
+        if (self.list_view) {
+            const column = self.listColumn(if (self.repository() != null) 0 else self.sortColumn());
+            setSource(cr, ui_theme.global.surface);
+            c.cairo_rectangle(cr, column.x, @floatFromInt(self.viewTop()), column.w, @floatFromInt(viewport_h));
+            c.cairo_fill(cr);
+            self.paintSortFeedback(cr, .{ .x = column.x, .y = @floatFromInt(self.viewTop()), .w = column.w, .h = @floatFromInt(viewport_h) });
+        }
+
+        if (self.error_message) |err| {
+            setSource(cr, ui_theme.global.file_broken);
+            drawText(cr, err, @floatFromInt(self.sidebarWidth() + 24), @floatFromInt(self.viewTop() + 36), shell_ui.textSize(), true);
+        } else if (self.loading and self.items.items.len == 0) {
+            // A quick listing never shows this; see `scan_notice_delay_ms`.
+            if (self.scan_notice_shown) {
+                setSource(cr, ui_theme.global.window_fg);
+                drawText(cr, tr("Scanning folder..."), @floatFromInt(self.sidebarWidth() + 24), @floatFromInt(self.viewTop() + 36), shell_ui.textSize(), false);
+            }
+        } else if (self.items.items.len == 0) {
+            setSource(cr, ui_theme.global.window_fg);
+            drawText(cr, if (self.search.text.items.len > 0 or self.folders_only) tr("No matching items") else if (self.changedOnly()) tr("No changed files") else if (self.isRecent()) tr("No recent files") else tr("This folder is empty"), @floatFromInt(self.sidebarWidth() + 24), @floatFromInt(self.viewTop() + 36), shell_ui.textSize(), false);
+        } else {
+            self.renderFileItems(cr, viewport_h);
+        }
     }
     self.renderSelectionBand(cr);
     self.renderScrollEdges(cr, viewport_h);
@@ -160,8 +170,9 @@ pub fn render(self: *App, cr: *c.cairo_t) void {
     if (self.chooser != null) self.renderChooser(cr) else self.renderStatusBar(cr, h_f);
     self.renderTerminal(cr);
 
-    if (self.menu == null and self.dialog == null and self.selection_band == null) self.renderFilenameTip(cr);
+    if (!self.transfer_view.active and self.menu == null and self.dialog == null and self.selection_band == null) self.renderFilenameTip(cr);
     if (self.menu != null) self.renderMenu(cr);
+    if (self.menu == null and self.dialog == null) self.renderTorrentTip(cr);
 
     // 6. Modal Dialog
     if (self.dialog != null) {
@@ -226,6 +237,7 @@ pub fn pointerCursor(self: *App, x: f64, y: f64) [*:0]const u8 {
     if (self.overSidebarDivider(x, y)) return "col-resize";
     if (self.chooser != null and self.chooserRect(0).contains(x, y)) return "text";
     if (self.focus != .location_bar and !self.search_visible and header.field(self.w).contains(x, y)) return "pointer";
+    if (self.inlineTorrentHit(x, y) != null) return "pointer";
     if (self.singleClickIconAt(x, y) != null) return "pointer";
     return if (header.field(self.w).contains(x, y)) "text" else "default";
 }
@@ -287,7 +299,7 @@ pub fn renderRenameCard(self: *App, cr: *c.cairo_t, card: RenameCard) void {
             .variant = .ghost,
             .icon = if (i == 0) .checkmark else .close,
             .icon_scale = 0.55,
-            .label = if (i == 0) "Rename" else "Cancel",
+            .label = if (i == 0) tr("Rename") else tr("Cancel"),
         }, .{ .pointer = if (rect.contains(self.mouse_x, self.mouse_y)) .hover else .idle });
         layer.finish();
     }
@@ -367,7 +379,7 @@ pub fn renderEditor(self: *App, cr: *c.cairo_t, edit: *Editor, rect: header.Rect
     const placeholder = search and text.len == 0;
     // Half-strength white, not the shell's blue-grey `faint`.
     setSource(cr, if (placeholder) withAlpha(t.fg, 0.5) else t.fg);
-    drawText(cr, if (placeholder) "Search this folder" else text, x, top + metrics.ascent, fieldFontSize(), false);
+    drawText(cr, if (placeholder) tr("Search this folder") else text, x, top + metrics.ascent, fieldFontSize(), false);
     if (focused) {
         setSource(cr, t.caretColor());
         c.cairo_rectangle(cr, x + pen, top, t.caret_width, ink_h);
@@ -403,13 +415,14 @@ pub fn renderStatusBar(self: *App, cr: *c.cairo_t, h_f: f64) void {
         }
     }
 
-    if (prog) |p| {
+    if (self.transfer_view.active) {
+        setSource(cr, if (self.torrents.message().len > 0) ui_theme.global.danger else ui_theme.global.window_fg);
+        const count = self.torrents.items().len;
+        status_text = if (self.torrents.message().len > 0) self.torrents.message() else if (self.torrents.retry_at != null) tr("Connecting…") else i18n.fmt(&status_buf, i18n.trn("{count} transfer · Downloads continue after closing Files.", "{count} transfers · Downloads continue after closing Files.", count), .{ .count = count }) catch tr("Transfers");
+    } else if (prog) |p| {
         setSource(cr, accent);
-        status_text = std.fmt.bufPrint(
-            &status_buf,
-            "{s} {d}/{d}: {s}... (Esc to cancel)",
-            .{ if (self.job_runner.?.kind == .extract or self.job_runner.?.kind == .open_archive_member) @as([]const u8, "Extracting") else "Transferring", p.processed_items + 1, p.total_items, p.current_name },
-        ) catch "Transferring...";
+        const pattern = if (self.job_runner.?.kind == .extract or self.job_runner.?.kind == .open_archive_member) tr("Extracting {current}/{total}: {name}... (Esc to cancel)") else tr("Transferring {current}/{total}: {name}... (Esc to cancel)");
+        status_text = i18n.fmt(&status_buf, pattern, .{ .current = p.processed_items + 1, .total = p.total_items, .name = p.current_name }) catch tr("Transferring...");
     } else if (self.status_notice != null and nowMs() < self.status_notice_until) {
         if (self.status_is_error) {
             setSource(cr, ui_theme.global.danger);
@@ -419,7 +432,7 @@ pub fn renderStatusBar(self: *App, cr: *c.cairo_t, h_f: f64) void {
         status_text = self.status_notice.?;
     } else if (self.error_message) |err| {
         setSource(cr, ui_theme.global.danger);
-        status_text = std.fmt.bufPrint(&status_buf, "Error: {s}", .{err}) catch err;
+        status_text = i18n.fmt(&status_buf, tr("Error: {value}"), .{ .value = err }) catch err;
     } else {
         setSource(cr, ui_theme.global.window_fg);
         var sel_count: usize = 0;
@@ -434,18 +447,11 @@ pub fn renderStatusBar(self: *App, cr: *c.cairo_t, h_f: f64) void {
         if (sel_count > 0) {
             var size_buf: [64]u8 = undefined;
             const sz = formatSize(sel_bytes, &size_buf);
-            status_text = std.fmt.bufPrint(
-                &status_buf,
-                "{d} item{s} selected  ·  {s}",
-                .{ sel_count, if (sel_count == 1) "" else "s", sz },
-            ) catch "Selected items";
+            status_text = i18n.fmt(&status_buf, i18n.trn("{count} item selected  ·  {size}", "{count} items selected  ·  {size}", sel_count), .{ .count = sel_count, .size = sz }) catch tr("Selected items");
         } else {
             const more = if (self.changedOnly() and self.snapshot != null and self.snapshot.?.changed_truncated) "+" else "";
-            status_text = std.fmt.bufPrint(
-                &status_buf,
-                "{d}{s} item{s}",
-                .{ self.items.items.len, more, if (self.items.items.len == 1 and more.len == 0) "" else "s" },
-            ) catch "Items";
+            const count = self.items.items.len;
+            status_text = i18n.fmt(&status_buf, i18n.trn("{count}{more} item", "{count}{more} items", if (more.len > 0) @max(2, count) else count), .{ .count = count, .more = more }) catch tr("Items");
         }
     }
 
@@ -454,6 +460,10 @@ pub fn renderStatusBar(self: *App, cr: *c.cairo_t, h_f: f64) void {
 
 pub fn renderDialog(self: *App, cr: *c.cairo_t) void {
     const dlg = self.dialog orelse return;
+    if (dlg.kind == .transfers) {
+        self.renderTransfers(cr);
+        return;
+    }
     if (dlg.kind == .properties) {
         self.dialog.?.properties.?.draw(cr, self.w, self.h, self.mouse_x, self.mouse_y, self.theme_cfg, self.io);
         return;
@@ -498,25 +508,25 @@ pub fn renderDialog(self: *App, cr: *c.cairo_t) void {
     var buf: [256]u8 = undefined;
 
     if (dlg.kind == .terminal_close) {
-        drawEllipsis(cr, "Closing ends this shell and its running jobs.", dx + 16, dy + 56, dw - 32, shell_ui.textSize(), false);
-        self.renderButton(cr, dx + dw - 184, dy + 84, 80, 28, "Close", true);
-        self.renderButton(cr, dx + dw - 96, dy + 84, 80, 28, "Cancel", true);
+        drawEllipsis(cr, tr("Closing ends this shell and its running jobs."), dx + 16, dy + 56, dw - 32, shell_ui.textSize(), false);
+        self.renderButton(cr, dx + dw - 184, dy + 84, 80, 28, tr("Close"), true);
+        self.renderButton(cr, dx + dw - 96, dy + 84, 80, 28, tr("Cancel"), true);
     } else if (dlg.kind == .conflict) {
         const conflict_str = dlg.conflict_name orelse "";
-        const conflict_msg = std.fmt.bufPrint(&buf, "File '{s}' already exists in destination.", .{conflict_str}) catch "Conflict";
+        const conflict_msg = i18n.fmt(&buf, tr("File '{value}' already exists in destination."), .{ .value = conflict_str }) catch tr("Conflict");
         setSource(cr, t.fg);
         drawEllipsis(cr, conflict_msg, dx + 16, dy + 56, dw - 32, shell_ui.textSize(), false);
 
-        self.renderButton(cr, dx + 16, dy + 84, (dw - 48) / 3, 28, "Skip (S)", true);
-        self.renderButton(cr, dx + 24 + (dw - 48) / 3, dy + 84, (dw - 48) / 3, 28, "Rename (R)", true);
-        self.renderButton(cr, dx + 32 + 2 * (dw - 48) / 3, dy + 84, (dw - 48) / 3, 28, "Cancel (C)", true);
+        self.renderButton(cr, dx + 16, dy + 84, (dw - 48) / 3, 28, tr("Skip (S)"), true);
+        self.renderButton(cr, dx + 24 + (dw - 48) / 3, dy + 84, (dw - 48) / 3, 28, tr("Rename (R)"), true);
+        self.renderButton(cr, dx + 32 + 2 * (dw - 48) / 3, dy + 84, (dw - 48) / 3, 28, tr("Cancel (C)"), true);
     } else {
         self.renderEditor(cr, &self.dialog.?.edit, self.editorRect(), true, false);
 
         setSource(cr, t.fg);
-        if (dw >= 420) drawText(cr, "Enter confirms · Esc cancels", dx + 16, dy + 102, shell_ui.textSize(), false);
+        if (dw >= 420) drawText(cr, tr("Enter confirms · Esc cancels"), dx + 16, dy + 102, shell_ui.textSize(), false);
 
-        self.renderButton(cr, dx + dw - 184, dy + 84, 80, 28, "OK", true);
-        self.renderButton(cr, dx + dw - 96, dy + 84, 80, 28, "Cancel", true);
+        self.renderButton(cr, dx + dw - 184, dy + 84, 80, 28, tr("OK"), true);
+        self.renderButton(cr, dx + dw - 96, dy + 84, 80, 28, tr("Cancel"), true);
     }
 }

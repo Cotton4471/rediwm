@@ -1,11 +1,15 @@
 //! Files listing: navigation, history moves, snapshot sync and the filtered, sorted view.
 
 const std = @import("std");
+const i18n = @import("i18n");
+const tr = i18n.tr;
 const App = @import("app.zig").App;
 const anim = @import("ui").anim;
 const c = @import("c.zig").api;
 const worker_mod = @import("worker.zig");
 const recent = @import("recent.zig");
+const collation = @import("collation.zig");
+const fold = @import("ui").fold;
 const icons = @import("../icon_cache.zig");
 const theme = @import("../icon_theme.zig");
 const header = @import("header.zig");
@@ -48,6 +52,10 @@ pub fn selectOnLoad(self: *App, path: []const u8) void {
 }
 
 pub fn back(self: *App) void {
+    if (self.transfer_view.active) {
+        self.leaveTransfers();
+        return;
+    }
     self.rememberView();
     if (self.history.back() catch null) |path| {
         self.applyHistoryNav(path);
@@ -76,6 +84,7 @@ pub fn home(self: *App) void {
 }
 
 pub fn applyHistoryNav(self: *App, path: []const u8) void {
+    self.leaveTransfers();
     self.navigation_count +%= 1;
     self.overwrite_pending = false;
     if (self.chooser != null and self.chooser.?.mode == .open) self.setChooserName("");
@@ -120,6 +129,7 @@ pub fn isStaleSnapshot(snapshot_request_id: u64, active_request_id: u64) bool {
 }
 
 pub fn sync(self: *App) void {
+    if (self.worker.takeApplicationNotice()) |notice| self.setStatusNotice(notice.message, notice.failed);
     if (self.worker.takeThemeNotice()) |notice| {
         defer self.worker.allocator.free(notice);
         self.setStatusNotice(notice, false);
@@ -196,11 +206,16 @@ pub fn sync(self: *App) void {
         self.invalidate();
     }
 
+    if (self.transfer_view.active) return;
+
     // A background refresh must not reorder items or cancel a gesture
     // while the button is held. The worker retains its latest snapshot;
     // the first loop after release applies it.
     if (self.selection_band != null or self.drag_origin != null) return;
-    const snap = self.worker.takeSnapshot() orelse return;
+    const snap = self.worker.takeSnapshot() orelse {
+        if (self.torrents.rows_changed) self.rebuildView();
+        return;
+    };
     if (isStaleSnapshot(snap.request_id, self.active_request_id)) {
         snap.destroy();
         return;
@@ -266,7 +281,7 @@ pub fn matches(self: *App, item: worker_mod.Item) bool {
         }
     }
     if (self.folders_only and !item.is_dir) return false;
-    return std.ascii.indexOfIgnoreCase(self.shownName(item), self.search.text.items) != null;
+    return fold.contains(self.shownName(item), self.search.text.items, .{ .turkish = @import("i18n").isTurkish() });
 }
 
 pub fn lessThan(mode: Sort, a: ViewItem, b: ViewItem) bool {
@@ -292,12 +307,13 @@ pub fn lessThan(mode: Sort, a: ViewItem, b: ViewItem) bool {
         const order = std.mem.order(u8, itemType(a), itemType(b));
         if (order != .eq) return if (mode == .type) order == .lt else order == .gt;
     }
-    const order = std.mem.order(u8, a.text(), b.text());
+    const order = collation.order(a.sort_key orelse a.text(), b.sort_key orelse b.text(), a.text(), b.text(), a.path, b.path);
     return if (mode == .name_desc) order == .gt else order == .lt;
 }
 
 pub fn rebuildView(self: *App) void {
     const snap = self.snapshot orelse return;
+    self.torrents.rows_changed = false;
     // Keep old storage alive until names, selection and focus have been copied.
     // Both a worker refresh and a local filter can rebuild this view.
     self.cancelWheel();
@@ -340,6 +356,7 @@ pub fn rebuildView(self: *App) void {
             self.items.append(self.allocator, .{
                 .name = mem.dupe(u8, it.name) catch continue,
                 .label = mem.dupe(u8, if (self.changedOnly() and self.full_paths) it.label else "") catch continue,
+                .sort_key = if (if (self.changedOnly() and self.full_paths and it.label.len > 0) it.label_key else it.name_key) |key| mem.dupe(u8, key) catch continue else null,
                 .path = mem.dupe(u8, it.path) catch continue,
                 .is_dir = it.is_dir,
                 .is_symlink = it.is_symlink,
@@ -359,6 +376,24 @@ pub fn rebuildView(self: *App) void {
                 .selection_border = if (previous) |item| item.selection_border else .{},
             }) catch continue;
         }
+        self.appendTorrentRows(mem, &selected_paths);
+        // Transfer placeholders and synthetic snapshots have no worker key.
+        // Give those rows keys from the same locale before sorting so every
+        // comparison uses one collation, including mixed real/stub folders.
+        var fallback_locale: ?collation.Locale = null;
+        defer if (fallback_locale) |*locale| locale.deinit();
+        var missing_key = false;
+        for (self.items.items) |*item| {
+            if (item.sort_key != null) continue;
+            if (fallback_locale == null) fallback_locale = collation.Locale.init(snap.collation_name) orelse collation.Locale.init("C").?;
+            item.sort_key = fallback_locale.?.key(mem, item.text()) catch null;
+            missing_key = missing_key or item.sort_key == null;
+        }
+        // Allocation failure must not mix byte and locale comparisons: that
+        // could make the comparator non-transitive.
+        if (missing_key) for (self.items.items) |*item| {
+            item.sort_key = null;
+        };
         std.mem.sort(ViewItem, self.items.items, self.effectiveSort(), lessThan);
         for (self.items.items, 0..) |item, i| {
             if (old_focus) |path| {
@@ -419,7 +454,7 @@ pub fn sortByColumn(self: *App, column: usize) void {
 }
 
 pub fn renderColumns(self: *App, cr: *c.cairo_t) void {
-    if (!self.list_view) return;
+    if (!self.list_view and !self.transfer_view.active) return;
     c.cairo_save(cr);
     defer c.cairo_restore(cr);
     c.cairo_rectangle(cr, @floatFromInt(self.sidebarWidth()), @floatFromInt(self.contentTop()), @floatFromInt(self.w - self.sidebarWidth() - self.scrollbarGutter()), 30);
@@ -434,7 +469,7 @@ pub fn renderColumns(self: *App, cr: *c.cairo_t) void {
             c.cairo_rectangle(cr, rect.x + rect.w - 0.5, rect.y + 6, 1, rect.h - 12);
             c.cairo_fill(cr);
         }
-        const sorted = self.sortColumn() == i and (self.repository() == null or i == 0);
+        const sorted = !self.transfer_view.active and self.sortColumn() == i and (self.repository() == null or i == 0);
         const hovered = self.hoverKey() == 400 + i;
         if (sorted) {
             setSource(cr, ui_theme.global.surface);
@@ -467,11 +502,11 @@ pub fn renderColumns(self: *App, cr: *c.cairo_t) void {
 }
 
 pub fn itemType(item: ViewItem) []const u8 {
-    if (item.is_broken) return "Broken link";
-    if (item.is_symlink) return "Link";
-    if (item.is_dir) return "Folder";
+    if (item.is_broken) return tr("Broken link");
+    if (item.is_symlink) return tr("Link");
+    if (item.is_dir) return tr("Folder");
     const ext = std.fs.path.extension(item.name);
-    return if (ext.len > 1) ext[1..] else "File";
+    return if (ext.len > 1) ext[1..] else tr("File");
 }
 
 pub fn isRecent(self: *const App) bool {

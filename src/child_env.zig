@@ -86,7 +86,7 @@ pub fn apply(map: *Map, spec: Spec) !void {
     }
 }
 
-pub const format_categories = [_][]const u8{ "LC_TIME", "LC_NUMERIC", "LC_MONETARY", "LC_MEASUREMENT", "LC_PAPER", "LC_ADDRESS", "LC_TELEPHONE", "LC_NAME" };
+pub const format_categories = [_][]const u8{ "LC_TIME", "LC_COLLATE", "LC_NUMERIC", "LC_MONETARY", "LC_MEASUREMENT", "LC_PAPER", "LC_ADDRESS", "LC_TELEPHONE", "LC_NAME" };
 
 pub fn applyRegion(map: *Map, prefs: @import("config").loader.RegionConfig) !void {
     if (prefs.timezone.len != 0) try map.put("TZ", prefs.timezone);
@@ -184,7 +184,7 @@ test "child env overwrites a host XDG_CURRENT_DESKTOP" {
     try std.testing.expectEqualStrings("C.utf8", map.get("LANG").?);
     try std.testing.expectEqualStrings("C.utf8", map.get("LC_MESSAGES").?);
     try std.testing.expectEqualStrings("C.utf8", map.get("LC_CTYPE").?);
-    try std.testing.expectEqualStrings("en_US.utf8", map.get("LC_COLLATE").?);
+    try std.testing.expectEqualStrings("en_NZ.utf8", map.get("LC_COLLATE").?);
     for (format_categories) |key| try std.testing.expectEqualStrings("en_NZ.utf8", map.get(key).?);
     try std.testing.expectEqualStrings("Pacific/Auckland", map.get("TZ").?);
 }

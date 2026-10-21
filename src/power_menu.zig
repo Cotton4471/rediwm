@@ -1,5 +1,6 @@
 // Centered session-action cards with system uptime.
 const std = @import("std");
+const i18n = @import("i18n");
 const glass = @import("glass.zig");
 const wl = @import("wayland").server.wl;
 const wlr = @import("wlroots");
@@ -44,17 +45,13 @@ const panel_width: f32 = panel_padding * 2 + tile_width * tiles.len + tile_gap *
 const uptime_width_slack: f32 = 4;
 
 const slide_distance: f32 = 16;
-// The glass blur itself stays constantly at full strength — only the
-// panel's scene-buffer opacity and the scrim fade with `slide`.
-const glass_opacity: f32 = 1;
-// How dark the rest of the screen gets behind the modal, at full open.
 
 const State = enum { opening, open, selecting, closing };
 
 const Tile = struct {
     name: []const u8,
     icon: layout.IconId,
-    label: []const u8,
+    label: i18n.Message,
     action: actions.Action,
     // Null for tiles that don't go through logind (Lock, Log Out) and are
     // always offered; set for tiles whose availability tracks a
@@ -64,11 +61,11 @@ const Tile = struct {
 
 // Order matches how the menu reads left to right.
 const tiles = [_]Tile{
-    .{ .name = "lock", .icon = .lock, .label = "Lock", .action = .lock_screen },
-    .{ .name = "logout", .icon = .logout, .label = "Log Out", .action = .quit },
-    .{ .name = "restart", .icon = .reboot, .label = "Restart", .action = .reboot, .power_kind = .reboot },
-    .{ .name = "suspend", .icon = .@"suspend", .label = "Suspend", .action = .@"suspend", .power_kind = .@"suspend" },
-    .{ .name = "poweroff", .icon = .power, .label = "Power Off", .action = .poweroff, .power_kind = .poweroff },
+    .{ .name = "lock", .icon = .lock, .label = i18n.msg("Lock"), .action = .lock_screen },
+    .{ .name = "logout", .icon = .logout, .label = i18n.msg("Log Out"), .action = .quit },
+    .{ .name = "restart", .icon = .reboot, .label = i18n.msg("Restart"), .action = .reboot, .power_kind = .reboot },
+    .{ .name = "suspend", .icon = .@"suspend", .label = i18n.msg("Suspend"), .action = .@"suspend", .power_kind = .@"suspend" },
+    .{ .name = "poweroff", .icon = .power, .label = i18n.msg("Power Off"), .action = .poweroff, .power_kind = .poweroff },
 };
 
 pub const PowerMenu = struct {
@@ -156,10 +153,11 @@ pub const PowerMenu = struct {
         const t = theme.global;
         var changed = false;
         for (tiles, 0..) |tile, i| {
-            const kind = tile.power_kind orelse continue;
-            const pm = menu.server.power orelse continue;
-            const available = pm.isAvailable(kind);
-            const label = if (available) tile.label else (pm.unavailableExplanation(kind) orelse tile.label);
+            const available = if (tile.power_kind) |kind| (if (menu.server.power) |pm| pm.isAvailable(kind) else true) else true;
+            const label = if (!available and tile.power_kind != null and menu.server.power != null)
+                menu.server.power.?.unavailableExplanation(tile.power_kind.?) orelse tile.label.get()
+            else
+                tile.label.get();
             const color = if (available) t.fg else t.window_fg;
             const want_state: layout.ButtonState = if (available) .idle else .disabled;
 
@@ -182,6 +180,8 @@ pub const PowerMenu = struct {
             if (!available and menu.keyboard_focus == i) menu.keyboard_focus = null;
         }
         if (!changed) return;
+        menu.uptime_minutes = null;
+        _ = menu.updateUptime();
         for (&menu.cards) |*card| card.markPaintDirty();
         menu.syncHighlight();
         menu.relayout();
@@ -215,7 +215,7 @@ pub const PowerMenu = struct {
                     .width = .{ .fixed = icon_size },
                     .height = .{ .fixed = icon_size },
                 },
-                .{ .kind = .{ .text = .{ .content = tile.label, .font_size = label_size, .color = t.fg } } },
+                .{ .kind = .{ .text = .{ .content = tile.label.get(), .font_size = label_size, .color = t.fg } } },
             };
             menu.cards[i] = .{
                 .name = tile.name,
@@ -231,7 +231,7 @@ pub const PowerMenu = struct {
         }
         menu.header_children = .{
             .{ .kind = .{ .icon = .{ .id = .clock, .color = t.window_fg } }, .width = .{ .fixed = 15 }, .height = .{ .fixed = 15 } },
-            .{ .kind = .{ .text = .{ .content = "Uptime unavailable", .font_size = uptime_size, .color = t.window_fg } } },
+            .{ .kind = .{ .text = .{ .content = i18n.tr("Uptime unavailable"), .font_size = uptime_size, .color = t.window_fg } } },
         };
         menu.root_children = .{
             .{ .kind = .container, .direction = .row, .@"align" = .center, .justify = .end, .gap = 10, .height = .{ .fixed = 20 }, .children = &menu.header_children },
@@ -300,7 +300,7 @@ pub const PowerMenu = struct {
         const minutes = @divTrunc(@max(0, ts.sec), 60);
         if (menu.uptime_minutes == minutes) return false;
         menu.uptime_minutes = minutes;
-        const content = std.fmt.bufPrint(&menu.uptime_text, "Uptime {d}h {d}m", .{ @divTrunc(minutes, 60), @mod(minutes, 60) }) catch unreachable;
+        const content = i18n.fmt(&menu.uptime_text, i18n.tr("Uptime {hours}h {minutes}m"), .{ .hours = @divTrunc(minutes, 60), .minutes = @mod(minutes, 60) }) catch i18n.tr("Uptime unavailable");
         menu.header_children[1].kind.text.content = content;
         const natural = text_mod.measureWidth(content, .manrope, uptime_size, 1.0) catch 0;
         menu.header_children[1].min_width = @as(f32, @floatFromInt(natural)) + uptime_width_slack;
@@ -510,9 +510,9 @@ pub const PowerMenu = struct {
         if (menu.panel_box.width <= 0 or menu.panel_box.height <= 0) return;
         const t = menu.slide.value(now_ms);
         panel_present.applySlide(menu.buffer_node, menu.panel_box, t, slide_distance);
-        // The blur itself stays fully applied throughout — only the panel's
-        // scene-buffer opacity and the scrim animate with `t`.
-        glass.Effect.configure(menu.glass_effect, panel_radius, glass_opacity);
+        // Glass has its own opacity: fade it with the panel so the blurred
+        // backdrop does not linger until the closing spring settles.
+        glass.Effect.configure(menu.glass_effect, panel_radius, std.math.clamp(t, 0, 1));
         const backdrop = theme.global.power_menu_backdrop;
         const scrim_alpha = backdrop[3] * std.math.clamp(t, 0, 1);
         if (menu.scrim.color[3] != scrim_alpha) {

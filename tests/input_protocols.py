@@ -294,6 +294,17 @@ def run():
             assert app.text().count("app-key 20 1\n") == before, "Russian layout lost Super+t"
             ime.send("layout-text"); app.expect("app-sym Cyrillic_ie\n")
             original_config = (tmp / "config.toml").read_text()
+            # A single Cyrillic layout has no Latin group. Compositor bindings
+            # still use Latin letters while ordinary client text stays Cyrillic.
+            for layout in ("ru", "ua"):
+                (tmp / "config.toml").write_text(original_config + f'[input]\nxkb_layout = "{layout}"\n')
+                action('reload_config')
+                before = app.text().count("app-key 20 1\n")
+                ime.send("layout-shortcut"); app.send("sync")
+                assert app.text().count("app-key 20 1\n") == before, f"{layout}-only layout lost Super+t"
+                before_text = app.text().count("app-sym Cyrillic_ie\n")
+                ime.send("layout-text"); app.send("sync")
+                assert app.text().count("app-sym Cyrillic_ie\n") > before_text, f"{layout}-only shortcut fallback changed client text"
             (tmp / "config.toml").write_text(original_config + '[input]\nxkb_layout = "us"\n')
             action('reload_config')
             ime.send("layout-us"); app.send("sync")

@@ -1,6 +1,8 @@
 //! PDF viewer keyboard input and actions.
 
 const std = @import("std");
+const i18n = @import("i18n");
+const tr = i18n.tr;
 const App = @import("app.zig").App;
 const c = @import("c.zig");
 const a = @import("app.zig").a;
@@ -31,7 +33,7 @@ pub fn triggerAction(self: *App, act: Action) void {
         .open_dialog => {
             self.dialog = .information;
             self.focus = .none;
-            self.error_message = "Open another PDF from Files in a new window.";
+            self.error_message = tr("Open another PDF from Files in a new window.");
         },
         .find_toggle => {
             self.search_open = !self.search_open;

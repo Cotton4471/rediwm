@@ -393,14 +393,14 @@ pub const Client = struct {
         const conn = self.conn orelse return;
         self.watching = true;
         _ = conn.addMatch(manager_match, null, null) catch {
-            self.inform("Could not subscribe to service updates.");
+            self.inform(@import("i18n").tr("Could not subscribe to service updates."));
             return;
         };
         _ = conn.addMatch(properties_match, null, null) catch {
-            self.inform("Could not subscribe to service updates.");
+            self.inform(@import("i18n").tr("Could not subscribe to service updates."));
             return;
         };
-        self.subscribe() catch self.inform("Could not subscribe to service updates.");
+        self.subscribe() catch self.inform(@import("i18n").tr("Could not subscribe to service updates."));
     }
     fn stopWatching(self: *Client) void {
         self.watching = false;
@@ -445,7 +445,7 @@ pub const Client = struct {
         const body: wire.Writer = .{ .allocator = gpa };
         self.call(.units, 0, path, manager, "ListUnits", "", &body, false) catch {
             self.loading = false;
-            self.inform("Could not load services. Try Refresh.");
+            self.inform(@import("i18n").tr("Could not load services. Try Refresh."));
         };
         self.changed();
     }
@@ -461,7 +461,7 @@ pub const Client = struct {
         self.boot_pending = true;
         self.getAll(.boot, 0, path, manager) catch {
             self.boot_pending = false;
-            self.inform("Boot summary is unavailable.");
+            self.inform(@import("i18n").tr("Boot summary is unavailable."));
         };
         self.pumpTiming();
         self.changed();
@@ -491,7 +491,7 @@ pub const Client = struct {
         self.message_len = 0;
         self.checkAuthorization() catch {
             self.unlocking = false;
-            self.inform("Could not start the authentication request.");
+            self.inform(@import("i18n").tr("Could not start the authentication request."));
         };
         self.changed();
     }
@@ -540,7 +540,7 @@ pub const Client = struct {
         self.message_len = 0;
         self.sendAction(unit, action) catch {
             self.action_pending = false;
-            self.inform("Could not send the service action.");
+            self.inform(@import("i18n").tr("Could not send the service action."));
         };
         self.changed();
     }
@@ -598,7 +598,7 @@ pub const Client = struct {
         edit.start(self, unit_name, service_types[index]) catch {
             self.edited_type = null;
             self.action_pending = false;
-            self.inform("Could not open the service edit for authorization.");
+            self.inform(@import("i18n").tr("Could not open the service edit for authorization."));
         };
         self.changed();
     }
@@ -607,9 +607,9 @@ pub const Client = struct {
             self.edited_type = null;
             self.action_pending = false;
             self.inform(if (status_code == 126 or status_code == 127)
-                "Authentication was cancelled or denied. Notify setting is unchanged."
+                @import("i18n").tr("Authentication was cancelled or denied. Notify setting is unchanged.")
             else
-                "Could not save Notify. Service editing requires systemd 256 or newer.");
+                @import("i18n").tr("Could not save Notify. Service editing requires systemd 256 or newer."));
             self.reload(false);
             return;
         }
@@ -617,7 +617,7 @@ pub const Client = struct {
         self.call(.reload, 1, path, manager, "Reload", "", &empty, true) catch {
             self.edited_type = null;
             self.action_pending = false;
-            self.inform("Notify override saved, but systemd could not reload it. Try Refresh after a daemon reload.");
+            self.inform(@import("i18n").tr("Notify override saved, but systemd could not reload it. Try Refresh after a daemon reload."));
         };
         self.changed();
     }
@@ -682,7 +682,7 @@ pub const Client = struct {
             self.edited_type = null;
             const i = self.snapshot.index.get(self.edited_unit.?);
             if (i == null or !std.mem.eql(u8, self.snapshot.units.items[i.?].service_type, service_types[expected]))
-                self.inform("Notify override saved, but the selected type is not active in systemd. Check other service overrides.");
+                self.inform(@import("i18n").tr("Notify override saved, but the selected type is not active in systemd. Check other service overrides."));
         }
         self.changed();
         if (self.again) self.reload(self.again_force);
@@ -731,7 +731,7 @@ pub const Client = struct {
         switch (req.kind) {
             .unlock => {
                 self.unlocking = false;
-                self.inform("Could not request authentication. Check that polkit is running.");
+                self.inform(@import("i18n").tr("Could not request authentication. Check that polkit is running."));
             },
             .detail => {
                 // Not every loaded unit has every property (a masked service has no Type).
@@ -740,19 +740,19 @@ pub const Client = struct {
             },
             .timing => {
                 self.pending_details -= 1;
-                self.inform("Some startup times are unavailable.");
+                self.inform(@import("i18n").tr("Some startup times are unavailable."));
                 self.pumpTiming();
             },
             .boot => {
                 self.boot_pending = false;
-                self.inform("Boot summary is unavailable.");
+                self.inform(@import("i18n").tr("Boot summary is unavailable."));
                 self.pumpTiming();
             },
             .action, .reload => {
                 self.action_pending = false;
                 if (req.kind == .reload and req.index == 1) {
                     self.edited_type = null;
-                    self.inform("Notify override saved, but systemd could not reload it. Try Refresh after a daemon reload.");
+                    self.inform(@import("i18n").tr("Notify override saved, but systemd could not reload it. Try Refresh after a daemon reload."));
                 } else self.inform(reason);
                 self.reload(false);
             },
@@ -858,7 +858,7 @@ pub const Client = struct {
                     self.action_job = try gpa.dupe(u8, try body.string());
                     self.action_pending = false;
                     // The unit's new state arrives as a signal.
-                    self.inform("Request accepted. Status updates when the job completes.");
+                    self.inform(@import("i18n").tr("Request accepted. Status updates when the job completes."));
                 }
             },
             .unlock => {
@@ -868,11 +868,11 @@ pub const Client = struct {
                 const authorized = try body.boolean();
                 self.unlocking = false;
                 self.unlocked = authorized;
-                if (authorized) self.changed() else self.inform("Authentication was cancelled or denied.");
+                if (authorized) self.changed() else self.inform(@import("i18n").tr("Authentication was cancelled or denied."));
             },
             .reload => {
                 self.action_pending = false;
-                self.inform(if (req.index == 1) "Notify setting saved. Applies on the next service start." else "Startup setting saved. Running status is unchanged.");
+                self.inform(if (req.index == 1) @import("i18n").tr("Notify setting saved. Applies on the next service start.") else @import("i18n").tr("Startup setting saved. Running status is unchanged."));
                 self.reload(true);
             },
         }
@@ -930,7 +930,7 @@ pub const Client = struct {
         if (self.closing) return;
         const msg = result catch return;
         if (msg.kind != .method_return) return;
-        self.setup(conn) catch self.inform("Could not connect to systemd.");
+        self.setup(conn) catch self.inform(@import("i18n").tr("Could not connect to systemd."));
     }
     fn setup(self: *Client, conn: *dbus.Connection) !void {
         try conn.registerSignal(.{ .owner = self, .callback = signal });

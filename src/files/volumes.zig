@@ -4,6 +4,8 @@
 //! A volume stays listed while its device is attached, mounted or not, so
 //! ejecting (unmounting) one leaves it there to mount again.
 const std = @import("std");
+const i18n = @import("i18n");
+const tr = i18n.tr;
 const c = @cImport({
     @cInclude("volumes.h");
 });
@@ -130,20 +132,20 @@ pub fn resultPath(result: *const Result) []const u8 {
 /// The status line for a failed mount or unmount of `name`.
 pub fn failureMessage(buf: []u8, result: *const Result, name: []const u8) []const u8 {
     const code = text(&result.code);
-    const verb = if (result.unmount != 0) "eject" else "mount";
-    const message = if (std.mem.endsWith(u8, code, ".DeviceBusy"))
-        std.fmt.bufPrint(buf, "{s} is busy", .{name})
+    const unmount = result.unmount != 0;
+    const pattern = if (std.mem.endsWith(u8, code, ".DeviceBusy"))
+        tr("{name} is busy")
     else if (std.mem.endsWith(u8, code, ".NotAuthorizedDismissed") or std.mem.endsWith(u8, code, ".Cancelled"))
-        std.fmt.bufPrint(buf, "Cancelled", .{})
+        tr("Cancelled")
     else if (std.mem.indexOf(u8, code, ".NotAuthorized") != null)
-        std.fmt.bufPrint(buf, "Not authorized to {s} {s}", .{ verb, name })
+        (if (unmount) tr("Not authorized to eject {name}") else tr("Not authorized to mount {name}"))
     else if (std.mem.endsWith(u8, code, ".Gone"))
-        std.fmt.bufPrint(buf, "{s} is no longer available", .{name})
+        tr("{name} is no longer available")
     else if (std.mem.endsWith(u8, code, ".AlreadyMounted"))
-        std.fmt.bufPrint(buf, "{s} is already mounted", .{name})
+        tr("{name} is already mounted")
     else
-        std.fmt.bufPrint(buf, "Could not {s} {s}", .{ verb, name });
-    return message catch "Could not use the device";
+        (if (unmount) tr("Could not eject {name}") else tr("Could not mount {name}"));
+    return i18n.fmt(buf, pattern, .{ .name = name }) catch tr("Could not use the device");
 }
 
 /// The GLib thread. Created once, after the window exists.

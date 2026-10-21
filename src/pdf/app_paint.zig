@@ -1,6 +1,8 @@
 //! PDF viewer painting: canvas, sidebar, toolbar, search bar and dialogs.
 
 const std = @import("std");
+const i18n = @import("i18n");
+const tr = i18n.tr;
 const App = @import("app.zig").App;
 const c = @import("c.zig");
 const document = @import("document.zig");
@@ -57,14 +59,14 @@ pub fn renderCanvas(self: *App, cr: *c.api.cairo_t) void {
 
     if (self.loading) {
         shell_ui.setSource(cr, ui_theme.global.window_fg);
-        const msg = "Opening document...";
+        const msg = tr("Opening document...");
         shell_ui.drawText(cr, msg, cv.x + @max(20.0, (cv.w - shell_ui.measureText(cr, msg, shell_ui.textSize(), false)) / 2.0), cv.y + cv.h / 2.0, shell_ui.textSize(), false);
         return;
     }
 
     if (self.doc_layout == null or self.n_pages == 0) {
         shell_ui.setSource(cr, ui_theme.global.window_fg);
-        const msg = if (self.error_message) |m| m else "No document open. Click 'Open' or press Ctrl+O.";
+        const msg = if (self.error_message) |m| m else tr("No document open. Click 'Open' or press Ctrl+O.");
         shell_ui.drawText(cr, msg, cv.x + @max(20.0, (cv.w - shell_ui.measureText(cr, msg, shell_ui.textSize(), false)) / 2.0), cv.y + cv.h / 2.0, shell_ui.textSize(), false);
         return;
     }
@@ -137,7 +139,7 @@ pub fn renderCanvas(self: *App, cr: *c.api.cairo_t) void {
                 // Placeholder while page is rendering
                 shell_ui.setSource(cr, ui_theme.global.pdf_loading);
                 var buf: [32]u8 = undefined;
-                const loading_msg = std.fmt.bufPrint(&buf, "Rendering page {d}...", .{i + 1}) catch "";
+                const loading_msg = i18n.fmt(&buf, tr("Rendering page {value}..."), .{ .value = i + 1 }) catch "";
                 shell_ui.drawText(cr, loading_msg, page_x + @max(20.0, (p.logical_width - shell_ui.measureText(cr, loading_msg, shell_ui.textSize(), false)) / 2.0), page_y + p.logical_height / 2.0, shell_ui.textSize(), false);
             }
         }
@@ -242,8 +244,8 @@ pub fn renderSidebar(self: *App, cr: *c.api.cairo_t) void {
 
     // The selected tab is told apart by its fill, not by a dimmer label.
     shell_ui.setSource(cr, ui_theme.global.sidebarForeground());
-    shell_ui.drawText(cr, "Pages", sb.x + (tab_w - shell_ui.measureText(cr, "Pages", shell_ui.textSize(), true)) / 2.0, sb.y + 20.0, shell_ui.textSize(), true);
-    shell_ui.drawText(cr, "Outline", sb.x + tab_w + (tab_w - shell_ui.measureText(cr, "Outline", shell_ui.textSize(), true)) / 2.0, sb.y + 20.0, shell_ui.textSize(), true);
+    shell_ui.drawText(cr, tr("Pages"), sb.x + (tab_w - shell_ui.measureText(cr, tr("Pages"), shell_ui.textSize(), true)) / 2.0, sb.y + 20.0, shell_ui.textSize(), true);
+    shell_ui.drawText(cr, tr("Outline"), sb.x + tab_w + (tab_w - shell_ui.measureText(cr, tr("Outline"), shell_ui.textSize(), true)) / 2.0, sb.y + 20.0, shell_ui.textSize(), true);
 
     // Divider under tabs
     shell_ui.setSource(cr, ui_theme.global.app_divider);
@@ -345,7 +347,7 @@ pub fn renderOutlineList(self: *App, cr: *c.api.cairo_t) void {
     const sb = self.sidebarRect();
     const items = self.outline orelse {
         shell_ui.setSource(cr, ui_theme.global.sidebarForeground());
-        shell_ui.drawText(cr, "No outline in document", sb.x + 16.0, sb.y + 60.0, shell_ui.textSize(), false);
+        shell_ui.drawText(cr, tr("No outline in document"), sb.x + 16.0, sb.y + 60.0, shell_ui.textSize(), false);
         return;
     };
 
@@ -391,16 +393,16 @@ pub fn renderToolbar(self: *App, cr: *c.api.cairo_t) void {
         const w = item.w;
         const h = toolbar_button_h;
         switch (item.act) {
-            .toggle_sidebar => self.renderButtonIcon(cr, x, y, w, h, .view_grid, "Toggle sidebar"),
+            .toggle_sidebar => self.renderButtonIcon(cr, x, y, w, h, .view_grid, tr("Toggle sidebar")),
             .prev_page => self.renderButtonText(cr, x, y, w, h, "◀"),
             .next_page => self.renderButtonText(cr, x, y, w, h, "▶"),
             .zoom_out => self.renderButtonText(cr, x, y, w, h, "−"),
             .zoom_in => self.renderButtonText(cr, x, y, w, h, "+"),
-            .fit_width => self.renderToggle(cr, x, y, w, h, "Fit width", self.zoom_mode == .fit_width),
-            .fit_page => self.renderToggle(cr, x, y, w, h, "Fit page", self.zoom_mode == .fit_page),
-            .rotate => self.renderButtonIcon(cr, x, y, w, h, .rotate, "Rotate"),
-            .find_toggle => self.renderButtonText(cr, x, y, w, h, if (self.search_open) "Find ▲" else "Find"),
-            .print => self.renderButtonIcon(cr, x, y, w, h, .print, "Print"),
+            .fit_width => self.renderToggle(cr, x, y, w, h, tr("Fit width"), self.zoom_mode == .fit_width),
+            .fit_page => self.renderToggle(cr, x, y, w, h, tr("Fit page"), self.zoom_mode == .fit_page),
+            .rotate => self.renderButtonIcon(cr, x, y, w, h, .rotate, tr("Rotate")),
+            .find_toggle => self.renderButtonText(cr, x, y, w, h, if (self.search_open) tr("Find ▲") else tr("Find")),
+            .print => self.renderButtonIcon(cr, x, y, w, h, .print, tr("Print")),
             else => {},
         }
     }
@@ -459,7 +461,7 @@ pub fn renderSearchBar(self: *App, cr: *c.api.cairo_t) void {
     // Half-strength white, not the shell's blue-grey `faint`.
     const fg = ui_theme.global.window_fg;
     shell_ui.setSource(cr, if (qtxt.len > 0) fg else .{ fg[0], fg[1], fg[2], fg[3] * 0.5 });
-    const display_txt = if (qtxt.len > 0) qtxt else "Find in document...";
+    const display_txt = if (qtxt.len > 0) qtxt else tr("Find in document...");
     c.api.cairo_save(cr);
     c.api.cairo_rectangle(cr, sr.x + 10.0, sr.y, sr.w - 110.0, sr.h);
     c.api.cairo_clip(cr);
@@ -504,8 +506,8 @@ pub fn renderDialog(self: *App, cr: *c.api.cairo_t) void {
 
     // Title
     const title = switch (self.dialog) {
-        .information => "PDF Viewer",
-        .password => "Password Required",
+        .information => tr("PDF Viewer"),
+        .password => tr("Password Required"),
         .none => "",
     };
     shell_ui.setSource(cr, ui_theme.global.window_fg);
@@ -518,8 +520,8 @@ pub fn renderDialog(self: *App, cr: *c.api.cairo_t) void {
     } else {
         shell_ui.setSource(cr, ui_theme.global.window_fg);
         const prompt = switch (self.dialog) {
-            .information => "Open another PDF from Files in a new window.",
-            .password => "Document is encrypted. Enter password:",
+            .information => tr("Open another PDF from Files in a new window."),
+            .password => tr("Document is encrypted. Enter password:"),
             .none => "",
         };
         shell_ui.drawText(cr, prompt, dx + 24.0, dy + 58.0, shell_ui.textSize(), false);
@@ -528,13 +530,13 @@ pub fn renderDialog(self: *App, cr: *c.api.cairo_t) void {
     if (self.dialog == .password) {
         if (shell_ui.Layer.begin(cr, .{ .x = @floatCast(dx + 24), .y = @floatCast(dy + 80), .w = @floatCast(dw - 48), .h = 44 })) |value| {
             var field = value;
-            _ = ui_field.paintSecret(&field.renderer, field.local(), .{}, .{ .focused = true, .external_caret = true }, &self.password_input, "Password");
+            _ = ui_field.paintSecret(&field.renderer, field.local(), .{}, .{ .focused = true, .external_caret = true }, &self.password_input, tr("Password"));
             field.finish();
         }
     }
 
-    self.renderButtonText(cr, dx + dw - 180, dy + dh - 46, 80, 32, "Cancel");
-    const btn_label = if (self.dialog == .password) "Unlock" else "OK";
+    self.renderButtonText(cr, dx + dw - 180, dy + dh - 46, 80, 32, tr("Cancel"));
+    const btn_label = if (self.dialog == .password) tr("Unlock") else tr("OK");
     self.renderButtonText(cr, dx + dw - 90, dy + dh - 46, 70, 32, btn_label);
 }
 

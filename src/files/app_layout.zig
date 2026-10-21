@@ -1,6 +1,8 @@
 //! Files geometry: toolbar, sidebar width, grid and list columns.
 
 const std = @import("std");
+const i18n = @import("i18n");
+const tr = i18n.tr;
 const App = @import("app.zig").App;
 const scrollbar = @import("ui").widgets.scrollbar;
 const splitter = @import("ui").widgets.splitter;
@@ -37,7 +39,7 @@ pub fn breadcrumbs(self: *App, target: ?*c.cairo_t, hit_x: ?f64) ?BreadcrumbHit 
     const at_trash = if (self.trash_dir) |trash| std.mem.eql(u8, path, trash) or
         (std.mem.startsWith(u8, path, trash) and path.len > trash.len and path[trash.len] == '/') else false;
     ends[0] = if (self.isRecent()) path.len else if (at_trash) self.trash_dir.?.len else if (at_home) self.home_dir.len else 1;
-    labels[0] = if (self.isRecent()) "Recent" else if (at_trash) "Trash" else if (at_home) "Home" else "/";
+    labels[0] = if (self.isRecent()) tr("Recent") else if (at_trash) tr("Trash") else if (at_home) tr("Home") else "/";
     var start = ends[0];
     while (start < path.len and count < ends.len) {
         if (path[start] == '/') {
@@ -107,15 +109,16 @@ pub fn sidebarFooter(self: *const App) i32 {
 }
 
 pub fn contentTop(self: *App) i32 {
+    if (self.transfer_view.active) return if (self.w < 500) 152 else 112;
     return header.height(self.w, self.inRepository());
 }
 
 pub fn viewTop(self: *App) i32 {
-    return self.contentTop() + if (self.list_view) @as(i32, 30) else 0;
+    return self.contentTop() + if (self.list_view or self.transfer_view.active) @as(i32, 30) else 0;
 }
 
 pub fn compactList(self: *App) bool {
-    return self.list_view and self.contentBottom() - self.viewTop() < 80;
+    return (self.list_view or self.transfer_view.active) and self.contentBottom() - self.viewTop() < 80;
 }
 
 pub fn itemInset(self: *App) i32 {
@@ -123,11 +126,11 @@ pub fn itemInset(self: *App) i32 {
 }
 
 pub fn rowHeight(self: *App) i32 {
-    return if (self.compactList()) 32 else if (self.list_view) 38 else GridCard.height + 8;
+    return if (self.compactList()) 32 else if (self.list_view or self.transfer_view.active) 38 else GridCard.height + 8;
 }
 
 pub fn cardHeight(self: *App) i32 {
-    return if (self.compactList()) 30 else if (self.list_view) 36 else GridCard.height;
+    return if (self.compactList()) 30 else if (self.list_view or self.transfer_view.active) 36 else GridCard.height;
 }
 
 /// Text baseline of a list row, from the row's top.
@@ -211,7 +214,7 @@ pub fn scrollbarGutter(self: *const App) i32 {
 }
 
 pub fn columns(self: *App) i32 {
-    return if (self.list_view) 1 else @max(1, @divTrunc(self.w - self.sidebarWidth() - 20 - self.scrollbarGutter(), 210));
+    return if (self.list_view or self.transfer_view.active) 1 else @max(1, @divTrunc(self.w - self.sidebarWidth() - 20 - self.scrollbarGutter(), 210));
 }
 
 pub fn cellWidth(self: *App) i32 {
@@ -219,11 +222,12 @@ pub fn cellWidth(self: *App) i32 {
 }
 
 pub fn contentHeight(self: *App) i32 {
-    const count: i32 = @intCast(self.items.items.len);
+    const count: i32 = @intCast(if (self.transfer_view.active) self.torrents.items().len else self.items.items.len);
     return 2 * self.itemInset() + @divTrunc(count + self.columns() - 1, self.columns()) * self.rowHeight();
 }
 
 pub fn itemAt(self: *App, x: f64, y: f64) ?usize {
+    if (self.transfer_view.active) return null;
     const gx = @as(i32, @intFromFloat(x)) - self.sidebarWidth() - 20;
     if (y < @as(f64, @floatFromInt(self.viewTop())) or y >= @as(f64, @floatFromInt(self.contentBottom()))) return null;
     const gy = @as(i32, @intFromFloat(y)) - self.viewTop() - self.itemInset() + self.scroll_y;
@@ -236,7 +240,7 @@ pub fn itemAt(self: *App, x: f64, y: f64) ?usize {
 
 /// The repository the folder belongs to, whether or not Git View is on.
 pub fn foundRepository(self: *App) ?git.Repository {
-    if (self.chooser != null) return null;
+    if (self.chooser != null or self.transfer_view.active) return null;
     return if (self.snapshot) |snap| snap.repository else null;
 }
 
@@ -254,7 +258,16 @@ pub fn changedOnly(self: *App) bool {
 }
 
 pub fn columnLabels(self: *App) []const []const u8 {
-    return if (self.repository() != null) &.{ "Name", "Git" } else if (self.isRecent()) &.{ "Name", "Size", "Type", "Opened", "Permissions" } else &column_labels;
+    const messages: []const i18n.Message = if (self.transfer_view.active)
+        &.{ i18n.msg("Name"), i18n.msg("Status"), i18n.msg("Progress"), i18n.msg("Download"), i18n.msg("Upload") }
+    else if (self.repository() != null)
+        &.{ i18n.msg("Name"), i18n.msg("Git") }
+    else if (self.isRecent())
+        &.{ i18n.msg("Name"), i18n.msg("Size"), i18n.msg("Type"), i18n.msg("Opened"), i18n.msg("Permissions") }
+    else
+        &.{ i18n.msg("Name"), i18n.msg("Size"), i18n.msg("Type"), i18n.msg("Modified"), i18n.msg("Permissions") };
+    for (messages, 0..) |message, i| self.column_label_text[i] = message.get();
+    return self.column_label_text[0..messages.len];
 }
 
 pub fn columnMinimums(width: f64) [5]f64 {
@@ -269,6 +282,9 @@ pub fn columnMinimums(width: f64) [5]f64 {
 
 pub fn listWidths(self: *App) [5]f64 {
     const width: f64 = @floatFromInt(self.cellWidth() - 20);
+    if (self.transfer_view.active) {
+        return .{ width * 0.36, width * 0.25, width * 0.13, width * 0.13, width * 0.13 };
+    }
     if (self.repository() != null) {
         if (self.git_column_widths) |widths| return widths;
         const minimum = gitColumnMinimums(width);
@@ -276,6 +292,7 @@ pub fn listWidths(self: *App) [5]f64 {
         return .{ name, width - name, 0, 0, 0 };
     }
     if (self.column_widths) |widths| return widths;
+    if (self.hasFolderTransfers()) return .{ width * 0.50, width * 0.10, width * 0.12, width * 0.18, width * 0.10 };
     const minimum = columnMinimums(width);
     const detail = @max(minimum[1], @min(110, width * 0.14));
     const modified = @max(minimum[3], @min(160, width * 0.20));
@@ -299,7 +316,7 @@ pub fn listColumn(self: *App, column: usize) header.Rect {
 }
 
 pub fn columnBoundary(self: *App, x: f64, y: f64) ?usize {
-    if (!self.list_view or self.dialog != null or self.menu != null) return null;
+    if (self.transfer_view.active or !self.list_view or self.dialog != null or self.menu != null) return null;
     if (x < @as(f64, @floatFromInt(self.sidebarWidth())) or x >= @as(f64, @floatFromInt(self.w - self.scrollbarGutter()))) return null;
     for (0..self.columnLabels().len - 1) |i| {
         const rect = self.listColumn(i);
@@ -330,7 +347,7 @@ pub fn sizeButtonRect(self: *App, idx: usize) ?header.Rect {
     if (self.repository() != null) return null;
     if (idx >= self.items.items.len) return null;
     const item = self.items.items[idx];
-    if (!item.is_dir or item.is_symlink) return null;
+    if (!item.is_dir or item.is_symlink or item.transfer_stub) return null;
     const cols = self.columns();
     const cell = self.cellWidth();
     const i: i32 = @intCast(idx);

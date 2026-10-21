@@ -1,6 +1,8 @@
 //! PDF viewer pointer input: motion, clicks, selection and toolbar.
 
 const std = @import("std");
+const i18n = @import("i18n");
+const tr = i18n.tr;
 const App = @import("app.zig").App;
 const layout = @import("layout.zig");
 const selection = @import("selection.zig");
@@ -174,7 +176,7 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
                             self.clipboard_text = copy;
                             self.clipboard_request = true;
                             self.dialog = .information;
-                            self.error_message = "Link copied. Paste it into your browser.";
+                            self.error_message = tr("Link copied. Paste it into your browser.");
                             self.dirty = true;
                         },
                     }

@@ -1,4 +1,5 @@
 //! Systemd Settings page. Data and requests outlive widget-tree rebuilds.
+const i18n = @import("i18n");
 const std = @import("std");
 const ui = @import("ui");
 const cairo = @import("ui").cairo;
@@ -118,7 +119,7 @@ pub fn build(s: *Section, cc: *panel.ControlCenter) void {
     s.rows = &.{};
     const client = cc.systemd_client orelse {
         if (saved) |field| gpa.free(field.value);
-        s.root = text("Systemd is unavailable.", true);
+        s.root = text(i18n.tr("Systemd is unavailable."), true);
         return;
     };
     s.root = tree(s, cc, client, s.arena.allocator(), saved) catch blk: {
@@ -141,9 +142,9 @@ fn tree(s: *Section, cc: *panel.ControlCenter, client: *systemd.Client, a: std.m
     const compact = table_width < 444;
     var content: std.ArrayList(W) = .empty;
     const locked = !client.unlocked;
-    var hint = text(if (client.unlocking) "Waiting for authentication…" else if (locked) "Unlock to make service changes." else "Service changes are unlocked for this session.", true);
+    var hint = text(if (client.unlocking) i18n.tr("Waiting for authentication…") else if (locked) i18n.tr("Unlock to make service changes.") else i18n.tr("Service changes are unlocked for this session."), true);
     hint.width = if (compact) .{ .percent = 1 } else .{ .flex = 1 };
-    var lock_button = named(button(cc, if (client.unlocked) "Lock" else "Unlock", 0, lockClicked, client.unlocking), "services_unlock");
+    var lock_button = named(button(cc, if (client.unlocked) i18n.tr("Lock") else i18n.tr("Unlock"), 0, lockClicked, client.unlocking), "services_unlock");
     lock_button.kind.button.leading_icon = if (client.unlocked) .checkmark else .lock;
     lock_button.width = if (compact) .{ .percent = 1 } else .auto;
     try tryAppend(&content, a, try group(a, &.{ hint, lock_button }, compact));
@@ -152,16 +153,16 @@ fn tree(s: *Section, cc: *panel.ControlCenter, client: *systemd.Client, a: std.m
         enabled += 1;
     };
     var summary = try group(a, &.{
-        text(try std.fmt.allocPrint(a, "Boot time: {s}", .{duration(a, client.boot_us)}), false),
-        text(try std.fmt.allocPrint(a, "{d} services, {d} enabled", .{ units.len, enabled }), true),
+        text(try i18n.allocPrint(a, i18n.tr("Boot time: {duration}"), .{ .duration = duration(a, client.boot_us) }), false),
+        text(try i18n.allocPrint(a, i18n.trn("{n} service, {enabled} enabled", "{n} services, {enabled} enabled", units.len), .{ .n = units.len, .enabled = enabled }), true),
     }, true);
     summary.width = .{ .flex = 1 };
-    var analyze_button = named(button(cc, if (client.analyzing) "Analyzing…" else "Analyze", 0, analyze, client.busy()), "services_analyze");
+    var analyze_button = named(button(cc, if (client.analyzing) i18n.tr("Analyzing…") else i18n.tr("Analyze"), 0, analyze, client.busy()), "services_analyze");
     analyze_button.kind.button.variant = .primary;
     var actions = try group(a, &.{
         analyze_button,
-        named(button(cc, "Optimize", 0, noop, true), "services_optimize"),
-        named(button(cc, "Refresh", 0, refresh, client.busy()), "services_refresh"),
+        named(button(cc, i18n.tr("Optimize"), 0, noop, true), "services_optimize"),
+        named(button(cc, i18n.tr("Refresh"), 0, refresh, client.busy()), "services_refresh"),
     }, false);
     actions.width = .auto;
     var banner = try group(a, &.{ summary, actions }, narrow);
@@ -169,11 +170,11 @@ fn tree(s: *Section, cc: *panel.ControlCenter, client: *systemd.Client, a: std.m
     banner.padding = ui.layout.Edges.all(12);
     try tryAppend(&content, a, banner);
     const field = try a.create(W);
-    field.* = .{ .name = "services_search", .kind = .{ .text_input = saved orelse .{ .field = .{ .leading_icon = .search }, .placeholder = "Search services…", .value = try gpa.dupe(u8, ""), .owner = cc, .on_change = searchChanged } }, .height = .{ .fixed = 36 }, .width = .{ .percent = 1 } };
+    field.* = .{ .name = "services_search", .kind = .{ .text_input = saved orelse .{ .field = .{ .leading_icon = .search }, .placeholder = i18n.tr("Search services…"), .value = try gpa.dupe(u8, ""), .owner = cc, .on_change = searchChanged } }, .height = .{ .fixed = 36 }, .width = .{ .percent = 1 } };
     s.search = field;
     var filters: [5]W = undefined;
-    inline for (.{ "All", "Enabled", "Slow", "Disabled", "Failed" }, 0..) |label, i| {
-        filters[i] = named(button(cc, label, i, filterClicked, i == 2 and !client.analyzed), label);
+    inline for (.{ i18n.msg("All"), i18n.msg("Enabled"), i18n.msg("Slow"), i18n.msg("Disabled"), i18n.msg("Failed") }, 0..) |label, i| {
+        filters[i] = named(button(cc, label.get(), i, filterClicked, i == 2 and !client.analyzed), label.source);
         if (@intFromEnum(s.filter) == i) filters[i].kind.button.variant = .primary;
     }
     const search_column: W = .{ .kind = .container, .direction = .column, .width = .{ .flex = 1 }, .children = field[0..1] };
@@ -184,22 +185,22 @@ fn tree(s: *Section, cc: *panel.ControlCenter, client: *systemd.Client, a: std.m
     const toolbar = named(try group(a, &.{ search_column, filter_row }, false), "services_toolbar");
 
     if (client.status().len > 0) try tryAppend(&content, a, text(try a.dupe(u8, client.status()), false));
-    if (s.filter == .slow) try tryAppend(&content, a, text("Services taking at least 1 second to activate.", true));
+    if (s.filter == .slow) try tryAppend(&content, a, text(i18n.tr("Services taking at least 1 second to activate."), true));
     if (s.selected) |selected| {
         if (client.snapshot.index.get(selected)) |i| {
             const unit = units[i];
             try tryAppend(&content, a, text(try a.dupe(u8, selected), false));
             try tryAppend(&content, a, try group(a, &.{
-                named(button(cc, "Start", @intFromEnum(systemd.Action.start), actionClicked, locked or client.busy() or std.mem.eql(u8, unit.active, "active") or std.mem.startsWith(u8, unit.startup, "masked")), "services_start"),
-                named(button(cc, "Stop", @intFromEnum(systemd.Action.stop), actionClicked, locked or client.busy() or std.mem.eql(u8, unit.active, "inactive")), "services_stop"),
-                named(button(cc, "Restart", @intFromEnum(systemd.Action.restart), actionClicked, locked or client.busy() or std.mem.startsWith(u8, unit.startup, "masked")), "services_restart"),
+                named(button(cc, i18n.tr("Start"), @intFromEnum(systemd.Action.start), actionClicked, locked or client.busy() or std.mem.eql(u8, unit.active, "active") or std.mem.startsWith(u8, unit.startup, "masked")), "services_start"),
+                named(button(cc, i18n.tr("Stop"), @intFromEnum(systemd.Action.stop), actionClicked, locked or client.busy() or std.mem.eql(u8, unit.active, "inactive")), "services_stop"),
+                named(button(cc, i18n.tr("Restart"), @intFromEnum(systemd.Action.restart), actionClicked, locked or client.busy() or std.mem.startsWith(u8, unit.startup, "masked")), "services_restart"),
             }, false));
-            if (unit.trigger.len > 0) try tryAppend(&content, a, text(try std.fmt.allocPrint(a, "Activated by: {s}", .{unit.trigger}), true));
+            if (unit.trigger.len > 0) try tryAppend(&content, a, text(try i18n.allocPrint(a, i18n.tr("Activated by: {name}"), .{ .name = unit.trigger }), true));
         }
     }
-    try tryAppend(&content, a, text("Startup settings apply at boot. Deferred is coming later.", true));
-    try tryAppend(&content, a, text("Notify sets the service type and applies on its next start. Saving requires administrator authentication.", true));
-    if (client.analyzed) try tryAppend(&content, a, text("Boot: from kernel start. Activation times overlap; — means unavailable.", true));
+    try tryAppend(&content, a, text(i18n.tr("Startup settings apply at boot. Deferred is coming later."), true));
+    try tryAppend(&content, a, text(i18n.tr("Notify sets the service type and applies on its next start. Saving requires administrator authentication."), true));
+    if (client.analyzed) try tryAppend(&content, a, text(i18n.tr("Boot: from kernel start. Activation times overlap; — means unavailable."), true));
 
     try tryAppend(&content, a, toolbar);
 
@@ -213,8 +214,8 @@ fn tree(s: *Section, cc: *panel.ControlCenter, client: *systemd.Client, a: std.m
     std.mem.sort(usize, sorted[0..count], SortContext{ .section = s, .units = units }, less);
     var table: std.ArrayList(W) = .empty;
     var headers: [5]W = undefined;
-    inline for (.{ "Service", "Status", "Start mode", "Notify", "Startup time" }, 0..) |label, i| {
-        headers[i] = try columnHeader(a, cc, s, label, i);
+    inline for (.{ i18n.msg("Service"), i18n.msg("Status"), i18n.msg("Start mode"), i18n.msg("Notify"), i18n.msg("Startup time") }, 0..) |label, i| {
+        headers[i] = try columnHeader(a, cc, s, label.get(), i);
     }
     var header = try group(a, &headers, false);
     header.name = "services_columns";
@@ -254,13 +255,13 @@ fn tree(s: *Section, cc: *panel.ControlCenter, client: *systemd.Client, a: std.m
         }, false);
         status_widget.children[0].gap = 6;
         status_widget.children[0].children[1].width = .{ .flex = 1 };
-        const choices: []const []const u8 = if (unit.editable()) &.{ "Enabled", "Disabled", "Deferred" } else try a.dupe([]const u8, &.{try a.dupe(u8, unit.startup)});
+        const choices: []const []const u8 = if (unit.editable()) panel.translatedLabels(&.{ i18n.msg("Enabled"), i18n.msg("Disabled"), i18n.msg("Deferred") }) else try a.dupe([]const u8, &.{try a.dupe(u8, unit.startup)});
         const initial: usize = if (unit.editable() and !unit.enabled()) 1 else 0;
         const type_index = systemd.typeIndex(unit.service_type);
         const notify_labels = if (type_index != null) systemd.service_types else blk: {
             const labels = try a.alloc([]const u8, systemd.service_types.len + 1);
             @memcpy(labels[0..systemd.service_types.len], systemd.service_types);
-            labels[systemd.service_types.len] = if (unit.service_type.len > 0) try a.dupe(u8, unit.service_type) else "Unavailable";
+            labels[systemd.service_types.len] = if (unit.service_type.len > 0) try a.dupe(u8, unit.service_type) else i18n.tr("Unavailable");
             break :blk labels;
         };
         const notify_initial = type_index orelse systemd.service_types.len;
@@ -302,7 +303,7 @@ fn tree(s: *Section, cc: *panel.ControlCenter, client: *systemd.Client, a: std.m
         row.height = .{ .fixed = if (!stacked) 54 else if (compact) 130 else 88 };
         try tryAppend(&rows, a, row);
     }
-    if (count == 0) try tryAppend(&rows, a, try placeholder(a, if (client.awaitingList()) "Loading services…" else "No matching services."));
+    if (count == 0) try tryAppend(&rows, a, try placeholder(a, if (client.awaitingList()) i18n.tr("Loading services…") else i18n.tr("No matching services.")));
     var body = try group(a, rows.items, true);
     body.gap = 2;
     body.padding = ui.layout.Edges.xy(0, 8);

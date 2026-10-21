@@ -194,7 +194,7 @@ pub fn onFocusZoomChanged(owner: ?*anyopaque, _: usize, index: usize) void {
     };
     server.config.compositor.focus_zoom = mode;
     server.world.refreshFocusZoom();
-    s.focus_zoom_children[2].kind.text.content = focus_zoom_descriptions[index];
+    s.focus_zoom_children[2].kind.text.content = focus_zoom_descriptions[index].get();
     s.focus_zoom_children[2].markDirty();
 }
 

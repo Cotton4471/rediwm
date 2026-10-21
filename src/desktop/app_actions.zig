@@ -1,6 +1,7 @@
 //! Desktop actions: clipboard, context menus, renaming and deleting.
 
 const std = @import("std");
+const i18n = @import("i18n");
 const App = @import("app.zig").App;
 const grid = @import("grid.zig");
 const watcher = @import("watcher.zig");
@@ -36,14 +37,16 @@ pub fn menuBuiltin(self: *const App) watcher.Builtin {
 }
 
 pub fn menuLabels(self: *App) []const []const u8 {
-    switch (self.menuBuiltin()) {
-        .home => return &.{"Open"},
-        .trash => return &.{ "Open", "Empty Trash…" },
-        .none => {},
-    }
-    const icon_labels = [_][]const u8{ "Open", "Open With…", "Cut", "Copy", "Rename", "Move to Trash", "Properties", "Allow Launching" };
-    if (self.menu_icon) |index| return if (self.untrustedLauncher(index)) &icon_labels else icon_labels[0 .. icon_labels.len - 1];
-    return &.{ "New Folder", "New File", "Add Application…", "Paste", "Refresh", "Change Wallpaper", "Desktop Settings" };
+    const icon_labels = [_]i18n.Message{ i18n.msg("Open"), i18n.msg("Open With…"), i18n.msg("Cut"), i18n.msg("Copy"), i18n.msg("Rename"), i18n.msg("Move to Trash"), i18n.msg("Properties"), i18n.msg("Allow Launching") };
+    const desktop_labels = [_]i18n.Message{ i18n.msg("New Folder"), i18n.msg("New File"), i18n.msg("Add Application…"), i18n.msg("Paste"), i18n.msg("Refresh"), i18n.msg("Change Wallpaper"), i18n.msg("Desktop Settings") };
+    const trash_labels = [_]i18n.Message{ i18n.msg("Open"), i18n.msg("Empty Trash…") };
+    const messages: []const i18n.Message = switch (self.menuBuiltin()) {
+        .home => icon_labels[0..1],
+        .trash => &trash_labels,
+        .none => if (self.menu_icon) |index| (if (self.untrustedLauncher(index)) &icon_labels else icon_labels[0 .. icon_labels.len - 1]) else &desktop_labels,
+    };
+    for (messages, 0..) |message, i| self.menu_labels[i] = message.get();
+    return self.menu_labels[0..messages.len];
 }
 
 pub fn menuIcon(self: *App, row: usize) @import("ui").layout.IconId {
@@ -101,11 +104,17 @@ pub fn menuAction(self: *App, row: usize) void {
             4 => self.worker.requestRefresh(),
             5 => self.host.openAppearance() catch |err| switch (err) {
                 error.Unsupported => self.worker.enqueue(.{ .kind = .settings, .path = "" }),
-                else => self.notify("Could not open Appearance: {s}", .{@errorName(err)}),
+                else => {
+                    var message: [512]u8 = undefined;
+                    self.notify("{s}", .{i18n.fmt(&message, i18n.tr("Could not open Appearance: {error}"), .{ .@"error" = @errorName(err) }) catch return});
+                },
             },
             6 => self.host.openDesktopSettings() catch |err| switch (err) {
                 error.Unsupported => self.worker.enqueue(.{ .kind = .settings, .path = "" }),
-                else => self.notify("Could not open Desktop Settings: {s}", .{@errorName(err)}),
+                else => {
+                    var message: [512]u8 = undefined;
+                    self.notify("{s}", .{i18n.fmt(&message, i18n.tr("Could not open Desktop Settings: {error}"), .{ .@"error" = @errorName(err) }) catch return});
+                },
             },
             else => {},
         }
@@ -134,7 +143,7 @@ pub fn beginEdit(self: *App, kind: @FieldType(App, "edit")) void {
     self.closePicker();
     self.edit = kind;
     if (kind == .folder) {
-        const path = std.fmt.allocPrint(a, "{s}/New Folder", .{self.worker.dir}) catch {
+        const path = std.fmt.allocPrint(a, "{s}/{s}", .{ self.worker.dir, i18n.tr("New Folder") }) catch {
             self.edit = .none;
             return;
         };
@@ -175,7 +184,7 @@ pub fn beginEdit(self: *App, kind: @FieldType(App, "edit")) void {
         };
         self.edit = .none;
     }
-    if (kind == .file) self.edit_text.appendSlice(a, "New File") catch {};
+    if (kind == .file) self.edit_text.appendSlice(a, i18n.tr("New File")) catch {};
 }
 
 pub fn deleteAction(self: *App, action: deletion.Action) void {

@@ -23,15 +23,15 @@ case "$family" in
         # A container image is a snapshot: refresh it so the release links
         # what rolling users have today.
         pacman -Syu --noconfirm
-        extra="xorg-xwayland xdg-desktop-portal xdg-desktop-portal-wlr xdg-desktop-portal-gtk python mesa"
+        extra="xorg-xwayland xdg-desktop-portal xdg-desktop-portal-wlr xdg-desktop-portal-gtk python mesa squashfs-tools"
         owner() { pacman -Qqo "$1" 2>/dev/null; }
         ;;
     debian|ubuntu)
-        extra="xwayland xdg-desktop-portal xdg-desktop-portal-wlr xdg-desktop-portal-gtk python3 xkb-data libgl1-mesa-dri libegl-mesa0"
+        extra="xwayland xdg-desktop-portal xdg-desktop-portal-wlr xdg-desktop-portal-gtk python3 xkb-data libgl1-mesa-dri libegl-mesa0 squashfs-tools"
         owner() { { dpkg-query -S "$1" 2>/dev/null || dpkg-query -S "/usr$1" 2>/dev/null; } | head -n 1 | sed 's/:.*//'; }
         ;;
     fedora)
-        extra="xorg-x11-server-Xwayland xdg-desktop-portal xdg-desktop-portal-wlr xdg-desktop-portal-gtk python3 mesa-dri-drivers"
+        extra="xorg-x11-server-Xwayland xdg-desktop-portal xdg-desktop-portal-wlr xdg-desktop-portal-gtk python3 mesa-dri-drivers squashfs-tools"
         owner() { rpm -qf --qf '%{NAME}\n' "$1" 2>/dev/null | head -n 1; }
         ;;
     *) die "unknown family '$family' (arch, debian, ubuntu, fedora)" ;;

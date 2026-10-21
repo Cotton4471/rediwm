@@ -46,8 +46,48 @@ pub fn bindingSyms(config: anytype, state: *xkb.State, key: xkb.Keycode, mods: a
         const fallback = state.getKeymap().keyGetSymsByLevel(key, 0, 0);
         for (fallback) |sym| if (config.lookupKeybind(mods, sym) != null) return fallback;
     }
+    // A Cyrillic-only keymap has no Latin group to fall back to. Resolve
+    // modifier-letter shortcuts by the XKB physical key name in that case;
+    // never add a text layout or change the active state's keysyms.
+    if (mods.logo or mods.ctrl or mods.alt) {
+        if (latinLetterSyms(state.getKeymap(), key, mods.shift)) |latin| {
+            if (config.lookupKeybind(mods, latin[0]) != null) return latin;
+            if (mods.shift) if (latinLetterSyms(state.getKeymap(), key, false)) |base| {
+                if (config.lookupKeybind(mods, base[0]) != null) return base;
+            };
+        }
+    }
     if (layout == 0) return active;
     return shifted_fallback;
+}
+
+const latin_lower = letterSyms("qwertyuiopasdfghjklzxcvbnm");
+const latin_upper = letterSyms("QWERTYUIOPASDFGHJKLZXCVBNM");
+
+fn letterSyms(comptime letters: []const u8) [letters.len]xkb.Keysym {
+    var syms: [letters.len]xkb.Keysym = undefined;
+    for (letters, 0..) |letter, i| syms[i] = @enumFromInt(letter);
+    return syms;
+}
+
+fn latinLetterSyms(map: *xkb.Keymap, key: xkb.Keycode, shifted: bool) ?[]const xkb.Keysym {
+    // Preserve the user's physical Latin layout (AZERTY, Dvorak, etc.) when
+    // one exists. This fallback is only for a key without any Latin group.
+    for (0..map.numLayoutsForKey(key)) |layout| {
+        for (map.keyGetSymsByLevel(key, @intCast(layout), 0)) |sym| {
+            const value = @intFromEnum(sym);
+            if ((value >= 'a' and value <= 'z') or (value >= 'A' and value <= 'Z')) return null;
+        }
+    }
+    const physical = std.mem.span(map.keyGetName(key) orelse return null);
+    if (physical.len != 4 or physical[2] != '0' or physical[3] < '1' or physical[3] > '9') {
+        // The tenth key in the top letter row is P.
+        if (!std.mem.eql(u8, physical, "AD10")) return null;
+        return if (shifted) latin_upper[9..10] else latin_lower[9..10];
+    }
+    const column: usize = physical[3] - '1';
+    const index = if (std.mem.eql(u8, physical[0..2], "AD")) column else if (std.mem.eql(u8, physical[0..2], "AC")) column + 10 else if (std.mem.eql(u8, physical[0..2], "AB") and column < 7) column + 19 else return null;
+    return if (shifted) latin_upper[index .. index + 1] else latin_lower[index .. index + 1];
 }
 
 pub fn namesEqual(a: anytype, b: @TypeOf(a)) bool {
@@ -101,4 +141,42 @@ test "invalid layout rejects config and empty layout compiles" {
     , "bad-layout"));
     const map = try compile(std.testing.allocator, loader.InputConfig{});
     defer map.unref();
+}
+
+test "Cyrillic-only keymaps keep Latin modifier shortcuts and Cyrillic text" {
+    const loader = @import("loader.zig");
+    const ModifierMask = @import("keybinds.zig").ModifierMask;
+    inline for (.{ "ru", "ua" }) |layout| {
+        var cfg = try loader.parse(
+            std.testing.allocator,
+            "[input]\nxkb_layout = \"" ++ layout ++ "\"\n" ++
+                "[keybinds]\n\"super+t\" = \"noop\"\n\"super+shift+T\" = \"noop\"\n" ++
+                "\"ctrl+t\" = \"noop\"\n\"alt+t\" = \"noop\"\n\"t\" = \"noop\"\n",
+            "cyrillic-only",
+        );
+        defer cfg.deinit();
+        const map = cfg.keyboard_keymap.?;
+        try std.testing.expectEqual(@as(u32, 1), map.numLayouts());
+        const state = xkb.State.new(map) orelse return error.InvalidKeymap;
+        defer state.unref();
+        const key = map.keyByName("AD05");
+        for ([_]ModifierMask{ .{ .logo = true }, .{ .ctrl = true }, .{ .alt = true } }) |mods| {
+            try std.testing.expectEqual(@as(u32, xkb.Keysym.t), @intFromEnum(bindingSyms(&cfg, state, key, mods)[0]));
+        }
+        try std.testing.expectEqual(@as(u32, xkb.Keysym.Cyrillic_ie), @intFromEnum(state.keyGetSyms(key)[0]));
+        try std.testing.expectEqual(@as(u32, xkb.Keysym.Cyrillic_ie), @intFromEnum(bindingSyms(&cfg, state, key, ModifierMask{})[0]));
+        _ = state.updateMask(1, 0, 0, 0, 0, 0);
+        try std.testing.expectEqual(@as(u32, xkb.Keysym.T), @intFromEnum(bindingSyms(&cfg, state, key, ModifierMask{ .logo = true, .shift = true })[0]));
+    }
+    var explicit = try loader.parse(std.testing.allocator,
+        \\[input]
+        \\xkb_layout = "ru"
+        \\[keybinds]
+        \\"super+Cyrillic_ie" = "noop"
+        \\"super+t" = "noop"
+    , "explicit-cyrillic");
+    defer explicit.deinit();
+    const state = xkb.State.new(explicit.keyboard_keymap.?) orelse return error.InvalidKeymap;
+    defer state.unref();
+    try std.testing.expectEqual(@as(u32, xkb.Keysym.Cyrillic_ie), @intFromEnum(bindingSyms(&explicit, state, 28, ModifierMask{ .logo = true })[0]));
 }

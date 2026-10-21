@@ -63,6 +63,7 @@ test {
     _ = @import("ui").shell_icons;
     _ = @import("icon_theme.zig");
     _ = @import("icon_service.zig");
+    _ = @import("server/icons.zig");
     _ = @import("chrome.zig");
     _ = @import("color.zig");
     _ = @import("ipc/stats.zig");

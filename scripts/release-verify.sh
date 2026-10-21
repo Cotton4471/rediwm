@@ -52,14 +52,18 @@ log "Checking the installed files"
 for bin in /usr/local/bin/rediwm /usr/local/bin/rediwm-*; do
     readelf -d "$bin" 2>/dev/null | grep -E 'RUNPATH|RPATH' | grep -q "/work/" && die "$bin carries a build path in its RUNPATH"
 done
-for bin in rediwm rediwm-msg rediwm-theme rediwm-files rediwm-files-terminal rediwm-images rediwm-monitor rediwm-editor rediwm-pdf rediwm-share-picker rediwm-session rediwm-dm rediwm-accounts-helper; do
+for bin in rediwm rediwm-msg rediwm-theme rediwm-files rediwm-files-terminal rediwm-transfers rediwm-images rediwm-monitor rediwm-calculator rediwm-editor rediwm-pdf rediwm-share-picker rediwm-session rediwm-dm rediwm-accounts-helper; do
     [ -x "/usr/local/bin/$bin" ] || die "/usr/local/bin/$bin is missing"
     ldd "/usr/local/bin/$bin" 2>&1 | grep -q 'not found' && die "$bin has unresolved libraries"
 done
+[ -f /usr/local/share/applications/rediwm-transfers.desktop ] || die "the torrent handler is missing"
+[ -f /usr/local/share/applications/rediwm-calculator.desktop ] || die "the Calculator launcher is missing"
+[ -f /usr/local/share/icons/hicolor/scalable/apps/rediwm-calculator.svg ] || die "the Calculator icon is missing"
 [ -f /usr/share/wayland-sessions/rediwm-release-safe.desktop ] || die "the session entry is missing"
 [ -d /usr/local/lib/rediwm ] || die "the bundled libraries are missing"
 runuser -u tester -- test -r /usr/local/lib/rediwm/files-bash.so || die "the Files Bash integration is missing or unreadable"
 runuser -u tester -- test -r /usr/local/share/licenses/rediwm/libvterm-LICENSE || die "the libvterm license is missing or unreadable"
+runuser -u tester -- test -r /usr/local/share/licenses/rediwm/libtorrent-LICENSE || die "the libtorrent license is missing or unreadable"
 for asset in theme.toml icons/folder.png icons/user-home.png icons/user-trash.png wallpapers/wallpaper-gold.png; do
     runuser -u tester -- test -r "/usr/local/share/rediwm/themes/gold/$asset" || die "Gold theme asset is missing or unreadable: $asset"
 done

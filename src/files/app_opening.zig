@@ -1,6 +1,8 @@
 //! Files opening: preview, editor, archives, extraction and activation.
 
 const std = @import("std");
+const i18n = @import("i18n");
+const tr = i18n.tr;
 const App = @import("app.zig").App;
 const archive = @import("archive.zig");
 const c = @import("c.zig").api;
@@ -8,6 +10,15 @@ const image_formats = @import("../images/formats.zig");
 const theme = @import("../icon_theme.zig");
 const chooser_mod = @import("chooser.zig");
 const Editor = @import("editor.zig").Editor;
+
+pub fn addApplication(self: *App) void {
+    const path = self.selectedAppImage() orelse return;
+    self.worker.addApplication(path) catch |err| {
+        self.setStatusNotice(if (err == error.Busy) tr("An application is already being added") else tr("Could not add the application"), true);
+        return;
+    };
+    self.setStatusNotice(tr("Adding to applications…"), false);
+}
 
 pub fn previewSelected(self: *App) void {
     if (self.chooser != null) return;
@@ -37,7 +48,7 @@ pub fn previewSelected(self: *App) void {
     if (self.preview_return_fd != null) return;
     self.launchPreview(selected) catch |err| {
         std.log.warn("could not launch image preview: {}", .{err});
-        self.setStatusNotice("Could not open image viewer", true);
+        self.setStatusNotice(tr("Could not open image viewer"), true);
     };
 }
 
@@ -49,7 +60,7 @@ pub fn launchEditor(self: *App, token: []const u8) void {
     var child = std.process.spawn(self.io, .{
         .argv = &.{ @import("../editor/operation.zig").executable(&exe, "rediwm-editor"), "--activation-token", token, "--", path },
     }) catch {
-        self.setStatusNotice("Could not open Text Editor", true);
+        self.setStatusNotice(tr("Could not open Text Editor"), true);
         return;
     };
     self.worker.recordOpened(path);
@@ -123,16 +134,20 @@ pub fn isPdf(path: []const u8) bool {
 
 pub fn openFile(self: *App, path: []const u8) void {
     if (self.chooser != null) return;
+    if (@import("app_torrents.zig").enabled and std.ascii.endsWithIgnoreCase(path, ".torrent")) {
+        self.torrentSource(path);
+        return;
+    }
     if (std.ascii.endsWithIgnoreCase(path, ".rediwm-theme")) {
         self.worker.installTheme(path);
-        self.setStatusNotice("Installing theme…", false);
+        self.setStatusNotice(tr("Installing theme…"), false);
         return;
     }
     const pdf = isPdf(path) and !@import("associations.zig").hasAlternativeDefault(path, "rediwm-pdf.desktop");
     if (!pdf) {
         @import("associations.zig").launchDefault(path) catch |err| {
             std.log.warn("failed to open '{s}': {}", .{ path, err });
-            self.setStatusNotice("Could not open file", true);
+            self.setStatusNotice(tr("Could not open file"), true);
             return;
         };
         self.worker.recordOpened(path);
@@ -153,7 +168,7 @@ pub fn openFile(self: *App, path: []const u8) void {
         .argv = &.{ executable, "--", path },
     }) catch |err| {
         std.log.warn("failed to open '{s}': {}", .{ path, err });
-        self.setStatusNotice("Could not open file", true);
+        self.setStatusNotice(tr("Could not open file"), true);
         return;
     };
 
@@ -171,7 +186,7 @@ pub fn browseArchive(self: *App, path: []const u8) void {
 pub fn startExtraction(self: *App, path: []const u8, destination: []const u8) void {
     const runner = self.job_runner orelse return;
     runner.startArchive(path, destination, null) catch |err| {
-        self.setStatusNotice(if (err == error.Busy) "A file operation is already running" else "Could not start extraction", true);
+        self.setStatusNotice(if (err == error.Busy) tr("A file operation is already running") else tr("Could not start extraction"), true);
         return;
     };
     self.job_was_running = true;
@@ -184,7 +199,7 @@ pub fn openArchiveMember(self: *App, path: []const u8, preview: bool) void {
     if (len == 0 or path.len <= len) return;
     const runner = self.job_runner orelse return;
     runner.startArchive(self.history.current[0..len], "/tmp", path[len + 1 ..]) catch |err| {
-        self.setStatusNotice(if (err == error.Busy) "A file operation is already running" else "Could not open archive member", true);
+        self.setStatusNotice(if (err == error.Busy) tr("A file operation is already running") else tr("Could not open archive member"), true);
         return;
     };
     self.archive_preview = preview;
@@ -196,7 +211,7 @@ pub fn openArchiveMember(self: *App, path: []const u8, preview: bool) void {
 
 pub fn openExtracted(self: *App, path: []const u8, preview: bool) void {
     if (preview and image_formats.candidate(path)) {
-        self.previewExtracted(path) catch self.setStatusNotice("Could not open image viewer", true);
+        self.previewExtracted(path) catch self.setStatusNotice(tr("Could not open image viewer"), true);
     } else if (preview and @import("../editor/formats.zig").candidate(path)) {
         if (self.editor_path == null) self.editor_path = self.allocator.dupeZ(u8, path) catch null;
     } else if (!preview or isPdf(path)) self.openFile(path);
@@ -233,7 +248,7 @@ pub fn chooseExtractionFolder(self: *App) void {
         .stdout = .pipe,
     }) catch {
         self.allocator.free(source);
-        self.setStatusNotice("Could not open folder picker", true);
+        self.setStatusNotice(tr("Could not open folder picker"), true);
         return;
     };
     const fd = child.stdout.?.handle;
@@ -243,7 +258,7 @@ pub fn chooseExtractionFolder(self: *App) void {
         _ = c.close(fd);
         child.kill(self.io);
         self.allocator.free(source);
-        self.setStatusNotice("Could not open folder picker", true);
+        self.setStatusNotice(tr("Could not open folder picker"), true);
         return;
     }
     self.children.add(self.allocator, child.id.?) catch {
@@ -266,14 +281,14 @@ pub fn extractionFolderReady(self: *App) void {
             .AGAIN => return,
             else => {
                 self.closeExtractPicker();
-                self.setStatusNotice("Could not read folder picker result", true);
+                self.setStatusNotice(tr("Could not read folder picker result"), true);
                 return;
             },
         };
         if (n == 0) break;
         if (self.extract_picker_bytes.items.len + @as(usize, @intCast(n)) > 65536) {
             self.closeExtractPicker();
-            self.setStatusNotice("Invalid folder picker result", true);
+            self.setStatusNotice(tr("Invalid folder picker result"), true);
             return;
         }
         self.extract_picker_bytes.appendSlice(self.allocator, buffer[0..@intCast(n)]) catch {
@@ -284,7 +299,7 @@ pub fn extractionFolderReady(self: *App) void {
     defer self.closeExtractPicker();
     if (self.extract_picker_bytes.items.len == 0) return;
     const parsed = std.json.parseFromSlice(chooser_mod.Result, self.allocator, self.extract_picker_bytes.items, .{}) catch {
-        self.setStatusNotice("Invalid folder picker result", true);
+        self.setStatusNotice(tr("Invalid folder picker result"), true);
         return;
     };
     defer parsed.deinit();
@@ -296,6 +311,12 @@ pub fn extractionFolderReady(self: *App) void {
 pub fn activateItem(self: *App, idx: usize) void {
     if (idx >= self.items.items.len) return;
     const item = self.items.items[idx];
+    if (item.transfer_stub or std.ascii.endsWithIgnoreCase(item.name, ".torrent")) {
+        if (self.torrentForItem(idx)) |t| {
+            self.openTorrentDetails(t.id);
+            return;
+        }
+    }
     if (item.is_broken or item.missing) {
         return;
     }

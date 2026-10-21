@@ -58,7 +58,9 @@ Settings is an ordinary window with a compositor-drawn body (`Backend.shell`).
 
 * Global search uses `search_index.zig` destinations (widget names or `@` plus
   visible label text), without building hidden sections. Add an index entry
-  with new settings. A selected category can be covered by search results:
-  background callbacks must use `showingPage`, rather than `page`, to decide
-  whether to refresh or fetch for it. The search field owns its text across
-  rebuilds; result widgets/strings belong to a separate arena.
+  with new settings. Typing navigates to the highest-ranked match; the sidebar
+  contains only matching pages, and selecting one reveals its best match while
+  keeping the query. Clearing search keeps the current page and scroll position.
+  Use `showingPage`, rather than `page`, in background callbacks: an empty
+  search covers the selected page. The search field owns its text across rebuilds;
+  navigation is deferred until widget dispatch has finished.

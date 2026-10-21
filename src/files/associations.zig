@@ -5,6 +5,7 @@
 //! to the Open With dialog. Neither owns the UI icon cache.
 const std = @import("std");
 const mime_db = @import("../mime_db.zig");
+const collation = @import("collation.zig");
 const Allocator = std.mem.Allocator;
 
 // GLib headers cannot be translated by Zig; declare the stable GIO ABI only.
@@ -143,6 +144,7 @@ pub const Applications = struct {
     pub const Entry = struct {
         app: *anyopaque,
         name: []const u8,
+        sort_key: []const u8 = "",
         icons: []const []const u8,
         is_default: bool,
     };
@@ -164,9 +166,12 @@ pub const Applications = struct {
         if (self.same_type) try self.appendList(g_app_info_get_all_for_type(self.content_type), default, false);
         self.recommended = self.entries.items.len;
         try self.appendList(g_app_info_get_all(), default, true);
+        var locale = collation.Locale.init(@import("settings.zig").formatsLocale()) orelse collation.Locale.init("C").?;
+        defer locale.deinit();
+        for (self.entries.items) |*entry| entry.sort_key = try locale.key(a, entry.name);
         std.mem.sort(Entry, self.entries.items[self.recommended..], {}, struct {
             fn less(_: void, a_entry: Entry, b_entry: Entry) bool {
-                return std.ascii.lessThanIgnoreCase(a_entry.name, b_entry.name);
+                return collation.order(a_entry.sort_key, b_entry.sort_key, a_entry.name, b_entry.name, "", "") == .lt;
             }
         }.less);
         return self;

@@ -462,6 +462,8 @@ pub const WidgetNodeData = struct {
     open: ?bool = null,
     selected: ?bool = null,
     text_length: ?usize = null,
+    /// Natural label advance in layout pixels (never editable/secret contents).
+    text_width: ?f64 = null,
     scroll_offset: ?f64 = null,
     content_size: ?f64 = null,
 };

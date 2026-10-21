@@ -92,10 +92,11 @@ pub const Client = struct {
     /// LC_CTYPE of the session; picks the Compose table (´+c is ç in pt_BR).
     locale: []const u8 = "",
     app: app_mod.App,
-    close_button: ui.layout.Widget = .{ .kind = .{ .button = .{ .variant = .chrome, .icon = .close, .label = "Close" } } },
+    close_button: ui.layout.Widget = .{ .kind = .{ .button = .{ .variant = .chrome, .icon = .close, .label = "" } } },
     chrome_input: ui.input.Dispatcher = .{},
 
     fn arrangeClose(self: *Client) void {
+        self.close_button.kind.button.label = @import("i18n").tr("Close");
         self.close_button.kind.button.owner = self;
         self.close_button.kind.button.on_click = closeClicked;
         const height: f32 = @floatFromInt(self.titlebarHeight());
@@ -658,7 +659,7 @@ pub const Client = struct {
         c.cairo_rectangle(cr, 0, 0, @floatFromInt(w), @floatFromInt(h));
         c.cairo_fill(cr);
         shell_ui.setSource(cr, ui_theme.global.window_fg);
-        shell_ui.drawText(cr, "System Monitor", 16, @as(f64, @floatFromInt(h)) / 2 + shell_ui.statusSize() / 3, shell_ui.statusSize(), true);
+        shell_ui.drawText(cr, @import("i18n").tr("System Monitor"), 16, @as(f64, @floatFromInt(h)) / 2 + shell_ui.statusSize() / 3, shell_ui.statusSize(), true);
         self.arrangeClose();
         if (shell_ui.Layer.begin(cr, .{ .x = 0, .y = 0, .w = @floatFromInt(w), .h = @floatFromInt(h) })) |value| {
             var layer = value;

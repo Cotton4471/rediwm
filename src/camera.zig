@@ -163,6 +163,8 @@ pub fn focusOffset(cam: Camera, bounds: Bounds, origin: Vec, size: Vec, usable: 
     result.offset_x += (a.x - x) / cam.zoom();
     result.offset_y += (a.y - y) / cam.zoom();
     result.clamp(bounds);
+    // A frame hanging off the canvas edge may be as revealed as it gets.
+    if (result.offset_x == cam.offset_x and result.offset_y == cam.offset_y) return null;
     return .{ .x = result.offset_x, .y = result.offset_y };
 }
 fn clampAxis(value: f64, lo: f64, hi: f64) f64 {
@@ -285,8 +287,15 @@ test "rectangular canvas sizes include even counts and a single screen" {
     try std.testing.expectEqual(@as(f64, 0), single.max_y);
 }
 
+/// A frame whose top-left strip this deep is within reach may hang past the
+/// right or bottom of the grid: its title bar and a grab area stay reachable.
+pub const reachable_strip: i32 = 96;
+
 /// Grow `bounds.max_*` so a frame at (wx, wy, w, h) stays reachable by panning
-/// the camera across `usable`. No-op when the usable viewport is empty.
+/// the camera across `usable`. Its top and left edges (title and left border)
+/// must be reachable. Past the right or bottom, a frame only grows the bounds
+/// once its `reachable_strip` has left them, so nudging a window off a one-row
+/// canvas does not add a second row. No-op when the usable viewport is empty.
 pub fn expandToFrame(
     bounds: *Bounds,
     wx: i32,
@@ -301,9 +310,9 @@ pub fn expandToFrame(
     if (usable_w <= 0 or usable_h <= 0) return;
 
     const ox1 = wx - usable_x;
-    const ox2 = wx + w - (usable_x + usable_w);
+    const ox2 = if (@as(f64, @floatFromInt(wx + @min(w, reachable_strip) - (usable_x + usable_w))) <= bounds.max_x) 0 else wx + w - (usable_x + usable_w);
     const oy1 = wy - usable_y;
-    const oy2 = wy + h - (usable_y + usable_h);
+    const oy2 = if (@as(f64, @floatFromInt(wy + @min(h, reachable_strip) - (usable_y + usable_h))) <= bounds.max_y) 0 else wy + h - (usable_y + usable_h);
 
     // Only edges outside the viewport need more pan range. Taking absolute
     // distances also counts the empty space beside an already visible window,
@@ -551,11 +560,29 @@ test "visible windows do not expand a resized canvas" {
     }
 }
 
-test "single-screen canvas retains access to every outside frame edge" {
+test "single-screen canvas keeps the top-left frame edges reachable" {
     var b = computeGridBounds(-1920, -200, 1920, 1080, 1, 1);
     expandToFrame(&b, -2020, -250, 2220, 1200, -1920, -200, 1920, 1080);
-    try std.testing.expectEqual(@as(f64, 200), b.max_x);
-    try std.testing.expectEqual(@as(f64, 70), b.max_y);
+    try std.testing.expectEqual(@as(f64, 100), b.max_x);
+    try std.testing.expectEqual(@as(f64, 50), b.max_y);
+}
+
+test "a frame nudged past the bottom or right does not add a row or column" {
+    // One row of three: a window hanging 300 below the screen keeps max_y at 0.
+    var b = computeGridBounds(0, 0, 1920, 1080, 3, 1);
+    const before = b;
+    expandToFrame(&b, 200, 600, 800, 780, 0, 0, 1920, 1080);
+    expandToFrame(&b, 3500, 100, 800, 600, 0, 0, 1920, 1080);
+    try std.testing.expectEqual(before, b);
+    // A frame whose grab strip left the grid is still reachable in full.
+    expandToFrame(&b, 200, 1050, 800, 600, 0, 0, 1920, 1080);
+    try std.testing.expectEqual(@as(f64, 570), b.max_y);
+}
+
+test "focusOffset is null when the clamped camera cannot reveal more" {
+    const b = computeGridBounds(0, 0, 1920, 1080, 1, 1);
+    const cam: Camera = .{};
+    try std.testing.expect(focusOffset(cam, b, .{ .x = 200, .y = 900 }, .{ .x = 800, .y = 600 }, .{ .x = 0, .y = 0 }, .{ .x = 1920, .y = 1080 }, true) == null);
 }
 
 test "expandToFrame no-op when window already reachable" {

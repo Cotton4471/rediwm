@@ -1,3 +1,4 @@
+const i18n = @import("i18n");
 const std = @import("std");
 const popup_style = @import("../popup_style.zig");
 const glass = @import("../glass.zig");
@@ -364,7 +365,7 @@ pub const Popup = struct {
         var net = self.selected orelse network.Network{ .security = self.security };
         if (self.hidden) {
             if (self.name.len == 0) {
-                self.error_message = "Enter a network name.";
+                self.error_message = i18n.tr("Enter a network name.");
                 self.focus = .ssid;
                 return;
             }
@@ -540,7 +541,7 @@ pub const Popup = struct {
         self.syncExpansion(anim.nowMs());
         self.content_height = if (enabled) @as(f32, @floatFromInt(count)) * row_height + 58 + self.opening.shown + self.closing.shown else 110;
         if (enabled and count == 0) self.content_height += row_height;
-        const status = if (self.error_message.len != 0) self.error_message else if (m) |n| n.message else "NetworkManager is unavailable";
+        const status = if (self.error_message.len != 0) self.error_message else if (m) |n| n.message else i18n.tr("NetworkManager is unavailable");
         self.status_height = if (enabled and status.len != 0) 40 else 0;
         self.height = @min(header + self.content_height + footer + self.status_height, @max(160, @as(f32, @floatFromInt(output_box.height - @import("../Taskbar.zig").barHeight() - 24)) / self.factor));
         self.scroll = std.math.clamp(self.scroll, 0, @max(0, self.content_height - (self.height - header - footer - self.status_height)));
@@ -558,7 +559,7 @@ pub const Popup = struct {
         popup_style.background(&r, buf, width, self.height, 12, tip, self.output.server.config.compositor.taskbar_position == .top);
         const card_t = popup_style.cardPalette(t);
         self.hit_count = 0;
-        label(&r, 24, 14, 180, 42, "Wi-Fi", 23, t.window_fg, true);
+        label(&r, 24, 14, 180, 42, i18n.tr("Wi-Fi"), 23, t.window_fg, true);
         // Same switch as Settings; the hit target is padded for the pointer.
         const toggle_box: Rect = .{ .x = 396 - toggle.width, .y = 35 - toggle.height / 2, .w = toggle.width, .h = toggle.height };
         _ = self.addHit(.{ .x = toggle_box.x - 8, .y = toggle_box.y - 8, .w = toggle_box.w + 16, .h = toggle_box.h + 16 }, .toggle, 0);
@@ -576,7 +577,7 @@ pub const Popup = struct {
         var y = header - self.scroll;
         if (enabled) {
             if (count == 0) {
-                label(&r, 28, y, width - 56, row_height, if (self.searching()) "Searching for networks…" else "No networks found. Try reopening to scan again.", 12, t.window_dim, false);
+                label(&r, 28, y, width - 56, row_height, if (self.searching()) i18n.tr("Searching for networks…") else i18n.tr("No networks found. Try reopening to scan again."), 12, t.window_dim, false);
                 y += row_height;
             }
             for (m.?.networks[0..count], 0..) |net, i| {
@@ -615,13 +616,13 @@ pub const Popup = struct {
             y += 10;
             const hidden_box: Rect = .{ .x = 22, .y = y, .w = width - 44, .h = 48 };
             const hover = self.addHit(hidden_box, .hidden, 0);
-            button.paint(&r, hidden_box, .{ .variant = .ghost, .label = "Join Hidden Network", .leading_icon = .plus, .trailing_icon = if (self.hidden) .chevron_up else .chevron_down }, .{ .focused = self.focus == .hidden, .pointer = if (hover) .hover else .idle });
+            button.paint(&r, hidden_box, .{ .variant = .ghost, .label = i18n.tr("Join Hidden Network"), .leading_icon = .plus, .trailing_icon = if (self.hidden) .chevron_up else .chevron_down }, .{ .focused = self.focus == .hidden, .pointer = if (hover) .hover else .idle });
             y += 48;
             const hidden_extra = self.shownHeight(null);
             if (self.hidden) self.paintFormClipped(&r, y, hidden_extra);
             y += hidden_extra;
         } else {
-            const value = if (m) |n| (if (!n.available) "NetworkManager is unavailable" else if (!n.hardware) "Wi-Fi is disabled by the hardware switch" else if (!n.enabled) "Wi-Fi is turned off" else "No Wi-Fi adapter found") else "NetworkManager is unavailable";
+            const value = if (m) |n| (if (!n.available) i18n.tr("NetworkManager is unavailable") else if (!n.hardware) i18n.tr("Wi-Fi is disabled by the hardware switch") else if (!n.enabled) i18n.tr("Wi-Fi is turned off") else i18n.tr("No Wi-Fi adapter found")) else i18n.tr("NetworkManager is unavailable");
             r.drawIcon(190, y + 16, 32, 32, .{ .id = .wifi, .color = t.window_dim });
             label(&r, 28, y + 55, width - 56, 32, value, 13, t.window_dim, false);
         }
@@ -634,7 +635,7 @@ pub const Popup = struct {
         r.fillRect(20, self.height - footer + 2, width - 40, 1, .{ .color = t.border });
         const settings_box: Rect = .{ .x = 22, .y = self.height - footer + 7, .w = width - 44, .h = 40 };
         const settings_hovered = self.addHit(settings_box, .settings, 0);
-        button.paint(&r, settings_box, .{ .variant = .ghost, .leading_icon = .settings, .label = "Network Settings", .alignment = .left }, .{ .focused = self.focus == .settings, .pointer = if (settings_hovered) .hover else .idle });
+        button.paint(&r, settings_box, .{ .variant = .ghost, .leading_icon = .settings, .label = i18n.tr("Network Settings"), .alignment = .left }, .{ .focused = self.focus == .settings, .pointer = if (settings_hovered) .hover else .idle });
         self.buffer_node.setBuffer(&buf.base);
         self.buffer_node.setDestSize(w, h);
         present.applySlide(self.buffer_node, self.panel_box, self.slide.value(anim.nowMs()), if (self.output.server.config.compositor.taskbar_position == .top) -20 else 20);
@@ -664,31 +665,31 @@ pub const Popup = struct {
         var y = top + 4;
         if (self.selected) |net| {
             if (net.connected) {
-                label(r, 78, y, 280, 32, "You're connected to this network", 12, t.window_dim, false);
+                label(r, 78, y, 280, 32, i18n.tr("You're connected to this network"), 12, t.window_dim, false);
                 return;
             }
             if (net.security == .unsupported and net.saved.len == 0) {
-                label(r, 28, y, 364, 48, "Configure this network with a network tool", 12, t.window_dim, false);
+                label(r, 28, y, 364, 48, i18n.tr("Configure this network with a network tool"), 12, t.window_dim, false);
                 return;
             }
         }
         if (self.hidden) {
-            label(r, 28, y, 360, 20, "Network Name (SSID)", 12, t.window_dim, false);
+            label(r, 28, y, 360, 20, i18n.tr("Network Name (SSID)"), 12, t.window_dim, false);
             y += 22;
             self.paintInput(r, y, .ssid);
             y += 48;
-            label(r, 28, y, 360, 20, "Security", 12, t.window_dim, false);
+            label(r, 28, y, 360, 20, i18n.tr("Security"), 12, t.window_dim, false);
             y += 22;
             const box: Rect = .{ .x = 28, .y = y, .w = 364, .h = 34 };
             const hover = self.addHit(box, .security, 0);
             button.paint(r, box, .{ .label = switch (self.security) {
-                .open => "Open",
-                .sae => "WPA3 Personal",
-                else => "WPA2 / WPA3 Personal",
+                .open => i18n.tr("Open"),
+                .sae => i18n.tr("WPA3 Personal"),
+                else => i18n.tr("WPA2 / WPA3 Personal"),
             }, .trailing_icon = .chevron_down }, .{ .focused = self.focus == .security, .pointer = if (!self.canUse()) .disabled else if (hover) .hover else .idle });
             y += 42;
             if (self.security_open) {
-                for ([_][]const u8{ "WPA2 / WPA3 Personal", "WPA3 Personal", "Open" }, 0..) |name, i| {
+                for ([_][]const u8{ i18n.tr("WPA2 / WPA3 Personal"), i18n.tr("WPA3 Personal"), i18n.tr("Open") }, 0..) |name, i| {
                     const choice: Rect = .{ .x = 28, .y = y, .w = 364, .h = 34 };
                     const hovered = self.addHit(choice, .security_option, i);
                     button.paint(r, choice, .{ .variant = .ghost, .label = name }, .{ .focused = self.focused(.security_option, i), .selected = @intFromEnum(self.security) == ([_]usize{ 1, 2, 0 })[i], .pointer = if (hovered) .hover else .idle });
@@ -697,7 +698,7 @@ pub const Popup = struct {
             }
         }
         if (self.needsPassword()) {
-            label(r, 28, y, 360, 20, "Password", 12, t.window_dim, false);
+            label(r, 28, y, 360, 20, i18n.tr("Password"), 12, t.window_dim, false);
             y += 22;
             self.paintInput(r, y, .password);
             y += 50;
@@ -706,15 +707,15 @@ pub const Popup = struct {
         if (!saved) {
             const check_box: Rect = .{ .x = 28, .y = y, .w = 210, .h = 28 };
             _ = self.addHit(check_box, .autojoin, 0);
-            checkbox.paint(r, check_box, "Auto-join this network", .{ .checked = self.autojoin, .focused = self.focus == .autojoin, .disabled = !self.canUse() });
+            checkbox.paint(r, check_box, i18n.tr("Auto-join this network"), .{ .checked = self.autojoin, .focused = self.focus == .autojoin, .disabled = !self.canUse() });
             y += 32;
         }
         const join_box: Rect = .{ .x = 202, .y = y, .w = 96, .h = 34 };
         const hover_join = self.addHit(join_box, .join, 0);
-        button.paint(r, join_box, .{ .variant = .primary, .label = "Join" }, .{ .focused = self.focus == .join, .pointer = if (!self.canUse()) .disabled else if (hover_join) .hover else .idle });
+        button.paint(r, join_box, .{ .variant = .primary, .label = i18n.tr("Join") }, .{ .focused = self.focus == .join, .pointer = if (!self.canUse()) .disabled else if (hover_join) .hover else .idle });
         const cancel_box: Rect = .{ .x = 306, .y = y, .w = 86, .h = 34 };
         const hover_cancel = self.addHit(cancel_box, .cancel, 0);
-        button.paint(r, cancel_box, .{ .label = "Cancel" }, .{ .focused = self.focus == .cancel, .pointer = if (hover_cancel) .hover else .idle });
+        button.paint(r, cancel_box, .{ .label = i18n.tr("Cancel") }, .{ .focused = self.focus == .cancel, .pointer = if (hover_cancel) .hover else .idle });
     }
     fn paintInput(self: *Popup, r: *paint.Renderer, y: f32, focus: Focus) void {
         const box: Rect = .{ .x = 28, .y = y, .w = 364, .h = 40 };
@@ -725,7 +726,7 @@ pub const Popup = struct {
         if (secret) if (field.arrange(box, opts, r.palette.?).trailing) |eye| {
             _ = self.addHit(eye, .reveal, 0);
         };
-        const layout = field.paintSecret(r, box, opts, .{ .focused = self.focus == focus, .disabled = !self.canUse(), .revealed = !secret or self.revealed, .trailing_focused = self.focus == .reveal, .external_caret = true }, if (secret) &self.password else &self.name, if (secret) (if (self.selected != null and self.selected.?.saved.len != 0) "Leave blank to use saved password" else "Enter password") else "Enter network name");
+        const layout = field.paintSecret(r, box, opts, .{ .focused = self.focus == focus, .disabled = !self.canUse(), .revealed = !secret or self.revealed, .trailing_focused = self.focus == .reveal, .external_caret = true }, if (secret) &self.password else &self.name, if (secret) (if (self.selected != null and self.selected.?.saved.len != 0) i18n.tr("Leave blank to use saved password") else i18n.tr("Enter password")) else i18n.tr("Enter network name"));
         const visible = r.clip.?;
         if (layout.caret) |place| if (place.y >= visible.y and place.y + place.h <= visible.y + visible.h) {
             self.caret_reported = true;

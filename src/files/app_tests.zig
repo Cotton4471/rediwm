@@ -109,6 +109,30 @@ test "search and sorting preserve visible selection across snapshot rebuilds" {
     try std.testing.expectEqualStrings("Documents", app.items.items[0].name);
 }
 
+test "Unicode folder filtering and sorting retain folder size and date rules" {
+    const listing = @import("app_listing.zig");
+    var app: App = .{ .allocator = std.testing.allocator, .io = undefined, .environ = undefined, .theme_cfg = undefined, .worker = undefined, .history = .{ .allocator = std.testing.allocator, .current = "/" }, .home_dir = "/", .items_arena = undefined };
+    defer app.search.text.deinit(app.allocator);
+    const source: worker_mod.Item = .{ .name = "CÁMARA — Терминал", .path = "/name", .is_dir = false, .is_symlink = false, .is_broken = false, .bytes = 10, .mtime = 20, .icon_name = "" };
+    for ([_][]const u8{ "camara", "Cámara", "терм", "ТЕРМ" }) |query| {
+        app.search.text.clearRetainingCapacity();
+        try app.search.text.appendSlice(app.allocator, query);
+        try std.testing.expect(app.matches(source));
+    }
+    var a: ViewItem = .{ .name = "z", .path = "/z", .sort_key = "a", .is_dir = true, .is_symlink = false, .is_broken = false, .bytes = 10, .mtime = 20, .icon_name = "" };
+    var b: ViewItem = .{ .name = "a", .path = "/a", .sort_key = "z", .is_dir = false, .is_symlink = false, .is_broken = false, .bytes = 100, .mtime = 30, .icon_name = "" };
+    try std.testing.expect(listing.lessThan(.name, a, b));
+    try std.testing.expect(listing.lessThan(.size, a, b));
+    try std.testing.expect(listing.lessThan(.modified, b, a));
+    try std.testing.expect(listing.lessThan(.modified_asc, a, b));
+    a.is_dir = false;
+    try std.testing.expect(listing.lessThan(.name, a, b));
+    try std.testing.expect(listing.lessThan(.name_desc, b, a));
+    try std.testing.expect(listing.lessThan(.size, b, a));
+    b.bytes = a.bytes;
+    try std.testing.expect(listing.lessThan(.size, a, b));
+}
+
 test "context menu stays inside the client and keyboard activation closes it" {
     var app = App{
         .allocator = std.testing.allocator,
@@ -188,6 +212,23 @@ test "terminal drawer shares viewport geometry and preserves its preferred heigh
     try std.testing.expectEqual(app.h - app.footerHeight() - app.scrollbarGutter(), app.contentBottom());
     app.resize(960, 540);
     try std.testing.expectEqual(@as(i32, 220), app.terminalHeight());
+}
+
+test "terminal dropped paths quote shell metacharacters and reject lossy paste bytes" {
+    const quotePaths = @import("app_terminal.zig").quotePaths;
+    const allocator = std.testing.allocator;
+    const quoted = try quotePaths(allocator, &.{ "/tmp/a space's 雪", "/tmp/\"$()`;\\" });
+    defer allocator.free(quoted);
+    try std.testing.expectEqualStrings("'/tmp/a space'\\''s 雪' '/tmp/\"$()`;\\' ", quoted);
+    for ([_][]const u8{ "/tmp/new\nline", "/tmp/carriage\rreturn", "/tmp/tab\t", "/tmp/escape\x1b", "/tmp/delete\x7f" }) |path| {
+        try std.testing.expectError(error.ControlCharacter, quotePaths(allocator, &.{ "/tmp/valid", path }));
+    }
+    try std.testing.expectError(error.InvalidPath, quotePaths(allocator, &.{"relative"}));
+    const huge = try allocator.alloc(u8, @import("transfer.zig").limit);
+    defer allocator.free(huge);
+    @memset(huge, '\'');
+    huge[0] = '/';
+    try std.testing.expectError(error.TooLong, quotePaths(allocator, &.{huge}));
 }
 
 test "terminal keys, modal priority and chooser isolation" {
@@ -1309,6 +1350,19 @@ test "File context actions distinguish files, folders and symlinks" {
     app.items.items[1].is_symlink = true;
     try std.testing.expectEqual(@as(usize, 7), app.menuLabels().len);
     app.items.items[1].selected = false;
+    app.items.items[0].name = "Hub.AppImage";
+    app.items.items[0].path = "/Hub.AppImage";
+    try std.testing.expectEqualStrings("/Hub.AppImage", app.selectedAppImage().?);
+    try std.testing.expectEqualStrings("Add to applications", app.menuLabels()[2]);
+    app.items.items[1].selected = true;
+    try std.testing.expect(app.selectedAppImage() == null);
+    app.items.items[1].selected = false;
+    app.items.items[0].missing = true;
+    try std.testing.expect(app.selectedAppImage() == null);
+    app.items.items[0].missing = false;
+    app.chooser = .{ .mode = .open };
+    try std.testing.expect(app.selectedAppImage() == null);
+    app.chooser = null;
     app.items.items[0].name = "example.ZIP";
     app.items.items[0].path = "/example.ZIP";
     try std.testing.expectEqualStrings("Extract", app.menuLabels()[2]);
@@ -1398,4 +1452,138 @@ test "Git layout has two columns, scrollable sidebar and display-only deleted ro
     try std.testing.expect(app.dialog == null);
     app.previewSelected();
     try std.testing.expect(app.editor_path == null);
+}
+
+test "Transfers uses list geometry and isolates file actions while preserving the folder view" {
+    var app = App{
+        .allocator = std.testing.allocator,
+        .io = undefined,
+        .environ = undefined,
+        .theme_cfg = undefined,
+        .worker = undefined,
+        .history = .{ .allocator = std.testing.allocator, .current = "/" },
+        .home_dir = "/",
+        .items_arena = undefined,
+    };
+    // These records are only counted. File actions must never read them
+    // while the transfer pane is active.
+    var files: [32]ViewItem = undefined;
+    var transfers: [32]@import("torrents.zig").Transfer = undefined;
+    app.items = .{ .items = &files, .capacity = files.len };
+    app.torrents.snapshot = .{ .arena = undefined, .value = .{ .transfers = &transfers } };
+    app.list_view = false;
+    app.transfer_view = .{ .active = true, .folder_scroll = 77, .folder_search_visible = true };
+    try std.testing.expectEqual(@as(i32, 1), app.columns());
+    try std.testing.expectEqual(@as(i32, 38), app.rowHeight());
+    try std.testing.expectEqualStrings("Status", app.columnLabels()[1]);
+    try std.testing.expect(app.scrollbarGeometry() != null);
+    try std.testing.expectEqual(@as(?usize, null), app.itemAt(260, 180));
+    try std.testing.expectEqual(@as(?[]const u8, null), app.dropDirectoryAt(260, 180));
+    app.handleKey(c.XKB_KEY_Delete, "");
+    app.ctrl = true;
+    app.handleKey(c.XKB_KEY_v, "v");
+    try std.testing.expect(!app.paste_requested);
+    try std.testing.expect(app.dialog == null);
+    app.ctrl = false;
+    app.transferPaneKey(c.XKB_KEY_End);
+    try std.testing.expectEqual(@as(?usize, 31), app.transfer_view.row);
+    try std.testing.expect(app.scroll_y > 0);
+    app.back();
+    try std.testing.expect(!app.transfer_view.active);
+    try std.testing.expect(!app.list_view);
+    try std.testing.expect(app.search_visible);
+    try std.testing.expectEqual(@as(i32, 77), app.scroll_y);
+}
+
+fn inlineTransferFixture() @import("torrents.zig").Transfer {
+    return .{
+        .id = "abc",
+        .name = "bundle",
+        .source = "/Downloads/bundle.torrent",
+        .download_directory = "/Downloads",
+        .destination = "/Downloads",
+        .storage = "/Downloads/.rediwm-partials/abc",
+        .pending = false,
+        .metadata = true,
+        .paused = false,
+        .finished = false,
+        .published = false,
+        .progress = 420000,
+        .download_rate = 100,
+        .upload_rate = 50,
+        .total = 1000,
+        .done = 420,
+        .ratio = 1,
+        .limit = 1024,
+        .@"error" = "",
+        .files = &.{},
+        .peers = 4,
+        .known_peers = 8,
+        .seeds = 2,
+    };
+}
+
+test "folder transfer rows match full paths, avoid duplicates and exclude staging from file operations" {
+    const allocator = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    var app = App{
+        .allocator = allocator,
+        .io = undefined,
+        .environ = undefined,
+        .theme_cfg = undefined,
+        .worker = undefined,
+        .history = .{ .allocator = allocator, .current = "/Downloads" },
+        .home_dir = "/",
+        .items_arena = undefined,
+    };
+    defer app.items.deinit(allocator);
+    var transfers = [_]@import("torrents.zig").Transfer{inlineTransferFixture()};
+    app.torrents.snapshot = .{ .arena = undefined, .value = .{ .transfers = &transfers } };
+    const old = std.StringHashMap(ViewItem).init(allocator);
+    app.appendTorrentRows(arena.allocator(), &old);
+    try std.testing.expectEqual(@as(usize, 1), app.items.items.len);
+    try std.testing.expect(app.items.items[0].transfer_stub and app.items.items[0].missing);
+    try std.testing.expectEqualStrings("abc", app.torrentForItem(0).?.id);
+    app.list_view = true;
+    try std.testing.expect(app.inlineTorrentWidth(0) > 0);
+    try std.testing.expect(app.sizeButtonRect(0) == null);
+    app.items.items[0].selected = true;
+    app.copySelected();
+    app.openRenameDialog();
+    app.openTrashConfirmDialog();
+    try std.testing.expectEqual(@as(usize, 0), app.clipboard_paths.items.len);
+    try std.testing.expect(app.dialog == null);
+    app.activateItem(0);
+    try std.testing.expectEqual(@import("app_model.zig").DialogKind.transfers, app.dialog.?.kind);
+    app.closeDialog();
+
+    app.items.items[0].transfer_stub = false;
+    app.items.items[0].missing = false;
+    app.items.items[0].path = "/Downloads/bundle.torrent";
+    app.appendTorrentRows(arena.allocator(), &old);
+    try std.testing.expectEqual(@as(usize, 1), app.items.items.len);
+    app.items.items[0].path = "/Elsewhere/bundle.torrent";
+    try std.testing.expect(app.torrentForItem(0) == null);
+    transfers[0].published = true;
+    transfers[0].destination = "/Downloads/bundle.download";
+    app.items.items[0].path = "/Downloads/bundle.download/file.bin";
+    try std.testing.expect(app.torrentForItem(0) != null);
+    app.items.items[0].path = "/Downloads/bundle.download-other/file.bin";
+    try std.testing.expect(app.torrentForItem(0) == null);
+}
+
+test "torrent ETA uses remaining selected bytes and is unknown while paused or stalled" {
+    const eta = @import("torrents.zig").etaSeconds;
+    var transfer = inlineTransferFixture();
+    try std.testing.expectEqual(@as(?i64, 6), eta(transfer));
+    transfer.download_rate = 0;
+    try std.testing.expect(eta(transfer) == null);
+    transfer.download_rate = 100;
+    transfer.paused = true;
+    try std.testing.expect(eta(transfer) == null);
+    transfer.finished = true;
+    try std.testing.expectEqual(@as(?i64, 0), eta(transfer));
+    transfer.pending = true;
+    try std.testing.expect(eta(transfer) == null);
 }

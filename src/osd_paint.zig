@@ -1,3 +1,4 @@
+const i18n = @import("i18n");
 const std = @import("std");
 const ui = @import("ui");
 const Profile = @import("power_profiles.zig").Profile;
@@ -73,7 +74,7 @@ pub fn paint(r: *ui.paint.Renderer, state: State) void {
         r.drawText(248, 14, w - 260, 32, .{ .content = label, .font_size = 18, .color = white });
     } else {
         if (state.active) r.fillRect(47, 27, 6, 6, .{ .color = if (state.kind == .microphone) red else white, .radius = 3 });
-        r.drawText(if (state.kind == .microphone) 17 else 30, 34, 52, 20, .{ .content = if (state.kind == .microphone) (if (state.active) "Muted" else "Mic on") else (if (state.active) "On" else "Off"), .font_size = 12, .color = white });
+        r.drawText(if (state.kind == .microphone) 17 else 30, 34, 52, 20, .{ .content = if (state.kind == .microphone) (if (state.active) i18n.tr("Muted") else i18n.tr("Mic on")) else (if (state.active) i18n.tr("On") else i18n.tr("Off")), .font_size = 12, .color = white });
     }
 }
 

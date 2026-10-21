@@ -16,8 +16,9 @@ pub const Rect = struct { x: f32, y: f32, w: f32, h: f32 };
 pub const Size = enum { md, lg };
 
 /// `.reveal` is a password's show/hide eye. Its click is the caller's to
-/// handle: hit test `Layout.trailing`.
-pub const Trailing = enum { none, reveal };
+/// handle: hit test `Layout.trailing`. `.accessory` reserves the same slot
+/// for a caller-provided child widget, such as a search field's clear button.
+pub const Trailing = enum { none, reveal, accessory };
 
 pub const Options = struct {
     size: Size = .md,
@@ -121,7 +122,7 @@ pub fn paintFrame(r: *Renderer, box: Rect, opts: Options, state: State) Layout {
         .color = if (state.disabled) t.faint else opts.leading_icon_color orelse t.dim,
     });
     if (out.trailing) |slot| switch (opts.trailing) {
-        .none => {},
+        .none, .accessory => {},
         .reveal => {
             if (state.trailing_focused) r.fillRect(slot.x, slot.y, slot.w, slot.h, .{
                 .color = t.surface_hover,
@@ -175,6 +176,9 @@ test "the leading icon and trailing accessory take their room from the text" {
     try std.testing.expectEqual(box.x + box.w - 6, eye.x + eye.w);
     try std.testing.expectEqual(box.y + 6, eye.y);
     try std.testing.expect(secret.text.x + secret.text.w <= eye.x);
+
+    const accessory = arrange(box, .{ .trailing = .accessory }, t);
+    try std.testing.expectEqualDeep(secret, accessory);
 }
 
 test "natural size adds the frame's chrome to the text" {

@@ -3,7 +3,10 @@
 const std = @import("std");
 const wlr = @import("wlroots");
 const sn = @import("node.zig");
+const i18n = @import("i18n");
 const c = @cImport({
+    @cInclude("langinfo.h");
+    @cInclude("locale.h");
     @cInclude("time.h");
 });
 const Output = @import("Output.zig");
@@ -82,6 +85,8 @@ pub const Calendar = struct {
         var box: wlr.Box = undefined;
         self.output.server.output_layout.getBox(self.output.wlr_output, &box);
         const prefs = self.output.server.config.region;
+        const locale = timeLocale(gpa, prefs.formats) orelse return;
+        defer c.freelocale(locale);
         const start: usize = @intFromEnum(prefs.first_day_of_week);
         const first = monthOffset(self.year, self.month, prefs);
         const days = daysInMonth(self.year, self.month);
@@ -142,19 +147,19 @@ pub const Calendar = struct {
             if (self.output.server.config.compositor.taskbar_position == .top) buf.flipVertical();
         }
         const tm = localNow();
-        var time: [32]u8 = undefined;
-        var date: [96]u8 = undefined;
-        _ = c.strftime(&time, time.len, prefs.timeFormat(), &tm);
-        _ = c.strftime(&date, date.len, "%A, %B %-d, %Y", &tm);
-        label(&r, 24, 17, 320, 44, std.mem.trimStart(u8, std.mem.sliceTo(&time, 0), " "), 36, t.window_fg, true);
-        label(&r, 24, 65, 320, 25, std.mem.sliceTo(&date, 0), 16, t.window_dim, false);
+        var time: [64]u8 = undefined;
+        var date: [192]u8 = undefined;
+        label(&r, 24, 17, 320, 44, std.mem.trimStart(u8, formatDate(&time, prefs.timeFormat(), &tm, locale), " "), 36, t.window_fg, true);
+        label(&r, 24, 65, 320, 25, formatDate(&date, i18n.trc("date", "%A, %B %-d, %Y"), &tm, locale), 16, t.window_dim, false);
         r.fillRect(20, 102, 328, 1, .{ .color = t.app_divider });
-        var title: [40]u8 = undefined;
-        label(&r, 24, 116, 238, 32, std.fmt.bufPrint(&title, "{s} {d}", .{ months[@intCast(self.month - 1)], self.year }) catch "", 16, t.text_secondary, true);
+        var title: [128]u8 = undefined;
+        var viewed = tm;
+        viewed.tm_year = self.year - 1900;
+        viewed.tm_mon = self.month - 1;
+        label(&r, 24, 116, 238, 32, formatDate(&title, i18n.trc("date", "%B %Y"), &viewed, locale), 16, t.text_secondary, true);
         label(&r, 282, 116, 24, 32, "‹", 26, t.text_secondary, false);
         label(&r, 324, 116, 24, 32, "›", 26, t.text_secondary, false);
-        const weekdays = [_][]const u8{ "SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT" };
-        for (0..7) |i| centered(&r, @floatFromInt(i), 158, weekdays[(i + start) % 7], 10, t.window_dim);
+        for (0..7) |i| centered(&r, @floatFromInt(i), 158, weekdayName(locale, (i + start) % 7), 10, t.window_dim);
         const previous = daysInMonth(if (self.month == 1) self.year - 1 else self.year, if (self.month == 1) 12 else self.month - 1);
         for (0..@intCast(rows * 7)) |i| {
             const n = @as(i32, @intCast(i)) - first + 1;
@@ -189,7 +194,26 @@ fn localNow() c.struct_tm {
     _ = c.localtime_r(&raw, &tm);
     return tm;
 }
-const months = [_][]const u8{ "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December" };
+fn timeLocale(allocator: std.mem.Allocator, name: []const u8) c.locale_t {
+    const terminated = allocator.dupeZ(u8, name) catch return null;
+    defer allocator.free(terminated);
+    // Locale objects are private to this paint. Reloading formats updates an
+    // already-open calendar without changing libc's process-wide locale.
+    return c.newlocale(c.LC_TIME_MASK, terminated, null) orelse c.newlocale(c.LC_TIME_MASK, "C", null);
+}
+
+fn weekdayName(locale: c.locale_t, day: usize) []const u8 {
+    return std.mem.span(c.nl_langinfo_l(@as(c.nl_item, c.ABDAY_1) + @as(c.nl_item, @intCast(day)), locale));
+}
+
+fn formatDate(destination: []u8, pattern: []const u8, tm: *const c.struct_tm, locale: c.locale_t) []const u8 {
+    var terminated: [256]u8 = undefined;
+    if (pattern.len >= terminated.len or std.mem.indexOfScalar(u8, pattern, 0) != null) return "";
+    @memcpy(terminated[0..pattern.len], pattern);
+    terminated[pattern.len] = 0;
+    const length = c.strftime_l(destination.ptr, destination.len, @ptrCast(&terminated), tm, locale);
+    return destination[0..length];
+}
 pub fn daysInMonth(year: i32, month: i32) i32 {
     return switch (month) {
         2 => if (@mod(year, 4) == 0 and (@mod(year, 100) != 0 or @mod(year, 400) == 0)) 29 else 28,
@@ -221,4 +245,21 @@ test "calendar leap centuries and month alignment" {
         const offset = monthOffset(2026, 5, .{ .first_day_of_week = @enumFromInt(start) });
         try std.testing.expectEqual(@mod(@as(i32, 5) - @as(i32, @intCast(start)), 7), offset);
     }
+}
+
+test "calendar dates use a private regional locale and bounded translated patterns" {
+    const locale = timeLocale(std.testing.allocator, "C") orelse return error.LocaleUnavailable;
+    defer c.freelocale(locale);
+    const tm = std.mem.zeroInit(c.struct_tm, .{ .tm_year = 126, .tm_mon = 9, .tm_mday = 20, .tm_wday = 2 });
+    var buffer: [192]u8 = undefined;
+    try std.testing.expectEqualStrings("Tuesday, October 20, 2026", formatDate(&buffer, "%A, %B %-d, %Y", &tm, locale));
+    try std.testing.expectEqualStrings("20 de October de 2026", formatDate(&buffer, "%-d de %B de %Y", &tm, locale));
+    try std.testing.expectEqualStrings("October 2026", formatDate(&buffer, "%B %Y", &tm, locale));
+    try std.testing.expectEqualStrings("Sun", weekdayName(locale, 0));
+    try std.testing.expectEqualStrings("Sat", weekdayName(locale, 6));
+    try std.testing.expectEqualStrings("", formatDate(buffer[0..2], "%B", &tm, locale));
+    try std.testing.expectEqualStrings("", formatDate(&buffer, "bad\x00format", &tm, locale));
+    const fallback = timeLocale(std.testing.allocator, "rediwm_nonexistent_locale") orelse return error.LocaleUnavailable;
+    defer c.freelocale(fallback);
+    try std.testing.expectEqualStrings("October 2026", formatDate(&buffer, "%B %Y", &tm, fallback));
 }

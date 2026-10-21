@@ -2,6 +2,8 @@
 //! Integrates background worker thread, LRU page/tile/thumb caches,
 //! continuous layout virtualization, search, selection, and outline.
 const std = @import("std");
+const i18n = @import("i18n");
+const tr = i18n.tr;
 const c = @import("c.zig");
 const document = @import("document.zig");
 const layout = @import("layout.zig");
@@ -298,11 +300,11 @@ pub const App = struct {
         if (self.path) |p| {
             const raw = std.fs.path.basename(p);
             const base = if (std.unicode.utf8ValidateSlice(raw)) raw else "Document.pdf";
-            _ = std.fmt.bufPrintZ(&self.title, "{s} — PDF Viewer ({d}/{d})", .{ base, self.current_page + 1, self.n_pages }) catch {
-                _ = std.fmt.bufPrintZ(&self.title, "PDF Viewer", .{}) catch unreachable;
+            _ = i18n.fmtZ(&self.title, tr("{name} — PDF Viewer ({page}/{pages})"), .{ .name = base, .page = self.current_page + 1, .pages = self.n_pages }) catch {
+                _ = i18n.fmtZ(&self.title, tr("PDF Viewer"), .{}) catch unreachable;
             };
         } else {
-            _ = std.fmt.bufPrintZ(&self.title, "PDF Viewer", .{}) catch unreachable;
+            _ = i18n.fmtZ(&self.title, tr("PDF Viewer"), .{}) catch unreachable;
         }
         self.title_changed = true;
     }

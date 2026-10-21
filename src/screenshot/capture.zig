@@ -1,3 +1,4 @@
+const i18n = @import("i18n");
 const std = @import("std");
 const posix = std.posix;
 const wl = @import("wayland").server.wl;
@@ -537,17 +538,17 @@ fn onWorkerComplete(res: worker.Result) void {
     if (res.client_id == null) {
         const picker = @import("selector.zig");
         if (res.err_msg) |err| {
-            picker.report(mgr.server, "Screenshot failed", err);
+            picker.report(mgr.server, i18n.tr("Screenshot failed"), err);
             return;
         }
         if (mgr.server.locker != null or mgr.server.shutting_down) return;
         if (res.png) |png| {
             @import("../clipboard.zig").copyPng(mgr.server, png) catch {
-                picker.report(mgr.server, "Screenshot saved; clipboard failed", res.path orelse "");
+                picker.report(mgr.server, i18n.tr("Screenshot saved; clipboard failed"), res.path orelse "");
                 return;
             };
-            picker.report(mgr.server, "Screenshot saved and copied", res.path orelse "");
-        } else picker.report(mgr.server, "Screenshot saved; clipboard failed", res.path orelse "");
+            picker.report(mgr.server, i18n.tr("Screenshot saved and copied"), res.path orelse "");
+        } else picker.report(mgr.server, i18n.tr("Screenshot saved; clipboard failed"), res.path orelse "");
         return;
     }
     const ipc = mgr.server.ipc orelse return;

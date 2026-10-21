@@ -12,6 +12,7 @@ const places = App.places;
 const pin_base = App.pin_base;
 
 pub fn hoverBounds(self: *App, key: usize) ?header.Rect {
+    if (key >= std.math.maxInt(usize) - 4096) return null;
     if (key >= 900 and key < 904) return .{ .x = 0, .y = 0, .w = @floatFromInt(self.w), .h = @floatFromInt(self.h) };
     if (key == 0) return .{ .x = 0, .y = 0, .w = 0, .h = 0 };
     if (key >= 2_000_000) {
@@ -157,6 +158,7 @@ pub fn toolbarButtonEnabled(self: *App, action: header.Action) bool {
 }
 
 pub fn hoveredToolbarButton(self: *App) ?header.Rect {
+    if (self.transfer_view.active) return null;
     if (self.dialog != null or self.menu != null) return null;
     const action = header.hit(self.w, self.inRepository(), self.mouse_x, self.mouse_y) orelse return null;
     if (!self.toolbarButtonVisible(action) or !self.toolbarButtonEnabled(action)) return null;
@@ -225,7 +227,7 @@ pub fn stepHover(self: *App, now: i64) void {
         self.hover_active = self.hover_active or !item.selection_fill.animation.settled(now) or !item.selection_border.animation.settled(now);
     }
     const field = header.field(self.w);
-    const hit = if (!self.search_visible and self.focus != .location_bar and
+    const hit = if (!self.transfer_view.active and !self.search_visible and self.focus != .location_bar and
         self.dialog == null and self.menu == null and field.contains(self.mouse_x, self.mouse_y))
         self.breadcrumbs(null, self.mouse_x)
     else

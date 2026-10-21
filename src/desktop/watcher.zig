@@ -1,4 +1,5 @@
 //! Filesystem worker. Only immutable snapshots cross into the Wayland thread.
+const i18n = @import("i18n");
 const std = @import("std");
 const c = @import("c.zig").api;
 const icons = @import("../icon_cache.zig");
@@ -222,7 +223,7 @@ pub const Worker = struct {
     fn reportError(self: *Worker, operation: []const u8, err: anyerror) void {
         _ = c.pthread_mutex_lock(&self.mutex);
         defer _ = c.pthread_mutex_unlock(&self.mutex);
-        const message = std.fmt.bufPrint(&self.error_message, "Could not {s}: {s}", .{ operation, @errorName(err) }) catch "File operation failed";
+        const message = i18n.fmt(&self.error_message, i18n.tr("Could not {operation}: {error}"), .{ .operation = operation, .@"error" = @errorName(err) }) catch i18n.tr("File operation failed");
         self.error_len = message.len;
         if (message.ptr != &self.error_message) @memcpy(self.error_message[0..message.len], message);
         signal(self.wake_main);
@@ -288,8 +289,8 @@ pub const Worker = struct {
         std.Io.Dir.cwd().createDirPath(self.io, trash_files) catch {};
         const size = self.icon_size.load(.acquire);
         const entries = [_]struct { kind: Builtin, name: []const u8, path: []const u8, glyph: @import("ui").layout.IconId }{
-            .{ .kind = .home, .name = "Home", .path = home, .glyph = .home },
-            .{ .kind = .trash, .name = "Trash", .path = trash_files, .glyph = .trash_can },
+            .{ .kind = .home, .name = i18n.tr("Home"), .path = home, .glyph = .home },
+            .{ .kind = .trash, .name = i18n.tr("Trash"), .path = trash_files, .glyph = .trash_can },
         };
         for (entries) |e| try list.append(mem, .{ .path = try mem.dupe(u8, e.path), .name = e.name, .icon = icons.get(self.theme_cfg, self.io, if (e.kind == .home) "user-home" else "user-trash", size) orelse builtinIcon(e.glyph, size, self.theme_cfg.generation), .folder = true, .cell = config.lookup(mem, saved, e.path), .builtin = e.kind });
     }

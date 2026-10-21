@@ -27,9 +27,11 @@ pub fn iconLookup(server: *Server, name: []const u8, size_px: i32) icon_service_
 ///      that entry's Icon= name.
 ///   2. A catalog entry whose desktop-file ID (sans ".desktop") exactly
 ///      matches `app_id` → use its Icon= name.
-///   3. Reverse-DNS strip: "com.example.App" → last component, tried against
+///   3. A catalog entry resolved through the stable application identity
+///      (e.g. Transmission's per-instance GTK ID) → use its Icon= name.
+///   4. Reverse-DNS strip: "com.example.App" → last component, tried against
 ///      catalog icon names.
-///   4. Fall back to `app_id` unchanged.
+///   5. Fall back to `app_id` unchanged.
 /// The returned slice is either borrowed from `snap` arena memory or is a
 /// sub-slice of `app_id`; the caller must keep `snap` retained until done.
 pub fn iconNameForAppId(snap: *applications.Snapshot, app_id: []const u8) []const u8 {
@@ -47,20 +49,15 @@ pub fn iconNameForAppId(snap: *applications.Snapshot, app_id: []const u8) []cons
         }
     }
 
-    // Pass 2: desktop-file ID (strip ".desktop" suffix) match.
-    for (snap.entries) |e| {
-        // e.id is the desktop file ID, e.g. "brave-browser.desktop" or
-        // "dev.zed.Zed.desktop"; strip the suffix before comparing.
-        const id = if (std.mem.endsWith(u8, e.id, ".desktop"))
-            e.id[0 .. e.id.len - ".desktop".len]
-        else
-            e.id;
-        if (std.mem.eql(u8, id, app_id)) {
-            return e.icon orelse app_id;
-        }
+    // Share the catalog mapping used to launch another window. In particular,
+    // this matches desktop-file IDs with or without the .desktop suffix.
+    // Transmission advertises com.transmissionbt.transmission_<n>_<n>, while
+    // its installed desktop entry and icon can be named transmission-gtk.
+    if (@import("../window_tabs.zig").entry(snap.entries, app_id)) |entry| {
+        return entry.icon orelse app_id;
     }
 
-    // Pass 3: reverse-DNS heuristic — "dev.zed.Zed" → last component "Zed".
+    // Reverse-DNS heuristic — "dev.zed.Zed" → last component "Zed".
     // Only fire when there are at least two dots (genuine reverse-DNS prefix).
     if (std.mem.lastIndexOfScalar(u8, app_id, '.')) |dot| {
         const last = app_id[dot + 1 ..];
@@ -77,6 +74,31 @@ pub fn iconNameForAppId(snap: *applications.Snapshot, app_id: []const u8) []cons
     }
 
     return app_id;
+}
+
+test "app icons use catalog identities before reverse-DNS fallback" {
+    const snap = try applications.Snapshot.create(std.testing.allocator);
+    defer snap.release();
+    snap.entries = &.{
+        .{ .id = "transmission-gtk.desktop", .desktop_file_path = "", .name = "Transmission", .exec = "transmission-gtk %U", .icon = "transmission-artwork" },
+        .{ .id = "browser.desktop", .desktop_file_path = "", .name = "Browser", .exec = "browser", .startup_wm_class = "browser-class", .icon = "browser-artwork" },
+        .{ .id = "com.example.App.desktop", .desktop_file_path = "", .name = "App", .exec = "app", .icon = "app-artwork" },
+    };
+    for ([_][2][]const u8{
+        .{ "com.transmissionbt.transmission_1000_12345", "transmission-artwork" },
+        .{ "com.transmissionbt.transmission_1000_67890", "transmission-artwork" },
+        .{ "com.transmissionbt.transmission", "transmission-artwork" },
+        .{ "transmission-gtk", "transmission-artwork" },
+        .{ "transmission-gtk.desktop", "transmission-artwork" },
+        .{ "browser-class", "browser-artwork" },
+        .{ "com.example.App", "app-artwork" },
+        .{ "com.unknown.Other", "Other" },
+        .{ "com.transmissionbt.transmission_bad_12345", "transmission_bad_12345" },
+        .{ "unknown", "unknown" },
+        .{ "", "" },
+    }) |case| {
+        try std.testing.expectEqualStrings(case[1], iconNameForAppId(snap, case[0]));
+    }
 }
 
 pub fn iconAcquire(server: *Server, id: u64) void {

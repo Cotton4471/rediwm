@@ -45,6 +45,8 @@ pub fn iconDistance(id: IconId, px: f32, py: f32, cx: f32, cy: f32, half: f32, t
             sdSegment(px, py, cx - half, cy + half * 0.3, cx, cy - half * 0.5, t),
             sdSegment(px, py, cx, cy - half * 0.5, cx + half, cy + half * 0.3, t),
         ),
+        .play => sdf.sdQuad(px, py, cx - half * 0.65, cy - half, cx + half, cy, cx - half * 0.65, cy + half, cx - half * 0.65, cy),
+        .pause => @min(sdBox(px, py, cx - half * 0.45, cy, half * 0.22, half), sdBox(px, py, cx + half * 0.45, cy, half * 0.22, half)),
         .minimize => sdSegment(px, py, cx - half, cy, cx + half, cy, t),
         .drag_handle => @min(
             sdSegment(px, py, cx - half, cy - half * 0.7, cx + half, cy - half * 0.7, t),

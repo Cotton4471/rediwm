@@ -84,6 +84,7 @@ pub const App = struct {
     catalog: []const @import("dotdesktop.zig").parser.AppEntry = &.{},
     applications: ?@import("../files/open_with.zig").State = null,
     picker_theme: @import("../icon_theme.zig").Config = .{ .theme_name = "", .base_dirs = &.{} },
+    menu_labels: [8][]const u8 = undefined,
     choice: usize = 0,
     last_tick: i64 = 0,
     last_tick_active: bool = false,

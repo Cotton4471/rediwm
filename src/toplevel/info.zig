@@ -16,7 +16,6 @@ const events = @import("../ipc/events.zig");
 const protocol = @import("../ipc/protocol.zig");
 const xdg = @import("../xdg.zig");
 const xwayland_surface = @import("../xwayland_surface.zig");
-const settings_title = Toplevel.settings_title;
 const settings_app_id = Toplevel.settings_app_id;
 const welcome_app_id = Toplevel.welcome_app_id;
 
@@ -90,7 +89,7 @@ pub fn titlePtr(toplevel: *const Toplevel) ?[*:0]const u8 {
         .xdg => |*adapter| adapter.xdg_toplevel.title,
         .xwayland => |*adapter| adapter.xsurface.title,
         .placeholder => |*ph| ph.name.ptr,
-        .shell => |shell| if (shell.welcome) "Welcome to RediWM" else settings_title.ptr,
+        .shell => |shell| if (shell.welcome) @import("i18n").trZ("Welcome to RediWM").ptr else @import("i18n").trZ("RediWM Settings").ptr,
     };
 }
 

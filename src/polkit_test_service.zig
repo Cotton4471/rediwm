@@ -32,6 +32,14 @@ fn simulated(_: ?*anyopaque, agent: *Agent, event: helper.Event) void {
 fn input(_: c_int, _: wl.EventMask, _: *bool) c_int {
     var byte: [1]u8 = undefined;
     const n = std.posix.system.read(0, &byte, byte.len);
+    if (n == 1 and byte[0] == 'l') {
+        input_agent.?.setLocale("de_DE.UTF-8") catch {
+            stop = true;
+            return 0;
+        };
+        _ = std.posix.system.write(1, "locale\n", 7);
+        return 0;
+    }
     if (n == 1 and hold_prompt) {
         const agent = input_agent.?;
         switch (byte[0]) {

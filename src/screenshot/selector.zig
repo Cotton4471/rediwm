@@ -1,4 +1,5 @@
 //! Native, modal region picker. All geometry is output-local logical pixels.
+const i18n = @import("i18n");
 const std = @import("std");
 const wlr = @import("wlroots");
 const sn = @import("../node.zig");
@@ -131,7 +132,7 @@ pub fn flush(self: *Self, output: *Output) void {
     }
     self.updateSelection() catch |err| {
         self.cancel();
-        report(output.server, "Screenshot failed", @errorName(err));
+        report(output.server, i18n.tr("Screenshot failed"), @errorName(err));
     };
 }
 
@@ -199,10 +200,10 @@ fn paintToolbar(self: *Self) !void {
     const buttons = ui.widgets.button;
     // Region is the mode in effect; Full Screen captures at once. `button()`
     // hit tests the same boxes.
-    buttons.paint(&r, .{ .x = 9, .y = 8, .w = 132, .h = 42 }, .{ .variant = .primary, .leading_icon = .region, .label = "Region" }, .{});
-    buttons.paint(&r, .{ .x = 146, .y = 8, .w = 164, .h = 42 }, .{ .variant = .ghost, .leading_icon = .display, .label = "Full Screen" }, .{});
-    buttons.paint(&r, .{ .x = 316, .y = 8, .w = 36, .h = 42 }, .{ .variant = .chrome, .icon = .close, .label = "Cancel" }, .{});
-    r.drawText(12, 64, 340, 22, .{ .content = "Drag to save and copy · Esc to cancel", .font_size = 13, .color = selectionWhite().toRgba() });
+    buttons.paint(&r, .{ .x = 9, .y = 8, .w = 132, .h = 42 }, .{ .variant = .primary, .leading_icon = .region, .label = i18n.tr("Region") }, .{});
+    buttons.paint(&r, .{ .x = 146, .y = 8, .w = 164, .h = 42 }, .{ .variant = .ghost, .leading_icon = .display, .label = i18n.tr("Full Screen") }, .{});
+    buttons.paint(&r, .{ .x = 316, .y = 8, .w = 36, .h = 42 }, .{ .variant = .chrome, .icon = .close, .label = i18n.tr("Cancel") }, .{});
+    r.drawText(12, 64, 340, 22, .{ .content = i18n.tr("Drag to save and copy · Esc to cancel"), .font_size = 13, .color = selectionWhite().toRgba() });
     const node = try tree.createSceneBuffer(&image.base);
     node.setDestSize(360, 88);
     node.node.setPosition(self.toolbarX(), 20);
@@ -262,7 +263,7 @@ fn capture(self: *Self, crop: ?wlr.Box) void {
 }
 
 pub fn save(server: *Server, output: *Output, crop: ?wlr.Box) void {
-    saveInner(server, output, crop) catch |err| report(server, "Screenshot failed", @errorName(err));
+    saveInner(server, output, crop) catch |err| report(server, i18n.tr("Screenshot failed"), @errorName(err));
 }
 
 fn saveInner(server: *Server, output: *Output, crop: ?wlr.Box) !void {
@@ -277,11 +278,11 @@ fn saveInner(server: *Server, output: *Output, crop: ?wlr.Box) !void {
     const path = try std.fmt.allocPrint(gpa, "{s}/Screenshot-{d}-{d}-{d}.png", .{ directory, ts.sec, ts.nsec, mgr.next_job_id });
     defer gpa.free(path);
     const result = try mgr.queueRequest(.{ .output = std.mem.span(output.wlr_output.name), .path = path, .crop = if (crop) |b| .{ .x = b.x, .y = b.y, .width = b.width, .height = b.height } else null }, null, null);
-    if (result == .err) report(server, "Screenshot failed", result.err);
+    if (result == .err) report(server, i18n.tr("Screenshot failed"), result.err);
 }
 
 pub fn report(server: *Server, title: []const u8, body: []const u8) void {
     if (server.notifications) |manager| {
-        _ = manager.postNotification("Screenshot", 0, "", title, body, &.{}, 1, false, true, 3500, "", null) catch {};
+        _ = manager.postNotification(i18n.tr("Screenshot"), 0, "", title, body, &.{}, 1, false, true, 3500, "", null) catch {};
     }
 }

@@ -1,4 +1,5 @@
 //! Printer setup, queue settings and explicit diagnostic print workflows.
+const i18n = @import("i18n");
 const std = @import("std");
 const ui = @import("ui");
 const panel = @import("../panel.zig");
@@ -216,7 +217,7 @@ fn authenticateClicked(raw: ?*anyopaque, _: usize) void {
     const self = &cc.printers;
     const manager = self.administration orelse return;
     manager.authenticate(fieldValue(self, .auth_user), self.password.value()) catch {
-        self.message = "Enter a valid CUPS administrator username and password.";
+        self.message = i18n.tr("Enter a valid CUPS administrator username and password.");
         self.password.clear();
         cc.refresh();
         return;
@@ -305,8 +306,8 @@ fn wrapLabels(a: A, widget: *W, available: f32) !void {
     for (widget.children) |*child| try wrapLabels(a, child, if (widget.direction == .row and child.width != .fixed) share else inner);
 }
 fn tree(self: *Section, cc: *panel.ControlCenter, a: A) !W {
-    if (cc.server.greeter_mode) return text("Printers are unavailable in the greeter.", true);
-    if (self.client == null) self.client = printing.Client.create(cc.server.io, cc.server.environ, cc.server.wl_server.getEventLoop(), cc, changed) catch return text("Could not start printer diagnostics.", true);
+    if (cc.server.greeter_mode) return text(i18n.tr("Printers are unavailable in the greeter."), true);
+    if (self.client == null) self.client = printing.Client.create(cc.server.io, cc.server.environ, cc.server.wl_server.getEventLoop(), cc, changed) catch return text(i18n.tr("Could not start printer diagnostics."), true);
     const client = self.client.?;
     var content: std.ArrayList(W) = .empty;
     const state = client.current;
@@ -326,15 +327,15 @@ fn tree(self: *Section, cc: *panel.ControlCenter, a: A) !W {
         self.listener_attempted = false;
     };
     const failure: ?anyerror = if (client.failure) |err| err else if (state) |snapshot| if (snapshot.failure) |err| err else snapshot.action_error else null;
-    const status = if (client.busy) "Loading printers…" else if (failure) |err| cups.failure(err) else "Connected to CUPS.";
+    const status = if (client.busy) i18n.tr("Loading printers…") else if (failure) |err| cups.failure(err) else i18n.tr("Connected to CUPS.");
     if (client.busy or failure != null) try content.append(a, named(text(status, true), "printers_status"));
     try content.append(a, try actionRow(a, cc, &.{
-        button(cc, "printers_add", "Add a printer", 0, !canAdmin(self) or busy(self), addClicked),
-        button(cc, "printers_refresh", "Refresh", 0, client.busy, refresh),
+        button(cc, "printers_add", i18n.tr("Add a printer"), 0, !canAdmin(self) or busy(self), addClicked),
+        button(cc, "printers_refresh", i18n.tr("Refresh"), 0, client.busy, refresh),
     }));
     if (self.message.len > 0) try content.append(a, text(self.message, false));
     if (self.administration) |manager| {
-        if (!std.mem.eql(u8, manager.status, "Printer administration is available; authorization may be required.")) try content.append(a, text(manager.status, true));
+        if (manager.status.len != 0) try content.append(a, text(manager.status, true));
         if (manager.authentication) {
             if (self.password.storage.len == 0) {
                 self.password.storage = try secure.alloc(u8, 4095);
@@ -342,39 +343,39 @@ fn tree(self: *Section, cc: *panel.ControlCenter, a: A) !W {
             }
             const username = try cups.user(a);
             try content.append(a, try card(a, &.{
-                text("Authorize printer administration", false),
-                text("Enter an account permitted to administer the local CUPS server.", true),
-                try entry(self, cc, a, .auth_user, "Username", username),
-                .{ .name = "printers_auth_password", .kind = .{ .secret_input = .{ .placeholder = "Password", .input = &self.password } }, .width = .{ .percent = 1 }, .height = .{ .fixed = 36 } },
+                text(i18n.tr("Authorize printer administration"), false),
+                text(i18n.tr("Enter an account permitted to administer the local CUPS server."), true),
+                try entry(self, cc, a, .auth_user, i18n.tr("Username"), username),
+                .{ .name = "printers_auth_password", .kind = .{ .secret_input = .{ .placeholder = i18n.tr("Password"), .input = &self.password } }, .width = .{ .percent = 1 }, .height = .{ .fixed = 36 } },
                 try actionRow(a, cc, &.{
-                    button(cc, "printers_auth_submit", "Authenticate", 0, false, authenticateClicked),
-                    button(cc, "printers_auth_cancel", "Cancel", 0, false, cancelAuthenticationClicked),
+                    button(cc, "printers_auth_submit", i18n.tr("Authenticate"), 0, false, authenticateClicked),
+                    button(cc, "printers_auth_cancel", i18n.tr("Cancel"), 0, false, cancelAuthenticationClicked),
                 }),
             }));
         }
-    } else try content.append(a, text("Printer setup requires the local default CUPS server.", true));
+    } else try content.append(a, text(i18n.tr("Printer setup requires the local default CUPS server."), true));
     if (state) |snapshot| {
         if (snapshot.action_error) |err| try content.append(a, text(cups.failure(err), false));
         if (snapshot.failure != null) {
             try content.append(a, text(snapshot.platform.missing_cups, true));
-            try content.append(a, button(cc, "printers_start", "Start CUPS", 0, !snapshot.admin_local or busy(self) or self.administration == null, startClicked));
+            try content.append(a, button(cc, "printers_start", i18n.tr("Start CUPS"), 0, !snapshot.admin_local or busy(self) or self.administration == null, startClicked));
         }
 
         if (self.form == .add or self.form == .connection) try content.append(a, try addForm(self, cc, a, snapshot));
         if (snapshot.cups) |data| {
             if (data.printers.len == 0) {
-                try content.append(a, text("No printers configured.", false));
+                try content.append(a, text(i18n.tr("No printers configured."), false));
             } else {
                 const selected = selectIndex(self, data.printers);
                 const labels = try a.alloc([]const u8, data.printers.len);
                 const queue_refs = try a.alloc([]const u8, data.printers.len);
                 for (data.printers, 0..) |printer, i| {
                     queue_refs[i] = try a.dupe(u8, printer.name);
-                    labels[i] = try std.fmt.allocPrint(a, "{s} · {s}{s}", .{ printer.name, cups.printerState(printer.state), if (std.mem.eql(u8, printer.name, data.user_default)) " · Default" else if (printer.is_default) " · System default" else "" });
+                    labels[i] = try std.fmt.allocPrint(a, "{s} · {s}{s}", .{ printer.name, cups.printerState(printer.state), if (std.mem.eql(u8, printer.name, data.user_default)) i18n.tr(" · Default") else if (printer.is_default) i18n.tr(" · System default") else "" });
                 }
                 self.queue_refs = queue_refs;
                 try content.append(a, try group(a, &.{
-                    text("Printer", false),
+                    text(i18n.tr("Printer"), false),
                     .{ .name = "printers_printer", .kind = .{ .select = .{ .labels = labels, .selected = selected, .disabled = busy(self), .owner = cc, .on_change = select } }, .height = .{ .fixed = 34 }, .width = .{ .percent = 1 } },
                 }));
                 try details(self, cc, a, &content, snapshot, data, data.printers[selected]);
@@ -383,14 +384,14 @@ fn tree(self: *Section, cc: *panel.ControlCenter, a: A) !W {
         // Attached printers can still be inspected if CUPS is missing or empty.
         if (snapshot.usb) |inventory| if (inventory.devices.len > 0) {
             var devices: std.ArrayList(W) = .empty;
-            try devices.append(a, disclosure(self, cc, "printers_devices", "Attached USB printers", .devices));
+            try devices.append(a, disclosure(self, cc, "printers_devices", i18n.tr("Attached USB printers"), .devices));
             if (isOpen(self, .devices)) for (inventory.devices) |device| {
                 try devices.append(a, text(try std.fmt.allocPrint(a, "{s} {s} ({x:0>4}:{x:0>4})", .{ device.manufacturer, device.product, device.vid, device.pid }), true));
                 if (known.lookup(device.vid, device.pid)) |hint| {
                     try devices.append(a, text(hint.note, true));
                     try devices.append(a, text(hint.driver_project, true));
                 }
-                if (device.nodes.len == 0) try devices.append(a, text("No usblp node was found; CUPS may still use libusb or ipp-usb.", true));
+                if (device.nodes.len == 0) try devices.append(a, text(i18n.tr("No usblp node was found; CUPS may still use libusb or ipp-usb."), true));
             };
             try content.append(a, try card(a, devices.items));
         };
@@ -517,25 +518,25 @@ fn details(self: *Section, cc: *panel.ControlCenter, a: A, content: *std.ArrayLi
     if (printer.message.len > 0 and !repeated_message) try header.append(a, text(try a.dupe(u8, printer.message), true));
     for (printer.markers) |marker| {
         if (marker.level == null) continue;
-        try header.append(a, text(if (marker.level) |level| try std.fmt.allocPrint(a, "{s}: {d}%", .{ marker.name, level }) else try std.fmt.allocPrint(a, "{s}: level unavailable", .{marker.name}), true));
+        try header.append(a, text(if (marker.level) |level| try std.fmt.allocPrint(a, "{s}: {d}%", .{ marker.name, level }) else try i18n.allocPrint(a, i18n.tr("{name}: level unavailable"), .{ .name = marker.name }), true));
         if (marker.level) |level| {
             const fill = try a.create(W);
             fill.* = .{ .kind = .{ .rect = .{ .color = panel.palette().accent, .radius = 3 } }, .width = .{ .percent = @as(f32, @floatFromInt(level)) / 100 }, .height = .{ .fixed = 6 } };
             try header.append(a, .{ .kind = .{ .rect = .{ .color = panel.palette().border_soft, .radius = 3 } }, .width = .{ .percent = 1 }, .height = .{ .fixed = 6 }, .children = fill[0..1] });
         }
     }
-    if (printer.accepting == false) try header.append(a, text("Not accepting new jobs", false));
+    if (printer.accepting == false) try header.append(a, text(i18n.tr("Not accepting new jobs"), false));
     const result = ladder.evaluate(try diagnostic(a, state, data, printer));
     if (result.firstFailure()) |first| {
         const row = result.rows[first];
         // Historical job failures belong in history and troubleshooting.
         if (row.layer != .last_job and row.layer != .queue) try header.append(a, text(try a.dupe(u8, row.message), false));
     }
-    if (printer.state == 5) try header.append(a, button(cc, "printers_resume", "Resume printer", 0, !canAdmin(self) or busy(self), resumeClicked));
+    if (printer.state == 5) try header.append(a, button(cc, "printers_resume", i18n.tr("Resume printer"), 0, !canAdmin(self) or busy(self), resumeClicked));
     try header.append(a, try actionRow(a, cc, &.{
-        button(cc, "printers_test_page", "Print test page…", @intFromEnum(printing.TestKind.driver), busy(self) or self.form == .test_result, testClicked),
-        button(cc, "printers_default", if (std.mem.eql(u8, data.user_default, printer.name)) "Your default printer" else "Set as my default", 0, busy(self) or std.mem.eql(u8, data.user_default, printer.name), defaultClicked),
-        disclosure(self, cc, "printers_manage", "Manage…", .manage),
+        button(cc, "printers_test_page", i18n.tr("Print test page…"), @intFromEnum(printing.TestKind.driver), busy(self) or self.form == .test_result, testClicked),
+        button(cc, "printers_default", if (std.mem.eql(u8, data.user_default, printer.name)) i18n.tr("Your default printer") else i18n.tr("Set as my default"), 0, busy(self) or std.mem.eql(u8, data.user_default, printer.name), defaultClicked),
+        disclosure(self, cc, "printers_manage", i18n.tr("Manage…"), .manage),
     }));
     if (preferences.overrideMessage(cc.server.environ)) |message| try header.append(a, text(message, true));
     if (isOpen(self, .manage)) try header.append(a, try management(self, cc, a, printer));
@@ -546,49 +547,49 @@ fn details(self: *Section, cc: *panel.ControlCenter, a: A, content: *std.ArrayLi
     try content.append(a, try printingOptions(self, cc, a, state, printer));
 
     var troubleshooting: std.ArrayList(W) = .empty;
-    try troubleshooting.append(a, disclosure(self, cc, "printers_diagnostics", "Troubleshooting", .troubleshooting));
+    try troubleshooting.append(a, disclosure(self, cc, "printers_diagnostics", i18n.tr("Troubleshooting"), .troubleshooting));
     if (isOpen(self, .troubleshooting)) {
-        const layer_names = [_][]const u8{ "Connection", "Device node", "CUPS", "Queue", "Backend", "Media and resolution", "Last job" };
+        const layer_names = [_]i18n.Message{ i18n.msg("Connection"), i18n.msg("Device node"), i18n.msg("CUPS"), i18n.msg("Queue"), i18n.msg("Backend"), i18n.msg("Media and resolution"), i18n.msg("Last job") };
         for (result.rows, layer_names) |row, name| {
             try troubleshooting.append(a, text(try std.fmt.allocPrint(a, "{s} · {s}: {s}", .{ switch (row.verdict) {
-                .pass => "Pass",
-                .fail => "Problem",
-                .unknown => "Unknown",
-            }, name, row.message }), row.verdict != .fail));
+                .pass => i18n.tr("Pass"),
+                .fail => i18n.tr("Problem"),
+                .unknown => i18n.tr("Unknown"),
+            }, name.get(), row.message }), row.verdict != .fail));
             if (row.verdict == .fail and row.fix.len > 0) try troubleshooting.append(a, text(row.fix, true));
         }
-        try troubleshooting.append(a, button(cc, "printers_copy_report", if (self.copied) "Report copied" else "Copy diagnostic report", 0, false, copy));
-        try troubleshooting.append(a, text("Reports omit document names, user names, USB serials and private printer addresses.", true));
+        try troubleshooting.append(a, button(cc, "printers_copy_report", if (self.copied) i18n.tr("Report copied") else i18n.tr("Copy diagnostic report"), 0, false, copy));
+        try troubleshooting.append(a, text(i18n.tr("Reports omit document names, user names, USB serials and private printer addresses."), true));
     }
     try content.append(a, try card(a, troubleshooting.items));
     // A test owns the media fields until its confirmation/result is dismissed.
     if (!testing) {
-        try content.append(a, disclosure(self, cc, "printers_label_tools", "Label printer and advanced test tools", .label_tools));
+        try content.append(a, disclosure(self, cc, "printers_label_tools", i18n.tr("Label printer and advanced test tools"), .label_tools));
         if (isOpen(self, .label_tools)) try content.append(a, try toolsForm(self, cc, a, state, printer));
     }
 }
 fn management(self: *Section, cc: *panel.ControlCenter, a: A, printer: cups.Printer) !W {
     var items: std.ArrayList(W) = .empty;
-    try items.append(a, text(try std.fmt.allocPrint(a, "Queue: {s}", .{printer.name}), true));
-    try items.append(a, button(cc, "printers_disable", "Disable printer", 0, !canAdmin(self) or busy(self) or printer.state == 5, disableClicked));
-    try items.append(a, button(cc, "printers_accepting", if (printer.accepting == false) "Accept jobs" else "Stop accepting jobs", 0, !canAdmin(self) or busy(self), acceptingClicked));
-    try items.append(a, button(cc, "printers_connection", "Change connection…", 0, !canAdmin(self) or busy(self), connectionClicked));
-    try items.append(a, button(cc, "printers_system_default", "Set as system default", 0, !canAdmin(self) or busy(self) or printer.is_default, systemDefaultClicked));
-    try items.append(a, try entry(self, cc, a, .rename, "Display name", ""));
-    try items.append(a, button(cc, "printers_rename_save", "Save display name", 0, !canAdmin(self) or busy(self), renameClicked));
-    try items.append(a, try entry(self, cc, a, .queue_name, "Queue identifier", ""));
-    try items.append(a, button(cc, "printers_queue_rename", "Change queue identifier…", 0, !canAdmin(self) or busy(self) or std.ascii.eqlIgnoreCase(fieldValue(self, .queue_name), printer.name), queueRenameClicked));
+    try items.append(a, text(try i18n.allocPrint(a, i18n.tr("Queue: {name}"), .{ .name = printer.name }), true));
+    try items.append(a, button(cc, "printers_disable", i18n.tr("Disable printer"), 0, !canAdmin(self) or busy(self) or printer.state == 5, disableClicked));
+    try items.append(a, button(cc, "printers_accepting", if (printer.accepting == false) i18n.tr("Accept jobs") else i18n.tr("Stop accepting jobs"), 0, !canAdmin(self) or busy(self), acceptingClicked));
+    try items.append(a, button(cc, "printers_connection", i18n.tr("Change connection…"), 0, !canAdmin(self) or busy(self), connectionClicked));
+    try items.append(a, button(cc, "printers_system_default", i18n.tr("Set as system default"), 0, !canAdmin(self) or busy(self) or printer.is_default, systemDefaultClicked));
+    try items.append(a, try entry(self, cc, a, .rename, i18n.tr("Display name"), ""));
+    try items.append(a, button(cc, "printers_rename_save", i18n.tr("Save display name"), 0, !canAdmin(self) or busy(self), renameClicked));
+    try items.append(a, try entry(self, cc, a, .queue_name, i18n.tr("Queue identifier"), ""));
+    try items.append(a, button(cc, "printers_queue_rename", i18n.tr("Change queue identifier…"), 0, !canAdmin(self) or busy(self) or std.ascii.eqlIgnoreCase(fieldValue(self, .queue_name), printer.name), queueRenameClicked));
     if (self.form == .queue_rename) {
-        try items.append(a, text(try std.fmt.allocPrint(a, "Change {s} to {s}?", .{ printer.name, fieldValue(self, .queue_name) }), false));
-        try items.append(a, text("CUPS copies the queue and removes its old identifier. Finish all jobs first. Check the resulting driver options afterwards.", true));
-        try items.append(a, button(cc, "printers_queue_rename_confirm", "Change this queue identifier", 0, !canAdmin(self) or busy(self), queueRenameConfirm));
-        try items.append(a, button(cc, "printers_queue_rename_cancel", "Keep identifier", 0, busy(self), dismiss));
+        try items.append(a, text(try i18n.allocPrint(a, i18n.tr("Change {old} to {name}?"), .{ .old = printer.name, .name = fieldValue(self, .queue_name) }), false));
+        try items.append(a, text(i18n.tr("CUPS copies the queue and removes its old identifier. Finish all jobs first. Check the resulting driver options afterwards."), true));
+        try items.append(a, button(cc, "printers_queue_rename_confirm", i18n.tr("Change this queue identifier"), 0, !canAdmin(self) or busy(self), queueRenameConfirm));
+        try items.append(a, button(cc, "printers_queue_rename_cancel", i18n.tr("Keep identifier"), 0, busy(self), dismiss));
     }
     if (self.form == .remove) {
-        try items.append(a, text(try std.fmt.allocPrint(a, "Remove printer {s} ({s})? This deletes its queue and settings.", .{ if (printer.info.len > 0) printer.info else printer.name, printer.name }), false));
-        try items.append(a, button(cc, "printers_remove_confirm", "Remove this printer", 0, !canAdmin(self) or busy(self), removeConfirm));
-        try items.append(a, button(cc, "printers_remove_cancel", "Keep printer", 0, busy(self), dismiss));
-    } else try items.append(a, button(cc, "printers_remove", "Remove printer…", 0, !canAdmin(self) or busy(self), removeClicked));
+        try items.append(a, text(try i18n.allocPrint(a, i18n.tr("Remove printer {name} ({queue})? This deletes its queue and settings."), .{ .name = if (printer.info.len > 0) printer.info else printer.name, .queue = printer.name }), false));
+        try items.append(a, button(cc, "printers_remove_confirm", i18n.tr("Remove this printer"), 0, !canAdmin(self) or busy(self), removeConfirm));
+        try items.append(a, button(cc, "printers_remove_cancel", i18n.tr("Keep printer"), 0, busy(self), dismiss));
+    } else try items.append(a, button(cc, "printers_remove", i18n.tr("Remove printer…"), 0, !canAdmin(self) or busy(self), removeClicked));
     return group(a, items.items);
 }
 
@@ -604,7 +605,7 @@ fn preference(option: driver_options.Option) ?Preference {
 }
 fn printingOptions(self: *Section, cc: *panel.ControlCenter, a: A, state: *const printing.State, printer: cups.Printer) !W {
     var options: std.ArrayList(W) = .empty;
-    try options.append(a, panel.sectionTitle("Printing preferences"));
+    try options.append(a, panel.sectionTitle(i18n.tr("Printing preferences")));
     const groups: []const driver_options.Group = if (std.mem.eql(u8, state.selected, printer.name)) state.groups else &.{};
     // Prefer the driver's selectable default over an alias of the same setting.
     var common: [@typeInfo(Preference).@"enum".fields.len]?*const driver_options.Option = @splat(null);
@@ -614,14 +615,14 @@ fn printingOptions(self: *Section, cc: *panel.ControlCenter, a: A, state: *const
         const slot = &common[@intFromEnum(kind)];
         if (slot.* == null or (slot.*.?.source == .ipp and option.source == .ppd)) slot.* = option;
     };
-    if (common[@intFromEnum(Preference.paper)] == null) try options.append(a, text(try std.fmt.allocPrint(a, "Paper: {s}", .{if (printer.media.len > 0) printer.media else "Unavailable"}), true));
+    if (common[@intFromEnum(Preference.paper)] == null) try options.append(a, text(try i18n.allocPrint(a, i18n.tr("Paper: {paper}"), .{ .paper = if (printer.media.len > 0) printer.media else i18n.tr("Unavailable") }), true));
     if (common[@intFromEnum(Preference.resolution)] == null) {
         if (resolution(printer.resolution)) |r| {
-            try options.append(a, text(try std.fmt.allocPrint(a, "Resolution: {d} × {d} dpi", .{ r.x_dpi, r.y_dpi }), true));
-        } else try options.append(a, text("Resolution: Unavailable", true));
+            try options.append(a, text(try i18n.allocPrint(a, i18n.tr("Resolution: {x} × {y} dpi"), .{ .x = r.x_dpi, .y = r.y_dpi }), true));
+        } else try options.append(a, text(i18n.tr("Resolution: Unavailable"), true));
     }
-    if (common[@intFromEnum(Preference.colour)] == null and printer.color.len > 0) try options.append(a, text(try std.fmt.allocPrint(a, "Colour: {s}", .{printer.color}), true));
-    if (common[@intFromEnum(Preference.sides)] == null and printer.sides.len > 0) try options.append(a, text(try std.fmt.allocPrint(a, "Sides: {s}", .{printer.sides}), true));
+    if (common[@intFromEnum(Preference.colour)] == null and printer.color.len > 0) try options.append(a, text(try i18n.allocPrint(a, i18n.tr("Colour: {colour}"), .{ .colour = printer.color }), true));
+    if (common[@intFromEnum(Preference.sides)] == null and printer.sides.len > 0) try options.append(a, text(try i18n.allocPrint(a, i18n.tr("Sides: {sides}"), .{ .sides = printer.sides }), true));
     var refs: std.ArrayList(driver_options.Option) = .empty;
     for (common) |option| if (option) |value| try optionWidget(self, cc, a, &options, &refs, state, value.*);
     var has_more = false;
@@ -631,12 +632,12 @@ fn printingOptions(self: *Section, cc: *panel.ControlCenter, a: A, state: *const
             if (driver_options.ppdMargins(state.ppd, value) != null) has_more = true;
         };
     };
-    if (has_more) try options.append(a, disclosure(self, cc, "printers_more_options", "More printing options", .more_options));
+    if (has_more) try options.append(a, disclosure(self, cc, "printers_more_options", i18n.tr("More printing options"), .more_options));
     if (isOpen(self, .more_options)) for (groups) |option_group| {
         var heading = false;
         for (option_group.options) |option| {
             if (std.mem.eql(u8, option.name, "PageSize")) {
-                if (driver_options.ppdMargins(state.ppd, option.default orelse continue)) |margins| try options.append(a, text(try std.fmt.allocPrint(a, "Margins (mm): left {d:.1}, right {d:.1}, top {d:.1}, bottom {d:.1}", .{ margins.left_mm, margins.right_mm, margins.top_mm, margins.bottom_mm }), true));
+                if (driver_options.ppdMargins(state.ppd, option.default orelse continue)) |margins| try options.append(a, text(try i18n.allocPrint(a, i18n.tr("Margins (mm): left {left}, right {right}, top {top}, bottom {bottom}"), .{ .left = try std.fmt.allocPrint(a, "{d:.1}", .{margins.left_mm}), .right = try std.fmt.allocPrint(a, "{d:.1}", .{margins.right_mm}), .top = try std.fmt.allocPrint(a, "{d:.1}", .{margins.top_mm}), .bottom = try std.fmt.allocPrint(a, "{d:.1}", .{margins.bottom_mm}) }), true));
             }
             if (preference(option) != null or (option.choices.len == 0 and option.range == null)) continue;
             if (!heading) {
@@ -673,10 +674,10 @@ fn optionWidget(self: *Section, cc: *panel.ControlCenter, a: A, options: *std.Ar
             try options.append(a, text(try a.dupe(u8, option.label), false));
             if (canAdmin(self) and !busy(self) and editable) {
                 try options.append(a, .{ .name = try std.fmt.allocPrint(a, "printers_range_{s}", .{option.name}), .kind = .{ .stepper = .{ .value = draft.value, .min = @floatFromInt(range.lower), .max = @floatFromInt(range.upper), .step = 1, .owner = cc, .id = index.?, .on_change = rangeChanged } }, .width = .{ .percent = 1 }, .height = .{ .fixed = 34 } });
-                try options.append(a, button(cc, try std.fmt.allocPrint(a, "printers_option_{s}_apply", .{option.name}), "Apply value", index.?, false, rangeApply));
+                try options.append(a, button(cc, try std.fmt.allocPrint(a, "printers_option_{s}_apply", .{option.name}), i18n.tr("Apply value"), index.?, false, rangeApply));
             } else {
-                try options.append(a, text(try std.fmt.allocPrint(a, "{d:.0} (supported {d}–{d})", .{ draft.value, range.lower, range.upper }), true));
-                if (!editable) try options.append(a, text("This range has no selectable queue setting in the current driver.", true));
+                try options.append(a, text(try i18n.allocPrint(a, i18n.tr("{value} (supported {min}–{max})"), .{ .value = try std.fmt.allocPrint(a, "{d:.0}", .{draft.value}), .min = range.lower, .max = range.upper }), true));
+                if (!editable) try options.append(a, text(i18n.tr("This range has no selectable queue setting in the current driver."), true));
             }
         }
         return;
@@ -697,7 +698,7 @@ fn optionWidget(self: *Section, cc: *panel.ControlCenter, a: A, options: *std.Ar
         text(try a.dupe(u8, option.label), false),
         .{ .name = try std.fmt.allocPrint(a, "printers_option_{s}", .{option.name}), .kind = .{ .select = .{ .labels = labels, .selected = selected, .disabled = !canAdmin(self) or busy(self) or !editable, .owner = cc, .id = id, .on_change = optionChanged } }, .height = .{ .fixed = 34 }, .width = .{ .percent = 1 } },
     }));
-    if (!editable) try options.append(a, text("This capability has no selectable queue default in the current driver.", true));
+    if (!editable) try options.append(a, text(i18n.tr("This capability has no selectable queue default in the current driver."), true));
 }
 
 fn historical(job: cups.Job) bool {
@@ -711,7 +712,7 @@ fn jobList(self: *Section, cc: *panel.ControlCenter, a: A, data: cups.Snapshot, 
         if (!job.own or !std.mem.eql(u8, job.printer, printer.name)) continue;
         if (historical(job)) history += 1 else active += 1;
     }
-    try items.append(a, panel.sectionTitle(if (active == 0) "Print queue" else try std.fmt.allocPrint(a, "Print queue · {d}", .{active})));
+    try items.append(a, panel.sectionTitle(if (active == 0) i18n.tr("Print queue") else try i18n.allocPrint(a, i18n.tr("Print queue · {n}"), .{ .n = active })));
     for (data.jobs) |job| {
         if (!job.own or !std.mem.eql(u8, job.printer, printer.name) or historical(job)) continue;
         try jobRow(self, cc, a, &items, job);
@@ -721,9 +722,9 @@ fn jobList(self: *Section, cc: *panel.ControlCenter, a: A, data: cups.Snapshot, 
             if (job.message.len > 0) try items.append(a, text(try a.dupe(u8, job.message), true));
         }
     }
-    if (data.jobs_error) |err| try items.append(a, text(cups.failure(err), true)) else if (active == 0) try items.append(a, text("No active jobs", true));
+    if (data.jobs_error) |err| try items.append(a, text(cups.failure(err), true)) else if (active == 0) try items.append(a, text(i18n.tr("No active jobs"), true));
     if (history > 0) {
-        try items.append(a, disclosure(self, cc, "printers_history", try std.fmt.allocPrint(a, "Job history · {d}", .{history}), .history));
+        try items.append(a, disclosure(self, cc, "printers_history", try i18n.allocPrint(a, i18n.tr("Job history · {n}"), .{ .n = history }), .history));
         if (isOpen(self, .history)) {
             var shown: usize = 0;
             for (data.jobs) |job| {
@@ -732,20 +733,20 @@ fn jobList(self: *Section, cc: *panel.ControlCenter, a: A, data: cups.Snapshot, 
                 try jobRow(self, cc, a, &items, job);
                 shown += 1;
             }
-            if (shown < history) try items.append(a, button(cc, "printers_history_more", "Show more", 0, false, moreHistory));
+            if (shown < history) try items.append(a, button(cc, "printers_history_more", i18n.tr("Show more"), 0, false, moreHistory));
         }
     }
     return card(a, items.items);
 }
 fn jobRow(self: *Section, cc: *panel.ControlCenter, a: A, items: *std.ArrayList(W), job: cups.Job) !void {
-    var row = button(cc, try std.fmt.allocPrint(a, "printers_job_{d}", .{job.id}), try std.fmt.allocPrint(a, "Job {d} · {s}", .{ job.id, cups.jobState(job.state) }), @intCast(@max(0, job.id)), job.id <= 0, jobClicked);
+    var row = button(cc, try std.fmt.allocPrint(a, "printers_job_{d}", .{job.id}), try i18n.allocPrint(a, i18n.tr("Job {id} · {state}"), .{ .id = job.id, .state = cups.jobState(job.state) }), @intCast(@max(0, job.id)), job.id <= 0, jobClicked);
     row.kind.button.variant = .ghost;
     row.kind.button.trailing_icon = if (self.expanded_job == job.id) .chevron_down else .chevron_right;
     if (job.cancellable()) {
-        try items.append(a, try actionRow(a, cc, &.{ row, button(cc, try std.fmt.allocPrint(a, "printers_cancel_{d}", .{job.id}), "Cancel job", @intCast(job.id), self.client.?.busy, cancel) }));
+        try items.append(a, try actionRow(a, cc, &.{ row, button(cc, try std.fmt.allocPrint(a, "printers_cancel_{d}", .{job.id}), i18n.tr("Cancel job"), @intCast(job.id), self.client.?.busy, cancel) }));
     } else try items.append(a, row);
     if (self.expanded_job == job.id) {
-        if (job.sheets) |sheets| if (sheets >= 0) try items.append(a, text(try std.fmt.allocPrint(a, "{d} completed sheets reported by CUPS", .{sheets}), true));
+        if (job.sheets) |sheets| if (sheets >= 0) try items.append(a, text(try i18n.allocPrint(a, i18n.trn("{n} completed sheet reported by CUPS", "{n} completed sheets reported by CUPS", @intCast(sheets)), .{ .n = sheets }), true));
         if (job.state != 4 and job.state != 6) {
             try showReasons(a, items, job.reasons);
             if (job.message.len > 0) try items.append(a, text(try a.dupe(u8, job.message), true));
@@ -914,11 +915,11 @@ fn runAdmin(cc: *panel.ControlCenter, action: admin.Action) void {
     const manager = cc.printers.administration orelse return;
     manager.request(action) catch |err| {
         cc.printers.message = switch (err) {
-            error.QueueExists => "A printer with this queue name already exists. Choose another name.",
-            error.InvalidName => "Use letters, numbers, dots, hyphens or underscores for the queue name.",
-            error.InvalidUri, error.UnsupportedScheme => "Enter a supported printer address without credentials.",
-            error.UntrustedDevice => "Find available printers again and choose the current discovered device.",
-            else => "The printer change could not be requested.",
+            error.QueueExists => i18n.tr("A printer with this queue name already exists. Choose another name."),
+            error.InvalidName => i18n.tr("Use letters, numbers, dots, hyphens or underscores for the queue name."),
+            error.InvalidUri, error.UnsupportedScheme => i18n.tr("Enter a supported printer address without credentials."),
+            error.UntrustedDevice => i18n.tr("Find available printers again and choose the current discovered device."),
+            else => i18n.tr("The printer change could not be requested."),
         };
     };
     cc.refresh();
@@ -926,7 +927,7 @@ fn runAdmin(cc: *panel.ControlCenter, action: admin.Action) void {
 fn runClient(cc: *panel.ControlCenter, action: printing.Action) void {
     const client = cc.printers.client orelse return;
     client.act(action) catch {
-        cc.printers.message = "Wait for the current printer operation to finish.";
+        cc.printers.message = i18n.tr("Wait for the current printer operation to finish.");
     };
     cc.refresh();
 }
@@ -1006,7 +1007,7 @@ fn verifyOption(cc: *panel.ControlCenter) void {
     for (data.printers) |printer| if (std.mem.eql(u8, printer.name, pending.queue[0..pending.queue_len])) {
         const option: driver_options.Option = .{ .name = pending.key[0..pending.key_len], .source = if (pending.ppd) .ppd else .ipp };
         const matches = driver_options.settingMatches(state.groups, printer.attributes, option, pending.value[0..pending.value_len]);
-        cc.printers.message = if (matches) |saved| if (saved) "Printer setting verified." else "The driver did not report the requested value. Review its settings before printing." else "CUPS accepted the change; the resulting driver value could not be verified.";
+        cc.printers.message = if (matches) |saved| if (saved) i18n.tr("Printer setting verified.") else i18n.tr("The driver did not report the requested value. Review its settings before printing.") else i18n.tr("CUPS accepted the change; the resulting driver value could not be verified.");
         return;
     };
 }
@@ -1042,8 +1043,8 @@ fn addClicked(raw: ?*anyopaque, _: usize) void {
 }
 fn addForm(self: *Section, cc: *panel.ControlCenter, a: A, state: *const printing.State) !W {
     var items: std.ArrayList(W) = .empty;
-    try items.append(a, panel.sectionTitle(if (self.form == .connection) "Change printer connection" else "Add a printer"));
-    try items.append(a, button(cc, "printers_discover", "Find available printers", 0, !canAdmin(self) or busy(self), discoverClicked));
+    try items.append(a, panel.sectionTitle(if (self.form == .connection) i18n.tr("Change printer connection") else i18n.tr("Add a printer")));
+    try items.append(a, button(cc, "printers_discover", i18n.tr("Find available printers"), 0, !canAdmin(self) or busy(self), discoverClicked));
     if (self.administration) |manager| {
         const devices = try a.alloc(admin.Device, manager.devices.len);
         for (manager.devices, 0..) |device, i| devices[i] = .{ .uri = try a.dupe(u8, device.uri), .make_model = try a.dupe(u8, device.make_model), .info = try a.dupe(u8, device.info), .device_id = try a.dupe(u8, device.device_id) };
@@ -1057,23 +1058,23 @@ fn addForm(self: *Section, cc: *panel.ControlCenter, a: A, state: *const printin
         if (used and self.form == .add) continue;
         try items.append(a, button(cc, try std.fmt.allocPrint(a, "printers_device_{d}", .{i}), try cups.clean(a, if (device.info.len > 0) device.info else device.make_model), i, busy(self), deviceClicked));
     }
-    try items.append(a, try entry(self, cc, a, .address, "Printer address (ipp, ipps, socket or lpd)", ""));
-    try items.append(a, button(cc, "printers_probe", "Check IPP address", 0, busy(self), probeClicked));
+    try items.append(a, try entry(self, cc, a, .address, i18n.tr("Printer address (ipp, ipps, socket or lpd)"), ""));
+    try items.append(a, button(cc, "printers_probe", i18n.tr("Check IPP address"), 0, busy(self), probeClicked));
     if (self.form == .connection) {
-        try items.append(a, text("Select an installed USB backend from discovery, or enter a network address. This changes the connection for the selected queue.", true));
-        try items.append(a, button(cc, "printers_connection_apply", "Apply connection", 0, busy(self) or !canAdmin(self), applyConnectionClicked));
-        try items.append(a, button(cc, "printers_add_cancel", "Keep connection", 0, busy(self), dismiss));
+        try items.append(a, text(i18n.tr("Select an installed USB backend from discovery, or enter a network address. This changes the connection for the selected queue."), true));
+        try items.append(a, button(cc, "printers_connection_apply", i18n.tr("Apply connection"), 0, busy(self) or !canAdmin(self), applyConnectionClicked));
+        try items.append(a, button(cc, "printers_add_cancel", i18n.tr("Keep connection"), 0, busy(self), dismiss));
         return card(a, items.items);
     }
-    try items.append(a, try entry(self, cc, a, .name, "Queue name", "Printer"));
+    try items.append(a, try entry(self, cc, a, .name, i18n.tr("Queue name"), i18n.tr("Printer")));
     const data = state.cups orelse return card(a, items.items);
     if (data.drivers_error) |err| try items.append(a, text(cups.failure(err), true));
     const labels = try a.alloc([]const u8, data.drivers.len + 3);
-    labels[0] = "Choose a driver…";
-    labels[1] = "IPP Everywhere / AirPrint";
-    labels[2] = "Raw queue (printer commands only)";
+    labels[0] = i18n.tr("Choose a driver…");
+    labels[1] = i18n.tr("IPP Everywhere / AirPrint");
+    labels[2] = i18n.tr("Raw queue (printer commands only)");
     const driver_refs = try a.alloc([]const u8, data.drivers.len);
-    for (data.drivers, 0..) |driver, i| labels[i + 3] = try cups.clean(a, try std.fmt.allocPrint(a, "{s} ({s})", .{ if (driver.model.len > 0) driver.model else "Driver", driver.name }));
+    for (data.drivers, 0..) |driver, i| labels[i + 3] = try cups.clean(a, try std.fmt.allocPrint(a, "{s} ({s})", .{ if (driver.model.len > 0) driver.model else i18n.tr("Driver"), driver.name }));
     for (data.drivers, 0..) |driver, i| driver_refs[i] = try a.dupe(u8, driver.name);
     self.driver_refs = driver_refs;
     if (self.driver_name_len > 0) {
@@ -1095,10 +1096,10 @@ fn addForm(self: *Section, cc: *panel.ControlCenter, a: A, state: *const printin
     if (state.action_error == null and state.probe == true and std.mem.eql(u8, fieldValue(self, .address), self.probe_address[0..self.probe_address_len]) and self.driver_index == 0) self.driver_index = 1;
     if (self.driver_index >= labels.len) self.driver_index = 0;
     try items.append(a, .{ .name = "printers_driver", .kind = .{ .select = .{ .labels = labels, .selected = self.driver_index, .disabled = busy(self), .owner = cc, .on_change = driverChanged } }, .height = .{ .fixed = 34 }, .width = .{ .percent = 1 } });
-    try items.append(a, text("A raw queue passes commands unchanged; ordinary PDF printing needs a compatible driver.", true));
-    if (self.driver_index == 0) try items.append(a, text("No unambiguous automatic driver match. Choose a listed driver, check an IPP address, or explicitly choose a raw queue.", true));
-    try items.append(a, button(cc, "printers_create", "Create printer", 0, busy(self) or !canAdmin(self) or self.driver_index == 0, createClicked));
-    try items.append(a, button(cc, "printers_add_cancel", "Cancel setup", 0, busy(self), dismiss));
+    try items.append(a, text(i18n.tr("A raw queue passes commands unchanged; ordinary PDF printing needs a compatible driver."), true));
+    if (self.driver_index == 0) try items.append(a, text(i18n.tr("No unambiguous automatic driver match. Choose a listed driver, check an IPP address, or explicitly choose a raw queue."), true));
+    try items.append(a, button(cc, "printers_create", i18n.tr("Create printer"), 0, busy(self) or !canAdmin(self) or self.driver_index == 0, createClicked));
+    try items.append(a, button(cc, "printers_add_cancel", i18n.tr("Cancel setup"), 0, busy(self), dismiss));
     return card(a, items.items);
 }
 fn discoverClicked(raw: ?*anyopaque, _: usize) void {
@@ -1152,12 +1153,12 @@ fn probeClicked(raw: ?*anyopaque, _: usize) void {
     const cc = owner(raw);
     const uri = selectedAddress(&cc.printers) catch return;
     setup.validateUri(uri, cc.printers.add_discovered) catch {
-        cc.printers.message = "Enter a supported printer address without credentials.";
+        cc.printers.message = i18n.tr("Enter a supported printer address without credentials.");
         cc.refresh();
         return;
     };
     if (!std.mem.startsWith(u8, uri, "ipp://") and !std.mem.startsWith(u8, uri, "ipps://")) {
-        cc.printers.message = "Address checks support IPP printers. Other connections can be tested with an explicit print after setup.";
+        cc.printers.message = i18n.tr("Address checks support IPP printers. Other connections can be tested with an explicit print after setup.");
         cc.refresh();
         return;
     }
@@ -1210,7 +1211,7 @@ fn finishCreate(cc: *panel.ControlCenter) void {
     defer pending.destroy();
     const state = cc.printers.client.?.current orelse return;
     if (state.failure != null or cc.printers.client.?.failure != null or state.generation != cc.printers.client.?.generation) {
-        cc.printers.message = "Could not verify existing printers. Refresh before creating a queue.";
+        cc.printers.message = i18n.tr("Could not verify existing printers. Refresh before creating a queue.");
         return;
     }
     const data = state.cups orelse return;
@@ -1222,7 +1223,7 @@ fn queueRenameClicked(raw: ?*anyopaque, _: usize) void {
     const cc = owner(raw);
     const name = fieldValue(&cc.printers, .queue_name);
     if (!setup.validName(name)) {
-        cc.printers.message = "Use letters, numbers, dots, hyphens or underscores for the queue identifier.";
+        cc.printers.message = i18n.tr("Use letters, numbers, dots, hyphens or underscores for the queue identifier.");
         cc.refresh();
         return;
     }
@@ -1246,19 +1247,19 @@ fn submitRename(cc: *panel.ControlCenter) void {
     const state = cc.printers.client.?.current orelse return;
     if (state.failure != null or cc.printers.client.?.failure != null or state.generation != cc.printers.client.?.generation) {
         cc.printers.pending_rename = null;
-        cc.printers.message = "Could not verify existing printers before changing the identifier.";
+        cc.printers.message = i18n.tr("Could not verify existing printers before changing the identifier.");
         return;
     }
     const data = state.cups orelse return;
     const old = pending.old[0..pending.old_len];
     if (data.jobs_error != null) {
         cc.printers.pending_rename = null;
-        cc.printers.message = "Could not verify the printer's jobs. Refresh before changing its identifier.";
+        cc.printers.message = i18n.tr("Could not verify the printer's jobs. Refresh before changing its identifier.");
         return;
     }
     for (data.jobs) |job| if (job.cancellable() and std.mem.eql(u8, job.printer, old)) {
         cc.printers.pending_rename = null;
-        cc.printers.message = "Finish or cancel the printer's jobs before changing its identifier.";
+        cc.printers.message = i18n.tr("Finish or cancel the printer's jobs before changing its identifier.");
         return;
     };
     var source_exists = false;
@@ -1268,7 +1269,7 @@ fn submitRename(cc: *panel.ControlCenter) void {
     };
     if (!source_exists) {
         cc.printers.pending_rename = null;
-        cc.printers.message = "The printer no longer exists. Refresh before retrying.";
+        cc.printers.message = i18n.tr("The printer no longer exists. Refresh before retrying.");
         return;
     }
     runAdmin(cc, .{ .rename = .{ .name = old, .new_name = pending.new[0..pending.new_len], .existing_names = queueNames(cc.printers.arena.allocator(), data) catch return } });
@@ -1293,7 +1294,7 @@ fn finishRename(cc: *panel.ControlCenter) void {
         @memcpy(cc.printers.selected[0..pending.new_len], pending.new[0..pending.new_len]);
         cc.printers.migration_pending = true;
         runClient(cc, .{ .rename_preferences = .{ .old = pending.old[0..pending.old_len], .new = pending.new[0..pending.new_len] } });
-    } else cc.printers.message = "The queue identifier change could not be verified. Review the printer list before retrying.";
+    } else cc.printers.message = i18n.tr("The queue identifier change could not be verified. Review the printer list before retrying.");
 }
 fn mediaFor(printer: cups.Printer, state: *const printing.State) ?tools.Media {
     if (tools.mediaFromKeyword(printer.media)) |media| return media;
@@ -1317,13 +1318,13 @@ fn loadedMedia(self: *Section) ?tools.Media {
 fn toolsForm(self: *Section, cc: *panel.ControlCenter, a: A, state: *const printing.State, printer: cups.Printer) !W {
     var items: std.ArrayList(W) = .empty;
     const testing = self.form == .test_confirm or self.form == .test_result;
-    try items.append(a, panel.sectionTitle(if (testing) "Print test" else "Label printer and advanced test tools"));
+    try items.append(a, panel.sectionTitle(if (testing) i18n.tr("Print test") else i18n.tr("Label printer and advanced test tools")));
     if (self.form != .test_result) {
-        if (!testing) try items.append(a, .{ .name = "printers_label", .kind = .{ .checkbox = .{ .label = "This is a label printer", .checked = printer.user.label, .disabled = busy(self), .owner = cc, .on_change = labelChanged } }, .width = .{ .percent = 1 } });
-        try items.append(a, .{ .name = "printers_units", .kind = .{ .select = .{ .labels = &.{ "Millimetres", "Inches" }, .selected = @intFromBool(self.inches), .owner = cc, .on_change = unitsChanged } }, .height = .{ .fixed = 34 }, .width = .{ .percent = 1 } });
-        try items.append(a, try entry(self, cc, a, .loaded_width, "Loaded paper width", ""));
-        try items.append(a, try entry(self, cc, a, .loaded_height, "Loaded paper height", ""));
-        try items.append(a, button(cc, "printers_save_media", "Remember loaded paper size", 0, busy(self) or loadedMedia(self) == null, saveMedia));
+        if (!testing) try items.append(a, .{ .name = "printers_label", .kind = .{ .checkbox = .{ .label = i18n.tr("This is a label printer"), .checked = printer.user.label, .disabled = busy(self), .owner = cc, .on_change = labelChanged } }, .width = .{ .percent = 1 } });
+        try items.append(a, .{ .name = "printers_units", .kind = .{ .select = .{ .labels = panel.translatedLabels(&.{ i18n.msg("Millimetres"), i18n.msg("Inches") }), .selected = @intFromBool(self.inches), .owner = cc, .on_change = unitsChanged } }, .height = .{ .fixed = 34 }, .width = .{ .percent = 1 } });
+        try items.append(a, try entry(self, cc, a, .loaded_width, i18n.tr("Loaded paper width"), ""));
+        try items.append(a, try entry(self, cc, a, .loaded_height, i18n.tr("Loaded paper height"), ""));
+        try items.append(a, button(cc, "printers_save_media", i18n.tr("Remember loaded paper size"), 0, busy(self) or loadedMedia(self) == null, saveMedia));
         if (!testing or self.test_kind == .raw) {
             const language_labels = try a.alloc([]const u8, tools.probe_languages.len + 1);
             language_labels[0] = "Unknown language — check the self-test sheet";
@@ -1333,49 +1334,49 @@ fn toolsForm(self: *Section, cc: *panel.ControlCenter, a: A, state: *const print
                 if (self.language == language) lang_index = index + 1;
             }
             try items.append(a, .{ .name = "printers_language", .kind = .{ .select = .{ .labels = language_labels, .selected = lang_index, .disabled = busy(self), .owner = cc, .on_change = languageChanged } }, .height = .{ .fixed = 34 }, .width = .{ .percent = 1 } });
-            try items.append(a, text("Check the printer's self-test sheet for its language and real resolution.", true));
-            try items.append(a, try entry(self, cc, a, .raw_dpi, "Raw sample resolution (dpi)", ""));
+            try items.append(a, text(i18n.tr("Check the printer's self-test sheet for its language and real resolution."), true));
+            try items.append(a, try entry(self, cc, a, .raw_dpi, i18n.tr("Raw sample resolution (dpi)"), ""));
         }
     }
     if (!testing) {
         const awaiting_result = self.form == .test_result;
-        try items.append(a, button(cc, "printers_test_raw", "Test without the driver…", @intFromEnum(printing.TestKind.raw), busy(self) or awaiting_result or self.language == null, testClicked));
-        try items.append(a, button(cc, "printers_probe_language", "Try one language sample…", @intFromEnum(printing.TestKind.raw), busy(self) or awaiting_result, probeLanguage));
-        if (printer.label_media) try items.append(a, text("The driver reports label media.", true));
+        try items.append(a, button(cc, "printers_test_raw", i18n.tr("Test without the driver…"), @intFromEnum(printing.TestKind.raw), busy(self) or awaiting_result or self.language == null, testClicked));
+        try items.append(a, button(cc, "printers_probe_language", i18n.tr("Try one language sample…"), @intFromEnum(printing.TestKind.raw), busy(self) or awaiting_result, probeLanguage));
+        if (printer.label_media) try items.append(a, text(i18n.tr("The driver reports label media."), true));
         if (printer.user.label or printer.label_media) {
-            try items.append(a, button(cc, "printers_check_scale", "Print a 2 × 3 inch ruler…", @intFromEnum(printing.TestKind.ruler), busy(self) or awaiting_result, testClicked));
-            try items.append(a, text("Measure the rectangle edge to edge in the selected unit. Print scaling is disabled for this test.", true));
-            try items.append(a, try entry(self, cc, a, .measured_width, "Measured rectangle width", ""));
-            try items.append(a, try entry(self, cc, a, .measured_height, "Measured rectangle height", ""));
-            try items.append(a, button(cc, "printers_calibrate", "Check measured scale", 0, busy(self), calibrate));
+            try items.append(a, button(cc, "printers_check_scale", i18n.tr("Print a 2 × 3 inch ruler…"), @intFromEnum(printing.TestKind.ruler), busy(self) or awaiting_result, testClicked));
+            try items.append(a, text(i18n.tr("Measure the rectangle edge to edge in the selected unit. Print scaling is disabled for this test."), true));
+            try items.append(a, try entry(self, cc, a, .measured_width, i18n.tr("Measured rectangle width"), ""));
+            try items.append(a, try entry(self, cc, a, .measured_height, i18n.tr("Measured rectangle height"), ""));
+            try items.append(a, button(cc, "printers_calibrate", i18n.tr("Check measured scale"), 0, busy(self), calibrate));
             if (self.suggested) |suggestion| {
                 const r = resolution(suggestion).?;
-                try items.append(a, text(try std.fmt.allocPrint(a, "Suggested supported resolution: {d} × {d} dpi", .{ r.x_dpi, r.y_dpi }), false));
+                try items.append(a, text(try i18n.allocPrint(a, i18n.tr("Suggested supported resolution: {x} × {y} dpi"), .{ .x = r.x_dpi, .y = r.y_dpi }), false));
                 const selectable = resolutionChoice(state, suggestion) != null;
-                try items.append(a, button(cc, "printers_apply_resolution", "Use suggested resolution", 0, busy(self) or !canAdmin(self) or !selectable, applyResolution));
-                if (!selectable) try items.append(a, text("This driver does not expose the suggested resolution as a queue setting. Review its quality or driver choices.", true));
+                try items.append(a, button(cc, "printers_apply_resolution", i18n.tr("Use suggested resolution"), 0, busy(self) or !canAdmin(self) or !selectable, applyResolution));
+                if (!selectable) try items.append(a, text(i18n.tr("This driver does not expose the suggested resolution as a queue setting. Review its quality or driver choices."), true));
             }
         }
     }
     if (self.form == .test_confirm) {
         const media = loadedMedia(self);
-        try items.append(a, text(try std.fmt.allocPrint(a, "Print one {s} test on {s}?", .{ @tagName(self.test_kind), if (printer.info.len != 0) printer.info else printer.name }), false));
-        if (media) |size| try items.append(a, text(try std.fmt.allocPrint(a, "Paper: {d:.2} × {d:.2} mm", .{ size.width_mm, size.height_mm }), true));
-        try items.append(a, text(try std.fmt.allocPrint(a, "Queue paper setting: {s}. Check that this matches the loaded paper.", .{if (printer.media.len > 0) printer.media else "Unavailable"}), true));
-        if (self.test_kind == .raw) try items.append(a, text(try std.fmt.allocPrint(a, "Language: {s}. This sample bypasses the filters and uses the queue's backend.", .{if (self.language) |language| language.label() else "Unknown"}), true));
+        try items.append(a, text(try i18n.allocPrint(a, i18n.tr("Print one {kind} test on {name}?"), .{ .kind = @tagName(self.test_kind), .name = if (printer.info.len != 0) printer.info else printer.name }), false));
+        if (media) |size| try items.append(a, text(try i18n.allocPrint(a, i18n.tr("Paper: {width} × {height} mm"), .{ .width = try std.fmt.allocPrint(a, "{d:.2}", .{size.width_mm}), .height = try std.fmt.allocPrint(a, "{d:.2}", .{size.height_mm}) }), true));
+        try items.append(a, text(try i18n.allocPrint(a, i18n.tr("Queue paper setting: {paper}. Check that this matches the loaded paper."), .{ .paper = if (printer.media.len > 0) printer.media else i18n.tr("Unavailable") }), true));
+        if (self.test_kind == .raw) try items.append(a, text(try i18n.allocPrint(a, i18n.tr("Language: {language}. This sample bypasses the filters and uses the queue's backend."), .{ .language = if (self.language) |language| language.label() else i18n.tr("Unknown") }), true));
         if (self.test_kind == .raw) try items.append(a, text(tools.self_test_help, true));
-        try items.append(a, button(cc, "printers_test_confirm", "Print one test", 0, busy(self) or media == null or (self.test_kind == .raw and (self.language == null or rawDpi(self) == null)), confirmTest));
-        try items.append(a, button(cc, "printers_test_cancel", "Cancel test", 0, busy(self), dismiss));
+        try items.append(a, button(cc, "printers_test_confirm", i18n.tr("Print one test"), 0, busy(self) or media == null or (self.test_kind == .raw and (self.language == null or rawDpi(self) == null)), confirmTest));
+        try items.append(a, button(cc, "printers_test_cancel", i18n.tr("Cancel test"), 0, busy(self), dismiss));
     }
     if (self.form == .test_result) {
         const valid = state.receipt != null and state.receipt.?.matchesQueue(printer.name) and state.receipt.?.kind == self.test_kind and state.action_error == null;
-        try items.append(a, text("Did the test produce printed output? CUPS completion alone cannot tell.", false));
-        try items.append(a, button(cc, "printers_test_printed", "It printed", 0, busy(self) or !valid, testOutcome));
-        try items.append(a, button(cc, "printers_test_blank", "Blank or no output", 1, busy(self) or !valid, testOutcome));
-        try items.append(a, button(cc, "printers_test_close", "Close test result", 0, busy(self), dismiss));
+        try items.append(a, text(i18n.tr("Did the test produce printed output? CUPS completion alone cannot tell."), false));
+        try items.append(a, button(cc, "printers_test_printed", i18n.tr("It printed"), 0, busy(self) or !valid, testOutcome));
+        try items.append(a, button(cc, "printers_test_blank", i18n.tr("Blank or no output"), 1, busy(self) or !valid, testOutcome));
+        try items.append(a, button(cc, "printers_test_close", i18n.tr("Close test result"), 0, busy(self), dismiss));
     }
-    if (printer.user.raw == .printed and printer.user.driver == .no_output) try items.append(a, text("The raw sample printed but the driver test did not: investigate the driver, filters, paper size and resolution.", false));
-    if (printer.user.raw == .no_output and printer.user.driver == .no_output) try items.append(a, text("Neither test produced output: check the backend, connection, printer and loaded paper.", false));
+    if (printer.user.raw == .printed and printer.user.driver == .no_output) try items.append(a, text(i18n.tr("The raw sample printed but the driver test did not: investigate the driver, filters, paper size and resolution."), false));
+    if (printer.user.raw == .no_output and printer.user.driver == .no_output) try items.append(a, text(i18n.tr("Neither test produced output: check the backend, connection, printer and loaded paper."), false));
     return card(a, items.items);
 }
 fn labelChanged(raw: ?*anyopaque, _: usize, checked: bool) void {
@@ -1425,7 +1426,7 @@ fn testClicked(raw: ?*anyopaque, kind: usize) void {
 fn probeLanguage(raw: ?*anyopaque, _: usize) void {
     const cc = owner(raw);
     if (cc.printers.language == null) cc.printers.language = .tspl;
-    cc.printers.message = "Choose a language from the self-test sheet or try one sample. Record the outcome before choosing another language.";
+    cc.printers.message = i18n.tr("Choose a language from the self-test sheet or try one sample. Record the outcome before choosing another language.");
     testClicked(raw, @intFromEnum(printing.TestKind.raw));
 }
 fn confirmTest(raw: ?*anyopaque, _: usize) void {
@@ -1474,7 +1475,7 @@ fn calibrate(raw: ?*anyopaque, _: usize) void {
     const receipt_resolution = if (state.receipt) |receipt| if (receipt.kind == .ruler and receipt.matchesQueue(printer.name)) receipt.queue_resolution else null else null;
     const current_value = receipt_resolution orelse printer.user.ruler_resolution orelse queueResolution(printer, state);
     const current = current_value orelse {
-        cc.printers.message = "The current printer resolution is unavailable.";
+        cc.printers.message = i18n.tr("The current printer resolution is unavailable.");
         cc.refresh();
         return;
     };
@@ -1485,7 +1486,7 @@ fn calibrate(raw: ?*anyopaque, _: usize) void {
     };
     if (supported.items.len == 0) supported.appendSlice(a, options_module.resolutionChoices(a, state.groups) catch &.{}) catch return;
     cc.printers.suggested = tools.suggestResolution(current, supported.items, measurement(&cc.printers, .measured_width) orelse 0, measurement(&cc.printers, .measured_height) orelse 0);
-    cc.printers.message = if (cc.printers.suggested != null) "Review the suggested resolution, then apply it explicitly." else "No supported resolution consistently matches both measurements. Check the ruler and print scaling.";
+    cc.printers.message = if (cc.printers.suggested != null) i18n.tr("Review the suggested resolution, then apply it explicitly.") else i18n.tr("No supported resolution consistently matches both measurements. Check the ruler and print scaling.");
     cc.refresh();
 }
 fn queueResolution(printer: cups.Printer, state: *const printing.State) ?cups.ipp.Resolution {

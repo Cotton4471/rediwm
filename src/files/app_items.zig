@@ -71,13 +71,13 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
         self.drawItemIcon(cr, item, icon.x, icon.y, icon.w);
         const label_x = x - self.horizontalOffset() + (if (self.list_view) @as(f64, 42) else GridCard.padding_x);
         setSource(cr, ui_theme.global.window_fg);
-        const name_width = if (self.list_view) self.listColumn(0).w - 46 else width - 2 * GridCard.padding_x;
+        const name_width = if (self.list_view) @max(0, self.listColumn(0).w - 46 - self.inlineTorrentWidth(idx)) else width - 2 * GridCard.padding_x;
         // A path that does not fit loses its head, so the file's own name stays readable.
         const name_y = y + (if (self.list_view) baseline else GridCard.name_baseline);
         if (item.label.len > 0) drawHeadEllipsis(cr, item.label, label_x, name_y, name_width, shell_ui.textSize(), false) else drawEllipsis(cr, item.name, label_x, name_y, name_width, shell_ui.textSize(), false);
         var buf: [64]u8 = undefined;
         var size_buf: [64]u8 = undefined;
-        const disp = self.itemSizeDisplay(item, &size_buf);
+        const disp = if (item.transfer_stub) App.ItemSizeDisplay{ .text = formatSize((self.torrentForItem(idx) orelse continue).total, &size_buf), .is_running = false } else self.itemSizeDisplay(item, &size_buf);
         const is_size_hovered = (self.hoverKey() == 2_000_000 + idx);
         if (self.list_view and self.repository() != null) {
             self.renderGitStatus(cr, item, y);
@@ -100,13 +100,15 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
             }
             setSource(cr, ui_theme.global.window_fg);
             const ty = self.listColumn(2);
-            drawEllipsis(cr, itemType(item), ty.x + 4, y + baseline, ty.w - 8, shell_ui.textSize(), false);
+            drawEllipsis(cr, if (item.transfer_stub) @import("i18n").tr("Download") else itemType(item), ty.x + 4, y + baseline, ty.w - 8, shell_ui.textSize(), false);
             const mt = self.listColumn(3);
-            const timestamp = @import("settings.zig").dateTime(if (self.isRecent()) item.opened else item.mtime, &buf);
+            const timestamp = if (item.transfer_stub) "—" else @import("settings.zig").dateTime(if (self.isRecent()) item.opened else item.mtime, &buf);
             drawEllipsis(cr, timestamp, mt.x + 4, y + baseline, mt.w - 8, shell_ui.textSize(), false);
             const permissions = self.listColumn(4);
             const mode = formatPermissions(item.mode);
-            drawEllipsis(cr, if (item.permissions_text.len > 0) item.permissions_text else &mode, permissions.x + 4, y + baseline, permissions.w - 8, shell_ui.textSize(), false);
+            drawEllipsis(cr, if (item.transfer_stub) "—" else if (item.permissions_text.len > 0) item.permissions_text else &mode, permissions.x + 4, y + baseline, permissions.w - 8, shell_ui.textSize(), false);
+        } else if (self.torrentForItem(idx) != null) {
+            // The transfer accessory occupies the grid card's detail line.
         } else {
             if (item.is_symlink) {
                 setSource(cr, ui_theme.global.window_fg);
@@ -132,6 +134,7 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
                 drawText(cr, formatSize(item.bytes, &buf), label_x, y + GridCard.detail_baseline, shell_ui.textSize(), false);
             }
         }
+        self.renderInlineTorrent(cr, idx);
         if (cut) {
             c.cairo_pop_group_to_source(cr);
             c.cairo_paint_with_alpha(cr, 0.45);
@@ -140,9 +143,10 @@ pub fn renderFileItems(self: *App, cr: *c.cairo_t, viewport_h: i32) void {
 }
 
 pub fn renderFilenameTip(self: *App, cr: *c.cairo_t) void {
+    if (self.inlineTorrentHit(self.mouse_x, self.mouse_y) != null) return;
     const index = self.itemAt(self.mouse_x, self.mouse_y) orelse return;
     const name = self.items.items[index].text();
-    const available: f64 = if (self.list_view) self.listColumn(0).w - 46 else @as(f64, @floatFromInt(self.cellWidth() - 62));
+    const available: f64 = if (self.list_view) self.listColumn(0).w - 46 - self.inlineTorrentWidth(index) else @as(f64, @floatFromInt(self.cellWidth() - 62));
     if (measureText(cr, name, shell_ui.textSize(), false) <= available) return;
     const width = @min(@as(f64, @floatFromInt(self.w - 24)), @max(180, measureText(cr, name, shell_ui.textSize(), false) + 20));
     var lines: [32][]const u8 = undefined;

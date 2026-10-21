@@ -98,6 +98,10 @@ def run(scale, gold=False, top=False):
                     # Disabled choices cannot submit a request after service restart.
                     stop_fake(fake)
                     wait_for(lambda: "service left the bus" in log_text(tmp), "service loss")
+                    rows_box = tuple(round(v * pixelscale) for v in (
+                        origin[0] + 20 * factor, origin[1] + 366 * factor,
+                        origin[0] + 348 * factor, origin[1] + 462 * factor))
+                    assert ImageChops.difference(initial.crop(rows_box), capture("lost").crop(rows_box)).getbbox(), "no notice when the service is gone"
                     fake = start_fake(offered="power-saver,balanced")
                     wait_for(lambda: log_text(tmp).count("active profile balanced") == 2, "restarted service")
                     ipc.click_at(*row(2))

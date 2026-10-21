@@ -6,6 +6,7 @@
 //! shown as a plain folder; every other is queried with fsmonitor, hooks,
 //! submodule recursion and every transport (lazy fetches included) disabled.
 const std = @import("std");
+const tr = @import("i18n").tr;
 const c = @import("c.zig").api;
 const Allocator = std.mem.Allocator;
 
@@ -270,17 +271,17 @@ pub fn switchBranch(mem: Allocator, io: std.Io, environ: std.process.Environ, di
             return o.*;
         }
     }.set;
-    if (name.len == 0) return fail(&out, "Branch name cannot be empty");
-    if (name[0] == '-') return fail(&out, "Invalid branch name");
-    var env = cleanEnv(mem, environ) catch return fail(&out, "Out of memory");
+    if (name.len == 0) return fail(&out, tr("Branch name cannot be empty"));
+    if (name[0] == '-') return fail(&out, tr("Invalid branch name"));
+    var env = cleanEnv(mem, environ) catch return fail(&out, tr("Out of memory"));
     defer env.deinit();
-    if (!trustedRepository(mem, io, &env, dir)) return fail(&out, "This repository runs its own programs; switch branches in a terminal");
+    if (!trustedRepository(mem, io, &env, dir)) return fail(&out, tr("This repository runs its own programs; switch branches in a terminal"));
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(mem);
-    argv.appendSlice(mem, &safe_options) catch return fail(&out, "Out of memory");
-    argv.appendSlice(mem, &.{ "-C", dir, "switch", "--no-recurse-submodules" }) catch return fail(&out, "Out of memory");
-    if (create) argv.append(mem, "-c") catch return fail(&out, "Out of memory");
-    argv.append(mem, name) catch return fail(&out, "Out of memory");
+    argv.appendSlice(mem, &safe_options) catch return fail(&out, tr("Out of memory"));
+    argv.appendSlice(mem, &.{ "-C", dir, "switch", "--no-recurse-submodules" }) catch return fail(&out, tr("Out of memory"));
+    if (create) argv.append(mem, "-c") catch return fail(&out, tr("Out of memory"));
+    argv.append(mem, name) catch return fail(&out, tr("Out of memory"));
     const result = std.process.run(mem, io, .{
         .argv = argv.items,
         .environ_map = &env,
@@ -288,7 +289,7 @@ pub fn switchBranch(mem: Allocator, io: std.Io, environ: std.process.Environ, di
         .stderr_limit = .limited(64 * 1024),
         // A checkout can rewrite many files; do not kill it half way.
         .timeout = .{ .duration = .{ .raw = .fromSeconds(60), .clock = .awake } },
-    }) catch return fail(&out, "Could not run git");
+    }) catch return fail(&out, tr("Could not run git"));
     defer mem.free(result.stdout);
     defer mem.free(result.stderr);
     if (result.term == .exited and result.term.exited == 0) {
@@ -301,7 +302,7 @@ pub fn switchBranch(mem: Allocator, io: std.Io, environ: std.process.Environ, di
         if (trimmed.len == 0) continue;
         return fail(&out, std.mem.trimStart(u8, std.mem.trimStart(u8, trimmed, "fatal:"), " "));
     }
-    return fail(&out, "git switch failed");
+    return fail(&out, tr("git switch failed"));
 }
 
 pub fn scan(mem: Allocator, io: std.Io, environ: std.process.Environ, dir: []const u8) !?Repository {

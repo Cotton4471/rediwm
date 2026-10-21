@@ -1,3 +1,4 @@
+const i18n = @import("i18n");
 const std = @import("std");
 const panel = @import("../panel.zig");
 const ui = @import("ui");
@@ -7,7 +8,7 @@ const gpa = @import("../../main.zig").gpa;
 pub const Section = struct {
     arena: std.heap.ArenaAllocator = .init(gpa),
     root: W = undefined,
-    message: []const u8 = "Changes apply next time you sign in.",
+    message: []const u8 = "",
 };
 fn text(value: []const u8, dim: bool) W {
     const t = panel.palette();
@@ -20,7 +21,7 @@ fn row(cc: *panel.ControlCenter, a: std.mem.Allocator, title: []const u8, name: 
     };
     const options = try a.alloc([]const u8, labels.len + @as(usize, if (index == values.len) 1 else 0));
     @memcpy(options[0..labels.len], labels);
-    if (index == values.len) options[index] = std.fmt.allocPrint(a, "Custom ({s})", .{selected}) catch "Custom";
+    if (index == values.len) options[index] = i18n.allocPrint(a, i18n.tr("Custom ({name})"), .{ .name = selected }) catch i18n.tr("Custom");
     return .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .gap = 12, .children = try a.dupe(W, &.{
         text(title, false),
         .{ .name = name, .kind = .{ .select = .{ .labels = options, .selected = index, .owner = cc, .on_change = callback } }, .width = .{ .fixed = 190 } },
@@ -35,21 +36,21 @@ pub fn build(s: *Section, cc: *panel.ControlCenter) void {
 fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
     const content = config.load(a, cc.server.io, cc.server.environ) catch config.defaults;
     return .{ .kind = .container, .direction = .column, .gap = 12, .width = .{ .percent = 1 }, .children = try a.dupe(W, &.{
-        panel.sectionTitle("Desktop portals"),
-        text("Choose the services apps use for desktop dialogs. The selected backend must be installed.", true),
+        panel.sectionTitle(i18n.tr("Desktop portals")),
+        text(i18n.tr("Choose the services apps use for desktop dialogs. The selected backend must be installed."), true),
         try row(cc, a, "Default backend", "portal_default", &.{ "GTK", "KDE", "RediWM + GTK" }, &default_values, config.get(content, "default") orelse "gtk", defaultChanged),
         try row(cc, a, "File dialogs", "portal_file_chooser", &.{ "RediWM", "GTK", "KDE", "Any available" }, &file_values, config.get(content, config.chooser_key) orelse config.get(content, "default") orelse "gtk", fileChanged),
-        text(s.message, true),
+        text(if (s.message.len > 0) s.message else i18n.tr("Changes apply next time you sign in."), true),
     }) };
 }
 fn save(owner: ?*anyopaque, key: []const u8, value: []const u8) void {
     const cc: *panel.ControlCenter = @ptrCast(@alignCast(owner orelse return));
     config.save(cc.server.io, cc.server.environ, key, value) catch {
-        cc.portals.message = "Could not save portal preferences. Check your configuration directory.";
+        cc.portals.message = i18n.tr("Could not save portal preferences. Check your configuration directory.");
         cc.refresh();
         return;
     };
-    cc.portals.message = "Saved. Changes apply next time you sign in.";
+    cc.portals.message = i18n.tr("Saved. Changes apply next time you sign in.");
     cc.refresh();
 }
 fn defaultChanged(owner: ?*anyopaque, _: usize, index: usize) void {

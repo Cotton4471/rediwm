@@ -17,6 +17,18 @@ taskbar, OSD and input integration. General rules remain in
   samples the nearest pixel and shows stair-steps at the dock's fractional
   downscale.
 
+* Apps with multiple dock-eligible windows show a circular count in the icon's
+  upper-right corner (including minimized windows, capped at `99+`). The count
+  is part of the item key and stays inside the icon's bounds during hover zoom.
+  Clicking opens the compact window picker in `taskbar/window_menu.zig`, sharing
+  the context menu's input routing, inward placement and auto-hide hold. It owns
+  window IDs and title copies; detaching any listed window dismisses it through
+  `Menu.references`. Each row has a shared chrome close button; close dismisses
+  the picker before requesting the window close, without activating the window.
+  Keyboard and wheel navigation reach rows beyond the output.
+  A shortcut opens it during its press: the menu input path must still balance
+  that press's `active_buttons` on release (pins open after their release).
+
 * Hover zoom keeps the screen-edge side fixed and grows toward the desktop.
   Its spring (`dock_hover`) is underdamped: `zoomRange` gives the overshoot
   headroom that rasters, icon size and cells are sized for, so never clamp a

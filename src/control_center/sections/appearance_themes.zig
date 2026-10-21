@@ -1,5 +1,6 @@
 //! Appearance themes: applying and saving, start logo, packs, import and export.
 
+const i18n = @import("i18n");
 const std = @import("std");
 const Server = @import("../../Server.zig");
 const theme = @import("ui").theme;
@@ -52,13 +53,13 @@ pub fn onChooseStartLogo(owner: ?*anyopaque, _: usize) void {
     const server = s.cc.server;
     s.start_logo_error = null;
     folder_picker.startWithOptions(server, .{
-        .title = "Choose Start button logo",
-        .accept_label = "Use logo",
+        .title = i18n.tr("Choose Start button logo"),
+        .accept_label = i18n.tr("Use logo"),
         .current_folder = std.fs.path.dirname(theme.global.start_button_icon) orelse "",
-        .filters = &.{.{ .name = "PNG and SVG images", .rules = &.{ .{ .kind = 0, .value = "*.png" }, .{ .kind = 0, .value = "*.svg" } } }},
+        .filters = &.{.{ .name = i18n.tr("PNG and SVG images"), .rules = &.{ .{ .kind = 0, .value = "*.png" }, .{ .kind = 0, .value = "*.svg" } } }},
     }, server, &onStartLogoChosen) catch |err| {
         std.log.warn("could not open the logo chooser: {}", .{err});
-        s.start_logo_error = "Could not open the file chooser.";
+        s.start_logo_error = i18n.tr("Could not open the file chooser.");
     };
     s.cc.refresh();
 }
@@ -70,7 +71,7 @@ pub fn onStartLogoChosen(owner: ?*anyopaque, path: ?[]const u8) void {
         // Theme strings use a literal, double-quoted TOML dialect.
         if (!std.fs.path.isAbsolute(picked) or std.mem.indexOfAny(u8, picked, "\"\\\n\r\t") != null) {
             if (server.input.open_control_center) |cc| {
-                cc.appearance.start_logo_error = "Choose a path without quotes, backslashes or control characters.";
+                cc.appearance.start_logo_error = i18n.tr("Choose a path without quotes, backslashes or control characters.");
                 cc.refresh();
             }
             return;
@@ -126,13 +127,13 @@ pub fn onResetTheme(owner: ?*anyopaque, _: usize) void {
 }
 pub fn themeFailure(server: *Server, err: anyerror) void {
     if (server.input.open_control_center) |cc| {
-        cc.appearance.theme_message = std.fmt.bufPrint(&cc.appearance.theme_message_buf, "Theme operation failed: {s}", .{@errorName(err)}) catch "Theme operation failed.";
+        cc.appearance.theme_message = i18n.fmt(&cc.appearance.theme_message_buf, i18n.tr("Theme operation failed: {reason}"), .{ .reason = @errorName(err) }) catch i18n.tr("Theme operation failed.");
         cc.refresh();
     }
 }
 pub fn onInstallTheme(owner: ?*anyopaque, _: usize) void {
     const server = section(owner).cc.server;
-    folder_picker.startWithOptions(server, .{ .title = "Install theme", .accept_label = "Install", .filters = &.{.{ .name = "Theme packs", .rules = &.{ .{ .kind = 0, .value = "*.rediwm-theme" }, .{ .kind = 0, .value = "*.zip" } } }} }, server, themeFileChosen) catch |err| themeFailure(server, err);
+    folder_picker.startWithOptions(server, .{ .title = i18n.tr("Install theme"), .accept_label = i18n.tr("Install"), .filters = &.{.{ .name = i18n.tr("Theme packs"), .rules = &.{ .{ .kind = 0, .value = "*.rediwm-theme" }, .{ .kind = 0, .value = "*.zip" } } }} }, server, themeFileChosen) catch |err| themeFailure(server, err);
 }
 pub fn themeFileChosen(owner: ?*anyopaque, path: ?[]const u8) void {
     const server: *Server = @ptrCast(@alignCast(owner orelse return));
@@ -166,7 +167,7 @@ pub fn onRemoveTheme(owner: ?*anyopaque, _: usize) void {
 }
 pub fn onExportTheme(owner: ?*anyopaque, _: usize) void {
     const server = section(owner).cc.server;
-    folder_picker.startWithOptions(server, .{ .mode = .save, .title = "Save current look as theme", .current_name = "my-theme.rediwm-theme", .accept_label = "Save" }, server, exportFileChosen) catch |err| themeFailure(server, err);
+    folder_picker.startWithOptions(server, .{ .mode = .save, .title = i18n.tr("Save current look as theme"), .current_name = "my-theme.rediwm-theme", .accept_label = i18n.tr("Save") }, server, exportFileChosen) catch |err| themeFailure(server, err);
 }
 pub fn exportFileChosen(owner: ?*anyopaque, path: ?[]const u8) void {
     const server: *Server = @ptrCast(@alignCast(owner orelse return));

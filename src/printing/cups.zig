@@ -518,39 +518,39 @@ pub fn jobs(a: A, message: ipp.Message, username: []const u8) ![]Job {
 
 pub fn printerState(value: ?i32) []const u8 {
     return switch (value orelse 0) {
-        3 => "Ready",
-        4 => "Printing",
-        5 => "Stopped",
-        else => "State unavailable",
+        3 => @import("i18n").tr("Ready"),
+        4 => @import("i18n").tr("Printing"),
+        5 => @import("i18n").tr("Stopped"),
+        else => @import("i18n").tr("State unavailable"),
     };
 }
 pub fn jobState(value: ?i32) []const u8 {
     return switch (value orelse 0) {
-        3 => "Pending",
-        4 => "Held",
-        5 => "Processing",
-        6 => "Stopped",
-        7 => "Cancelled",
-        8 => "Aborted",
-        9 => "Completed",
-        else => "State unavailable",
+        3 => @import("i18n").tr("Pending"),
+        4 => @import("i18n").tr("Held"),
+        5 => @import("i18n").tr("Processing"),
+        6 => @import("i18n").tr("Stopped"),
+        7 => @import("i18n").tr("Cancelled"),
+        8 => @import("i18n").tr("Aborted"),
+        9 => @import("i18n").tr("Completed"),
+        else => @import("i18n").tr("State unavailable"),
     };
 }
 pub fn failure(err: anyerror) []const u8 {
     return switch (err) {
-        error.OutOfMemory => "Not enough memory to load printer status. Refresh to check the result.",
-        error.CupsUnavailable => "CUPS is unavailable. Install or start CUPS, then refresh.",
-        error.UnsupportedServer => "This print server requires an unsupported encrypted or authenticated connection.",
-        error.InvalidMedia, error.MediaTooSmall => "Choose the actual paper dimensions before printing this test.",
-        error.InvalidPreferences, error.AmbiguousPreferences => "Printer preferences could not be saved safely. Check the existing preferences file.",
-        error.PreferencesMigration => "The queue changed, but personal preferences could not be moved. Check your default printer.",
-        error.InvalidClientConfiguration => "The CUPS client configuration could not be read or is invalid.",
-        error.NotAuthorized => "CUPS denied permission. The operation requires authorization.",
-        error.Timeout => "CUPS did not respond in time. Refresh to try again.",
-        error.NotFound => "The printer or job no longer exists. Refresh the list.",
-        error.OperationUnsupported => "This CUPS server does not support the requested operation.",
-        error.UnsupportedPrintSettings => "CUPS cannot honor the requested print settings. Check the paper, format and scaling options.",
-        else => "CUPS returned an invalid response or the connection failed. Refresh to try again.",
+        error.OutOfMemory => @import("i18n").tr("Not enough memory to load printer status. Refresh to check the result."),
+        error.CupsUnavailable => @import("i18n").tr("CUPS is unavailable. Install or start CUPS, then refresh."),
+        error.UnsupportedServer => @import("i18n").tr("This print server requires an unsupported encrypted or authenticated connection."),
+        error.InvalidMedia, error.MediaTooSmall => @import("i18n").tr("Choose the actual paper dimensions before printing this test."),
+        error.InvalidPreferences, error.AmbiguousPreferences => @import("i18n").tr("Printer preferences could not be saved safely. Check the existing preferences file."),
+        error.PreferencesMigration => @import("i18n").tr("The queue changed, but personal preferences could not be moved. Check your default printer."),
+        error.InvalidClientConfiguration => @import("i18n").tr("The CUPS client configuration could not be read or is invalid."),
+        error.NotAuthorized => @import("i18n").tr("CUPS denied permission. The operation requires authorization."),
+        error.Timeout => @import("i18n").tr("CUPS did not respond in time. Refresh to try again."),
+        error.NotFound => @import("i18n").tr("The printer or job no longer exists. Refresh the list."),
+        error.OperationUnsupported => @import("i18n").tr("This CUPS server does not support the requested operation."),
+        error.UnsupportedPrintSettings => @import("i18n").tr("CUPS cannot honor the requested print settings. Check the paper, format and scaling options."),
+        else => @import("i18n").tr("CUPS returned an invalid response or the connection failed. Refresh to try again."),
     };
 }
 

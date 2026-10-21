@@ -1,3 +1,4 @@
+const i18n = @import("i18n");
 const std = @import("std");
 const panel = @import("../panel.zig");
 const ui = @import("ui");
@@ -9,7 +10,7 @@ pub const Section = struct {
     arena: std.heap.ArenaAllocator = .init(gpa),
     root: W = undefined,
     values: [2][]const []const u8 = .{ &.{}, &.{} },
-    message: []const u8 = "Used for desktop folders, app shortcuts and apps that run in a terminal.",
+    message: []const u8 = "",
 };
 fn text(value: []const u8) W {
     return .{ .kind = .{ .text = .{ .content = value, .font_size = 14, .color = panel.palette().fg } } };
@@ -23,11 +24,11 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
     const snapshot = cc.server.start_menu_catalog.retainSnapshot();
     defer snapshot.release();
     const children = try a.alloc(W, 4);
-    children[0] = text("Default applications");
+    children[0] = text(i18n.tr("Default applications"));
     inline for (.{ defaults.Kind.file_manager, defaults.Kind.terminal }, 0..) |kind, index| {
         var labels: std.ArrayList([]const u8) = .empty;
         var values: std.ArrayList([]const u8) = .empty;
-        try labels.append(a, if (kind == .file_manager) "RediWM Files (built-in)" else "Automatic ($TERMINAL / Foot)");
+        try labels.append(a, if (kind == .file_manager) i18n.tr("RediWM Files (built-in)") else i18n.tr("Automatic ($TERMINAL / Foot)"));
         try values.append(a, "");
         const selected = if (kind == .file_manager) cc.server.config.compositor.default_file_manager else cc.server.config.compositor.default_terminal;
         var selected_index: usize = 0;
@@ -38,17 +39,17 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !W {
             if (std.mem.eql(u8, entry.id, selected)) selected_index = values.items.len - 1;
         }
         if (selected.len > 0 and selected_index == 0) {
-            try labels.append(a, try std.fmt.allocPrint(a, "Unavailable: {s}", .{selected}));
+            try labels.append(a, try i18n.allocPrint(a, i18n.tr("Unavailable: {name}"), .{ .name = selected }));
             try values.append(a, try a.dupe(u8, selected));
             selected_index = values.items.len - 1;
         }
         s.values[index] = values.items;
         children[index + 1] = .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .gap = 12, .children = try a.dupe(W, &.{
-            text(if (kind == .file_manager) "File Manager" else "Terminal"),
+            text(if (kind == .file_manager) i18n.tr("File Manager") else i18n.tr("Terminal")),
             .{ .name = "default_" ++ @tagName(kind), .kind = .{ .select = .{ .labels = labels.items, .selected = selected_index, .notify_on_reselect = kind == .file_manager, .owner = cc, .on_change = if (kind == .file_manager) fileChanged else terminalChanged } }, .width = .{ .fixed = 240 } },
         }) };
     }
-    children[3] = text(s.message);
+    children[3] = try panel.paragraph(a, if (s.message.len > 0) s.message else i18n.tr("Used for desktop folders, app shortcuts and apps that run in a terminal."), @as(f32, @floatFromInt(cc.panel_box.width)) - panel.sidebarWidth(cc) - 100, 14, false);
     return .{ .kind = .container, .direction = .column, .gap = 12, .width = .{ .percent = 1 }, .children = children };
 }
 fn save(owner: ?*anyopaque, comptime kind: defaults.Kind, index: usize) void {
@@ -60,14 +61,14 @@ fn save(owner: ?*anyopaque, comptime kind: defaults.Kind, index: usize) void {
     const key = "default_" ++ @tagName(kind);
     @import("config").setting_save.saveCompositor(gpa, server.io, server.config.path, key, value) catch |err| {
         std.log.warn("could not save default application: {}", .{err});
-        cc.default_apps.message = "Could not save the default application.";
+        cc.default_apps.message = i18n.tr("Could not save the default application.");
         cc.refresh();
         return;
     };
     @field(server.config.compositor, key) = server.config.arena.allocator().dupe(u8, value) catch return;
-    cc.default_apps.message = "Saved. Your choice applies immediately.";
+    cc.default_apps.message = i18n.tr("Saved. Your choice applies immediately.");
     if (kind == .file_manager) setDirectoryDefault(value) catch {
-        cc.default_apps.message = "Saved for RediWM, but could not update the system folder association.";
+        cc.default_apps.message = i18n.tr("Saved for RediWM, but could not update the system folder association.");
     };
     cc.refresh();
 }

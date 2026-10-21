@@ -65,7 +65,7 @@ pub const Manager = struct {
     closing: bool = false,
     availability: Availability = .loading,
     busy: bool = true,
-    status: []const u8 = "Checking printer administration…",
+    status: []const u8 = "",
     /// Increases after successful mutations or uncertain add/rename results;
     /// owners refresh CUPS when it changes. Discovery does not reload CUPS.
     generation: u64 = 0,
@@ -86,7 +86,7 @@ pub const Manager = struct {
     pub fn create(loop: *wl.EventLoop, env: std.process.Environ, owner: *anyopaque, changed: *const fn (*anyopaque) void) !*Manager {
         const self = try a.create(Manager);
         errdefer a.destroy(self);
-        self.* = .{ .owner = owner, .changed = changed, .loop = loop };
+        self.* = .{ .owner = owner, .changed = changed, .loop = loop, .status = @import("i18n").tr("Checking printer administration…") };
         self.bus = dbus.Connection.openSystem(a, loop, env) catch {
             self.useDirect();
             return self;
@@ -118,7 +118,7 @@ pub const Manager = struct {
         if (self.closing) return;
         if (self.worker != null) return;
         self.stage = .idle;
-        self.unavailable("System bus connection lost. Reopen Printers to reconnect.");
+        self.unavailable(@import("i18n").tr("System bus connection lost. Reopen Printers to reconnect."));
     }
 
     fn hello(owner: ?*anyopaque, bus: *dbus.Connection, result: dbus.Connection.Failure!wire.Message) void {
@@ -149,19 +149,19 @@ pub const Manager = struct {
         if (msg.kind == .method_return and std.mem.eql(u8, msg.headers.signature, "as")) {
             var body = msg.body;
             var names = body.array(4) catch {
-                self.unavailable("Invalid system bus reply.");
+                self.unavailable(@import("i18n").tr("Invalid system bus reply."));
                 return;
             };
             var found = false;
             while (names.offset < names.bytes.len) {
                 const value = names.string() catch {
-                    self.unavailable("Invalid system bus reply.");
+                    self.unavailable(@import("i18n").tr("Invalid system bus reply."));
                     return;
                 };
                 found = found or std.mem.eql(u8, value, helper_name);
             }
             body.done() catch {
-                self.unavailable("Invalid system bus reply.");
+                self.unavailable(@import("i18n").tr("Invalid system bus reply."));
                 return;
             };
             if (found) {
@@ -192,7 +192,7 @@ pub const Manager = struct {
             var body = msg.body;
             const found = body.boolean() catch false;
             body.done() catch {
-                self.unavailable("Invalid system bus reply.");
+                self.unavailable(@import("i18n").tr("Invalid system bus reply."));
                 return;
             };
             if (found) {
@@ -206,11 +206,11 @@ pub const Manager = struct {
     fn useDirect(self: *Manager) void {
         if (self.worker == null) {
             const loop = self.loop orelse {
-                self.unavailable("Could not start CUPS administration.");
+                self.unavailable(@import("i18n").tr("Could not start CUPS administration."));
                 return;
             };
             self.worker = direct.Worker.create(loop, self, directReady) catch {
-                self.unavailable("Could not start CUPS administration.");
+                self.unavailable(@import("i18n").tr("Could not start CUPS administration."));
                 return;
             };
         }
@@ -230,7 +230,7 @@ pub const Manager = struct {
         switch (worker.state()) {
             1 => {
                 self.authentication = true;
-                self.status = "CUPS requires an administrator username and password.";
+                self.status = @import("i18n").tr("CUPS requires an administrator username and password.");
                 self.notify();
             },
             2 => {
@@ -238,11 +238,11 @@ pub const Manager = struct {
                 const result = worker.result();
                 if (result != 0) {
                     self.fail(switch (result) {
-                        2 => "Printer administration was cancelled.",
-                        3 => "CUPS authentication failed after three attempts. Check the administrator account and permissions.",
-                        4 => "Queue rename only partly completed. Refresh and check both queues before retrying.",
-                        5 => "This printer belongs to a CUPS class. Manage its class membership before renaming it here.",
-                        else => "CUPS refused or could not complete the request. Check authorization and refresh before retrying.",
+                        2 => @import("i18n").tr("Printer administration was cancelled."),
+                        3 => @import("i18n").tr("CUPS authentication failed after three attempts. Check the administrator account and permissions."),
+                        4 => @import("i18n").tr("Queue rename only partly completed. Refresh and check both queues before retrying."),
+                        5 => @import("i18n").tr("This printer belongs to a CUPS class. Manage its class membership before renaming it here."),
+                        else => @import("i18n").tr("CUPS refused or could not complete the request. Check authorization and refresh before retrying."),
                     });
                     return;
                 }
@@ -250,18 +250,18 @@ pub const Manager = struct {
                     var body: wire.Writer = .{ .allocator = a };
                     defer body.deinit();
                     worker.devices(&body) catch {
-                        self.fail("Invalid or oversized printer discovery reply.");
+                        self.fail(@import("i18n").tr("Invalid or oversized printer discovery reply."));
                         return;
                     };
                     var reader: wire.Reader = .{ .bytes = body.bytes.items };
                     self.readDevices(&reader) catch {
-                        self.fail("Invalid or oversized printer discovery reply.");
+                        self.fail(@import("i18n").tr("Invalid or oversized printer discovery reply."));
                         return;
                     };
                     worker.finish();
                     self.stage = .idle;
                     self.busy = false;
-                    self.status = if (self.devices.len == 0) "CUPS discovered no supported printer addresses. You can enter a network address." else "Printer discovery complete.";
+                    self.status = if (self.devices.len == 0) @import("i18n").tr("CUPS discovered no supported printer addresses. You can enter a network address.") else @import("i18n").tr("Printer discovery complete.");
                     self.notify();
                 } else self.advance();
             },
@@ -273,7 +273,7 @@ pub const Manager = struct {
         if (!self.authentication) return error.NoChallenge;
         try self.worker.?.credentials(user, password);
         self.authentication = false;
-        self.status = "Authenticating with CUPS…";
+        self.status = @import("i18n").tr("Authenticating with CUPS…");
     }
     pub fn cancelAuthentication(self: *Manager) void {
         if (self.worker) |worker| worker.cancel();
@@ -283,7 +283,7 @@ pub const Manager = struct {
     fn available(self: *Manager) void {
         self.availability = .available;
         self.busy = false;
-        self.status = "Printer administration is available; authorization may be required.";
+        self.status = "";
         self.notify();
     }
 
@@ -346,22 +346,22 @@ pub const Manager = struct {
         }
         self.busy = true;
         self.status = switch (action) {
-            .discover => "Discovering printers; authorization may be required…",
-            .start_service => "Requesting CUPS start; authorization may be required…",
-            else => "Applying printer change; authorization may be required…",
+            .discover => @import("i18n").tr("Discovering printers; authorization may be required…"),
+            .start_service => @import("i18n").tr("Requesting CUPS start; authorization may be required…"),
+            else => @import("i18n").tr("Applying printer change; authorization may be required…"),
         };
         if (action == .start_service) {
             const bus = self.bus orelse {
-                self.fail("The system service manager is unavailable.");
+                self.fail(@import("i18n").tr("The system service manager is unavailable."));
                 return error.Disconnected;
             };
             _ = bus.callWithFlags("org.freedesktop.systemd1", "/org/freedesktop/systemd1", "org.freedesktop.systemd1.Manager", method.member, method.signature, &body, self, reply, 120000, 4) catch |err| {
-                self.fail("Could not request CUPS start.");
+                self.fail(@import("i18n").tr("Could not request CUPS start."));
                 return err;
             };
         } else {
             self.send(method, &body, true) catch |err| {
-                self.fail("Could not send printer administration request.");
+                self.fail(@import("i18n").tr("Could not send printer administration request."));
                 return err;
             };
         }
@@ -371,67 +371,67 @@ pub const Manager = struct {
         const self: *Manager = @ptrCast(@alignCast(owner.?));
         if (self.closing) return;
         const msg = result catch |err| {
-            self.fail(if (err == error.Timeout) "Printer administration timed out. Refresh before trying again." else "System bus disconnected during printer administration.");
+            self.fail(if (err == error.Timeout) @import("i18n").tr("Printer administration timed out. Refresh before trying again.") else @import("i18n").tr("System bus disconnected during printer administration."));
             return;
         };
         if (msg.kind == .error_reply) {
             const error_name = msg.headers.error_name orelse "";
             if (std.mem.eql(u8, error_name, "org.freedesktop.DBus.Error.ServiceUnknown") or std.mem.eql(u8, error_name, "org.freedesktop.DBus.Error.NameHasNoOwner")) {
                 if (self.stage != .start_service) self.availability = .missing;
-                self.fail(if (self.stage == .start_service) "The system service manager is unavailable; start CUPS using your distribution's service tools." else "Printer authorization helper unavailable. Refresh before trying again.");
+                self.fail(if (self.stage == .start_service) @import("i18n").tr("The system service manager is unavailable; start CUPS using your distribution's service tools.") else @import("i18n").tr("Printer authorization helper unavailable. Refresh before trying again."));
             } else if (std.mem.indexOf(u8, error_name, "NotPrivileged") != null or std.mem.indexOf(u8, error_name, "AccessDenied") != null or std.mem.indexOf(u8, error_name, "NotAuthorized") != null or std.mem.indexOf(u8, error_name, "InteractiveAuthorizationRequired") != null) {
-                self.fail("Printer administration was not authorized or was cancelled.");
-            } else self.fail("Printer administration failed; refresh and check the printer status.");
+                self.fail(@import("i18n").tr("Printer administration was not authorized or was cancelled."));
+            } else self.fail(@import("i18n").tr("Printer administration failed; refresh and check the printer status."));
             return;
         }
         if (msg.kind != .method_return) {
-            self.fail("Invalid printer administration reply.");
+            self.fail(@import("i18n").tr("Invalid printer administration reply."));
             return;
         }
         if (self.stage == .start_service) {
             if (!std.mem.eql(u8, msg.headers.signature, "o")) {
-                self.fail("Invalid service-manager reply.");
+                self.fail(@import("i18n").tr("Invalid service-manager reply."));
                 return;
             }
             var body = msg.body;
             _ = body.objectPath() catch {
-                self.fail("Invalid service-manager reply.");
+                self.fail(@import("i18n").tr("Invalid service-manager reply."));
                 return;
             };
             body.done() catch {
-                self.fail("Invalid service-manager reply.");
+                self.fail(@import("i18n").tr("Invalid service-manager reply."));
                 return;
             };
-            self.succeed("CUPS start requested. Refresh to check when it is ready.");
+            self.succeed(@import("i18n").tr("CUPS start requested. Refresh to check when it is ready."));
             return;
         }
         const expected = if (self.stage == .discovery) "sa{ss}" else "s";
         if (!std.mem.eql(u8, msg.headers.signature, expected)) {
-            self.fail("Invalid cups-pk-helper reply.");
+            self.fail(@import("i18n").tr("Invalid cups-pk-helper reply."));
             return;
         }
         var body = msg.body;
         const error_message = body.string() catch {
-            self.fail("Invalid cups-pk-helper reply.");
+            self.fail(@import("i18n").tr("Invalid cups-pk-helper reply."));
             return;
         };
         if (error_message.len != 0) {
-            self.fail("CUPS refused the printer change. Check authorization, the address and driver, then refresh.");
+            self.fail(@import("i18n").tr("CUPS refused the printer change. Check authorization, the address and driver, then refresh."));
             return;
         }
         if (self.stage == .discovery) {
             self.readDevices(&body) catch {
-                self.fail("Invalid or oversized printer discovery reply.");
+                self.fail(@import("i18n").tr("Invalid or oversized printer discovery reply."));
                 return;
             };
             self.busy = false;
             self.stage = .idle;
-            self.status = if (self.devices.len == 0) "CUPS discovered no supported printer addresses. You can enter a network address." else "Printer discovery complete.";
+            self.status = if (self.devices.len == 0) @import("i18n").tr("CUPS discovered no supported printer addresses. You can enter a network address.") else @import("i18n").tr("Printer discovery complete.");
             self.notify();
             return;
         }
         body.done() catch {
-            self.fail("Invalid cups-pk-helper reply.");
+            self.fail(@import("i18n").tr("Invalid cups-pk-helper reply."));
             return;
         };
         self.advance();
@@ -447,9 +447,9 @@ pub const Manager = struct {
                 self.stage = .accept_added;
                 self.sendAdded(.{ .accepting = .{ .name = self.added_name[0..self.added_len], .value = true } });
             },
-            .accept_added => self.succeed("Printer added, enabled and accepting jobs."),
-            .rename => self.succeed("Queue rename request completed. Check the refreshed queues and options."),
-            .device => self.succeed("Printer connection changed."),
+            .accept_added => self.succeed(@import("i18n").tr("Printer added, enabled and accepting jobs.")),
+            .rename => self.succeed(@import("i18n").tr("Queue rename request completed. Check the refreshed queues and options.")),
+            .device => self.succeed(@import("i18n").tr("Printer connection changed.")),
             .clear_ppd_override => {
                 if (self.option_alias != null) {
                     self.stage = .clear_ppd_alias;
@@ -463,8 +463,8 @@ pub const Manager = struct {
                 self.stage = .ppd_option;
                 self.sendPpdOption();
             },
-            .ppd_option => self.succeed("Printer option applied."),
-            else => self.succeed("Printer change applied."),
+            .ppd_option => self.succeed(@import("i18n").tr("Printer option applied.")),
+            else => self.succeed(@import("i18n").tr("Printer change applied.")),
         }
     }
 
@@ -472,11 +472,11 @@ pub const Manager = struct {
         var body: wire.Writer = .{ .allocator = a };
         defer body.deinit();
         const method = encode(&body, action) catch {
-            self.fail("Printer was added, but could not be enabled. Refresh and resume it.");
+            self.fail(@import("i18n").tr("Printer was added, but could not be enabled. Refresh and resume it."));
             return;
         };
         self.send(method, &body, false) catch {
-            self.fail("Printer was added, but could not be enabled. Refresh and resume it.");
+            self.fail(@import("i18n").tr("Printer was added, but could not be enabled. Refresh and resume it."));
         };
     }
 
@@ -488,7 +488,7 @@ pub const Manager = struct {
 
     fn sendPpdOption(self: *Manager) void {
         self.send(.{ .member = "PrinterAddOption", .signature = "ssas" }, &self.option_body, false) catch {
-            self.fail("Could not apply the printer option.");
+            self.fail(@import("i18n").tr("Could not apply the printer option."));
         };
     }
 
@@ -499,11 +499,11 @@ pub const Manager = struct {
             .name = self.option_queue[0..self.option_queue_len],
             .key = self.option_alias.?,
         } }) catch {
-            self.fail("Could not clear the canonical default override.");
+            self.fail(@import("i18n").tr("Could not clear the canonical default override."));
             return;
         };
         self.send(method, &body, false) catch {
-            self.fail("Could not clear the canonical default override.");
+            self.fail(@import("i18n").tr("Could not clear the canonical default override."));
         };
     }
 
@@ -520,11 +520,11 @@ pub const Manager = struct {
         const alias_partial = self.stage == .clear_ppd_alias;
         if (partial or option_partial or alias_partial or self.stage == .clear_ppd_override or self.stage == .add or self.stage == .rename or self.stage == .device) self.generation +%= 1;
         self.status = if (partial)
-            "Printer was added, but enabling or accepting jobs failed. Refresh, then resume it and allow jobs."
+            @import("i18n").tr("Printer was added, but enabling or accepting jobs failed. Refresh, then resume it and allow jobs.")
         else if (option_partial)
-            "Old printer default override cleared, but the new printer option could not be applied. Refresh and review the option."
+            @import("i18n").tr("Old printer default override cleared, but the new printer option could not be applied. Refresh and review the option.")
         else if (alias_partial)
-            "Printer default cleanup partly completed, but the new printer option could not be applied. Refresh and review the option."
+            @import("i18n").tr("Printer default cleanup partly completed, but the new printer option could not be applied. Refresh and review the option.")
         else
             status;
         self.busy = false;

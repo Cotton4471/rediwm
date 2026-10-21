@@ -1,5 +1,6 @@
-//! Global Settings search UI. The field outlives tree rebuilds and results own
-//! their strings/widgets in a separate arena, never in a section's arena.
+//! Global Settings search navigates directly to matching controls. The field
+//! owns its text across page rebuilds; only the visible page is built.
+const i18n = @import("i18n");
 const std = @import("std");
 const ui = @import("ui");
 const W = ui.layout.Widget;
@@ -11,18 +12,17 @@ const gpa = @import("../main.zig").gpa;
 pub const State = struct {
     field: W = .{ .kind = .container },
     toolbar: W = .{ .kind = .container },
-    toolbar_children: [2]W = undefined,
+    clear_button: W = .{ .kind = .container },
     initialized: bool = false,
     focused: bool = false,
     request_focus: bool = false,
     expanded: bool = false,
     active: bool = false,
-    built_active: bool = false,
-    selected: usize = 0,
+    built_empty: bool = false,
     matches: [index.entries.len]usize = undefined,
     count: usize = 0,
-    rows: []W = &.{},
-    arena: std.heap.ArenaAllocator = .init(gpa),
+    services_available: bool = false,
+    empty_children: [2]W = undefined,
     saved_scroll: ui.layout.ScrollState = .{},
     restore_scroll: bool = false,
     pending_result: ?usize = null,
@@ -33,7 +33,6 @@ pub const State = struct {
 
     pub fn deinit(s: *State) void {
         if (s.initialized) gpa.free(s.field.kind.text_input.value);
-        s.arena.deinit();
     }
 
     pub fn capture(s: *State) void {
@@ -44,39 +43,48 @@ pub const State = struct {
         if (!s.initialized) {
             const value = gpa.dupe(u8, "") catch return;
             s.field = .{ .name = "settings_search", .kind = .{ .text_input = .{
-                .field = .{ .leading_icon = .search, .leading_icon_size = 14 },
-                .placeholder = "Search settings…",
+                .field = .{ .leading_icon = .search, .leading_icon_size = 20 },
+                .placeholder = i18n.tr("Search settings…"),
                 .value = value,
                 .owner = cc,
                 .on_change = changed,
             } }, .width = .{ .percent = 1 }, .height = .{ .fixed = 36 } };
             s.initialized = true;
         }
-        s.toolbar_children = .{
-            .{ .kind = .container, .width = .{ .flex = 1 }, .children = (&s.field)[0..1] },
-            .{ .name = "settings_search_clear", .kind = .{ .button = .{ .label = "×", .owner = cc, .on_click = clearClicked } }, .width = .{ .fixed = 30 }, .height = .{ .fixed = 36 } },
-        };
-        s.toolbar = .{ .kind = .container, .direction = .row, .gap = 4, .width = .{ .percent = 1 }, .height = .{ .fixed = 36 }, .children = s.toolbar_children[0..if (s.query().len > 0) @as(usize, 2) else 1] };
+        s.field.kind.text_input.placeholder = i18n.tr("Search settings…");
+        const has_query = s.query().len > 0;
+        s.clear_button = .{ .name = "settings_search_clear", .kind = .{ .button = .{ .label = i18n.tr("Clear search"), .icon = .close, .variant = .ghost, .owner = cc, .on_click = clearClicked } }, .width = .{ .fixed = 30 }, .height = .{ .fixed = 30 } };
+        s.field.kind.text_input.field.trailing = if (has_query) .accessory else .none;
+        s.field.direction = .row;
+        s.field.justify = .end;
+        s.field.@"align" = .center;
+        s.field.padding.right = 3;
+        s.field.children = if (has_query) (&s.clear_button)[0..1] else &.{};
+        s.toolbar = .{ .kind = .container, .width = .{ .percent = 1 }, .height = .{ .fixed = 36 }, .children = (&s.field)[0..1] };
     }
 
     pub fn query(s: *const State) []const u8 {
         return if (s.initialized) s.field.kind.text_input.value else "";
     }
 
-    fn failed(s: *State) W {
-        s.count = 0;
-        s.rows = &.{};
-        return panel.outOfMemory();
+    pub fn empty(s: *const State) bool {
+        return s.active and s.count == 0;
     }
 
-    pub fn build(s: *State, cc: *CC) W {
-        _ = s.arena.reset(.retain_capacity);
-        const a = s.arena.allocator();
+    pub fn firstInPage(s: *const State, page: index.Page) ?usize {
+        for (s.matches[0..s.count]) |id| {
+            if (index.entries[id].page == page) return id;
+        }
+        return null;
+    }
+
+    fn collect(s: *State, cc: *CC) void {
+        s.services_available = if (cc.systemd_client) |client| client.available() else false;
         s.count = 0;
         var scores: [index.entries.len]u32 = undefined;
         for (index.entries, 0..) |entry, id| {
-            if (entry.page == .services and (cc.systemd_client == null or !cc.systemd_client.?.available())) continue;
-            const rank = index.score(entry, s.query(), panel.page_labels[@intFromEnum(entry.page)]) orelse continue;
+            if (entry.page == .services and !s.services_available) continue;
+            const rank = index.scoreLocalized(id, s.query(), panel.pageLabel(@intFromEnum(entry.page))) orelse continue;
             var at = s.count;
             while (at > 0 and scores[at - 1] < rank) : (at -= 1) {
                 scores[at] = scores[at - 1];
@@ -86,25 +94,26 @@ pub const State = struct {
             s.matches[at] = id;
             s.count += 1;
         }
-        s.selected = @min(s.selected, s.count -| 1);
-        s.rows = a.alloc(W, s.count + 1) catch return s.failed();
-        const t = panel.palette();
-        const query_copy = a.dupe(u8, s.query()) catch return s.failed();
-        s.rows[0] = panel.sectionTitle(if (s.count == 0) "No settings found" else "Search results");
-        if (s.count == 0) {
-            const children = a.dupe(W, &.{ s.rows[0], .{ .kind = .{ .text = .{ .content = "Try a setting name, such as volume, wallpaper or scroll.", .font_size = t.settings_description_size, .color = t.dim } } } }) catch return s.failed();
-            return .{ .name = "settings_search_results", .kind = .container, .direction = .column, .gap = 12, .children = children };
+    }
+
+    pub fn syncAvailability(s: *State, cc: *CC) void {
+        const available = if (cc.systemd_client) |client| client.available() else false;
+        if (!s.active or available == s.services_available) return;
+        s.collect(cc);
+        if (s.firstInPage(cc.page) == null) {
+            s.pending_result = if (s.count > 0) s.matches[0] else null;
+            s.destination = null;
+            s.unavailable = false;
         }
-        for (s.matches[0..s.count], 0..) |id, i| {
-            const entry = index.entries[id];
-            const title = W{ .kind = .{ .text = .{ .content = entry.title, .font_size = t.app_text_size, .weight = 600, .color = t.fg, .highlight_query = query_copy } } };
-            const path = panel.page_labels[@intFromEnum(entry.page)];
-            const subtitle = W{ .kind = .{ .text = .{ .content = if (entry.target.len == 0) "Settings page" else path, .font_size = t.settings_description_size, .color = t.dim, .highlight_query = query_copy } } };
-            const labels = a.dupe(W, &.{ title, subtitle }) catch return s.failed();
-            const children = a.dupe(W, &.{.{ .kind = .container, .direction = .column, .width = .{ .flex = 1 }, .gap = 4, .children = labels }}) catch return s.failed();
-            s.rows[i + 1] = .{ .name = entry.target, .kind = .{ .row = .{ .owner = cc, .id = id, .on_click = resultClicked, .selected = i == s.selected } }, .height = .{ .fixed = 64 }, .width = .{ .percent = 1 }, .padding = ui.layout.Edges.all(10), .children = children };
-        }
-        return .{ .name = "settings_search_results", .kind = .container, .direction = .column, .gap = 6, .width = .{ .percent = 1 }, .children = s.rows };
+        cc.refresh();
+    }
+
+    pub fn noResults(s: *State) W {
+        s.empty_children = .{
+            panel.sectionTitle(i18n.tr("No settings found")),
+            .{ .kind = .{ .text = .{ .content = i18n.tr("Try a setting name, such as volume, wallpaper or scroll."), .font_size = panel.palette().settings_description_size, .color = panel.palette().dim } } },
+        };
+        return .{ .name = "settings_search_empty", .kind = .container, .direction = .column, .gap = 12, .children = &s.empty_children };
     }
 };
 
@@ -134,8 +143,10 @@ fn changed(owner: ?*anyopaque, _: usize, value: []const u8) void {
     const cc: *CC = @ptrCast(@alignCast(owner orelse return));
     const s = &cc.search;
     s.active = std.mem.trim(u8, value, " \t\r\n").len > 0;
-    s.selected = 0;
-    s.reset_scroll = true;
+    s.collect(cc);
+    s.pending_result = if (s.active and s.count > 0) s.matches[0] else null;
+    s.request_focus = true;
+    s.reset_scroll = s.active;
     s.destination = null;
     s.unavailable = false;
     cc.refresh();
@@ -155,15 +166,11 @@ pub fn clear(cc: *CC) void {
     s.field.kind.text_input.cursor_pos = 0;
     s.field.kind.text_input.selection_anchor = null;
     s.active = false;
+    s.pending_result = null;
     s.destination = null;
     s.unavailable = false;
     s.request_focus = true;
     cc.refresh();
-}
-
-fn resultClicked(owner: ?*anyopaque, id: usize) void {
-    const cc: *CC = @ptrCast(@alignCast(owner orelse return));
-    cc.search.pending_result = id;
 }
 
 pub fn apply(cc: *CC) void {
@@ -171,21 +178,19 @@ pub fn apply(cc: *CC) void {
     const id = s.pending_result orelse return;
     s.pending_result = null;
     if (id >= index.entries.len) return;
-    s.active = false;
-    s.built_active = false;
+    // Navigation runs after widget dispatch, so no callback rebuilds its tree.
+    s.built_empty = false;
     s.restore_scroll = false;
-    s.focused = false;
-    s.request_focus = false;
-    ui.input.current.focused = null;
     s.destination = id;
     s.unavailable = false;
     s.reveal = true;
-    cc.selectPage(index.entries[id].page);
+    cc.selectSearchPage(index.entries[id].page);
 }
 
 pub fn key(cc: *CC, k: ui.input.Key, shift: bool) bool {
     const s = &cc.search;
     if (cc.is_welcome or !s.initialized) return false;
+    if (s.pending_result != null) apply(cc);
     if (s.active and cc.refresh_pending and (k == .up or k == .down or k == .enter or k == .tab)) cc.relayout();
     const field_focused = ui.input.current.focused == &s.field;
     if (k == .escape and (s.active or field_focused or s.destination != null)) {
@@ -197,39 +202,39 @@ pub fn key(cc: *CC, k: ui.input.Key, shift: bool) bool {
         }
         return true;
     }
-    if (s.active and (k == .down or k == .up)) {
-        if (s.count > 0) {
-            ui.input.current.focus(&cc.root, &s.field);
-            s.selected = if (k == .down) @min(s.selected + 1, s.count - 1) else s.selected -| 1;
-            for (s.rows[1..], 0..) |*row, i| {
-                row.kind.row.selected = i == s.selected;
-                row.markPaintDirty();
-            }
-            ui.widgets.scroll_container.ensureVisibleChild(&cc.body_children[1], &s.rows[s.selected + 1]);
+    if (s.active and field_focused and (k == .down or k == .up)) {
+        const rows = cc.sidebar_children[1].children;
+        for (rows, 0..) |row, i| {
+            if (row.kind.row.id != @intFromEnum(cc.page)) continue;
+            const next = if (k == .down) @min(i + 1, rows.len - 1) else i -| 1;
+            s.pending_result = s.firstInPage(@enumFromInt(rows[next].kind.row.id));
+            apply(cc);
+            break;
         }
         cc.requestWidgetRepaint();
         return true;
     }
     if (s.active and k == .enter) {
-        // Tab can leave the field: activate the focused clear button, category
-        // or result rather than opening the arrow-key selection unexpectedly.
-        if (!field_focused and ui.input.current.focused != null) {
-            if (ui.input.current.focused) |widget| switch (widget.kind) {
+        // Enter in the field keeps the revealed control unchanged. Tab can
+        // reach the clear button and filtered navigation without losing search.
+        if (field_focused) return true;
+        if (ui.input.current.focused) |widget| {
+            switch (widget.kind) {
                 .button => |data| {
-                    if (data.state != .disabled) if (data.on_click) |callback| callback(data.owner, data.id);
+                    if (widget != &s.clear_button) return false;
+                    if (data.on_click) |callback| callback(data.owner, data.id);
                 },
                 .row => |data| {
-                    if (data.state != .disabled) if (data.on_click) |callback| callback(data.owner, data.id);
+                    const nav = &cc.sidebar_children[1];
+                    if (widget.parent != nav) return false;
+                    if (data.on_click) |callback| callback(data.owner, data.id);
                 },
-                else => {},
-            };
-        } else if (s.count > 0) s.pending_result = s.matches[s.selected];
-        if (cc.pending_page) |page| {
-            cc.pending_page = null;
-            cc.selectPage(page);
-        } else apply(cc);
-        cc.requestWidgetRepaint();
-        return true;
+                else => return false,
+            }
+            apply(cc);
+            cc.requestWidgetRepaint();
+            return true;
+        }
     }
     if (s.active and k == .tab) {
         _ = ui.input.current.focusNext(&cc.root, shift);
@@ -244,14 +249,14 @@ pub fn key(cc: *CC, k: ui.input.Key, shift: bool) bool {
     return false;
 }
 
-fn find(root: *W, target: []const u8) ?*W {
+fn find(root: *W, target: []const u8, heading: []const u8) ?*W {
     if (target.len == 0) return null;
     if (target[0] == '@') {
-        if (root.kind == .text and std.mem.eql(u8, root.kind.text.content, target[1..])) return root;
+        if (root.kind == .text and std.mem.eql(u8, root.kind.text.content, heading)) return root;
     } else if (root.name) |name| {
         if (std.mem.eql(u8, name, target)) return root;
     }
-    for (root.children) |*child| if (find(child, target)) |found| return found;
+    for (root.children) |*child| if (find(child, target, heading)) |found| return found;
     return null;
 }
 
@@ -259,10 +264,10 @@ fn find(root: *W, target: []const u8) ?*W {
 /// the containing row using the shared renderer. No control receives a click.
 pub fn reveal(cc: *CC) void {
     const s = &cc.search;
-    if (s.active) return;
+    removeMarker(&cc.body_children[1]);
     const id = s.destination orelse return;
     if (index.entries[id].target.len == 0) return;
-    const target = find(&cc.body_children[1], index.entries[id].target) orelse {
+    const target = find(&cc.body_children[1], index.entries[id].target, index.targetLabel(id)) orelse {
         // A hardware-dependent control may be absent; its page still explains
         // the unavailable device. Never redirect to another setting.
         s.reveal = false;

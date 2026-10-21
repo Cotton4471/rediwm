@@ -40,6 +40,9 @@ pub const Agent = struct {
     conversation: ?Conversation = null,
     session_id: ?[]u8 = null,
     locale: []const u8,
+    owned_locale: ?[]u8 = null,
+    locale_revision: usize = 0,
+    registration_locale_revision: usize = 0,
     authority: ?[]u8 = null,
     owner_revision: usize = 0,
     query_revision: usize = 0,
@@ -80,7 +83,7 @@ pub const Agent = struct {
             .allocator = allocator,
             .conn = conn,
             .loop = loop,
-            .locale = nonempty(environ.getPosix("LC_ALL")) orelse nonempty(environ.getPosix("LC_MESSAGES")) orelse nonempty(environ.getPosix("LANG")) orelse "C",
+            .locale = @import("i18n").resolve("", environ),
             .observer_owner = observer_owner,
             .observer = observer,
         };
@@ -113,6 +116,7 @@ pub const Agent = struct {
         }
         self.conn.destroy();
         self.queue.deinit(self.allocator);
+        if (self.owned_locale) |value| self.allocator.free(value);
         if (self.owned_helper_socket) |path| self.allocator.free(path);
         if (self.session_id) |id| self.allocator.free(id);
         if (self.authority) |owner| self.allocator.free(owner);
@@ -131,13 +135,31 @@ pub const Agent = struct {
         if (enabled) try self.maybeRegister();
         self.schedule();
     }
+    pub fn setLocale(self: *Agent, value: []const u8) !void {
+        if (std.mem.eql(u8, self.locale, value)) return;
+        const owned = try self.allocator.dupe(u8, value);
+        if (self.owned_locale) |old| self.allocator.free(old);
+        self.owned_locale = owned;
+        self.locale = owned;
+        self.locale_revision += 1;
+        if (self.active != null or self.queue.items.len != 0) return;
+        if (self.registered) {
+            try self.unregister();
+            self.registered = false;
+        }
+        // An in-flight registration completes before we unregister and retry.
+        try self.maybeRegister();
+    }
+
     fn settlePolicy(self: *Agent) void {
-        if (self.enabled or !self.registered or self.active != null or self.queue.items.len != 0 or self.conn.closed) return;
+        if (!self.registered or self.active != null or self.queue.items.len != 0 or self.conn.closed) return;
+        if (self.enabled and self.registration_locale_revision == self.locale_revision) return;
         self.unregister() catch |err| {
             self.unavailable(err);
             return;
         };
         self.registered = false;
+        if (self.enabled) self.maybeRegister() catch |err| self.unavailable(err);
     }
 
     fn unregister(self: *Agent) !void {
@@ -270,6 +292,7 @@ pub const Agent = struct {
         _ = try self.conn.call(self.authority.?, authority_path, authority_interface, "RegisterAuthenticationAgent", "(sa{sv})ss", &body, self, registrationReply, 5000);
         self.registration_pending = true;
         self.registration_revision = self.owner_revision;
+        self.registration_locale_revision = self.locale_revision;
     }
     fn registrationReply(owner: ?*anyopaque, _: *C, result: C.Failure!wire.Message) void {
         const self = from(owner);
@@ -287,6 +310,12 @@ pub const Agent = struct {
             return self.unavailable(error.InvalidReply);
         }
         self.registered = true;
+        if (self.registration_locale_revision != self.locale_revision) {
+            self.unregister() catch |err| return self.unavailable(err);
+            self.registered = false;
+            self.maybeRegister() catch |err| self.unavailable(err);
+            return;
+        }
         self.settlePolicy();
         if (self.registered) {
             log.info("authentication agent registered", .{});
@@ -461,7 +490,7 @@ pub const Agent = struct {
                 if (self.active.?.attempt < max_attempts) {
                     self.active.?.attempt += 1;
                     self.restart = true;
-                    self.emit(.{ .error_message = "Authentication failed. Please try again." });
+                    self.emit(.{ .error_message = @import("i18n").tr("Authentication failed. Please try again.") });
                     self.schedule();
                     return;
                 }

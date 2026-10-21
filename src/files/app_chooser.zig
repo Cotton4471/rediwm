@@ -1,6 +1,8 @@
 //! Files in chooser mode: the portal file dialog's footer, filters and results.
 
 const std = @import("std");
+const i18n = @import("i18n");
+const tr = i18n.tr;
 const App = @import("app.zig").App;
 const c = @import("c.zig").api;
 const header = @import("header.zig");
@@ -195,7 +197,7 @@ pub fn chooserKey(self: *App, sym: u32, utf8: []const u8) bool {
 
 pub fn acceptChooser(self: *App) void {
     self.collectChooser() catch {
-        self.setStatusNotice("Choose an accessible file or folder and a valid filename.", true);
+        self.setStatusNotice(tr("Choose an accessible file or folder and a valid filename."), true);
     };
     self.invalidate();
 }
@@ -293,20 +295,20 @@ pub fn renderChooser(self: *App, cr: *c.cairo_t) void {
     c.cairo_rectangle(cr, 0, top, @floatFromInt(self.w), 1);
     c.cairo_fill(cr);
     setSource(cr, ui_theme.global.window_fg);
-    drawText(cr, if (opts.mode == .folder) "Folder:" else "File name:", 16, self.chooserRect(0).y + 23, shell_ui.textSize(), false);
+    drawText(cr, if (opts.mode == .folder) tr("Folder:") else tr("File name:"), 16, self.chooserRect(0).y + 23, shell_ui.textSize(), false);
     if (opts.mode == .folder) {
         drawEllipsis(cr, self.history.current, 96, self.chooserRect(0).y + 23, self.chooserRect(0).w, shell_ui.textSize(), false);
     } else self.renderEditor(cr, &self.filename, self.chooserRect(0), self.focus == .filename, false);
     for (1..4) |i| {
         const r = self.chooserRect(i);
         const text = switch (i) {
-            1 => if (self.overwrite_pending) "Replace" else if (opts.accept_label.len > 0) opts.accept_label else switch (opts.mode) {
-                .open => "Open",
-                .save => "Save",
-                .folder => "Select",
+            1 => if (self.overwrite_pending) tr("Replace") else if (opts.accept_label.len > 0) opts.accept_label else switch (opts.mode) {
+                .open => tr("Open"),
+                .save => tr("Save"),
+                .folder => tr("Select"),
             },
-            2 => "Cancel",
-            else => if (opts.filters.len == 0) "All files" else opts.filters[opts.filter_index].name,
+            2 => tr("Cancel"),
+            else => if (opts.filters.len == 0) tr("All files") else opts.filters[opts.filter_index].name,
         };
         var layer = shell_ui.Layer.begin(cr, .{ .x = @floatCast(r.x), .y = @floatCast(r.y), .w = @floatCast(r.w), .h = @floatCast(r.h) }) orelse continue;
         ui_button.paint(&layer.renderer, layer.local(), .{ .label = text, .variant = if (i == 1) .primary else .secondary, .alignment = if (i == 3) .left else .center, .trailing_icon = if (i == 3 and opts.filters.len > 0) .chevron_down else null }, .{ .pointer = if (i == 3 and opts.filters.len == 0) .disabled else if (r.contains(self.mouse_x, self.mouse_y)) .hover else .idle, .selected = self.focus == (switch (i) {
@@ -331,6 +333,6 @@ pub fn renderChooser(self: *App, cr: *c.cairo_t) void {
     }
     if (self.overwrite_pending or self.status_notice != null) {
         setSource(cr, ui_theme.global.window_fg);
-        drawEllipsis(cr, if (self.overwrite_pending) "A file with this name exists. Replace it?" else self.status_notice.?, 16, top + (if (self.w >= 800) @as(f64, 78) else 56), @floatFromInt(self.w - 32), shell_ui.textSize(), false);
+        drawEllipsis(cr, if (self.overwrite_pending) tr("A file with this name exists. Replace it?") else self.status_notice.?, 16, top + (if (self.w >= 800) @as(f64, 78) else 56), @floatFromInt(self.w - 32), shell_ui.textSize(), false);
     }
 }

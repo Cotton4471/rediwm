@@ -70,8 +70,15 @@ pub fn resolveDock(output: *Output) ?PanelRoot {
     return .{ .root = &output.dock.root, .box = output.dock.box };
 }
 
+pub fn resolveWindowPicker(output: *Output) ?PanelRoot {
+    const menu = &output.server.input.window_menu;
+    if (menu.output != output or menu.node == null or menu.window_ids.len == 0) return null;
+    return .{ .root = &menu.picker_root, .box = menu.box };
+}
+
 pub const panel_registry = [_]PanelRegistryEntry{
     .{ .name = "dock", .resolve = resolveDock },
+    .{ .name = "window_picker", .resolve = resolveWindowPicker },
     .{ .name = "start_menu", .resolve = resolveStartMenu },
     .{ .name = "control_center", .resolve = resolveControlCenter },
     .{ .name = "power_menu", .resolve = resolvePowerMenu },

@@ -119,6 +119,8 @@ pub const IconId = enum {
     trash,
     /// Filled bin used by the desktop's built-in Trash icon.
     trash_can,
+    play,
+    pause,
     view_grid,
     view_list,
     sort,

@@ -294,11 +294,14 @@ pub const Renderer = struct {
             const line_h = @min(h, metrics.ascent + metrics.descent);
             var words = std.mem.tokenizeAny(u8, style.highlight_query, " \t\r\n");
             while (words.next()) |word| {
-                if (word.len > style.content.len) continue;
-                for (0..style.content.len - word.len + 1) |i| {
-                    if (!std.ascii.eqlIgnoreCase(style.content[i..][0..word.len], word)) continue;
-                    const left = text_mod.measureWidthF(style.content[0..i], font, style.font_size, r.scale) catch continue;
-                    const right = text_mod.measureWidthF(style.content[0 .. i + word.len], font, style.font_size, r.scale) catch continue;
+                var offset: usize = 0;
+                while (@import("fold.zig").indexOf(style.content[offset..], word, .{ .turkish = @import("i18n").isTurkish() })) |match| {
+                    const start = offset + match.start;
+                    const end = offset + match.end;
+                    if (end <= offset) break;
+                    offset = end;
+                    const left = text_mod.measureWidthF(style.content[0..start], font, style.font_size, r.scale) catch continue;
+                    const right = text_mod.measureWidthF(style.content[0..end], font, style.font_size, r.scale) catch continue;
                     const clipped_right = @min(right, w - ellipsis);
                     if (clipped_right > left) r.fillRect(@as(f32, @floatFromInt(rect.x)) + left, y + (h - line_h) / 2, clipped_right - left, line_h, .{
                         .color = .{ pal.accent[0], pal.accent[1], pal.accent[2], 0.25 },

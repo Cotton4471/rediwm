@@ -1,6 +1,8 @@
 //! Files menus: header actions, context menus and their geometry.
 
 const std = @import("std");
+const i18n = @import("i18n");
+const tr = i18n.tr;
 const App = @import("app.zig").App;
 const archive = @import("archive.zig");
 const c = @import("c.zig").api;
@@ -145,16 +147,16 @@ pub fn menuIcon(self: *App, row: usize) ?IconId {
 // Faint shortcut text shown on the right of a context-menu row.
 pub fn menuHint(self: *App, row: usize) ?[]const u8 {
     const label = self.menuLabels()[row];
-    if (std.mem.eql(u8, label, "Properties")) return "ALT+ENTER";
+    if (std.mem.eql(u8, label, tr("Properties"))) return "ALT+ENTER";
     if (self.menu != .file and self.menu != .background) return null;
     const hints = [_][2][]const u8{
-        .{ "Open", "CTRL+O" },
-        .{ "Cut", "CTRL+X" },
-        .{ "Copy", "CTRL+C" },
-        .{ "Paste", "CTRL+V" },
-        .{ "Rename", "F2" },
-        .{ "Move to Trash", "DELETE" },
-        .{ "Refresh", "F5" },
+        .{ tr("Open"), "CTRL+O" },
+        .{ tr("Cut"), "CTRL+X" },
+        .{ tr("Copy"), "CTRL+C" },
+        .{ tr("Paste"), "CTRL+V" },
+        .{ tr("Rename"), "F2" },
+        .{ tr("Move to Trash"), "DELETE" },
+        .{ tr("Refresh"), "F5" },
     };
     for (hints) |hint| {
         if (std.mem.eql(u8, label, hint[0])) return hint[1];
@@ -164,7 +166,7 @@ pub fn menuHint(self: *App, row: usize) ?[]const u8 {
 
 pub fn hasSizeSelection(self: *App) bool {
     for (self.items.items) |item| {
-        if (item.selected and item.is_dir and !item.is_symlink) return true;
+        if (item.selected and item.is_dir and !item.is_symlink and !item.transfer_stub) return true;
     }
     return false;
 }
@@ -180,13 +182,36 @@ pub fn selectedArchive(self: *App) ?[]const u8 {
     return selected;
 }
 
+pub fn selectedAppImage(self: *App) ?[]const u8 {
+    if (self.chooser != null or self.history.archive_len > 0 or self.transfer_view.active) return null;
+    var selected: ?[]const u8 = null;
+    for (self.items.items) |item| {
+        if (!item.selected) continue;
+        if (selected != null or item.is_dir or item.is_broken or item.missing or item.transfer_stub or !@import("appimage.zig").candidate(item.name)) return null;
+        selected = item.path;
+    }
+    return selected;
+}
+
 pub fn fileActions(self: *App) []const FileAction {
+    var only_transfers = false;
+    for (self.items.items) |item| {
+        if (!item.selected) continue;
+        if (!item.transfer_stub) {
+            only_transfers = false;
+            break;
+        }
+        only_transfers = true;
+    }
+    if (only_transfers) return &.{.open};
     if (self.history.archive_len > 0) return &.{.open};
     if (self.isRecent()) {
+        if (self.selectedAppImage() != null) return &.{ .open, .open_with, .add_application, .cut, .copy, .rename, .trash, .properties };
         if (self.selectedArchive() != null) return &.{ .open, .open_with, .extract, .extract_to, .cut, .copy, .rename, .trash, .properties };
         if (self.canOpenWith()) return &.{ .open, .open_with, .cut, .copy, .rename, .trash, .properties };
         return &.{ .open, .cut, .copy, .rename, .trash, .properties };
     }
+    if (self.selectedAppImage() != null) return &.{ .open, .open_with, .add_application, .cut, .copy, .paste, .rename, .trash, .properties };
     if (self.selectedArchive() != null) return &.{ .open, .open_with, .extract, .extract_to, .cut, .copy, .paste, .rename, .trash, .properties };
     if (self.canOpenWith()) return &.{ .open, .open_with, .cut, .copy, .paste, .rename, .trash, .properties };
     if (self.hasSizeSelection()) return &.{ .open, .cut, .copy, .paste, .rename, .trash, .size, .properties };
@@ -216,26 +241,28 @@ pub fn placeActions(self: *App) []const PlaceAction {
 }
 
 pub fn menuLabels(self: *App) []const []const u8 {
-    return switch (self.menu orelse return &.{}) {
-        .new => &.{ "New Folder", "New File" },
-        .sort => &.{ "Name: A to Z", "Name: Z to A", "Largest first", "Newest first", "Type: A to Z", "Smallest first", "Oldest first", "Type: Z to A" },
+    const messages: []const i18n.Message = switch (self.menu orelse return &.{}) {
+        .new => &.{ i18n.msg("New Folder"), i18n.msg("New File") },
+        .sort => &.{ i18n.msg("Name: A to Z"), i18n.msg("Name: Z to A"), i18n.msg("Largest first"), i18n.msg("Newest first"), i18n.msg("Type: A to Z"), i18n.msg("Smallest first"), i18n.msg("Oldest first"), i18n.msg("Type: Z to A") },
         .filter => if (self.repository() != null)
-            &.{ "Folders only", "Show hidden files", "Show changed files", "Show full paths" }
+            &.{ i18n.msg("Folders only"), i18n.msg("Show hidden files"), i18n.msg("Show changed files"), i18n.msg("Show full paths") }
         else
-            &.{ "Folders only", "Show hidden files" },
-        .file => blk: {
+            &.{ i18n.msg("Folders only"), i18n.msg("Show hidden files") },
+        .file => {
             const actions = self.fileActions();
             for (actions, 0..) |action, i| self.file_menu_labels[i] = action.label();
-            break :blk self.file_menu_labels[0..actions.len];
+            return self.file_menu_labels[0..actions.len];
         },
-        .sidebar, .device => blk: {
+        .sidebar, .device => {
             const actions = self.placeActions();
             for (actions, 0..) |action, i| self.place_menu_labels[i] = action.label();
-            break :blk self.place_menu_labels[0..actions.len];
+            return self.place_menu_labels[0..actions.len];
         },
-        .background => if (self.history.archive_len > 0 or self.isRecent()) &.{"Refresh"} else &.{ "New Folder", "New File", "Paste", "Refresh" },
-        .chooser_filter => self.chooser_filter_labels.items,
+        .background => if (self.history.archive_len > 0 or self.isRecent()) &.{i18n.msg("Refresh")} else &.{ i18n.msg("New Folder"), i18n.msg("New File"), i18n.msg("Paste"), i18n.msg("Refresh") },
+        .chooser_filter => return self.chooser_filter_labels.items,
     };
+    for (messages, 0..) |message, i| self.menu_label_text[i] = message.get();
+    return self.menu_label_text[0..messages.len];
 }
 
 pub fn openMenu(self: *App, kind: MenuKind, x: f64, y: f64) void {
@@ -317,6 +344,7 @@ pub fn runMenu(self: *App, row: usize) void {
         .file => if (file_action) |action| switch (action) {
             .open => self.activateSelected(),
             .open_with => self.openWithDialog(),
+            .add_application => self.addApplication(),
             .extract => if (self.selectedArchive()) |path| self.startExtraction(path, std.fs.path.dirname(path) orelse "/"),
             .extract_to => self.chooseExtractionFolder(),
             .cut => self.cutSelected(),

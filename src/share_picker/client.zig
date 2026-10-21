@@ -1,6 +1,7 @@
 //! Wayland GUI for `rediwm-share-picker --xdpw-dmenu`. Labels stay opaque;
 //! the selected stdin line is returned unchanged. Layout constants are part
 //! of the test contract in tests/screencast.py.
+const i18n = @import("i18n");
 const std = @import("std");
 const wl = @import("wayland").client.wl;
 const xdg = @import("wayland").client.xdg;
@@ -381,11 +382,11 @@ const Client = struct {
         c.cairo_rectangle(cr, 0, 0, w_f, h_f);
         c.cairo_fill(cr);
         setSource(cr, t.fg);
-        drawText(cr, "Share screen", 16, h_f / 2.0 + 4, 13, true);
+        drawText(cr, i18n.tr("Share screen"), 16, h_f / 2.0 + 4, 13, true);
         const close_w: f64 = @min(h_f, 32);
         const hovered = self.inside and self.pointer_y < h_f and self.pointer_x >= w_f - close_w;
         var layer = shell_ui.Layer.begin(cr, .{ .x = @floatCast(w_f - close_w), .y = 0, .w = @floatCast(close_w), .h = @floatCast(h_f) }) orelse return;
-        ui_button.paint(&layer.renderer, layer.local(), .{ .variant = .chrome, .icon = .close, .label = "Close" }, .{ .pointer = if (hovered) .hover else .idle });
+        ui_button.paint(&layer.renderer, layer.local(), .{ .variant = .chrome, .icon = .close, .label = i18n.tr("Close") }, .{ .pointer = if (hovered) .hover else .idle });
         layer.finish();
     }
 
@@ -398,13 +399,13 @@ const Client = struct {
         c.cairo_fill(cr);
 
         setSource(cr, t.fg);
-        drawText(cr, "Share screen", pad, 28, 16, true);
+        drawText(cr, i18n.tr("Share screen"), pad, 28, 16, true);
         setSource(cr, t.dim);
-        drawText(cr, "Choose a source. Escape cancels.", pad, 48, 12, false);
+        drawText(cr, i18n.tr("Choose a source. Escape cancels."), pad, 48, 12, false);
 
         if (self.labels.len == 0) {
             setSource(cr, t.dim);
-            drawText(cr, "No sources available.", pad, header_h + 24, 13, false);
+            drawText(cr, i18n.tr("No sources available."), pad, header_h + 24, 13, false);
             return;
         }
 
@@ -513,7 +514,8 @@ pub fn run(labels: []const []const u8) !sources.Decision {
     defer self.xdg_toplevel.destroy();
     self.xdg_toplevel.setListener(*Client, Client.xdgToplevelEvent, &self);
     self.xdg_toplevel.setAppId("rediwm-share-picker");
-    self.xdg_toplevel.setTitle("Share screen");
+    var title: [256]u8 = undefined;
+    self.xdg_toplevel.setTitle(std.fmt.bufPrintZ(&title, "{s}", .{i18n.tr("Share screen")}) catch "Share screen");
     self.xdg_toplevel.setMinSize(320, 200 + CSD_TITLEBAR_H);
 
     if (self.decoration_manager) |mgr| {

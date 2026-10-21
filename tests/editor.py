@@ -281,6 +281,108 @@ def run():
                 key(17, ctrl=True)
                 wait_for(lambda: not windows("rediwm-editor"), "large file tab closes")
                 print("files beyond 16 MiB open, jump to the end and save exactly", flush=True)
+                # Real held-key delivery, Unicode word selection and drag extension.
+                inputs = docs / "input.txt"
+                inputs.write_text("alpha café omega")
+                start("rediwm-editor", inputs)
+                win = title("input.txt")
+                ipc.focus_window(win["id"])
+                ipc.wait_for("window_geometry_settled", window_id=win["id"])
+                ipc.wait_for_frame()
+                time.sleep(.15)
+                header = 46 if csd else 0
+
+                def save_input():
+                    key(31, ctrl=True)
+                    title("input.txt")
+                    return inputs.read_text()
+
+                def hold(code, duration=.85, ctrl=False):
+                    if ctrl: ipc.key(29, True)
+                    ipc.key(code, True)
+                    time.sleep(duration)
+                    ipc.key(code, False)
+                    if ctrl: ipc.key(29, False)
+                    time.sleep(.1)
+
+                # A click near the centre of café must select only that word.
+                # Use the rendered glyphs to find its extent across fonts/scales.
+                from PIL import Image
+                preview = tmp / "word-selection.png"
+                ipc.screenshot(path=str(preview))
+                image = Image.open(preview).convert("RGB")
+                factor = image.width / ipc.get_outputs()[0]["logical_width"]
+                box = ipc.get_window_debug(win["id"])["client_box"]
+                y0 = round((box["y"] + header + 40) * factor)
+                y1 = round((box["y"] + header + 64) * factor)
+                columns = []
+                for x in range(round((box["x"]+16)*factor), round((box["x"]+220)*factor)):
+                    if any(min(image.getpixel((x, y))) > 155 for y in range(y0, y1)):
+                        if not columns or x > columns[-1][-1] + 1: columns.append([x])
+                        else: columns[-1].append(x)
+                # Derive the monospace cell width from the first five glyphs.
+                assert len(columns) >= 9, (columns, box)
+                cell = (columns[4][0] - columns[0][0]) / 4 / factor
+                x = 16 + cell * 8
+                y = header + 50
+                click(win, x, y)
+                click(win, x+1, y)
+                key(45)  # replace selected café with x
+                assert save_input() == "alpha x omega", inputs.read_text()
+                key(44, ctrl=True)
+                assert save_input() == "alpha café omega"
+                for end_cell, expected in ((13, "alpha x"), (2, "x omega")):
+                    click(win, x, y)
+                    box = ipc.get_window_debug(win["id"])["client_box"]
+                    ipc.move_cursor(round(box["x"]+x+1), round(box["y"]+y))
+                    ipc.action('pointer_button', {"button": 272, "pressed": True})
+                    ipc.move_cursor(round(box["x"]+16+cell*end_cell), round(box["y"]+y))
+                    ipc.action('pointer_button', {"button": 272, "pressed": False})
+                    key(45)
+                    assert save_input() == expected
+                    key(44, ctrl=True)
+                    assert save_input() == "alpha café omega"
+                print("double-click selects a Unicode word and drags by whole words", flush=True)
+
+                key(107, ctrl=True)
+                hold(28)  # Return
+                value = save_input()
+                assert value.startswith("alpha café omega") and value.count("\n") >= 3, repr(value)
+                time.sleep(.5)
+                assert save_input() == value, "key repeat continued after release"
+                hold(15)  # Tab
+                value = save_input()
+                assert value.count("\t") >= 3, repr(value)
+                hold(30)  # a
+                value = save_input()
+                assert value.endswith("aaa"), repr(value)
+                hold(14)  # Backspace
+                assert len(save_input()) < len(value)-2
+                key(30, ctrl=True)
+                ipc.type_text("one two three four five")
+                key(107, ctrl=True)
+                hold(105, ctrl=True)  # Ctrl+Left reaches the first word
+                key(45)
+                assert save_input() == "xone two three four five"
+                key(107, ctrl=True)
+                hold(14, ctrl=True)  # Ctrl+Backspace removes words repeatedly
+                assert len(save_input()) < 10
+                # Changing focus cancels a held key even when its release is
+                # delivered to the newly focused client.
+                key(30, ctrl=True)
+                key(14)
+                ipc.key(30, True)
+                time.sleep(.5)
+                start("rediwm-files", docs)
+                other = wait_for(lambda: next(iter(windows("rediwm-files")), None), "repeat focus target")
+                ipc.focus_window(other["id"])
+                time.sleep(.2)
+                ipc.key(30, False)
+                ipc.focus_window(win["id"])
+                stopped = save_input()
+                time.sleep(.5)
+                assert save_input() == stopped, "held key survived focus loss"
+                print("held Enter, Tab, text, deletion and word navigation; release and focus cancellation", flush=True)
                 if env["WLR_RENDERER"] == "gles2":
                     lines = (tmp / "rediwm-0.log").read_text().splitlines()
                     for line in lines:

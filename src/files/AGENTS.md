@@ -59,6 +59,13 @@ and headless fixtures. The pinned library is compiled only into Files/tests.
   agree with Files. Only the content type is ours; GIO calls take it as a
   C string through `TypeZ`.
 
+* **AppImages:** `appimage.zig` reads type-2 metadata through bounded,
+  timed `unsquashfs` calls on the directory worker; never run AppRun or the
+  AppImage to inspect it. Publish only the rewritten launcher and icon in
+  XDG data, preserving existing MIME defaults. Registration keeps the image
+  in place, uses its canonical absolute path and drops bundled TryExec,
+  working-directory, desktop-action and D-Bus activation references.
+
 ## Git
 
 `git.zig` never runs a repository's own programs: a folder's `.git` arrives
@@ -151,7 +158,10 @@ together.
 
 `main.zig` `dragOver`/`dragDropped` accept `text/uri-list`: PLACES pins with
 *copy* only; the content area transfers to the hovered folder or, on empty
-space, the displayed directory.
+space, the displayed directory. The live terminal body accepts *copy* only
+and inserts shell-quoted absolute paths without Enter. Snapshot its editor
+revision so a delayed receive cannot type after focus/session changes;
+control bytes are refused because terminal paste would alter them.
 
 * Files sources advertise `application/x-rediwm-file-transfer`: the receiving
   job owns moves and the source never deletes on `dnd_finished`. Ctrl at drag
@@ -163,3 +173,34 @@ space, the displayed directory.
   state; reject a folder dropped into itself or a descendant, including
   through symlinks. Pins take their gap from `pin_drop`.
 * Ctrl-click deselection waits for release so Ctrl-drag keeps the selection.
+
+## BitTorrent transfers
+
+`app_torrents.zig` owns the sidebar, main-pane list, toolbar and detail dialog;
+`app_torrent_rows.zig` owns folder-row matching, controls and hover details; `torrents.zig` is a bounded,
+nonblocking SOCK_SEQPACKET subscriber (poll slot 22). `torrent/helper.cpp`
+owns libtorrent, persistent resume data, StatusNotifierItem and its D-Bus menu.
+The helper survives Files closing; no torrent state belongs to a window.
+See `docs/files-torrents.md` for dependencies, storage and lifecycle.
+
+* The socket is `files-transfers.sock`, deliberately outside `rediwm-*.sock`
+  compositor discovery. Both ends check peer credentials; runtime/state are
+  private. Use the system C++ compiler to match libtorrent's distro ABI.
+* Folder accessories match full source/storage/published paths, never basenames.
+  Destination entries for unpublished payload have `transfer_stub` and `missing`:
+  activate transfer details, exclude them from filesystem operations and chooser
+  results. Rebuild their rows only for structural changes; progress/rate updates
+  repaint without resetting selection or scrolling. ETA uses remaining selected
+  bytes and payload rate; no estimate while paused or stalled.
+* File priorities apply asynchronously: keep payload paused/upload-only until
+  `file_prio_alert` confirms the requested priorities, then save and resume.
+  Treat duplicate v1/v2 aliases as errors in libtorrent too, not just by UI ID.
+* Payload starts in a private staging directory. Metadata alone never starts
+  payload downloading. Pause before publication, rename the whole directory
+  with RENAME_NOREPLACE, then update the engine's storage path. Never use
+  libtorrent's racy `fail_if_exist` move mode or delete payload on removal.
+* Idle releases the engine after pending resume writes drain. UI subscribers
+  can remain attached without torrent worker timers. Last subscriber leaving
+  exits a stopped helper; active downloads/seeding keep it alive.
+* `zig build test-files-torrents` uses a private bus, temporary state and a
+  noninstalled loopback network shim. Never fetch public torrents in tests.

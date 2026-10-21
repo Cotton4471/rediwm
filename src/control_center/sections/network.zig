@@ -1,5 +1,6 @@
 //! Live NetworkManager settings. Widget storage belongs to the window;
 //! passwords stay in locked, wiped storage, never in the tree's arena.
+const i18n = @import("i18n");
 const std = @import("std");
 const panel = @import("../panel.zig");
 const network = @import("../../network/manager.zig");
@@ -150,28 +151,31 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: Allocator) !W {
         if (net.connected) break net;
     } else null else null;
     const online = available and m.?.connectivity == 4;
-    const internet_state: []const u8 = if (!available) "Unavailable" else switch (m.?.connectivity) {
-        2 => "Sign-in required",
-        3 => "Limited access",
-        4 => "Connected",
-        else => if (m.?.state >= 50) "Connected" else "Offline",
+    const internet_state: []const u8 = if (!available) i18n.tr("Unavailable") else switch (m.?.connectivity) {
+        2 => i18n.tr("Sign-in required"),
+        3 => i18n.tr("Limited access"),
+        4 => i18n.tr("Connected"),
+        else => if (m.?.state >= 50) i18n.tr("Connected") else i18n.tr("Offline"),
     };
-    const internet_detail: []const u8 = if (!available) "NetworkManager unavailable" else switch (m.?.connectivity) {
-        2 => "Open a browser to sign in",
-        3 => "No internet access",
-        4 => "You're online.",
-        else => if (m.?.state >= 50) "Internet access not verified" else "No internet connection",
+    const internet_detail: []const u8 = if (!available) i18n.tr("NetworkManager unavailable") else switch (m.?.connectivity) {
+        2 => i18n.tr("Open a browser to sign in"),
+        3 => i18n.tr("No internet access"),
+        4 => i18n.tr("You're online."),
+        else => if (m.?.state >= 50) i18n.tr("Internet access not verified") else i18n.tr("No internet connection"),
     };
-    const wifi_state: []const u8 = if (!available) "Unavailable" else if (!m.?.hardware) "Hardware blocked" else if (!m.?.enabled) "Turned off" else if (m.?.device.len == 0) "No adapter" else if (connected_wifi != null) "Connected" else "Not connected";
-    const eth_detail = if (eth) |e| if (e.connected() and e.address.len != 0) try std.fmt.allocPrint(a, "{s} · {s}", .{ try speed(a, e.*), e.address.slice() }) else try a.dupe(u8, e.name.slice()) else "No wired adapter";
-    const wifi_detail = if (connected_wifi) |net| try std.fmt.allocPrint(a, "{s} · {s}", .{ network.networkName(net), if (net.strength >= 80) @as([]const u8, "Excellent") else if (net.strength >= 55) "Good" else "Weak" }) else "Wireless connections";
-    const stacked = cc.panel_box.width < 1000;
+    const wifi_state: []const u8 = if (!available) i18n.tr("Unavailable") else if (!m.?.hardware) i18n.tr("Hardware blocked") else if (!m.?.enabled) i18n.tr("Turned off") else if (m.?.device.len == 0) i18n.tr("No adapter") else if (connected_wifi != null) i18n.tr("Connected") else i18n.tr("Not connected");
+    const eth_detail = if (eth) |e| if (e.connected() and e.address.len != 0) try std.fmt.allocPrint(a, "{s} · {s}", .{ try speed(a, e.*), e.address.slice() }) else try a.dupe(u8, e.name.slice()) else i18n.tr("No wired adapter");
+    const wifi_detail = if (connected_wifi) |net| try std.fmt.allocPrint(a, "{s} · {s}", .{ network.networkName(net), if (net.strength >= 80) @as([]const u8, i18n.tr("Excellent")) else if (net.strength >= 55) i18n.tr("Good") else i18n.tr("Weak") }) else i18n.tr("Wireless connections");
+    const overview_width = @as(f32, @floatFromInt(cc.panel_box.width)) - panel.sidebarWidth(cc) - 100;
+    var description_width: f32 = 0;
+    for ([_][]const u8{ internet_detail, eth_detail, wifi_detail }) |value| description_width = @max(description_width, ui.measure.textNatural(value, .sans, 400, 12).w);
+    const stacked = overview_width < 3 * (@min(description_width, 260) + 74);
     var overview = try card(a, &.{
-        try summary(a, .globe, "Internet", internet_state, internet_detail, online),
+        try summary(a, .globe, i18n.tr("Internet"), internet_state, internet_detail, online),
         divider(!stacked),
-        try summary(a, .ethernet, "Ethernet", if (eth) |e| e.status() else "Unavailable", eth_detail, if (eth) |e| e.connected() else false),
+        try summary(a, .ethernet, i18n.tr("Ethernet"), if (eth) |e| e.status() else i18n.tr("Unavailable"), eth_detail, if (eth) |e| e.connected() else false),
         divider(!stacked),
-        try summary(a, .wifi, "Wi-Fi", wifi_state, wifi_detail, connected_wifi != null),
+        try summary(a, .wifi, i18n.tr("Wi-Fi"), wifi_state, wifi_detail, connected_wifi != null),
     });
     overview.name = "network_overview";
     overview.direction = if (stacked) .column else .row;
@@ -190,8 +194,8 @@ fn tree(s: *Section, cc: *panel.ControlCenter, a: Allocator) !W {
 }
 fn ethernetCard(s: *Section, cc: *panel.ControlCenter, a: Allocator, eth: ?*const network.Ethernet) !W {
     const m = cc.server.network;
-    const subtitle = if (eth) |e| if (e.driver.len != 0) try std.fmt.allocPrint(a, "{s} ({s})", .{ e.name.slice(), e.driver.slice() }) else try a.dupe(u8, e.name.slice()) else "No wired adapter found";
-    var labels = try group(a, .column, &.{ text("Ethernet", 20, false), text(subtitle, 12, true) });
+    const subtitle = if (eth) |e| if (e.driver.len != 0) try std.fmt.allocPrint(a, "{s} ({s})", .{ e.name.slice(), e.driver.slice() }) else try a.dupe(u8, e.name.slice()) else i18n.tr("No wired adapter found");
+    var labels = try group(a, .column, &.{ text(i18n.tr("Ethernet"), 20, false), text(subtitle, 12, true) });
     labels.width = .{ .flex = 1 };
     labels.gap = 4;
     const disabled = if (eth) |e| !e.managed or (!e.carrier and !e.active()) or m.?.wired_pending != null else true;
@@ -210,12 +214,12 @@ fn ethernetCard(s: *Section, cc: *panel.ControlCenter, a: Allocator, eth: ?*cons
         try items.append(a, .{ .name = "ethernet_adapter", .kind = .{ .select = .{ .labels = names, .selected = selected, .owner = cc, .on_change = adapterChanged } }, .width = .{ .percent = 1 }, .height = .{ .fixed = 34 } });
     }
     var details = try card(a, &.{
-        try detail(cc, a, "Status", if (eth) |e| e.status() else "Unavailable", null, if (eth) |e| e.connected() else false),
-        try detail(cc, a, "Link speed", if (eth) |e| try speed(a, e.*) else "—", null, false),
-        try detail(cc, a, "IPv4 address", if (eth) |e| e.address.slice() else "", 0, false),
-        try detail(cc, a, "Gateway", if (eth) |e| e.gateway.slice() else "", 1, false),
-        try detail(cc, a, "DNS servers", if (eth) |e| e.dns.slice() else "", 2, false),
-        try detail(cc, a, "MAC address", if (eth) |e| e.mac.slice() else "", 3, false),
+        try detail(cc, a, i18n.tr("Status"), if (eth) |e| e.status() else i18n.tr("Unavailable"), null, if (eth) |e| e.connected() else false, true),
+        try detail(cc, a, i18n.tr("Link speed"), if (eth) |e| try speed(a, e.*) else "—", null, false, false),
+        try detail(cc, a, i18n.tr("IPv4 address"), if (eth) |e| e.address.slice() else "", 0, false, false),
+        try detail(cc, a, i18n.tr("Gateway"), if (eth) |e| e.gateway.slice() else "", 1, false, false),
+        try detail(cc, a, i18n.tr("DNS servers"), if (eth) |e| e.dns.slice() else "", 2, false, false),
+        try detail(cc, a, i18n.tr("MAC address"), if (eth) |e| e.mac.slice() else "", 3, false, false),
     });
     details.gap = 6;
     try items.append(a, details);
@@ -226,10 +230,11 @@ fn ethernetCard(s: *Section, cc: *panel.ControlCenter, a: Allocator, eth: ?*cons
     result.name = "ethernet_card";
     return result;
 }
-fn detail(cc: *panel.ControlCenter, a: Allocator, title: []const u8, value: []const u8, copy_id: ?usize, active: bool) !W {
+fn detail(cc: *panel.ControlCenter, a: Allocator, title: []const u8, value: []const u8, copy_id: ?usize, active: bool, status_chip: bool) !W {
     var key_label = text(title, 12, true);
-    key_label.width = .{ .fixed = 96 };
-    var val = if (std.mem.eql(u8, title, "Status")) try status(a, value, active) else text(if (value.len == 0) "—" else try a.dupe(u8, value), 12, true);
+    key_label.width = .auto;
+    key_label.min_width = 96;
+    var val = if (status_chip) try status(a, value, active) else text(if (value.len == 0) "—" else try a.dupe(u8, value), 12, true);
     val.width = .{ .flex = 1 };
     var row = try group(a, .row, &.{ key_label, val });
     row.height = .{ .fixed = 30 };
@@ -247,7 +252,7 @@ fn wifiCard(s: *Section, cc: *panel.ControlCenter, a: Allocator) !W {
     const m = cc.server.network;
     const available = if (m) |n| n.available and n.hardware and n.enabled and n.device.len != 0 else false;
     const busy = if (m) |n| n.busy else false;
-    var title = text("Wi-Fi", 20, false);
+    var title = text(i18n.tr("Wi-Fi"), 20, false);
     title.width = .{ .flex = 1 };
     var scan = action(cc, "wifi_scan", "", 0, scanClicked, !available or m.?.searching());
     scan.kind.button.icon = .refresh;
@@ -273,7 +278,7 @@ fn wifiCard(s: *Section, cc: *panel.ControlCenter, a: Allocator) !W {
         if (selected) try rows.append(a, try form(s, cc, a));
     }
     if (s.row_count == 0) {
-        const message: []const u8 = if (m) |n| if (!n.available) "NetworkManager is unavailable" else if (!n.hardware) "Wi-Fi is disabled by the hardware switch" else if (!n.enabled) "Wi-Fi is turned off" else if (n.device.len == 0) "No Wi-Fi adapter found" else if (n.searching()) "Searching for networks…" else "No networks found. Scan to try again." else "NetworkManager is unavailable";
+        const message: []const u8 = if (m) |n| if (!n.available) i18n.tr("NetworkManager is unavailable") else if (!n.hardware) i18n.tr("Wi-Fi is disabled by the hardware switch") else if (!n.enabled) i18n.tr("Wi-Fi is turned off") else if (n.device.len == 0) i18n.tr("No Wi-Fi adapter found") else if (n.searching()) i18n.tr("Searching for networks…") else i18n.tr("No networks found. Scan to try again.") else i18n.tr("NetworkManager is unavailable");
         var empty = try group(a, .column, &.{ icon(.wifi, 32, false), text(message, 13, true) });
         empty.padding = ui.layout.Edges.all(16);
         empty.gap = 16;
@@ -281,7 +286,7 @@ fn wifiCard(s: *Section, cc: *panel.ControlCenter, a: Allocator) !W {
     }
     if (available) {
         try rows.append(a, divider(false));
-        var hidden = action(cc, "wifi_hidden", "Join Hidden Network", 0, hiddenClicked, busy);
+        var hidden = action(cc, "wifi_hidden", i18n.tr("Join Hidden Network"), 0, hiddenClicked, busy);
         hidden.kind.button.variant = .ghost;
         hidden.kind.button.leading_icon = .plus;
         hidden.kind.button.trailing_icon = if (s.hidden) .chevron_up else .chevron_down;
@@ -307,18 +312,18 @@ fn wifiCard(s: *Section, cc: *panel.ControlCenter, a: Allocator) !W {
 }
 fn form(s: *Section, cc: *panel.ControlCenter, a: Allocator) !W {
     if (s.selected) |net| {
-        if (net.connected) return group(a, .column, &.{text("You're connected to this network", 12, true)});
-        if (net.security == .unsupported and net.saved.len == 0) return group(a, .column, &.{text("Configure this network with a network tool", 12, true)});
+        if (net.connected) return group(a, .column, &.{text(i18n.tr("You're connected to this network"), 12, true)});
+        if (net.security == .unsupported and net.saved.len == 0) return group(a, .column, &.{text(i18n.tr("Configure this network with a network tool"), 12, true)});
     }
     var items: std.ArrayList(W) = .empty;
     if (s.hidden) {
-        if (s.name_data == null) s.name_data = .{ .placeholder = "Network name (SSID)", .value = try gpa.dupe(u8, ""), .owner = cc, .on_change = nameChanged };
+        if (s.name_data == null) s.name_data = .{ .placeholder = i18n.tr("Network name (SSID)"), .value = try gpa.dupe(u8, ""), .owner = cc, .on_change = nameChanged };
         const field = try a.create(W);
         field.* = .{ .name = "wifi_ssid", .kind = .{ .text_input = s.name_data.? }, .width = .{ .percent = 1 }, .height = .{ .fixed = 36 } };
-        try items.append(a, text("Network name", 12, true));
+        try items.append(a, text(i18n.tr("Network name"), 12, true));
         try items.append(a, field.*);
-        try items.append(a, text("Security", 12, true));
-        try items.append(a, .{ .name = "wifi_security", .kind = .{ .select = .{ .labels = &.{ "WPA2 / WPA3 Personal", "WPA3 Personal", "Open" }, .selected = if (s.security == .personal) 0 else if (s.security == .sae) 1 else 2, .owner = cc, .on_change = securityChanged } }, .width = .{ .percent = 1 }, .height = .{ .fixed = 34 } });
+        try items.append(a, text(i18n.tr("Security"), 12, true));
+        try items.append(a, .{ .name = "wifi_security", .kind = .{ .select = .{ .labels = panel.translatedLabels(&.{ i18n.msg("WPA2 / WPA3 Personal"), i18n.msg("WPA3 Personal"), i18n.msg("Open") }), .selected = if (s.security == .personal) 0 else if (s.security == .sae) 1 else 2, .owner = cc, .on_change = securityChanged } }, .width = .{ .percent = 1 }, .height = .{ .fixed = 34 } });
     }
     const net = s.selected orelse network.Network{ .security = s.security };
     if (net.security == .personal or net.security == .sae) {
@@ -326,19 +331,19 @@ fn form(s: *Section, cc: *panel.ControlCenter, a: Allocator) !W {
             s.password.storage = try secure.alloc(u8, 128);
             @memset(s.password.storage, 0);
         }
-        try items.append(a, text(if (net.saved.len != 0) "Password (leave empty to use saved)" else "Password", 12, true));
+        try items.append(a, text(if (net.saved.len != 0) i18n.tr("Password (leave empty to use saved)") else i18n.tr("Password"), 12, true));
         var reveal = action(cc, "wifi_reveal", "", 0, revealClicked, false);
         reveal.kind.button.icon = if (s.revealed) .eye else .eye_off;
         reveal.kind.button.variant = .ghost;
         reveal.width = .{ .fixed = 34 };
         try items.append(a, try group(a, .row, &.{
-            .{ .name = "wifi_password", .kind = .{ .secret_input = .{ .placeholder = "Password", .input = &s.password, .revealed = s.revealed } }, .width = .{ .flex = 1 }, .height = .{ .fixed = 36 } }, reveal,
+            .{ .name = "wifi_password", .kind = .{ .secret_input = .{ .placeholder = i18n.tr("Password"), .input = &s.password, .revealed = s.revealed } }, .width = .{ .flex = 1 }, .height = .{ .fixed = 36 } }, reveal,
         }));
     }
-    if (net.saved.len == 0) try items.append(a, .{ .name = "wifi_autojoin", .kind = .{ .checkbox = .{ .label = "Connect automatically", .checked = s.autojoin, .owner = cc, .on_change = autojoinChanged } }, .width = .{ .percent = 1 } });
-    var join = action(cc, "wifi_join", "Connect", 0, joinClicked, cc.server.network.?.busy);
+    if (net.saved.len == 0) try items.append(a, .{ .name = "wifi_autojoin", .kind = .{ .checkbox = .{ .label = i18n.tr("Connect automatically"), .checked = s.autojoin, .owner = cc, .on_change = autojoinChanged } }, .width = .{ .percent = 1 } });
+    var join = action(cc, "wifi_join", i18n.tr("Connect"), 0, joinClicked, cc.server.network.?.busy);
     join.kind.button.variant = .primary;
-    var buttons = try group(a, .row, &.{ action(cc, "wifi_cancel", "Cancel", 0, cancelClicked, false), join });
+    var buttons = try group(a, .row, &.{ action(cc, "wifi_cancel", i18n.tr("Cancel"), 0, cancelClicked, false), join });
     buttons.justify = .end;
     try items.append(a, buttons);
     var result = try group(a, .column, items.items);
@@ -448,7 +453,7 @@ fn joinClicked(raw: ?*anyopaque, _: usize) void {
     if (s.hidden) {
         const value = if (s.name_field) |field| field.kind.text_input.value else "";
         if (value.len > 32) {
-            s.message = "Network names must be at most 32 bytes.";
+            s.message = i18n.tr("Network names must be at most 32 bytes.");
             cc.refresh();
             return;
         }

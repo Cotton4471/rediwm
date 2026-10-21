@@ -1,4 +1,6 @@
 const std = @import("std");
+const i18n = @import("i18n");
+const tr = i18n.tr;
 const c = @import("../files/c.zig").api;
 const decoder = @import("loader.zig");
 const view = @import("view.zig");
@@ -20,7 +22,7 @@ const a = std.heap.c_allocator;
 const Dialog = enum { none, save, trash, discard };
 const Pending = union(enum) { none, close, select: usize };
 const Action = enum { back, previous, next, rotate, crop, undo, smaller, larger, fit, actual, save, trash };
-const labels = [_][]const u8{ "Back", "Previous", "Next", "Rotate", "Crop", "Undo edits", "Zoom out", "Zoom in", "Fit", "100%", "Save as", "Trash" };
+const labels = [_]i18n.Message{ i18n.msg("Back"), i18n.msg("Previous"), i18n.msg("Next"), i18n.msg("Rotate"), i18n.msg("Crop"), i18n.msg("Undo edits"), i18n.msg("Zoom out"), i18n.msg("Zoom in"), i18n.msg("Fit"), i18n.msg("100%"), i18n.msg("Save as"), i18n.msg("Trash") };
 const Thumb = struct { index: usize, image: ?decoder.Image, stamp: ?cache_mod.Stamp };
 
 pub const App = struct {
@@ -106,9 +108,9 @@ pub const App = struct {
     }
     fn setTitle(self: *App) void {
         const raw_name = std.fs.path.basename(self.paths[self.selected]);
-        const name = if (std.unicode.utf8ValidateSlice(raw_name)) raw_name else "Image";
-        _ = std.fmt.bufPrintZ(&self.title, "{s}{s} — Images ({d}/{d})", .{ if (self.modified) "* " else "", name, self.position() + 1, self.count() }) catch {
-            _ = std.fmt.bufPrintZ(&self.title, "Images ({d}/{d})", .{ self.position() + 1, self.count() }) catch unreachable;
+        const name = if (std.unicode.utf8ValidateSlice(raw_name)) raw_name else tr("Image");
+        _ = i18n.fmtZ(&self.title, tr("{modified}{name} — Images ({position}/{count})"), .{ .modified = if (self.modified) "* " else "", .name = name, .position = self.position() + 1, .count = self.count() }) catch {
+            _ = i18n.fmtZ(&self.title, tr("Images ({position}/{count})"), .{ .position = self.position() + 1, .count = self.count() }) catch unreachable;
         };
         self.title_changed = true;
     }
@@ -239,9 +241,9 @@ pub const App = struct {
                 // Only cache pixels if the file remained unchanged throughout decoding.
                 if (!std.meta.eql(self.image_stamp, cache_mod.Stamp.read(self.paths[self.selected]))) self.image_stamp = null;
                 self.error_message = if (result.err) |err| switch (err) {
-                    error.ImageTooLarge => "Image exceeds the 32 megapixel preview limit",
-                    error.UnsupportedImage => "Unsupported image, missing decoder, or file unavailable",
-                    else => "Could not read this image",
+                    error.ImageTooLarge => tr("Image exceeds the 32 megapixel preview limit"),
+                    error.UnsupportedImage => tr("Unsupported image, missing decoder, or file unavailable"),
+                    else => tr("Could not read this image"),
                 } else null;
                 self.dirty = true;
             } else {
@@ -338,7 +340,7 @@ pub const App = struct {
             .next => self.navigate(true),
             .rotate => {
                 if (self.image) |im| self.replaceImage(edit.rotate(im) catch {
-                    self.message("Could not rotate: not enough memory.");
+                    self.message(tr("Could not rotate: not enough memory."));
                     return;
                 });
             },
@@ -351,7 +353,7 @@ pub const App = struct {
                 self.deletion.deinit();
                 self.deletion.add(self.paths[self.selected], std.fs.path.basename(self.paths[self.selected]), false, if (self.trash_stamp) |stamp| stamp.size else 0, null) catch {
                     self.deletion.deinit();
-                    self.message("Could not open the delete dialog.");
+                    self.message(tr("Could not open the delete dialog."));
                     return;
                 };
                 self.deletion.permanent = self.shift;
@@ -626,7 +628,7 @@ pub const App = struct {
     }
     pub fn requestClose(self: *App) void {
         if (self.operation != null) {
-            self.message("Please wait for the file operation to finish.");
+            self.message(tr("Please wait for the file operation to finish."));
             return;
         }
         self.cancelDrag();
@@ -681,7 +683,7 @@ pub const App = struct {
         self.crop_drag = false;
         self.view.reset();
         self.storeThumb(self.selected, decoder.makeThumbnail(original) catch null);
-        self.message("Edits undone.");
+        self.message(tr("Edits undone."));
         self.setTitle();
     }
     fn imageRect(self: *const App) Rect {
@@ -720,7 +722,7 @@ pub const App = struct {
         const w: i32 = @min(im.w, @as(i32, @intFromFloat(@ceil(r.x + r.w)))) - x;
         const h: i32 = @min(im.h, @as(i32, @intFromFloat(@ceil(r.y + r.h)))) - y;
         if (r.w < 1 or r.h < 1) {
-            self.message("Drag a larger crop selection.");
+            self.message(tr("Drag a larger crop selection."));
             return;
         }
         if (x == 0 and y == 0 and w == im.w and h == im.h) {
@@ -729,7 +731,7 @@ pub const App = struct {
             return;
         }
         self.replaceImage(edit.crop(im, x, y, w, h) catch {
-            self.message("Could not crop this selection.");
+            self.message(tr("Could not crop this selection."));
             return;
         });
     }
@@ -782,13 +784,13 @@ pub const App = struct {
         for (0..10000) |n| {
             const name = if (n == 0) std.fmt.bufPrint(&name_buf, "{s}-edited.png", .{base}) catch "edited.png" else std.fmt.bufPrint(&name_buf, "{s}-edited-{d}.png", .{ base, n }) catch "edited.png";
             const dest = std.fmt.bufPrintZ(&buf, "{s}/{s}", .{ dir, name }) catch {
-                self.message("The filename is too long.");
+                self.message(tr("The filename is too long."));
                 return;
             };
             var st: c.struct_stat = undefined;
             if (c.lstat(dest, &st) == 0) continue;
             self.filename.set(a, name) catch {
-                self.message("Not enough memory.");
+                self.message(tr("Not enough memory."));
                 return;
             };
             self.filename.anchor = 0;
@@ -798,7 +800,7 @@ pub const App = struct {
         }
         if (!suggested) {
             self.filename.set(a, "edited.png") catch {
-                self.message("Not enough memory.");
+                self.message(tr("Not enough memory."));
                 return;
             };
             self.filename.select_all = true;
@@ -828,21 +830,21 @@ pub const App = struct {
             .save => {
                 const name = self.filename.text.items;
                 if (name.len == 0 or !std.unicode.utf8ValidateSlice(name) or std.mem.indexOfScalar(u8, name, 0) != null) {
-                    self.message("Enter a filename.");
+                    self.message(tr("Enter a filename."));
                     return;
                 }
                 if (!std.ascii.eqlIgnoreCase(std.fs.path.extension(name), ".png")) {
-                    self.message("Use a .png filename to save a PNG copy.");
+                    self.message(tr("Use a .png filename to save a PNG copy."));
                     return;
                 }
                 if (!std.fs.path.isAbsolute(name)) @import("../files/ops.zig").validateFilename(name) catch {
-                    self.message("Enter a filename or an absolute path.");
+                    self.message(tr("Enter a filename or an absolute path."));
                     return;
                 };
                 const path = if (std.fs.path.isAbsolute(name)) a.dupeZ(u8, name) catch return else std.fmt.allocPrintSentinel(a, "{s}/{s}", .{ std.fs.path.dirname(self.paths[self.selected]) orelse ".", name }, 0) catch return;
                 defer a.free(path);
                 self.operation = edit.Operation.start(.save, self.io, path, self.image, null) catch {
-                    self.message("Could not start saving.");
+                    self.message(tr("Could not start saving."));
                     return;
                 };
                 self.notice_len = 0;
@@ -850,7 +852,7 @@ pub const App = struct {
             },
             .trash => {
                 self.operation = edit.Operation.start(if (self.deletion.permanent) .delete else .trash, self.io, self.deletion.paths.items[0], null, self.trash_stamp) catch {
-                    self.message("Could not start deleting this file.");
+                    self.message(tr("Could not start deleting this file."));
                     return;
                 };
                 self.notice_len = 0;
@@ -870,10 +872,10 @@ pub const App = struct {
                 self.deletion.deinit();
             }
             self.message(switch (err) {
-                error.PathAlreadyExists => "That file already exists. Choose another name.",
-                error.FileChanged => "The file changed. Please try again.",
-                error.GioNotAvailable => "Trash is unavailable: install gio to use it.",
-                else => if (op.kind == .save) "Could not save. Check the folder and permissions." else if (op.kind == .delete) "Could not delete. The file was kept." else "Could not move to Trash. The file was kept.",
+                error.PathAlreadyExists => tr("That file already exists. Choose another name."),
+                error.FileChanged => tr("The file changed. Please try again."),
+                error.GioNotAvailable => tr("Trash is unavailable: install gio to use it."),
+                else => if (op.kind == .save) tr("Could not save. Check the folder and permissions.") else if (op.kind == .delete) tr("Could not delete. The file was kept.") else tr("Could not move to Trash. The file was kept."),
             });
             return;
         }
@@ -882,9 +884,9 @@ pub const App = struct {
         if (op.kind == .save) {
             self.modified = false;
             self.setTitle();
-            if (std.fmt.bufPrint(&self.notice, "Saved {s}", .{std.fs.path.basename(op.path)})) |saved_message| {
+            if (i18n.fmt(&self.notice, tr("Saved {name}"), .{ .name = std.fs.path.basename(op.path) })) |saved_message| {
                 self.notice_len = saved_message.len;
-            } else |_| self.message("Saved PNG copy.");
+            } else |_| self.message(tr("Saved PNG copy."));
             self.finishPending();
         } else {
             var pos = self.position();
@@ -906,7 +908,7 @@ pub const App = struct {
                 return;
             }
             self.select(self.indexAt(@min(pos, self.count() - 1)));
-            self.message("Moved to Trash.");
+            self.message(tr("Moved to Trash."));
         }
     }
     fn dialogRect(self: *const App) Rect {
@@ -946,7 +948,7 @@ pub const App = struct {
     fn drawDialog(self: *App, cr: *c.cairo_t) void {
         if (self.dialog == .trash) {
             self.deletion.draw(cr, self.w, self.h, self.px, self.py, null);
-            const note = if (self.operation != null) "Working…" else self.notice[0..self.notice_len];
+            const note = if (self.operation != null) tr("Working…") else self.notice[0..self.notice_len];
             if (note.len > 0) {
                 setSource(cr, ui_theme.global.window_fg);
                 drawText(cr, note, 16, @floatFromInt(self.h - 8), shell_ui.statusSize(), false);
@@ -969,7 +971,7 @@ pub const App = struct {
             const n: usize = if (self.dialog == .discard) 3 else 2;
             for (0..n) |i| {
                 const b = self.dialogButton(i);
-                const label = if (i == 0) "Cancel" else if (self.dialog == .save or i == 2) "Save as…" else if (self.dialog == .trash) "Move to Trash" else "Discard";
+                const label = if (i == 0) tr("Cancel") else if (self.dialog == .save or i == 2) tr("Save as…") else if (self.dialog == .trash) tr("Move to Trash") else tr("Discard");
                 ui_button.paint(lr, .{ .x = @floatCast(b.x - r.x), .y = @floatCast(b.y - r.y), .w = @floatCast(b.w), .h = @floatCast(b.h) }, .{
                     .variant = if (i == 0) .secondary else .primary,
                     .label = label,
@@ -979,17 +981,17 @@ pub const App = struct {
         }
         setSource(cr, t.fg);
         const title = switch (self.dialog) {
-            .save => "Save a PNG copy",
-            .trash => "Move this image to Trash?",
-            .discard => "Save your edits?",
+            .save => tr("Save a PNG copy"),
+            .trash => tr("Move this image to Trash?"),
+            .discard => tr("Save your edits?"),
             .none => "",
         };
         drawText(cr, title, r.x + 20, r.y + 30, shell_ui.textSize(), true);
         setSource(cr, t.fg);
         const description = switch (self.dialog) {
-            .save => "Same folder, or enter an absolute path.",
-            .trash => if (self.modified or self.hasCropSelection()) "Unsaved edits will be discarded." else "You can restore the file from Trash.",
-            .discard => "This image has unsaved changes.",
+            .save => tr("Same folder, or enter an absolute path."),
+            .trash => if (self.modified or self.hasCropSelection()) tr("Unsaved edits will be discarded.") else tr("You can restore the file from Trash."),
+            .discard => tr("This image has unsaved changes."),
             .none => "",
         };
         clippedText(cr, description, .{ .x = r.x + 20, .y = r.y + 42, .w = r.w - 40, .h = 25 }, shell_ui.textSize(), false);
@@ -1024,7 +1026,7 @@ pub const App = struct {
             setSource(cr, t.fg);
             clippedText(cr, std.fs.path.basename(self.paths[self.selected]), .{ .x = r.x + 20, .y = r.y + 76, .w = r.w - 40, .h = 30 }, shell_ui.textSize(), true);
         }
-        const note = if (self.operation != null) "Working…" else self.notice[0..self.notice_len];
+        const note = if (self.operation != null) tr("Working…") else self.notice[0..self.notice_len];
         setSource(cr, t.danger);
         clippedText(cr, note, .{ .x = r.x + 20, .y = r.y + 118, .w = r.w - 40, .h = 26 }, shell_ui.textSize(), false);
     }
@@ -1043,9 +1045,9 @@ pub const App = struct {
         c.cairo_paint(cr);
         for (std.meta.tags(Action)) |act| {
             const r = self.buttonRect(act);
-            const label = if (act == .crop and self.crop_mode) "Apply crop" else labels[@intFromEnum(act)];
+            const label = if (act == .crop and self.crop_mode) tr("Apply crop") else labels[@intFromEnum(act)].get();
             const opts: ui_button.Options = if (act == .crop and self.crop_mode)
-                .{ .variant = .primary, .label = "Apply" }
+                .{ .variant = .primary, .label = tr("Apply") }
             else if (self.w >= 1400)
                 .{ .variant = .ghost, .leading_icon = glyph(act), .label = label }
             else if (act == .fit or act == .actual)
@@ -1058,7 +1060,7 @@ pub const App = struct {
             });
             layer.finish();
         }
-        const hint = if (self.operation) |op| (if (op.kind == .save) "Saving image…" else "Moving to Trash…") else if (self.hover) |act| (if (act == .crop and self.crop_mode) "Apply crop · Enter" else labels[@intFromEnum(act)]) else if (self.notice_len > 0) self.notice[0..self.notice_len] else if (self.crop_mode) "Drag to select · Enter: crop · Esc: cancel" else if (self.modified) "Unsaved edits · Ctrl+S: save · Ctrl+Z: undo" else "C: crop · Ctrl+S: save · Delete: trash";
+        const hint = if (self.operation) |op| (if (op.kind == .save) tr("Saving image…") else tr("Moving to Trash…")) else if (self.hover) |act| (if (act == .crop and self.crop_mode) tr("Apply crop · Enter") else labels[@intFromEnum(act)].get()) else if (self.notice_len > 0) self.notice[0..self.notice_len] else if (self.crop_mode) tr("Drag to select · Enter: crop · Esc: cancel") else if (self.modified) tr("Unsaved edits · Ctrl+S: save · Ctrl+Z: undo") else tr("C: crop · Ctrl+S: save · Delete: trash");
         setSource(cr, t.window_fg);
         clippedText(cr, hint, .{ .x = 16, .y = self.toolbarBottom() + 2, .w = @floatFromInt(self.w - 32), .h = 22 }, shell_ui.statusSize(), false);
         const box = self.canvas();
@@ -1081,7 +1083,7 @@ pub const App = struct {
             c.cairo_rotate(cr, @as(f64, @floatFromInt(self.view.rotation)) * std.math.pi / 2.0);
             paintImage(cr, im, .{ .x = -@as(f64, @floatFromInt(im.w)) * z / 2, .y = -@as(f64, @floatFromInt(im.h)) * z / 2, .w = @as(f64, @floatFromInt(im.w)) * z, .h = @as(f64, @floatFromInt(im.h)) * z });
         } else {
-            const msg = self.error_message orelse "Loading image…";
+            const msg = self.error_message orelse tr("Loading image…");
             setSource(cr, t.window_fg);
             drawText(cr, msg, box.x + @max(12, (box.w - measureText(cr, msg, shell_ui.textSize(), false)) / 2), box.y + box.h / 2, shell_ui.textSize(), false);
         }
@@ -1125,7 +1127,7 @@ pub const App = struct {
         }
         if (self.stripBar()) |bar| shell_ui.drawScrollbar(cr, scrollbar.look(bar, self.strip_appearance, ui_theme.global.scrollbar_width, ui_theme.shellPalette()));
         var status: [160]u8 = undefined;
-        const text = if (self.image) |im| std.fmt.bufPrint(&status, "{d} × {d}   ·   {d:.0}%   ·   {d} / {d}", .{ im.w, im.h, self.view.scale(box, @floatFromInt(im.w), @floatFromInt(im.h)) * self.density * 100, self.position() + 1, self.count() }) catch "" else "Space / Esc to close  ·  Arrow keys to browse";
+        const text = if (self.image) |im| std.fmt.bufPrint(&status, "{d} × {d}   ·   {d:.0}%   ·   {d} / {d}", .{ im.w, im.h, self.view.scale(box, @floatFromInt(im.w), @floatFromInt(im.h)) * self.density * 100, self.position() + 1, self.count() }) catch "" else tr("Space / Esc to close  ·  Arrow keys to browse");
         setSource(cr, t.window_fg);
         drawText(cr, text, (@as(f64, @floatFromInt(self.w)) - measureText(cr, text, shell_ui.statusSize(), false)) / 2, @floatFromInt(self.h - 3), shell_ui.statusSize(), false);
         if (self.dialog != .none) self.drawDialog(cr);

@@ -18,6 +18,8 @@ const gitBranchRow = App.gitBranchRow;
 
 // Input handlers
 pub fn hoverKey(self: *App) usize {
+    if (self.dialog) |dlg| if (dlg.kind == .transfers) return self.transfersHover();
+    if (self.dialog == null and self.torrentSidebarHit(self.mouse_x, self.mouse_y)) return std.math.maxInt(usize) - 2001;
     const x = self.mouse_x;
     const y = self.mouse_y;
     if (self.dialog) |dlg| {
@@ -40,6 +42,8 @@ pub fn hoverKey(self: *App) usize {
         return 0;
     }
     if (self.menu != null) return 100 + (self.menuHit(x, y) orelse 99);
+    if (self.transfer_view.active and (y < @as(f64, @floatFromInt(self.contentTop())) or
+        (x >= @as(f64, @floatFromInt(self.sidebarWidth())) and y < @as(f64, @floatFromInt(self.contentBottom()))))) return self.transferPaneHover();
     if (self.terminalHit(x, y)) |index| return 900 + index;
     if (self.sidebar_resize != null or self.overSidebarDivider(x, y)) return 0;
     if (self.chooser) |opts| {
@@ -68,6 +72,7 @@ pub fn hoverKey(self: *App) usize {
             };
         }
     }
+    if (self.inlineTorrentHit(x, y)) |hit| return std.math.maxInt(usize) - 3000 - hit.index * 2 - @intFromBool(hit.toggle);
     if (self.itemAt(x, y)) |i| {
         if (self.sizeButtonRect(i)) |rect| {
             if (rect.contains(x, y)) {
@@ -340,6 +345,10 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
     // Modal Dialog click handling
     if (self.dialog != null and button != 0x110) return;
     if (self.dialog) |dlg| {
+        if (dlg.kind == .transfers) {
+            self.transfersClick(x, y);
+            return;
+        }
         if (dlg.kind == .properties) {
             const action = self.dialog.?.properties.?.click(self.w, self.h, x, y);
             self.propertiesAction(action);
@@ -431,6 +440,8 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
         self.invalidate();
         if (button == 0x110) return;
     }
+    if (self.transfer_view.active and self.transferPaneClick(x, y, button)) return;
+    if (button == 0x110 and self.inlineTorrentClick(x, y)) return;
     if (button == 0x111) {
         if (self.placeAt(x, y)) |index| {
             self.menu_place = index;
@@ -484,6 +495,10 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
             }
             return;
         }
+    }
+    if (self.torrentSidebarHit(x, y)) {
+        self.openTransfers();
+        return;
     }
     if (self.ejectAt(x, y)) |k| {
         self.ejectDevice(k);
@@ -612,7 +627,7 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
                 self.selection_anchor = idx;
             }
             if (self.chooser != null and !self.items.items[idx].is_dir) self.setChooserName(self.items.items[idx].name);
-            if (self.chooser == null and button == 0x110 and self.items.items[idx].selected) self.drag_origin = .{ .x = x, .y = y };
+            if (self.chooser == null and button == 0x110 and self.items.items[idx].selected and !self.items.items[idx].missing) self.drag_origin = .{ .x = x, .y = y };
             if (single_click) self.open_on_release = idx;
         } else {
             // A background press starts a rubber-band selection; pressing

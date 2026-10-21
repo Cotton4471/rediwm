@@ -155,7 +155,7 @@ pub fn gtkColors(a: Allocator, p: Palette, gtk4: bool) ![]u8 {
     // GTK3's built-in Adwaita uses literal colors. Named colors alone cannot
     // recolor it; override common surfaces without replacing widget geometry.
     try out.appendSlice(a,
-        \\.background { color: @window_fg_color; background-color: @window_bg_color; }
+        \\window.background, messagedialog.background { color: @window_fg_color; background-color: @window_bg_color; }
         \\headerbar, headerbar:backdrop { color: @headerbar_fg_color; background-color: @headerbar_bg_color; background-image: none; }
         \\.sidebar, .sidebar:backdrop { color: @sidebar_fg_color; background-color: @sidebar_bg_color; }
         \\.view, .view:backdrop, textview text, textview text:backdrop, treeview, treeview:backdrop { color: @view_fg_color; background-color: @view_bg_color; }
@@ -164,7 +164,7 @@ pub fn gtkColors(a: Allocator, p: Palette, gtk4: bool) ![]u8 {
         \\button:hover { background-color: @button_hover_color; }
         \\button.suggested-action, button.suggested-action:backdrop, selection, :selected { color: @accent_fg_color; background-color: @accent_bg_color; }
         \\button.destructive-action { color: @destructive_fg_color; background-color: @destructive_bg_color; }
-        \\menu, .menu, popover > contents { color: @popover_fg_color; background-color: @popover_bg_color; }
+        \\menu, popover > contents { color: @popover_fg_color; background-color: @popover_bg_color; }
         \\*:disabled { color: @insensitive_fg_color; }
         \\
     );
@@ -193,6 +193,44 @@ pub fn qtColors(a: Allocator, p: Palette) ![]u8 {
         try out.append(a, '\n');
     }
     return out.toOwnedSlice(a);
+}
+
+/// KDE Frameworks apps (Dolphin, Kate) read their colors from kdeglobals, not
+/// from the qt6ct palette. Only the color roles RediWM has a source for are
+/// written; neutral/positive and the disabled/inactive effects stay as found.
+pub fn kdeGlobals(a: Allocator, content: []const u8, p: Palette) ![]u8 {
+    const Role = struct { key: []const u8, color: Color };
+    const Group = struct { section: []const u8, roles: []const Role };
+    const groups = [_]Group{
+        .{ .section = "Colors:Window", .roles = &.{ .{ .key = "BackgroundNormal", .color = p.bg }, .{ .key = "BackgroundAlternate", .color = p.item }, .{ .key = "ForegroundNormal", .color = p.fg } } },
+        .{ .section = "Colors:View", .roles = &.{ .{ .key = "BackgroundNormal", .color = p.bg }, .{ .key = "BackgroundAlternate", .color = p.item }, .{ .key = "ForegroundNormal", .color = p.fg } } },
+        .{ .section = "Colors:Button", .roles = &.{ .{ .key = "BackgroundNormal", .color = p.item }, .{ .key = "BackgroundAlternate", .color = p.hover }, .{ .key = "ForegroundNormal", .color = p.fg } } },
+        .{ .section = "Colors:Selection", .roles = &.{ .{ .key = "BackgroundNormal", .color = p.accent }, .{ .key = "BackgroundAlternate", .color = p.accent }, .{ .key = "ForegroundNormal", .color = p.on_accent } } },
+        .{ .section = "Colors:Tooltip", .roles = &.{ .{ .key = "BackgroundNormal", .color = p.toolbar }, .{ .key = "BackgroundAlternate", .color = p.item }, .{ .key = "ForegroundNormal", .color = p.fg } } },
+        .{ .section = "Colors:Complementary", .roles = &.{ .{ .key = "BackgroundNormal", .color = p.sidebar }, .{ .key = "BackgroundAlternate", .color = p.item }, .{ .key = "ForegroundNormal", .color = p.sidebar_fg } } },
+        .{ .section = "Colors:Header", .roles = &.{ .{ .key = "BackgroundNormal", .color = p.toolbar }, .{ .key = "BackgroundAlternate", .color = p.item }, .{ .key = "ForegroundNormal", .color = p.fg } } },
+        .{ .section = "Colors:Header][Inactive", .roles = &.{ .{ .key = "BackgroundNormal", .color = p.toolbar }, .{ .key = "BackgroundAlternate", .color = p.item }, .{ .key = "ForegroundNormal", .color = p.fg } } },
+    };
+    // Every group shares the accent, link and dim roles.
+    const shared = [_]Role{
+        .{ .key = "DecorationFocus", .color = p.accent },
+        .{ .key = "DecorationHover", .color = p.accent },
+        .{ .key = "ForegroundActive", .color = p.accent },
+        .{ .key = "ForegroundLink", .color = p.accent },
+        .{ .key = "ForegroundVisited", .color = p.dim },
+        .{ .key = "ForegroundInactive", .color = p.dim },
+        .{ .key = "ForegroundNegative", .color = p.danger },
+    };
+    var current = try a.dupe(u8, content);
+    errdefer a.free(current);
+    for (groups) |group| for ([_][]const Role{ group.roles, &shared }) |roles| for (roles) |role| {
+        var buf: [11]u8 = undefined;
+        const value = std.fmt.bufPrint(&buf, "{d},{d},{d}", .{ role.color[0], role.color[1], role.color[2] }) catch unreachable;
+        const next = try patchIni(a, current, group.section, role.key, value);
+        a.free(current);
+        current = next;
+    };
+    return current;
 }
 
 pub fn iniValue(content: []const u8, section: []const u8, key: []const u8) ?[]const u8 {
@@ -256,8 +294,10 @@ pub fn patchCss(a: Allocator, content: []const u8) ![]u8 {
     if (std.mem.indexOf(u8, rest, css_end) != null) return error.InvalidManagedCss;
     try out.appendSlice(a, rest);
     if (out.items.len > 0 and out.items[out.items.len - 1] != '\n') try out.append(a, '\n');
-    // Imports precede user rules, so their own CSS keeps its precedence.
-    const result = try std.fmt.allocPrint(a, css_begin ++ "\n@import url(\"rediwm-colors.css\");\n" ++ css_end ++ "\n{s}", .{out.items});
+    // The import goes last: GTK keeps the final @define-color and the later of
+    // two equal rules, and generators such as matugen/DMS import their own
+    // palette into gtk.css. Applying must win over those.
+    const result = try std.fmt.allocPrint(a, "{s}" ++ css_begin ++ "\n@import url(\"rediwm-colors.css\");\n" ++ css_end ++ "\n", .{out.items});
     out.deinit(a);
     return result;
 }
@@ -382,6 +422,8 @@ pub fn apply(a: Allocator, io: Io, home: []const u8, toolkit: Toolkit, p: Palett
                 try tx.add(scheme, colors, false);
                 try tx.add(config, content, true);
             }
+            const kdeglobals = try std.fs.path.join(alloc, &.{ home, "kdeglobals" });
+            try tx.add(kdeglobals, try kdeGlobals(alloc, try readOptional(alloc, io, kdeglobals) orelse "", p), true);
             const state = try std.fs.path.join(alloc, &.{ home, "rediwm/app-colors.conf" });
             try tx.add(state, try patchIni(alloc, try readOptional(alloc, io, state) orelse "", "Applications", "qt", "true"), true);
         },
@@ -439,7 +481,8 @@ test "app colors edits are idempotent and scoped to their INI section" {
     const again = try patchCss(a, css);
     defer a.free(again);
     try std.testing.expectEqualStrings(css, again);
-    try std.testing.expect(std.mem.endsWith(u8, again, "button { color: red; }\n"));
+    try std.testing.expect(std.mem.startsWith(u8, again, "/* user */\nbutton { color: red; }\n"));
+    try std.testing.expect(std.mem.endsWith(u8, again, css_end ++ "\n"));
     try std.testing.expectError(error.InvalidManagedCss, patchCss(a, css_begin));
 }
 
@@ -482,8 +525,8 @@ test "app colors replaces a file symlink, and rejects linked directories and sta
     try std.testing.expectError(error.NotLink, tmp.dir.readLink(io, "gtk-4.0/gtk.css", &buf));
     const merged = try tmp.dir.readFileAlloc(io, "gtk-4.0/gtk.css", a, .limited(4096));
     defer a.free(merged);
-    try std.testing.expect(std.mem.startsWith(u8, merged, css_begin));
-    try std.testing.expect(std.mem.endsWith(u8, merged, "/* owned elsewhere */\n"));
+    try std.testing.expect(std.mem.startsWith(u8, merged, "/* owned elsewhere */\n"));
+    try std.testing.expect(std.mem.endsWith(u8, merged, css_end ++ "\n"));
     const target = try tmp.dir.readFileAlloc(io, "user.css", a, .limited(64));
     defer a.free(target);
     try std.testing.expectEqualStrings("/* owned elsewhere */\n", target);
@@ -501,4 +544,22 @@ test "app colors replaces a file symlink, and rejects linked directories and sta
     try tmp.dir.symLink(io, "external4", "gtk-4.0", .{});
     try std.testing.expectError(error.ManagedSymlink, apply(a, io, home, .gtk, p, .{ .qt5 = false, .qt6 = false }));
     try std.testing.expectError(error.FileNotFound, tmp.dir.access(io, "external4/rediwm-colors.css", .{}));
+}
+
+test "kdeglobals export replaces stale roles in place and is idempotent" {
+    const a = std.testing.allocator;
+    var t = theme.Theme{};
+    t.app_bg = .{ 0.2, 0.1, 0, 1 };
+    const p = Palette.fromTheme(t);
+    const old = "[Colors:Window]\nBackgroundNormal=54,29,25\nForegroundNeutral=1,2,3\n[General]\nColorScheme=Old\n";
+    const first = try kdeGlobals(a, old, p);
+    defer a.free(first);
+    const second = try kdeGlobals(a, first, p);
+    defer a.free(second);
+    try std.testing.expectEqualStrings(first, second);
+    try std.testing.expectEqualStrings("51,26,0", iniValue(first, "Colors:Window", "BackgroundNormal").?);
+    try std.testing.expectEqualStrings("1,2,3", iniValue(first, "Colors:Window", "ForegroundNeutral").?);
+    try std.testing.expectEqualStrings("Old", iniValue(first, "General", "ColorScheme").?);
+    try std.testing.expect(iniValue(first, "Colors:Header][Inactive", "BackgroundNormal") != null);
+    try std.testing.expect(std.mem.indexOf(u8, first, "[Colors:Header][Inactive]\n") != null);
 }

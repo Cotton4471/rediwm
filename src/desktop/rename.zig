@@ -1,3 +1,4 @@
+const i18n = @import("i18n");
 const std = @import("std");
 const c = @import("c.zig").api;
 const grid = @import("grid.zig");
@@ -93,7 +94,7 @@ pub const Editor = struct {
                 .variant = .ghost,
                 .icon = if (i == 0) .checkmark else .close,
                 .icon_scale = 0.55,
-                .label = if (i == 0) "Rename" else "Cancel",
+                .label = if (i == 0) i18n.tr("Rename") else i18n.tr("Cancel"),
             }, .{ .pointer = if (b.contains(mx, my)) .hover else .idle });
             layer.finish();
         }

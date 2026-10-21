@@ -1,5 +1,6 @@
 //! A single interactive notification toast card.
 //! Rendered using the ui/ widget engine into a PanelBuffer scene node.
+const i18n = @import("i18n");
 const std = @import("std");
 const wlr = @import("wlroots");
 const sn = @import("../node.zig");
@@ -56,7 +57,7 @@ pub const Toast = struct {
     target_x: f32 = 0,
     target_y: f32 = 0,
     width: f32 = 480,
-    age_buffer: [32]u8 = undefined,
+    age_buffer: [96]u8 = undefined,
     age_minute: i64 = -1,
     age_widget: ?*Widget = null,
     height: f32 = 0,
@@ -220,7 +221,7 @@ pub const Toast = struct {
         const header = try a.alloc(Widget, 3);
         header[0] = .{
             .kind = .{ .text = .{
-                .content = if (toast.summary.len > 0) toast.summary else if (toast.app_name.len > 0) toast.app_name else "Notification",
+                .content = if (toast.summary.len > 0) toast.summary else if (toast.app_name.len > 0) toast.app_name else i18n.tr("Notification"),
                 .font_size = 15,
                 .weight = 600,
                 .color = t.notification_fg orelse t.window_fg,
@@ -228,7 +229,7 @@ pub const Toast = struct {
             .width = .{ .flex = 1 },
         };
         header[1] = .{
-            .kind = .{ .text = .{ .content = "now", .font_size = 11, .color = t.notification_dim orelse t.window_dim } },
+            .kind = .{ .text = .{ .content = i18n.tr("now"), .font_size = 11, .color = t.notification_dim orelse t.window_dim } },
             .width = .{ .fixed = 52 },
         };
         toast.age_widget = &header[1];
@@ -325,10 +326,9 @@ pub const Toast = struct {
         const minute = @max(0, @divTrunc(now_ms - toast.created_at_ms, 60000));
         if (minute == toast.age_minute) return;
         const widget = toast.age_widget orelse return;
-        widget.kind.text.content = if (minute == 0) "now" else std.fmt.bufPrint(&toast.age_buffer, "{d}{s} ago", .{
-            if (minute < 60) minute else @divTrunc(minute, 60),
-            if (minute < 60) "m" else "h",
-        }) catch "earlier";
+        widget.kind.text.content = if (minute == 0) i18n.tr("now") else i18n.fmt(&toast.age_buffer, if (minute < 60) i18n.tr("{count}m ago") else i18n.tr("{count}h ago"), .{
+            .count = if (minute < 60) minute else @divTrunc(minute, 60),
+        }) catch i18n.tr("earlier");
         toast.age_minute = minute;
         widget.markPaintDirty();
         toast.dirty = true;

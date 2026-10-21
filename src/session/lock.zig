@@ -3,6 +3,7 @@
 //!
 //! Greeter mode (`rediwm --greeter`) is the same lock that never unlocks: it
 //! picks an account and session and signs in through rediwm-dm, then exits.
+const i18n = @import("i18n");
 const std = @import("std");
 const Child = @import("child.zig");
 const wl = @import("wayland").server.wl;
@@ -98,7 +99,7 @@ pub const Lock = struct {
         std.debug.assert(server.locker == null);
         const self = try gpa.create(Lock);
         errdefer gpa.destroy(self);
-        self.* = .{ .server = server, .timer = undefined, .origin = origin };
+        self.* = .{ .server = server, .timer = undefined, .origin = origin, .status = i18n.tr("Press Enter to unlock") };
         var home: [4096]u8 = @splat(0);
         if (rediwm_account(&self.user, self.user.len, &self.name, self.name.len, &home, home.len) != 0) return error.NoAccount;
         self.timer = try server.wl_server.getEventLoop().addTimer(*Lock, tick, self);
@@ -258,10 +259,10 @@ pub const Lock = struct {
     }
 
     pub fn idleStatus(self: *const Lock) []const u8 {
-        const greeter = self.greeter orelse return unlock_hint;
-        if (greeter.users.len == 0) return "No user accounts found";
-        if (greeter.sessions.len == 0) return "No sessions installed";
-        return login_hint;
+        const greeter = self.greeter orelse return i18n.tr("Press Enter to unlock");
+        if (greeter.users.len == 0) return i18n.tr("No user accounts found");
+        if (greeter.sessions.len == 0) return i18n.tr("No sessions installed");
+        return i18n.tr("Press Enter to log in");
     }
 
     pub fn busy(self: *const Lock) bool {
@@ -285,7 +286,7 @@ pub const Lock = struct {
                 self.focus = 0;
             },
             .rejected => {
-                self.status = "Incorrect password. Try again.";
+                self.status = i18n.tr("Incorrect password. Try again.");
                 self.retry_at = anim.nowMs() + 1500;
             },
             .failed => |message| {
@@ -293,13 +294,13 @@ pub const Lock = struct {
                 self.retry_at = anim.nowMs() + 1500;
             },
             .started => {
-                self.status = "Starting session…";
+                self.status = i18n.tr("Starting session…");
                 std.log.info("greeter: rediwm-dm accepted the session; exiting", .{});
                 // Out to black, as the session comes in from it.
                 self.server.reveal.cover(self.server, Server.terminate);
             },
             .disconnected => {
-                self.status = "Lost contact with login service. Try again.";
+                self.status = i18n.tr("Lost contact with login service. Try again.");
                 std.log.info("greeter: lost the rediwm-dm connection; exiting so it starts a new greeter", .{});
                 self.server.terminate();
             },
@@ -385,7 +386,7 @@ pub const Lock = struct {
     /// The lock client died without unlocking: the built-in screen takes over.
     pub fn clientGone(self: *Lock) void {
         self.focus = 0;
-        self.status = unlock_hint;
+        self.status = i18n.tr("Press Enter to unlock");
         self.changed();
     }
 
@@ -477,7 +478,7 @@ pub const Lock = struct {
     pub fn powerExited(owner: ?*anyopaque, _: *Child, status: ?u32) void {
         const self: *Lock = @ptrCast(@alignCast(owner.?));
         self.power_child = null;
-        self.status = if (status != null and status.? == 0) "Power request accepted" else "Power request denied or unavailable";
+        self.status = if (status != null and status.? == 0) i18n.tr("Power request accepted") else i18n.tr("Power request denied or unavailable");
         self.changed();
     }
 
@@ -512,7 +513,7 @@ pub const Lock = struct {
             self.release();
             return 0;
         }
-        self.status = "Unable to unlock. Try again.";
+        self.status = i18n.tr("Unable to unlock. Try again.");
         self.retry_at = anim.nowMs() + 1500;
         self.changed();
         return 0;
@@ -532,7 +533,7 @@ pub const Lock = struct {
                 self.auth = null;
             }
         }
-        self.status = if (self.auth != null) "Checking password…" else "Authentication unavailable. Try again.";
+        self.status = if (self.auth != null) i18n.tr("Checking password…") else i18n.tr("Authentication unavailable. Try again.");
         self.changed();
     }
 
@@ -541,18 +542,18 @@ pub const Lock = struct {
         defer self.changed();
         if (greeter.phase == .prompting) {
             greeter.answer(self.field().value()) catch {
-                self.status = "Lost contact with login service. Try again.";
+                self.status = i18n.tr("Lost contact with login service. Try again.");
             };
-            if (greeter.phase == .authenticating) self.status = "Checking…";
+            if (greeter.phase == .authenticating) self.status = i18n.tr("Checking…");
             self.clear();
             return;
         }
         if (greeter.busy() or self.input.len == 0) return;
         self.status = greeter.begin(self.field().value()) catch |err| switch (err) {
-            error.NoService => "No login service",
-            error.NoAccount => "No user accounts found",
-            error.NoSession => "No sessions installed",
-            else => "Cannot reach login service. Try again.",
+            error.NoService => i18n.tr("No login service"),
+            error.NoAccount => i18n.tr("No user accounts found"),
+            error.NoSession => i18n.tr("No sessions installed"),
+            else => i18n.tr("Cannot reach login service. Try again."),
         };
         self.clear();
     }
@@ -632,7 +633,7 @@ pub const Lock = struct {
             self.focus = 0;
             if (self.prompting()) {
                 self.greeter.?.cancel();
-                self.status = "Sign-in cancelled";
+                self.status = i18n.tr("Sign-in cancelled");
             } else if (!self.busy()) self.status = self.idleStatus();
             return;
         }
@@ -678,7 +679,7 @@ pub const Lock = struct {
                 if (self.confirm == null or self.confirm.? != reboot) {
                     self.clear();
                     self.confirm = reboot;
-                    self.status = if (reboot) "Restart? Activate Restart again to confirm." else "Power off? Activate Power again to confirm.";
+                    self.status = if (reboot) i18n.tr("Restart? Activate Restart again to confirm.") else i18n.tr("Power off? Activate Power again to confirm.");
                     return;
                 }
                 self.confirm = null;
@@ -687,15 +688,15 @@ pub const Lock = struct {
                 // auth agent behind the locked screen.
                 var argv: [4][]const u8 = undefined;
                 var child = std.process.spawn(self.server.io, .{ .argv = power_cmd.commandArgv(&argv, if (reboot) .reboot else .poweroff, false, true) }) catch {
-                    self.status = "Power service unavailable";
+                    self.status = i18n.tr("Power service unavailable");
                     return;
                 };
                 self.power_child = Child.watch(gpa, self.server.wl_server.getEventLoop(), child.id.?, self, powerExited) catch {
                     child.kill(self.server.io);
-                    self.status = "Power service unavailable";
+                    self.status = i18n.tr("Power service unavailable");
                     return;
                 };
-                self.status = "Requesting power action…";
+                self.status = i18n.tr("Requesting power action…");
             },
             focus_account, focus_session => self.choose(focus, 1),
             else => {},
@@ -995,10 +996,12 @@ pub fn paint(r: *ui.paint.Renderer, lock: *Lock, w: f32, h: f32, clock_24h: bool
     var time_buf: [32]u8 = @splat(0);
     var date_buf: [96]u8 = @splat(0);
     var period: [16]u8 = @splat(0);
+    var pattern: [256]u8 = undefined;
+    const date_pattern = std.fmt.bufPrintZ(&pattern, "{s}", .{i18n.trc("date", "%A, %B %-d")}) catch "%A, %B %-d";
     if (c.localtime_r(&raw, &tm) != null) {
         _ = c.strftime(&time_buf, time_buf.len, if (clock_24h) "%H:%M" else "%l:%M", &tm);
         if (!clock_24h) _ = c.strftime(&period, period.len, "%p", &tm);
-        _ = c.strftime(&date_buf, date_buf.len, "%A, %B %-d", &tm);
+        _ = c.strftime(&date_buf, date_buf.len, date_pattern, &tm);
     }
     const time_str = std.mem.trim(u8, std.mem.sliceTo(&time_buf, 0), " ");
     const period_str = std.mem.sliceTo(&period, 0);
@@ -1025,23 +1028,23 @@ pub fn paint(r: *ui.paint.Renderer, lock: *Lock, w: f32, h: f32, clock_24h: bool
         .revealed = lock.reveal,
         .trailing_focused = lock.focus == 1,
         .external_caret = true,
-    }, lock.field(), if (lock.prompting()) "Response" else "Password");
+    }, lock.field(), if (lock.prompting()) i18n.tr("Response") else i18n.tr("Password"));
     const action = if (lock.greeter != null)
-        (if (lock.busy()) "Signing in…" else if (lock.prompting()) "Continue" else "Log In")
-    else if (lock.busy()) "Checking…" else "Unlock";
+        (if (lock.busy()) i18n.tr("Signing in…") else if (lock.prompting()) i18n.tr("Continue") else i18n.tr("Log In"))
+    else if (lock.busy()) i18n.tr("Checking…") else i18n.tr("Unlock");
     ui.widgets.button.paint(&zoomed, geo.submit(), .{
         .variant = .primary,
         .size = .lg,
         .label = action,
         .trailing_icon = .chevron_right,
     }, .{ .pointer = if (lock.busy()) .disabled else .idle, .focused = lock.focus == 2 });
-    label(r, cx, y + 590 * s, w - 20, 32 * s, if (lock.caps and std.mem.eql(u8, lock.status, lock.idleStatus())) "Caps Lock is on" else lock.status, 16 * s, muted);
+    label(r, cx, y + 590 * s, w - 20, 32 * s, if (lock.caps and std.mem.eql(u8, lock.status, lock.idleStatus())) i18n.tr("Caps Lock is on") else lock.status, 16 * s, muted);
     for (0..2) |i| ui.widgets.button.paint(&zoomed, geo.powerAction(i), .{
         .variant = .ghost,
         .size = .sm,
         .stacked = true,
         .leading_icon = if (i == 0) .power else .reboot,
-        .label = if (i == 0) "Power" else "Restart",
+        .label = if (i == 0) i18n.tr("Power") else i18n.tr("Restart"),
     }, .{ .focused = lock.focus == 3 + i });
     r.fillRect(w - 120 * s, h - 90 * s, s, 34 * s, .{ .color = ui.theme.global.lock_divider });
     return .{ .caret = field.caret, .factor = s };
@@ -1064,7 +1067,7 @@ pub fn paintChoices(r: *ui.paint.Renderer, lock: *const Lock, greeter: *const Gr
                 .variant = .ghost,
                 .icon = if (side < 0) .chevron_left else .chevron_right,
                 .icon_scale = 0.7,
-                .label = if (side < 0) "Previous account" else "Next account",
+                .label = if (side < 0) i18n.tr("Previous account") else i18n.tr("Next account"),
             }, .{});
         }
     }
@@ -1073,7 +1076,7 @@ pub fn paintChoices(r: *ui.paint.Renderer, lock: *const Lock, greeter: *const Gr
     const x = 30 * s;
     const name_w = @min(280 * s, (text.measureWidthF(session.name, .manrope, 16 * s, r.scale) catch 280 * s) + 1);
     r.drawText(x, h - 90 * s, name_w, 30 * s, .{ .content = session.name, .font_size = 16 * s, .color = if (lock.focus == focus_session) fg else ui.theme.global.lock_session_fg });
-    const caption = if (greeter.sessions.len > 1) "Session  ›" else "Session";
+    const caption = if (greeter.sessions.len > 1) i18n.tr("Session  ›") else i18n.tr("Session");
     const caption_w = (text.measureWidthF(caption, .manrope, 13 * s, r.scale) catch 90 * s) + 1;
     r.drawText(x, h - 54 * s, caption_w, 24 * s, .{ .content = caption, .font_size = 13 * s, .color = color });
     if (lock.focus == focus_session) r.fillRect(x - 12 * s, h - 96 * s, @max(name_w, caption_w) + 24 * s, 76 * s, .{ .color = .{ 0, 0, 0, 0 }, .radius = 10 * s, .border_width = s, .border_color = fg });

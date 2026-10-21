@@ -1,5 +1,7 @@
 //! A snapshot of one file, owned independently of directory refreshes.
 const std = @import("std");
+const i18n = @import("i18n");
+const tr = i18n.tr;
 const c = @import("c.zig").api;
 const mime_db = @import("../mime_db.zig");
 const ui = @import("ui").cairo;
@@ -125,17 +127,17 @@ pub const State = struct {
         // Read current bits and operate on the pinned inode even if its name
         // was replaced while this dialog was open. Preserve special bits.
         if (c.fstat(self.fd, &self.stat) != 0) {
-            self.message = "Could not read permissions";
+            self.message = tr("Could not read permissions");
             return;
         }
         var buf: [64]u8 = undefined;
         const pinned = std.fmt.bufPrintZ(&buf, "/proc/self/fd/{d}", .{self.fd}) catch unreachable;
         if (c.chmod(pinned, (self.stat.st_mode & 0o7777) ^ permissionBit(index)) != 0) {
-            self.message = "Could not change permissions";
+            self.message = tr("Could not change permissions");
             return;
         }
         self.changed = true;
-        self.message = "Permissions updated";
+        self.message = tr("Permissions updated");
         _ = c.fstat(self.fd, &self.stat);
     }
 
@@ -202,9 +204,9 @@ pub const State = struct {
         frame.paintWindowFrame(r, layer.local(), theme.global.app_toolbar);
         const metrics: chrome.Metrics = .{};
         const icon = icons.get(cfg, io, "text-x-generic", @intFromFloat(@as(f32, @floatFromInt(metrics.iconSize())) * ui.scaleOf(cr)));
-        frame.paintWindowTitle(r, layer.local(), "Properties", .view_list, if (icon) |im| .{ .pixels = im.pixels, .width = @intCast(im.size), .height = @intCast(im.size) } else null);
+        frame.paintWindowTitle(r, layer.local(), tr("Properties"), .view_list, if (icon) |im| .{ .pixels = im.pixels, .width = @intCast(im.size), .height = @intCast(im.size) } else null);
         const hover = self.hit(w, h, mx, my);
-        button.paint(r, g.close, .{ .icon = .close, .variant = .chrome, .label = "Close" }, .{ .focused = self.keyboard_focus and self.focus == 0, .pointer = if (hover == 1) .hover else .idle });
+        button.paint(r, g.close, .{ .icon = .close, .variant = .chrome, .label = tr("Close") }, .{ .focused = self.keyboard_focus and self.focus == 0, .pointer = if (hover == 1) .hover else .idle });
         r.clip = .{ .x = 12, .y = 49 + contentShift(), .w = g.box.w - 24, .h = g.box.h - 59 - contentShift() };
         const s = g.scroll - contentShift();
         r.fillRect(24, 66 - s, 64, 64, .{ .color = theme.global.app_toolbar, .radius = 9, .border_width = 1, .border_color = theme.global.app_item_border });
@@ -215,38 +217,39 @@ pub const State = struct {
         var accent_palette = palette;
         accent_palette.fg = palette.accent;
         r.palette = accent_palette;
-        button.paint(r, g.open, .{ .icon = .open, .variant = .ghost, .label = "Open" }, .{ .focused = self.keyboard_focus and self.focus == 1, .pointer = if (hover == 2) .hover else .idle });
+        button.paint(r, g.open, .{ .icon = .open, .variant = .ghost, .label = tr("Open") }, .{ .focused = self.keyboard_focus and self.focus == 1, .pointer = if (hover == 2) .hover else .idle });
         r.palette = palette;
         r.fillRect(24, 146 - s, g.box.w - 48, 1, .{ .color = theme.global.app_divider });
         var size_buf: [128]u8 = undefined;
         var short_buf: [32]u8 = undefined;
-        const size = if (self.isDirectory()) "—" else std.fmt.bufPrint(&size_buf, "{s} ({d} bytes)", .{ @import("app.zig").formatSize(self.stat.st_size, &short_buf), self.stat.st_size }) catch "—";
+        const byte_count: u64 = @intCast(@max(0, self.stat.st_size));
+        const size = if (self.isDirectory()) "—" else i18n.fmt(&size_buf, i18n.trn("{size} ({bytes} byte)", "{size} ({bytes} bytes)", byte_count), .{ .size = @import("app.zig").formatSize(self.stat.st_size, &short_buf), .bytes = byte_count }) catch "—";
         var created_buf: [64]u8 = undefined;
         var modified_buf: [64]u8 = undefined;
         const values = [_][]const u8{ size, date(self.created, &created_buf), date(self.stat.st_mtim.tv_sec, &modified_buf), std.fs.path.dirname(self.path) orelse "/", self.owner, self.group };
-        const labels = [_][]const u8{ "Size", "Created", "Modified", "Location", "Owner", "Group" };
+        const labels = [_][]const u8{ tr("Size"), tr("Created"), tr("Modified"), tr("Location"), tr("Owner"), tr("Group") };
         for (labels, values, 0..) |label, value, i| {
             const y = 157 + @as(f32, @floatFromInt(i)) * 26 - s;
             r.drawText(24, y, 120, 24, .{ .content = label, .font_size = ui.textSize(), .color = palette.fg });
             r.drawText(162, y, g.box.w - 186, 24, .{ .content = value, .font_size = ui.textSize(), .color = palette.fg });
         }
         r.fillRect(24, 322 - s, g.box.w - 48, 1, .{ .color = theme.global.app_divider });
-        r.drawText(24, 334 - s, 160, 28, .{ .content = "Permissions", .font_size = ui.headingSize(), .weight = 600, .color = palette.fg });
+        r.drawText(24, 334 - s, 160, 28, .{ .content = tr("Permissions"), .font_size = ui.headingSize(), .weight = 600, .color = palette.fg });
         var mode_buf: [8]u8 = undefined;
         const mode = std.fmt.bufPrint(&mode_buf, "{o:0>3}", .{self.stat.st_mode & 0o7777}) catch "";
         var tint = palette.accent;
         tint[3] *= 0.2;
         r.fillRect(g.box.w - 86, 334 - s, 62, 28, .{ .color = tint, .radius = 8 });
         r.drawText(centeredTextX(g.box.w - 86, 62, mode, ui.textSize()), 334 - s, 62, 28, .{ .content = mode, .font_size = ui.textSize(), .weight = 600, .color = palette.fg });
-        for ([_][]const u8{ "Owner", "Group", "Others" }, 0..) |label, i| {
+        for ([_][]const u8{ tr("Owner"), tr("Group"), tr("Others") }, 0..) |label, i| {
             const cell = g.permission(i);
             r.drawText(centeredTextX(cell.x - 30, 78, label, ui.headingSize()), 365 - s, 78, 22, .{ .content = label, .font_size = ui.headingSize(), .color = palette.fg });
         }
-        for ([_][]const u8{ "Read", "Write", "Execute" }, 0..) |label, row| {
+        for ([_][]const u8{ tr("Read"), tr("Write"), tr("Execute") }, 0..) |label, row| {
             r.drawText(24, 386 + @as(f32, @floatFromInt(row)) * 34 - s, 90, 28, .{ .content = label, .font_size = ui.textSize(), .color = palette.fg });
         }
         for (0..9) |i| checkbox.paint(r, g.permission(i), "", .{ .checked = self.stat.st_mode & permissionBit(i) != 0, .focused = (self.keyboard_focus and self.focus == i + 2) or hover == i + 3, .disabled = !self.editable() });
-        const message = if (self.message.len > 0) self.message else if (self.stat.st_mode & c.S_IFMT == c.S_IFLNK) "Link permissions cannot be changed" else if (!self.editable()) "Only the owner can change permissions" else "";
+        const message = if (self.message.len > 0) self.message else if (self.stat.st_mode & c.S_IFMT == c.S_IFLNK) tr("Link permissions cannot be changed") else if (!self.editable()) tr("Only the owner can change permissions") else "";
         r.drawText(24, 488 - s, g.box.w - 48, 20, .{ .content = message, .font_size = ui.statusSize(), .color = palette.fg });
         const strip = scrollbar.gutter(theme.global.scrollbar_width);
         if (scrollbar.Geometry.compute(.vertical, .{ .x = g.box.w - strip, .y = 54 + contentShift(), .w = strip, .h = g.box.h - 68 - contentShift() }, g.box.h - 58 - contentShift(), 520 - 58, g.scroll)) |bar|
@@ -259,16 +262,16 @@ fn permissionBit(index: usize) c.mode_t {
 }
 
 fn date(timestamp: ?i64, buf: []u8) []const u8 {
-    return @import("settings.zig").dateTime(timestamp orelse return "Unavailable", buf);
+    return @import("settings.zig").dateTime(timestamp orelse return tr("Unavailable"), buf);
 }
 
 fn describe(a: std.mem.Allocator, path: [:0]const u8, mode: c.mode_t) ![]const u8 {
     const simple: ?[]const u8 = switch (mode & c.S_IFMT) {
-        c.S_IFDIR => "Folder",
-        c.S_IFLNK => "Symbolic link",
-        c.S_IFIFO => "Named pipe",
-        c.S_IFSOCK => "Socket",
-        c.S_IFCHR, c.S_IFBLK => "Device",
+        c.S_IFDIR => tr("Folder"),
+        c.S_IFLNK => tr("Symbolic link"),
+        c.S_IFIFO => tr("Named pipe"),
+        c.S_IFSOCK => tr("Socket"),
+        c.S_IFCHR, c.S_IFBLK => tr("Device"),
         else => null,
     };
     if (simple) |label| return a.dupe(u8, label);

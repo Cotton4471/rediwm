@@ -1,4 +1,5 @@
 //! Geometry and retained-pixel painting for the chrome's compact taskbar chips.
+const i18n = @import("i18n");
 const std = @import("std");
 const theme = @import("ui").theme;
 const ui = @import("ui").paint;
@@ -138,9 +139,9 @@ pub fn paint(comptime C: type, pixels: []u32, width: i32, height: i32, logical_w
             .font_size = theme.global.taskbar_title_size * density,
             .color = theme.global.window_fg,
         });
-        button.paint(&renderer, close, .{ .variant = .chrome, .size = .sm, .icon = .close, .icon_scale = 0.39, .label = "Close tab" }, .{ .pointer = if (strip.hover == key(.{ .close = t.id })) .hover else .idle });
+        button.paint(&renderer, close, .{ .variant = .chrome, .size = .sm, .icon = .close, .icon_scale = 0.39, .label = i18n.tr("Close tab") }, .{ .pointer = if (strip.hover == key(.{ .close = t.id })) .hover else .idle });
     }
-    button.paint(&renderer, g.plus, .{ .variant = .ghost, .size = .sm, .icon = .plus, .label = "New tab", .radius = navigationRadius(g.plus) }, .{ .pointer = if (strip.notice == .opening) .disabled else if (strip.hover == key(.plus)) .hover else .idle });
+    button.paint(&renderer, g.plus, .{ .variant = .ghost, .size = .sm, .icon = .plus, .label = i18n.tr("New tab"), .radius = navigationRadius(g.plus) }, .{ .pointer = if (strip.notice == .opening) .disabled else if (strip.hover == key(.plus)) .hover else .idle });
     if (g.previous) |r| button.paint(&renderer, r, .{ .variant = .ghost, .size = .sm, .icon = .chevron_left, .radius = navigationRadius(r) }, .{ .pointer = if (strip.hover == key(.previous)) .hover else .idle });
     if (g.next) |r| button.paint(&renderer, r, .{ .variant = .ghost, .size = .sm, .icon = .chevron_right, .radius = navigationRadius(r) }, .{ .pointer = if (strip.hover == key(.next)) .hover else .idle });
 }
