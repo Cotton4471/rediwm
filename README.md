@@ -56,23 +56,11 @@ Installing never replaces your login manager
 Requirements: Zig 0.16, wlroots 0.20, and the development files for Wayland,
 wayland-protocols, xkbcommon, pixman, FreeType, HarfBuzz, Fontconfig,
 librsvg/GdkPixbuf, PangoCairo, libinput, PAM, libpulse, libpipewire-0.3, Poppler GLib,
-libseccomp, libarchive, libjpeg, libpng, libwebp and GNU Readline. Background
-[Files transfers](docs/files-torrents.md) additionally require libtorrent-rasterbar,
-JSON-GLib and a system C++17 compiler. Files embeds
+libseccomp, libarchive, libjpeg, libpng, libwebp and GNU Readline. Files embeds
 the pinned libvterm 0.3.3 source (downloaded by Zig; no system libvterm needed). Optional:
 Xwayland, `foot`, `brightnessctl`, `gio`/`xdg-open`, `git` (optional).
 
-In Files, right-click a type-2 AppImage and choose **Add to applications** to
-install its bundled launcher, icon and file/link associations. This needs
-`unsquashfs` from `squashfs-tools`; it reads metadata without running the app.
-Keep the AppImage in its current location after adding it. Existing default
-applications are preserved; unhandled link schemes become available to browsers.
-
-Printer support links against `libcups` (CUPS development headers are needed to
-build). Settings → Printers uses `cups-pk-helper` when installed, or talks directly
-to the local CUPS server and prompts for a CUPS administrator account when needed.
-The CUPS server and helper are optional runtime packages. RediWM does not install
-printer drivers or change USB rules.
+Printer support uses an existing CUPS server (`cups`).
 
 Run from a checkout, `scripts/install.sh` builds that checkout (dependencies,
 then `install-session.sh` with the arguments you give it).
