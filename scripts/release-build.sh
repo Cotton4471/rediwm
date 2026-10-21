@@ -92,7 +92,8 @@ sonames=$(
 pkgs=""
 for soname in $sonames; do
     [ ! -e "$bundle/$soname" ] || continue # shipped in the release
-    path=$(ldconfig -p | grep -E "^[[:space:]]*$soname .*x86-64" | head -n 1 | sed 's/.*=> //')
+    # Exact match: sonames such as libstdc++.so.6 hold regex metacharacters.
+    path=$(ldconfig -p | awk -v soname="$soname" '$1 == soname && /x86-64/ { print $NF; exit }')
     [ -n "$path" ] || die "$soname isn't installed in this container"
     pkg=$(owner "$path")
     [ -n "$pkg" ] || die "no package owns $path ($soname)"
