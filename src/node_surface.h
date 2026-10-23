@@ -26,6 +26,9 @@ struct rediwm_surface {
 
 // A node showing `surface` alone, no subsurfaces. NULL on allocation failure.
 struct rediwm_surface *rediwm_surface_create(struct rediwm_tree *parent, struct wlr_surface *);
+// Clips what the node shows of the surface to `clip` (surface coordinates), or lifts the
+// clip when NULL. The subsurface tree sets it; others use rediwm_subsurface_tree_set_clip.
+void rediwm_surface_set_clip(struct rediwm_surface *surface, const struct wlr_box *clip);
 
 // The surface and its subsurfaces, in a tree that follows them, enabled while mapped.
 struct rediwm_tree *rediwm_subsurface_tree_create(struct rediwm_tree *parent, struct wlr_surface *);
