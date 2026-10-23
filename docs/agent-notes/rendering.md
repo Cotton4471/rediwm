@@ -20,7 +20,7 @@ chrome, capture, or retained panel painting. General rules remain in
   buffer and carries footprint, opacity and input only, so the projection
   damages that footprint itself. CSD windows have no shape and keep the
   `border_rects` outline. A changed clip damages its rim itself
-  (`projection.c`); a point the shape cuts away is declined by the pick
+  (`projection_resolve.c`); a point the shape cuts away is declined by the pick
   (`pick_world`), so the pick falls to what is below. Window capture draws the client alone and is
   handed the shape explicitly. The ring is one `max(1, round(border * scale))`.
   Without the shaped programs (`chrome.shapes` false) windows are square, with
@@ -35,7 +35,7 @@ chrome, capture, or retained panel painting. General rules remain in
   stays): persist raster sizes.
 * **Glass is drawn by the output pass** (stage 5, `docs/plans/scene-graph-stage5.md`).
   `glass.c` only registers effects: a bufferless node just below its target, to
-  which resolve gives the target's box. When an effect re-blurs, `scene_output.c`
+  which resolve gives the target's box. When an effect re-blurs, `scene_output_draw.c`
   redirects the pass (`rediwm_scene_pass_begin_backdrop`) and draws the items
   below it into an image a quarter of the logical size of its padded extent
   (target + 3 sigma), blurs that and composites it through the shape (shaped
@@ -52,7 +52,7 @@ chrome, capture, or retained panel painting. General rules remain in
   is checked by `glass_reblur.py`.
 * **Owned GL beside wlroots:** wlroots draws with client-side vertex arrays, so
   any GL work of ours must put `GL_ARRAY_BUFFER` (and the rest of the state it
-  touched) back before a wlroots pass runs, as `scene_pass.c`'s `leave()` does; a quad
+  touched) back before a wlroots pass runs, as `scene_pass_leave()` does; a quad
   VBO left bound makes wlroots draw half a rectangle. A border is drawn in the
   same pass as its body, never over it (`docs/plans/scene-graph-stage1.md`).
 * **Commit only via `Output.commitFrameState`**, never
@@ -74,7 +74,7 @@ chrome, capture, or retained panel painting. General rules remain in
   the caller. The programs cost the driver about 430 KiB (a GL program costs
   130-150 KiB whatever its size), so `enable_shapes` builds them on request, never
   with the renderer; before it a shaped draw fails the pass. Blend NONE is only
-  valid inside `rediwm_clip_opaque`, minus the ring (`scene_output.c` draws a
+  valid inside `rediwm_clip_opaque`, minus the ring (`scene_output_draw.c` draws a
   clipped item's ring-free core plain and the rest through the shape). The
   distance ramp is not area coverage (up to 18 of 208 levels at one pixel of a
   curved edge): that is expected.
@@ -91,7 +91,8 @@ chrome, capture, or retained panel painting. General rules remain in
   (`Projection.damageBuffer` after `setBuffer`, or `presentOwned`). Cache keys
   include visual state, text, geometry and Cairo transform; round globally
   before subtracting projection group origins.
-* **Projection is resolve, then present** (`projection.c`, `scene_graph.h`).
+* **Projection is resolve, then present** (`projection_resolve.c`,
+  `projection_present.c`, `scene_graph.h`; `projection.c` has the overview).
   `resolve` turns the source tree into typed items (kind, unrounded
   layout-space edges, composed scale, content) listed in paint order per group
   and shows nothing; `present` rounds once (`rediwm_edges_snap`, edges not

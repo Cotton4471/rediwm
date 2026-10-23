@@ -62,9 +62,12 @@ Also in `src/`: `Shell.zig` (xdg-shell and decorations), `Popup.zig`,
 (Alt+Tab), `workspaces.zig`, `snap.zig`, `auto_tiling.zig`, `window_tabs.zig`.
 
 **Rendering** (read [rendering details](rendering.md) first): own scene nodes
-`node.zig`/`node.c`/`node_surface.c`; `projection.zig`/`.c` (geometry and
-damage); `scene_output.zig`/`.c`, `scene_pass.c`, `scene_damage.c`,
-`scene_outputs.zig`/`.c` (the output pass); `glass.zig`/`.c`; `chrome.zig`
+`node.zig`/`node.c`, client surfaces `node_surface.c` (+ `node_subsurface_tree.c`,
+`node_xdg_shell.c`); `projection.zig`/`.c` (geometry and damage; parts
+`projection_props`, `_resolve`, `_present`, `_pass`, `_pick.c`);
+`scene_output.zig`/`.c` (+ `_collect`, `_effects`, `_draw.c`), `scene_pass.c`
+(+ `_draw`, `_backdrop.c`), `scene_damage.c`, `scene_outputs.zig`/`.c` (the
+output pass); `glass.zig`/`.c`; `chrome.zig`
 (+ `chrome_paint.zig`, `chrome_tabs.zig`) for window frames; `panel_buffer`,
 `panel_paint` and `panel_present.zig` for compositor-drawn panels;
 `camera.zig`, `geometry.zig`, `color.zig`.
@@ -108,5 +111,6 @@ damage); `scene_output.zig`/`.c`, `scene_pass.c`, `scene_damage.c`,
 compositor's code), `ipc_tests.zig`, `files_tests.zig`, `editor_tests.zig`,
 `images_tests.zig`, `pdf_tests.zig` and the shared modules. Other
 `*_tests.zig` files sit beside their code and are reached through
-`test { _ = @import(...); }` blocks; C fixtures are `src/*_test.c`;
-integration suites are `tests/*.py`.
+`test { _ = @import(...); }` blocks; C fixtures are `src/*_test.c` (cases in
+`*_test_*.c`); integration suites are `tests/*.py`. Splitting tools are in
+`tools/split/`.

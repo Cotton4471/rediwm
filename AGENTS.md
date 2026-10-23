@@ -16,10 +16,10 @@ the one for the directory you work in: `src/files`, `src/editor`,
 * Add tests only when really needed or asked; prefer extending existing ones.
 * Keep files small enough to read whole. When a file you touch grows past
   ~800 lines or a function past ~150, split it by concern (below), moving
-  code verbatim. Tests go in a `*_tests.zig` beside the code once they
-  outgrow a screen. Exempt: generated or table files (`ui/fold_data.zig`,
-  `ipc/commands.zig`) and the C rendering core, whose static state splitting
-  would have to share across translation units.
+  code verbatim (C and C++ too). Tests go in a `*_tests.zig` beside the code
+  once they outgrow a screen. Exempt: generated or table files
+  (`ui/fold_data.zig`, `ipc/commands.zig`). `tools/split/` moves Zig
+  declarations from a spec and checks C splits; read its README first.
 * Before finishing: build Debug and `-Doptimize=ReleaseSafe`, run
   `zig build test` and the integration tests for what you touched. Some
   suites fail on HEAD: compare with a `git worktree` of HEAD before calling a
@@ -55,6 +55,16 @@ Tests that used to sit in the big file are in a `*tests.zig` file reached by a
 `test { _ = @import(...); }` block: a file nothing imports contributes no tests.
 State (`var`) stays in the file that uses it; an alias would copy it.
 
+C splits keep the public header and the file's lifecycle in the original
+(`projection.c`, `scene_output.c`, `scene_pass.c`), with the parts
+(`projection_*.c`, …) sharing a private `*_internal.h`: the structs, and small
+per-item helpers as `static inline` (no LTO, so a file boundary must not cost
+them inlining); other shared functions lose `static` and take the file's
+prefix. `build/support.zig` lists the parts, and fixtures that `#include` a .c
+include every part (`projection_test.c`); their cases are `*_test_*.c` files
+included into the same unit. The transfers helper is `files/torrent/helper*.cpp`
+around `helper.hpp`, all in `namespace helper`.
+
 ## Rendering and damage
 
 Read [rendering details](docs/agent-notes/rendering.md) before changing
@@ -72,8 +82,8 @@ panel painting. The key rules:
   buffer or rect node keeps its pixels in a hidden wlr_scene *carrier* that the
   output pass reads; every setter keeps the two in step, and every change asks
   for a frame through the scene's hook. Client surfaces are own nodes too
-  (`node_surface.c`, ported from wlr_scene_surface/subsurface_tree/xdg_shell/
-  drag_icon): a surface is a buffer node whose `surface` binding follows its
+  (`node_surface.c`, `node_subsurface_tree.c`, `node_xdg_shell.c`, ported from
+  wlr_scene_surface/subsurface_tree/xdg_shell/drag_icon): a surface is a buffer node whose `surface` binding follows its
   wl_surface, an xdg surface a tree. The carrier's signals (`outputs_update`,
   `output_sample`, `frame_done`) are where the binding listens, so the projection
   raises them on the carrier. Hits come from `Projection.nodeAt` (a leaf node; a
