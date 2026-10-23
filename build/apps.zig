@@ -49,7 +49,8 @@ pub fn add(ctx: Context) Apps {
     torrents.addArg("-D_GLIBCXX_ASSERTIONS");
     torrents.addArg("-fstack-protector-strong");
     if (optimize != .Debug) torrents.addArg("-D_FORTIFY_SOURCE=3");
-    torrents.addFileArg(b.path("src/files/torrent/helper.cpp"));
+    inline for (.{ "helper.cpp", "helper_transfers.cpp", "helper_peers.cpp", "helper_tray.cpp" }) |part| torrents.addFileArg(b.path("src/files/torrent/" ++ part));
+    torrents.addFileInput(b.path("src/files/torrent/helper.hpp"));
     torrents.addArg("-o");
     const torrent_binary = torrents.addOutputFileArg("rediwm-transfers");
     const install_torrents = b.addInstallFileWithDir(torrent_binary, .bin, "rediwm-transfers");

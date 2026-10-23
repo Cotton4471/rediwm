@@ -184,7 +184,10 @@ control bytes are refused because terminal paste would alter them.
 `app_torrents.zig` owns the sidebar, main-pane list, toolbar and detail dialog;
 `app_torrent_rows.zig` owns folder-row matching, controls and hover details; `torrents.zig` is a bounded,
 nonblocking SOCK_SEQPACKET subscriber (poll slot 22). `torrent/helper.cpp`
-owns libtorrent, persistent resume data, StatusNotifierItem and its D-Bus menu.
+owns libtorrent, persistent resume data, StatusNotifierItem and its D-Bus menu;
+its parts are `helper_transfers`, `helper_peers` and `helper_tray.cpp`, sharing
+`helper.hpp` (everything in `namespace helper`; new state shared between parts
+is an `inline` variable there, state of one part stays `static` in it).
 The helper survives Files closing; no torrent state belongs to a window.
 See `docs/files-torrents.md` for dependencies, storage and lifecycle.
 

@@ -19,7 +19,7 @@ or a lowercase directory named after a TitleCase host (`Dock.zig` → `dock/`).
 |---|---|---|
 | `rediwm` | `src/main.zig` | the compositor; everything below unless listed |
 | `rediwm-msg` | `src/msg/main.zig` | `msg_parse` (arguments), `msg_request` (request line), `msg_reply` (output) |
-| `rediwm-files` | `src/files_main.zig` | `files/`: `App` in `app.zig` + `app_*.zig`, its window in `Client.zig` + `client_*.zig`; `files/terminal/` (PTY drawer, `rediwm-files-terminal`, `files-bash.so`), `files/torrent/helper.cpp` (`rediwm-transfers`) |
+| `rediwm-files` | `src/files_main.zig` | `files/`: `App` in `app.zig` + `app_*.zig`, its window in `Client.zig` + `client_*.zig`; `files/terminal/` (PTY drawer, `rediwm-files-terminal`, `files-bash.so`), `files/torrent/helper.cpp` + `helper_*.cpp` (`rediwm-transfers`) |
 | `rediwm-images` | `src/images_main.zig` | `images/` (`app.zig` + `app_*.zig`) |
 | `rediwm-editor` | `src/editor_main.zig` | `editor/` (`app.zig` + `app_*.zig`, window in `main.zig` + `client_*.zig`) |
 | `rediwm-pdf` | `src/pdf_main.zig` | `pdf/` (sandboxed; window in `main.zig` + `client_*.zig`) |
