@@ -1,6 +1,25 @@
+//! RediWM's build: options, the shared modules, the compositor and rediwm-msg.
+//! The other programs, installed data, the session binaries and every test step
+//! are in build/ (apps, data, session, tests.zig); generated Wayland bindings in
+//! build/protocols.zig, helpers in build/support.zig.
+
 const std = @import("std");
 
-const Scanner = @import("wayland").Scanner;
+const Context = @import("build/context.zig").Context;
+const protocols = @import("build/protocols.zig");
+const apps = @import("build/apps.zig");
+const data = @import("build/data.zig");
+const session_build = @import("build/session.zig");
+const tests = @import("build/tests.zig");
+const support = @import("build/support.zig");
+const usePrivateWlroots = support.usePrivateWlroots;
+const addBass = support.addBass;
+const addBassDsp = support.addBassDsp;
+const addGlass = support.addGlass;
+const addThumbCodec = support.addThumbCodec;
+const addShellUi = support.addShellUi;
+const localizedData = support.localizedData;
+const addCatalogInputs = support.addCatalogInputs;
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
@@ -13,60 +32,7 @@ pub fn build(b: *std.Build) void {
     const wlroots_prefix = b.option([]const u8, "wlroots-prefix", "Use wlroots and its bundled dependencies from this private prefix (see scripts/build-wlroots.sh)");
     if (wlroots_prefix) |prefix| usePrivateWlroots(b, prefix);
 
-    const scanner = Scanner.create(b, .{});
-    scanner.addSystemProtocol("stable/xdg-shell/xdg-shell.xml");
-    scanner.addSystemProtocol("unstable/text-input/text-input-unstable-v3.xml");
-    scanner.generate("zwp_text_input_manager_v3", 1);
-    scanner.addSystemProtocol("staging/xdg-activation/xdg-activation-v1.xml");
-    scanner.addSystemProtocol("staging/security-context/security-context-v1.xml");
-    scanner.generate("wp_security_context_manager_v1", 1);
-    scanner.generate("xdg_activation_v1", 1);
-    scanner.addCustomProtocol(b.path("protocol/wlr-layer-shell-unstable-v1.xml"));
-    scanner.generate("zwlr_layer_shell_v1", 4);
-    scanner.addSystemProtocol("stable/tablet/tablet-v2.xml");
-    scanner.addSystemProtocol("staging/cursor-shape/cursor-shape-v1.xml");
-    scanner.addSystemProtocol("staging/ext-idle-notify/ext-idle-notify-v1.xml");
-    scanner.addSystemProtocol("staging/color-management/color-management-v1.xml");
-    scanner.addSystemProtocol("unstable/idle-inhibit/idle-inhibit-unstable-v1.xml");
-    scanner.addSystemProtocol("unstable/xdg-decoration/xdg-decoration-unstable-v1.xml");
-    scanner.addCustomProtocol(b.path("protocol/server-decoration.xml"));
-    scanner.addCustomProtocol(b.path("protocol/virtual-keyboard-unstable-v1.xml"));
-    scanner.addSystemProtocol("unstable/pointer-gestures/pointer-gestures-unstable-v1.xml");
-    scanner.addSystemProtocol("unstable/xdg-output/xdg-output-unstable-v1.xml");
-    scanner.addSystemProtocol("unstable/pointer-constraints/pointer-constraints-unstable-v1.xml");
-    scanner.addSystemProtocol("unstable/relative-pointer/relative-pointer-unstable-v1.xml");
-    scanner.addSystemProtocol("staging/ext-session-lock/ext-session-lock-v1.xml");
-    scanner.addCustomProtocol(b.path("protocol/wlr-output-power-management-unstable-v1.xml"));
-
-    // These versions control generated Zig bindings only. They do not change
-    // the wlroots ABI used by the compositor.
-    scanner.generate("wl_compositor", 5);
-    scanner.generate("wl_subcompositor", 1);
-    scanner.generate("wl_shm", 1);
-    scanner.generate("wl_output", 4);
-    scanner.generate("wl_seat", 8);
-    scanner.generate("wl_data_device_manager", 3);
-    scanner.generate("xdg_wm_base", 6);
-    scanner.addSystemProtocol("stable/viewporter/viewporter.xml");
-    scanner.generate("wp_viewporter", 1);
-    scanner.addSystemProtocol("staging/fractional-scale/fractional-scale-v1.xml");
-    scanner.generate("wp_fractional_scale_manager_v1", 1);
-    scanner.generate("zwp_tablet_manager_v2", 1);
-    scanner.generate("wp_cursor_shape_manager_v1", 2);
-    scanner.generate("ext_idle_notifier_v1", 1);
-    scanner.generate("zwp_idle_inhibit_manager_v1", 1);
-    scanner.generate("wp_color_manager_v1", 2);
-    scanner.generate("zxdg_decoration_manager_v1", 1);
-    scanner.generate("org_kde_kwin_server_decoration_manager", 1);
-    scanner.generate("zwp_virtual_keyboard_manager_v1", 1);
-    scanner.generate("zwp_pointer_gestures_v1", 3);
-    scanner.generate("zxdg_output_manager_v1", 3);
-    scanner.generate("zwp_pointer_constraints_v1", 1);
-    scanner.generate("zwp_relative_pointer_manager_v1", 1);
-    scanner.generate("ext_session_lock_manager_v1", 1);
-    scanner.generate("zwlr_output_power_manager_v1", 1);
-
-    const wayland = b.createModule(.{ .root_source_file = scanner.result });
+    const wayland = protocols.module(b);
     const xkbcommon = b.dependency("xkbcommon", .{}).module("xkbcommon");
     const pixman = b.dependency("pixman", .{}).module("pixman");
     const wlroots = b.dependency("wlroots", .{}).module("wlroots");
@@ -207,187 +173,31 @@ pub fn build(b: *std.Build) void {
     msg_cli.root_module.addImport("protocol", protocol_mod);
     b.installArtifact(msg_cli);
 
-    const files = b.addExecutable(.{
-        .name = "rediwm-files",
-        .root_module = b.createModule(.{ .root_source_file = b.path("src/files_main.zig"), .target = target, .optimize = optimize, .link_libc = true }),
+    const ctx: Context = .{
+        .b = b,
+        .target = target,
+        .optimize = optimize,
         .use_llvm = use_llvm,
-        .use_lld = use_llvm,
-    });
-    files.root_module.addImport("wayland", wayland);
-    inline for (.{ "wayland-client", "wayland-cursor", "xkbcommon", "gio-2.0", "gdk-pixbuf-2.0", "gobject-2.0", "glib-2.0" }) |lib| files.root_module.linkSystemLibrary(lib, .{});
-    files.root_module.linkSystemLibrary("libarchive", .{});
-    addThumbCodec(b, files.root_module);
-    addVolumes(b, files.root_module);
-    addFilesTerminal(b, files.root_module, false);
-    const terminal_license = b.addInstallFileWithDir(b.dependency("vterm", .{}).path("LICENSE"), .prefix, "share/licenses/rediwm/libvterm-LICENSE");
-    b.getInstallStep().dependOn(&terminal_license.step);
-    // Use the system C++ ABI, matching the distro's libtorrent-rasterbar.
-    const torrents = b.addSystemCommand(&.{ "sh", "-c", "exec c++ -std=c++17 -Wall -Wextra -Werror -Wno-deprecated-declarations -Wno-missing-field-initializers $(pkg-config --cflags libtorrent-rasterbar gio-unix-2.0 json-glib-1.0) \"$@\" $(pkg-config --libs libtorrent-rasterbar gio-unix-2.0 json-glib-1.0)", "build-transfers" });
-    torrents.addArg(if (optimize == .Debug) "-O0" else "-O2");
-    torrents.addArg("-g");
-    torrents.addArg("-D_GLIBCXX_ASSERTIONS");
-    torrents.addArg("-fstack-protector-strong");
-    if (optimize != .Debug) torrents.addArg("-D_FORTIFY_SOURCE=3");
-    torrents.addFileArg(b.path("src/files/torrent/helper.cpp"));
-    torrents.addArg("-o");
-    const torrent_binary = torrents.addOutputFileArg("rediwm-transfers");
-    const install_torrents = b.addInstallFileWithDir(torrent_binary, .bin, "rediwm-transfers");
-    b.getInstallStep().dependOn(&install_torrents.step);
-    const torrent_license = b.addInstallFileWithDir(b.path("src/files/torrent/LICENSE.libtorrent"), .prefix, "share/licenses/rediwm/libtorrent-LICENSE");
-    b.getInstallStep().dependOn(&torrent_license.step);
-    const install_files = b.addInstallArtifact(files, .{});
-    // Advertises rediwm-files to the start menu's applications scanner
-    // (src/start_menu/applications.zig) and to any other XDG-aware
-    // launcher. Its icon is installed in the hicolor fallback theme so the
-    // start menu and taskbar can resolve the desktop entry's Icon name.
-    const install_files_desktop_entry = b.addInstallFileWithDir(
-        localizedData(b, i18n_tool, "data/rediwm-files.desktop"),
-        .prefix,
-        "share/applications/rediwm-files.desktop",
-    );
-    b.getInstallStep().dependOn(&install_files.step);
-    b.getInstallStep().dependOn(&install_files_desktop_entry.step);
-    const install_files_icon = b.addSystemCommand(&.{ "install", "-Dm644" });
-    install_files_icon.addFileArg(b.path("assets/icons/redi-fm-icon.png"));
-    install_files_icon.addArg(b.getInstallPath(.prefix, "share/icons/hicolor/256x256/apps/redi-fm-icon.png"));
-    b.getInstallStep().dependOn(&install_files_icon.step);
-    // rediwm-files links neither wlroots-server nor libinput/libpulse, so it
-    // can be built (and its dependencies checked) without the rest of this
-    // repository's toolchain. `zig build` (the default `install` step) still
-    // builds everything, this only adds a narrower entry point.
-    const files_step = b.step("files", "Build the standalone Files and image viewer clients");
-    files_step.dependOn(&install_files.step);
-    files_step.dependOn(&install_torrents.step);
-    files_step.dependOn(&torrent_license.step);
-    const transfers_entry = b.addInstallFileWithDir(localizedData(b, i18n_tool, "data/rediwm-transfers.desktop"), .prefix, "share/applications/rediwm-transfers.desktop");
-    b.getInstallStep().dependOn(&transfers_entry.step);
-    files_step.dependOn(&transfers_entry.step);
-    const test_torrents = b.step("test-files-torrents", "Test real loopback transfers and the Files/tray interface");
-    const torrent_engine_test = b.addSystemCommand(&.{ "python3", "tests/files_torrents.py" });
-    torrent_engine_test.step.dependOn(b.getInstallStep());
-    const torrent_ui_test = b.addSystemCommand(&.{ "python3", "tests/files_transfers_ui.py" });
-    torrent_ui_test.step.dependOn(&torrent_engine_test.step);
-    test_torrents.dependOn(&torrent_ui_test.step);
-    files_step.dependOn(&install_files_desktop_entry.step);
-    files_step.dependOn(&terminal_license.step);
-    const terminal_child = b.addExecutable(.{
-        .name = "rediwm-files-terminal",
-        .root_module = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true }),
-    });
-    terminal_child.root_module.addCSourceFile(.{ .file = b.path("src/files/terminal/child.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    terminal_child.root_module.linkSystemLibrary("gio-2.0", .{});
-    const install_terminal = b.addInstallArtifact(terminal_child, .{});
-    b.getInstallStep().dependOn(&install_terminal.step);
-    files_step.dependOn(&install_terminal.step);
-    const bash_hook = b.addLibrary(.{
-        .name = "rediwm-files-bash",
-        .linkage = .dynamic,
-        .root_module = b.createModule(.{ .target = target, .optimize = .ReleaseFast, .link_libc = true, .sanitize_c = .off }),
-    });
-    bash_hook.root_module.addCSourceFile(.{ .file = b.path("src/files/terminal/bash.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    bash_hook.root_module.linkSystemLibrary("readline", .{});
-    const install_bash = b.addInstallArtifact(bash_hook, .{ .dest_dir = .{ .override = .lib }, .dest_sub_path = "rediwm/files-bash.so", .dylib_symlinks = false });
-    b.getInstallStep().dependOn(&install_bash.step);
-    files_step.dependOn(&install_bash.step);
-
-    const images = b.addExecutable(.{
-        .name = "rediwm-images",
-        .root_module = b.createModule(.{ .root_source_file = b.path("src/images_main.zig"), .target = target, .optimize = optimize, .link_libc = true }),
-        .use_llvm = use_llvm,
-        .use_lld = use_llvm,
-    });
-    images.root_module.addImport("wayland", wayland);
-    inline for (.{ "wayland-client", "wayland-cursor", "gdk-pixbuf-2.0", "gobject-2.0", "glib-2.0", "xkbcommon" }) |lib| images.root_module.linkSystemLibrary(lib, .{});
-    const install_images = b.addInstallArtifact(images, .{});
-    const images_entry = b.addInstallFileWithDir(localizedData(b, i18n_tool, "data/rediwm-images.desktop"), .prefix, "share/applications/rediwm-images.desktop");
-    b.getInstallStep().dependOn(&install_images.step);
-    b.getInstallStep().dependOn(&images_entry.step);
-    const images_step = b.step("images", "Build the standalone image viewer");
-    images_step.dependOn(&install_images.step);
-    images_step.dependOn(&images_entry.step);
-    files_step.dependOn(&install_images.step);
-    files_step.dependOn(&images_entry.step);
-
-    const monitor = b.addExecutable(.{
-        .name = "rediwm-monitor",
-        .root_module = b.createModule(.{ .root_source_file = b.path("src/system_monitor_main.zig"), .target = target, .optimize = optimize, .link_libc = true }),
-        .use_llvm = use_llvm,
-        .use_lld = use_llvm,
-    });
-    monitor.root_module.addImport("wayland", wayland);
-    inline for (.{ "wayland-client", "wayland-cursor", "xkbcommon" }) |lib| monitor.root_module.linkSystemLibrary(lib, .{});
-    const install_monitor = b.addInstallArtifact(monitor, .{});
-    const monitor_entry = b.addInstallFileWithDir(localizedData(b, i18n_tool, "data/rediwm-monitor.desktop"), .prefix, "share/applications/rediwm-monitor.desktop");
-    const monitor_icon = b.addInstallFileWithDir(b.path("data/rediwm-monitor.svg"), .prefix, "share/icons/hicolor/scalable/apps/rediwm-monitor.svg");
-    const monitor_step = b.step("monitor", "Build the standalone System Monitor");
-    inline for (.{ &install_monitor.step, &monitor_entry.step, &monitor_icon.step }) |step| {
-        b.getInstallStep().dependOn(step);
-        monitor_step.dependOn(step);
-    }
-
-    const calculator = b.addExecutable(.{
-        .name = "rediwm-calculator",
-        .root_module = b.createModule(.{ .root_source_file = b.path("src/calculator_main.zig"), .target = target, .optimize = optimize, .link_libc = true }),
-        .use_llvm = use_llvm,
-        .use_lld = use_llvm,
-    });
-    calculator.root_module.addImport("wayland", wayland);
-    inline for (.{ "wayland-client", "wayland-cursor", "xkbcommon" }) |lib| calculator.root_module.linkSystemLibrary(lib, .{});
-    const install_calculator = b.addInstallArtifact(calculator, .{});
-    const calculator_entry = b.addInstallFileWithDir(localizedData(b, i18n_tool, "data/rediwm-calculator.desktop"), .prefix, "share/applications/rediwm-calculator.desktop");
-    const calculator_icon = b.addInstallFileWithDir(b.path("data/rediwm-calculator.svg"), .prefix, "share/icons/hicolor/scalable/apps/rediwm-calculator.svg");
-    const calculator_step = b.step("calculator", "Build the standalone Calculator");
-    inline for (.{ &install_calculator.step, &calculator_entry.step, &calculator_icon.step }) |step| {
-        b.getInstallStep().dependOn(step);
-        calculator_step.dependOn(step);
-    }
-
-    const editor = b.addExecutable(.{
-        .name = "rediwm-editor",
-        .root_module = b.createModule(.{ .root_source_file = b.path("src/editor_main.zig"), .target = target, .optimize = optimize, .link_libc = true }),
-        .use_llvm = use_llvm,
-        .use_lld = use_llvm,
-    });
-    editor.root_module.addImport("wayland", wayland);
-    inline for (.{ "wayland-client", "wayland-cursor", "xkbcommon", "pangocairo" }) |lib| editor.root_module.linkSystemLibrary(lib, .{});
-    const install_editor = b.addInstallArtifact(editor, .{});
-    const editor_entry = b.addInstallFileWithDir(localizedData(b, i18n_tool, "data/rediwm-editor.desktop"), .prefix, "share/applications/rediwm-editor.desktop");
-    b.getInstallStep().dependOn(&install_editor.step);
-    b.getInstallStep().dependOn(&editor_entry.step);
-    const editor_step = b.step("editor", "Build the standalone text editor");
-    editor_step.dependOn(&install_editor.step);
-    editor_step.dependOn(&editor_entry.step);
-    files_step.dependOn(&install_editor.step);
-    files_step.dependOn(&editor_entry.step);
-
-    const pdf = b.addExecutable(.{
-        .name = "rediwm-pdf",
-        .root_module = b.createModule(.{ .root_source_file = b.path("src/pdf_main.zig"), .target = target, .optimize = optimize, .link_libc = true }),
-        .use_llvm = use_llvm,
-        .use_lld = use_llvm,
-    });
-    pdf.root_module.addImport("wayland", wayland);
-    pdf.root_module.addCSourceFile(.{ .file = b.path("src/pdf/sandbox.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    pdf.root_module.addCSourceFile(.{ .file = b.path("src/pdf/print.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    pdf.root_module.linkSystemLibrary("seccomp", .{});
-    inline for (.{ "wayland-client", "wayland-cursor", "poppler-glib", "cairo", "gio-2.0", "gobject-2.0", "glib-2.0", "xkbcommon" }) |lib| pdf.root_module.linkSystemLibrary(lib, .{});
-    const install_pdf = b.addInstallArtifact(pdf, .{});
-    const pdf_entry = b.addInstallFileWithDir(localizedData(b, i18n_tool, "data/rediwm-pdf.desktop"), .prefix, "share/applications/rediwm-pdf.desktop");
-    b.getInstallStep().dependOn(&install_pdf.step);
-    b.getInstallStep().dependOn(&pdf_entry.step);
-    const pdf_step = b.step("pdf", "Build the standalone PDF viewer");
-    pdf_step.dependOn(&install_pdf.step);
-    pdf_step.dependOn(&pdf_entry.step);
-
-    const share_picker = b.addExecutable(.{
-        .name = "rediwm-share-picker",
-        .root_module = b.createModule(.{ .root_source_file = b.path("src/share_picker_main.zig"), .target = target, .optimize = optimize, .link_libc = true }),
-        .use_llvm = use_llvm,
-        .use_lld = use_llvm,
-    });
-    share_picker.root_module.addImport("wayland", wayland);
-    inline for (.{ "wayland-client", "xkbcommon" }) |lib| share_picker.root_module.linkSystemLibrary(lib, .{});
-    b.installArtifact(share_picker);
+        .wlroots_prefix = wlroots_prefix,
+        .i18n_tool = i18n_tool,
+        .wayland = wayland,
+        .xkbcommon = xkbcommon,
+        .pixman = pixman,
+        .wlroots = wlroots,
+        .i18n_mod = i18n_mod,
+        .ui_mod = ui_mod,
+        .dbus_mod = dbus_mod,
+        .config_mod = config_mod,
+        .protocol_mod = protocol_mod,
+    };
+    const app = apps.add(ctx);
+    const files = app.files;
+    const images = app.images;
+    const monitor = app.monitor;
+    const calculator = app.calculator;
+    const editor = app.editor;
+    const pdf = app.pdf;
+    const share_picker = app.share_picker;
     if (wlroots_prefix) |prefix| {
         // Installed next to the binaries so both zig-out/ and /usr/local work.
         b.installDirectory(.{
@@ -398,434 +208,23 @@ pub fn build(b: *std.Build) void {
         for ([_]*std.Build.Step.Compile{ compositor, files, images, share_picker, pdf, editor }) |exe|
             exe.root_module.addRPathSpecial("$ORIGIN/../lib/rediwm");
     }
-    b.getInstallStep().dependOn(&b.addInstallFileWithDir(
-        b.path("data/rediwm-portals.conf"),
-        .prefix,
-        "share/xdg-desktop-portal/rediwm-portals.conf",
-    ).step);
-    b.getInstallStep().dependOn(&b.addInstallFileWithDir(
-        b.path("data/rediwm.portal"),
-        .prefix,
-        "share/xdg-desktop-portal/portals/rediwm.portal",
-    ).step);
-    b.getInstallStep().dependOn(&b.addInstallFileWithDir(
-        b.path("data/xdg-desktop-portal-wlr.ini"),
-        .prefix,
-        "share/xdg-desktop-portal-wlr/config",
-    ).step);
-    b.getInstallStep().dependOn(&b.addInstallFileWithDir(
-        localizedData(b, i18n_tool, "data/rediwm.desktop"),
-        .prefix,
-        "share/wayland-sessions/rediwm.desktop",
-    ).step);
+    data.add(ctx);
 
-    b.getInstallStep().dependOn(&b.addInstallFileWithDir(localizedData(b, i18n_tool, "data/org.rediwm.accounts.policy"), .prefix, "share/polkit-1/actions/org.rediwm.accounts.policy").step);
-    b.getInstallStep().dependOn(&b.addInstallFileWithDir(localizedData(b, i18n_tool, "data/rediwm-release-safe.desktop"), .prefix, "share/wayland-sessions/rediwm-release-safe.desktop").step);
+    const session = session_build.add(ctx);
+    const session_supervisor = session.session_supervisor;
 
-    // Wallpapers, found at runtime through share/rediwm/wallpapers next to
-    // the binaries (wallpapers.zig); `[compositor] wallpaper` picks one.
-    b.installDirectory(.{
-        .source_dir = b.path("assets/wallpapers"),
-        .install_dir = .prefix,
-        .install_subdir = "share/rediwm/wallpapers",
-    });
-
-    // Xcursor themes rendered from the vendored phinger-cursors SVGs. They
-    // land in share/icons next to the binaries; the compositor adds that
-    // directory to XCURSOR_PATH for itself and its children.
-    const cursorgen = b.addExecutable(.{
-        .name = "rediwm-cursorgen",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/cursor_theme_gen.zig"),
-            .target = b.graph.host,
-            .optimize = .ReleaseSafe,
-            .link_libc = true,
-        }),
-        .use_llvm = use_llvm,
-        .use_lld = use_llvm,
-    });
-    cursorgen.root_module.linkSystemLibrary("librsvg-2.0", .{});
-    cursorgen.root_module.linkSystemLibrary("cairo", .{});
-    const cursorgen_run = b.addRunArtifact(cursorgen);
-    cursorgen_run.addDirectoryArg(b.path("assets/cursors"));
-    const cursor_themes = cursorgen_run.addOutputDirectoryArg("icons");
-    // Cursor aliases are symlinks, which InstallDir drops; cp -a keeps them.
-    const install_cursors = b.addSystemCommand(&.{ "sh", "-c", "mkdir -p \"$2\" && cp -a -T \"$1\" \"$2\"", "sh" });
-    install_cursors.addDirectoryArg(cursor_themes);
-    install_cursors.addArg(b.getInstallPath(.prefix, "share/icons"));
-    b.getInstallStep().dependOn(&install_cursors.step);
-
-    const session_supervisor = b.addExecutable(.{
-        .name = "rediwm-session",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/session_main.zig"),
-            .target = target,
-            .optimize = optimize,
-            .link_libc = true,
-        }),
-        .use_llvm = use_llvm,
-        .use_lld = use_llvm,
-    });
-    session_supervisor.root_module.addImport("wayland", wayland);
-    session_supervisor.root_module.linkSystemLibrary("wayland-server", .{});
-    if (wlroots_prefix != null) session_supervisor.root_module.addRPathSpecial("$ORIGIN/../lib/rediwm");
-    b.installArtifact(session_supervisor);
-
-    const child_set_mod = b.createModule(.{ .root_source_file = b.path("src/child_set.zig"), .target = target, .optimize = optimize });
-    const dm_ipc_mod = b.createModule(.{
-        .root_source_file = b.path("src/session/dm_ipc.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    const ws_mod = b.createModule(.{
-        .root_source_file = b.path("src/session/wayland_sessions.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    const dm = b.addExecutable(.{
-        .name = "rediwm-dm",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/dm/main.zig"),
-            .target = target,
-            .optimize = optimize,
-            .link_libc = true,
-        }),
-        .use_llvm = use_llvm,
-        .use_lld = use_llvm,
-    });
-    dm.root_module.addImport("child_set", child_set_mod);
-    dm.root_module.addImport("dm_ipc", dm_ipc_mod);
-    dm.root_module.addImport("wayland_sessions", ws_mod);
-    dm.root_module.linkSystemLibrary("pam", .{});
-    dm.root_module.addCSourceFile(.{ .file = b.path("src/dm/pam.c"), .flags = &.{"-std=c11"} });
-    b.installArtifact(dm);
-
-    const accounts_helper = b.addExecutable(.{
-        .name = "rediwm-accounts-helper",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/accounts_helper/main.zig"),
-            .target = target,
-            .optimize = optimize,
-            .link_libc = true,
-        }),
-        .use_llvm = use_llvm,
-        .use_lld = use_llvm,
-    });
-    accounts_helper.root_module.addImport("wayland_sessions", ws_mod);
-    accounts_helper.root_module.addImport("accounts_validation", b.createModule(.{
-        .root_source_file = b.path("src/accounts/validation.zig"),
-        .target = target,
-        .optimize = optimize,
-    }));
-    accounts_helper.root_module.addImport("dm_config", b.createModule(.{
-        .root_source_file = b.path("src/dm/config.zig"),
-        .target = target,
-        .optimize = optimize,
-    }));
-    b.installArtifact(accounts_helper);
-    b.step("accounts-helper", "Build the privileged account-management helper").dependOn(&accounts_helper.step);
-
-    // The UI layout engine (src/ui/) isn't wired into the compositor's
-    // render loop yet, but its files reach into the rest of src/ (chrome.zig
-    // for its SDF primitives, text.zig for glyph metrics, ...), so its test
-    // build needs the same system libraries and embedded fonts as the
-    // compositor itself.
-    const ui_tests_module = b.createModule(.{
-        .root_source_file = b.path("src/ui_tests.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
-    ui_tests_module.addImport("wayland", wayland);
-    ui_tests_module.addImport("xkbcommon", xkbcommon);
-    ui_tests_module.addImport("wlroots", wlroots);
-    ui_tests_module.addImport("pixman", pixman);
-    ui_tests_module.linkSystemLibrary("wayland-server", .{});
-    ui_tests_module.linkSystemLibrary("cups", .{});
-    ui_tests_module.addCSourceFile(.{ .file = b.path("src/printing/direct.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-deprecated-declarations" } });
-    ui_tests_module.linkSystemLibrary("xkbcommon", .{});
-    ui_tests_module.linkSystemLibrary("pixman-1", .{});
-    ui_tests_module.linkSystemLibrary("freetype2", .{});
-    ui_tests_module.linkSystemLibrary("harfbuzz", .{});
-    ui_tests_module.linkSystemLibrary("fontconfig", .{});
-    ui_tests_module.linkSystemLibrary("librsvg-2.0", .{});
-    ui_tests_module.linkSystemLibrary("libinput", .{});
-    ui_tests_module.linkSystemLibrary("png16", .{});
-    ui_tests_module.linkSystemLibrary("libpulse", .{});
-    ui_tests_module.linkSystemLibrary("xcb", .{});
-    addBass(b, ui_tests_module);
-    // Fake PAM is linked only into unit tests; the compositor always uses libpam.
-    ui_tests_module.addCSourceFile(.{ .file = b.path("tests/auth_test.c"), .flags = &.{ "-std=c11", "-DREDIWM_AUTH_EMBEDDED_TEST" } });
-    ui_tests_module.addCSourceFile(.{ .file = b.path("src/polkit/native.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    addGlass(b, ui_tests_module, false);
-    ui_tests_module.addCSourceFile(.{ .file = b.path("src/gpu_timing.c"), .flags = &.{"-std=c11"} });
-    const ui_tests = b.addTest(.{ .root_module = ui_tests_module });
-    const run_ui_tests = b.addRunArtifact(ui_tests);
-
-    const ipc_tests_module = b.createModule(.{
-        .root_source_file = b.path("src/ipc_tests.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
-    ipc_tests_module.addImport("protocol", protocol_mod);
-    ipc_tests_module.linkSystemLibrary("png16", .{});
-    const ipc_tests = b.addTest(.{ .root_module = ipc_tests_module });
-    const run_ipc_tests = b.addRunArtifact(ipc_tests);
-
-    const test_step = b.step("test", "Run the project unit tests");
-    const i18n_tests = b.addTest(.{ .root_module = i18n_mod });
-    const run_i18n_tests = b.addRunArtifact(i18n_tests);
-    test_step.dependOn(&run_i18n_tests.step);
-    const i18n_tool_tests = b.addTest(.{ .root_module = i18n_tool.root_module });
-    test_step.dependOn(&b.addRunArtifact(i18n_tool_tests).step);
-    b.step("test-i18n", "Test locale resolution, catalogs and formatting").dependOn(&run_i18n_tests.step);
-    const monitor_tests = b.addTest(.{ .root_module = b.createModule(.{
-        .root_source_file = b.path("src/system_monitor_tests.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    }) });
-    const run_monitor_tests = b.addRunArtifact(monitor_tests);
-    const monitor_test_step = b.step("test-monitor", "Test System Monitor collection, process identity and model");
-    monitor_test_step.dependOn(&run_monitor_tests.step);
-    test_step.dependOn(&run_monitor_tests.step);
-    const printing_tests = b.addTest(.{ .root_module = b.createModule(.{
-        .root_source_file = b.path("src/printing/tests.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    }) });
-    printing_tests.root_module.addImport("dbus", dbus_mod);
-    printing_tests.root_module.addImport("i18n", i18n_mod);
-    printing_tests.root_module.addImport("wayland", wayland);
-    printing_tests.root_module.linkSystemLibrary("wayland-server", .{});
-    printing_tests.root_module.linkSystemLibrary("cups", .{});
-    printing_tests.root_module.addCSourceFile(.{ .file = b.path("src/printing/direct.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-deprecated-declarations" } });
-    const run_printing_tests = b.addRunArtifact(printing_tests);
-    test_step.dependOn(&run_printing_tests.step);
-    const printers_integration = b.addSystemCommand(&.{"python3"});
-    printers_integration.addFileArg(b.path("tests/printers.py"));
-    printers_integration.step.dependOn(b.getInstallStep());
-    const printers_step = b.step("test-printers", "Test printer diagnostics and private CUPS page lifecycle");
-    printers_step.dependOn(&run_printing_tests.step);
-    printers_step.dependOn(&printers_integration.step);
-    const printers_direct = b.addSystemCommand(&.{"python3"});
-    printers_direct.addFileArg(b.path("tests/printers_direct.py"));
-    printers_direct.step.dependOn(&printers_integration.step);
-    printers_step.dependOn(&printers_direct.step);
-    // Dependency-module tests are not collected by the executable's test root.
-    const shared_ui_tests = b.addTest(.{ .root_module = ui_mod });
-    const shared_config_tests = b.addTest(.{ .root_module = config_mod });
-    const shared_dbus_tests = b.addTest(.{ .root_module = dbus_mod });
-    const run_shared_ui_tests = b.addRunArtifact(shared_ui_tests);
-    const run_shared_config_tests = b.addRunArtifact(shared_config_tests);
-    const run_shared_dbus_tests = b.addRunArtifact(shared_dbus_tests);
-    test_step.dependOn(&run_shared_ui_tests.step);
-    test_step.dependOn(&run_shared_config_tests.step);
-    test_step.dependOn(&run_shared_dbus_tests.step);
-    const dbus_tests = b.addTest(.{ .root_module = b.createModule(.{
-        .root_source_file = b.path("src/dbus_tests.zig"),
-        .link_libc = true,
-        .target = target,
-        .optimize = optimize,
-    }) });
-    dbus_tests.root_module.addImport("wayland", wayland);
-    dbus_tests.root_module.linkSystemLibrary("wayland-server", .{});
-    dbus_tests.root_module.addCSourceFile(.{ .file = b.path("src/polkit/native.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    dbus_tests.root_module.linkSystemLibrary("pthread", .{});
-    const run_dbus_tests = b.addRunArtifact(dbus_tests);
-    test_step.dependOn(&run_dbus_tests.step);
-    const dbus_service = b.addExecutable(.{
-        .name = "dbus-test-service",
-        .root_module = b.createModule(.{ .root_source_file = b.path("src/dbus_test_service.zig"), .target = target, .optimize = optimize, .link_libc = true }),
-        .use_llvm = use_llvm,
-        .use_lld = use_llvm,
-    });
-    dbus_service.root_module.addImport("wayland", wayland);
-    dbus_service.root_module.linkSystemLibrary("wayland-server", .{});
-    const dbus_integration = b.addSystemCommand(&.{"python3"});
-    dbus_integration.addFileArg(b.path("tests/dbus.py"));
-    dbus_integration.addArtifactArg(dbus_service);
-    const dbus_step = b.step("test-dbus", "Test D-Bus codec and real private-bus client/service");
-    dbus_step.dependOn(&run_shared_dbus_tests.step);
-    dbus_step.dependOn(&run_dbus_tests.step);
-    dbus_step.dependOn(&dbus_integration.step);
-
-    const polkit_service = b.addExecutable(.{
-        .name = "polkit-test-service",
-        .root_module = b.createModule(.{ .root_source_file = b.path("src/polkit_test_service.zig"), .target = target, .optimize = optimize, .link_libc = true }),
-        .use_llvm = use_llvm,
-        .use_lld = use_llvm,
-    });
-    polkit_service.root_module.addImport("wayland", wayland);
-    polkit_service.root_module.addImport("i18n", i18n_mod);
-    polkit_service.root_module.linkSystemLibrary("wayland-server", .{});
-    polkit_service.root_module.addCSourceFile(.{ .file = b.path("src/polkit/native.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    polkit_service.root_module.linkSystemLibrary("pthread", .{});
-    const polkit_manual = b.addRunArtifact(polkit_service);
-    if (b.args) |args| polkit_manual.addArgs(args);
-    b.step("run-polkit-test-agent", "Run the noninstalled polkit test agent (-- --terminal for manual authentication)").dependOn(&polkit_manual.step);
-    const polkit_integration = b.addSystemCommand(&.{"python3"});
-    polkit_integration.addFileArg(b.path("tests/polkit.py"));
-    polkit_integration.addArtifactArg(polkit_service);
-    const polkit_step = b.step("test-polkit", "Test polkit registration on a private bus without credentials");
-    polkit_step.dependOn(&run_dbus_tests.step);
-    polkit_step.dependOn(&polkit_integration.step);
-    const polkit_ui = b.addSystemCommand(&.{"python3"});
-    polkit_ui.addFileArg(b.path("tests/polkit_dialog.py"));
-    polkit_ui.step.dependOn(b.getInstallStep());
-    b.step("test-polkit-ui", "Test native authentication UI on a private bus and headless output").dependOn(&polkit_ui.step);
-
-    const tray_integration = b.addSystemCommand(&.{"python3"});
-    tray_integration.addFileArg(b.path("tests/tray.py"));
-    tray_integration.step.dependOn(b.getInstallStep());
-    b.step("test-tray", "Test application tray icons and D-Bus context menus on a private bus").dependOn(&tray_integration.step);
-
-    const notif_integration = b.addSystemCommand(&.{"python3"});
-    notif_integration.addFileArg(b.path("tests/notifications.py"));
-    const notif_step = b.step("test-notifications", "Test notifications daemon, D-Bus service, and IPC");
-    notif_step.dependOn(&notif_integration.step);
-
-    const chooser_integration = b.addSystemCommand(&.{"python3"});
-    chooser_integration.addFileArg(b.path("tests/file_chooser.py"));
-    chooser_integration.step.dependOn(b.getInstallStep());
-    b.step("test-file-chooser", "Test Open/Save dialogs and portal preferences on a private bus").dependOn(&chooser_integration.step);
-
-    const settings_portal_integration = b.addSystemCommand(&.{"python3"});
-    settings_portal_integration.addFileArg(b.path("tests/settings_portal.py"));
-    const settings_portal_step = b.step("test-settings-portal", "Test the dark_mode Settings portal backend on a private bus");
-    settings_portal_step.dependOn(&settings_portal_integration.step);
-
-    const power_integration = b.addSystemCommand(&.{"python3"});
-    power_integration.addFileArg(b.path("tests/power.py"));
-    power_integration.step.dependOn(b.getInstallStep());
-    const power_step = b.step("test-power", "Test poweroff/reboot/suspend against a private mock logind");
-    power_step.dependOn(&power_integration.step);
-
-    const power_profiles_integration = b.addSystemCommand(&.{"python3"});
-    power_profiles_integration.addFileArg(b.path("tests/power_profiles.py"));
-    power_profiles_integration.step.dependOn(b.getInstallStep());
-    const power_profiles_step = b.step("test-power-profiles", "Test the power profile OSD against a private fake PowerProfiles daemon");
-    power_profiles_step.dependOn(&power_profiles_integration.step);
-
-    const layout_autosave_integration = b.addSystemCommand(&.{"python3"});
-    layout_autosave_integration.addFileArg(b.path("tests/layout_autosave.py"));
-    const layout_autosave_step = b.step("test-layout-autosave", "Test periodic layout autosave and startup restore");
-    layout_autosave_step.dependOn(&layout_autosave_integration.step);
-
-    const dm_tests = b.addTest(.{ .root_module = b.createModule(.{
-        .root_source_file = b.path("src/dm/tests.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    }) });
-    dm_tests.root_module.addImport("child_set", child_set_mod);
-    dm_tests.root_module.addImport("dm_ipc", dm_ipc_mod);
-    dm_tests.root_module.addImport("wayland_sessions", ws_mod);
-    dm_tests.root_module.linkSystemLibrary("pam", .{});
-    dm_tests.root_module.addCSourceFile(.{ .file = b.path("src/dm/pam.c"), .flags = &.{"-std=c11"} });
-    const run_dm_tests = b.addRunArtifact(dm_tests);
-    test_step.dependOn(&run_dm_tests.step);
-    const dm_step = b.step("test-dm", "Run unit tests for rediwm-dm");
-    dm_step.dependOn(&run_dm_tests.step);
-
-    const session_tests = b.addTest(.{ .root_module = b.createModule(.{
-        .root_source_file = b.path("src/session_main.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    }) });
-    session_tests.root_module.addImport("wayland", wayland);
-    session_tests.root_module.linkSystemLibrary("wayland-server", .{});
-    const run_session_tests = b.addRunArtifact(session_tests);
-    test_step.dependOn(&run_session_tests.step);
-    const rediwm_session_step = b.step("test-rediwm-session", "Test the login supervisor's publication, crash-restart loop and bus calls");
-    rediwm_session_step.dependOn(&run_session_tests.step);
-    const rediwm_session_integration = b.addSystemCommand(&.{"python3"});
-    rediwm_session_integration.addFileArg(b.path("tests/rediwm_session.py"));
-    rediwm_session_integration.addArtifactArg(session_supervisor);
-    rediwm_session_step.dependOn(&rediwm_session_integration.step);
-    const session_services = b.addSystemCommand(&.{"python3"});
-    session_services.addFileArg(b.path("tests/session_services.py"));
-    session_services.addArtifactArg(session_supervisor);
-    rediwm_session_step.dependOn(&session_services.step);
-    const session_bus = b.addSystemCommand(&.{"python3"});
-    session_bus.addFileArg(b.path("tests/session_bus.py"));
-    session_bus.addArtifactArg(session_supervisor);
-    rediwm_session_step.dependOn(&session_bus.step);
-    const session_readiness = b.addSystemCommand(&.{"python3"});
-    session_readiness.addFileArg(b.path("tests/session_readiness.py"));
-    session_readiness.step.dependOn(b.getInstallStep());
-    rediwm_session_step.dependOn(&session_readiness.step);
-    const notification_services = b.addSystemCommand(&.{"python3"});
-    notification_services.addFileArg(b.path("tests/notification_services.py"));
-    notification_services.step.dependOn(b.getInstallStep());
-    rediwm_session_step.dependOn(&notification_services.step);
-    const app_activation = b.addSystemCommand(&.{"python3"});
-    app_activation.addFileArg(b.path("tests/app_activation.py"));
-    app_activation.step.dependOn(b.getInstallStep());
-    b.step("test-app-activation", "Test application Activate/Open and Exec fallback on a private bus").dependOn(&app_activation.step);
-    const lifecycle_tests = b.addTest(.{ .root_module = ui_tests_module, .filters = &.{"lifecycle"} });
-    const run_lifecycle_tests = b.addRunArtifact(lifecycle_tests);
-    b.step("test-lifecycle", "Check callback ownership under allocation failure").dependOn(&run_lifecycle_tests.step);
-    test_step.dependOn(&run_ui_tests.step);
-    const lock_tests = b.addTest(.{ .root_module = ui_tests_module, .filters = &.{ "lock ", "greeter " } });
-    const run_lock_tests = b.addRunArtifact(lock_tests);
-    const lock_step = b.step("test-lock", "Test lock isolation, password editing, rendering, PAM outcomes and the rediwm-dm greeter");
-    lock_step.dependOn(&run_lock_tests.step);
-    const auth_tests = b.addExecutable(.{ .name = "auth-tests", .root_module = b.createModule(.{ .target = target, .optimize = .Debug, .link_libc = true }) });
-    auth_tests.root_module.addCSourceFile(.{ .file = b.path("tests/auth_test.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    const run_auth_tests = b.addRunArtifact(auth_tests);
-    lock_step.dependOn(&run_auth_tests.step);
-    test_step.dependOn(&run_auth_tests.step);
-    const editor_tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("src/editor_tests.zig"), .target = target, .optimize = optimize, .link_libc = true }) });
-    inline for (.{ "pangocairo", "xkbcommon" }) |lib| editor_tests.root_module.linkSystemLibrary(lib, .{});
-    const run_editor_tests = b.addRunArtifact(editor_tests);
-    test_step.dependOn(&run_editor_tests.step);
-    b.step("test-editor", "Test text document editing and saving").dependOn(&run_editor_tests.step);
-
-    const images_tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("src/images_tests.zig"), .target = target, .optimize = optimize, .link_libc = true }) });
-    inline for (.{ "gdk-pixbuf-2.0", "gobject-2.0", "glib-2.0", "xkbcommon" }) |lib| images_tests.root_module.linkSystemLibrary(lib, .{});
-    const run_images_tests = b.addRunArtifact(images_tests);
-    test_step.dependOn(&run_images_tests.step);
-    const test_images_step = b.step("test-images", "Test image viewer geometry and loading");
-    test_images_step.dependOn(&run_images_tests.step);
-
-    const pdf_tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("src/pdf_tests.zig"), .target = target, .optimize = optimize, .link_libc = true }) });
-    inline for (.{ "poppler-glib", "cairo", "gobject-2.0", "glib-2.0", "xkbcommon" }) |lib| pdf_tests.root_module.linkSystemLibrary(lib, .{});
-    const run_pdf_tests = b.addRunArtifact(pdf_tests);
-    test_step.dependOn(&run_pdf_tests.step);
-    const test_pdf_step = b.step("test-pdf", "Test PDF document loading, geometry and rendering");
-    test_pdf_step.dependOn(&run_pdf_tests.step);
-
-    const files_tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("src/files_tests.zig"), .target = target, .optimize = optimize, .link_libc = true }) });
-    files_tests.root_module.linkSystemLibrary("xkbcommon", .{});
-    files_tests.root_module.linkSystemLibrary("gio-2.0", .{});
-    inline for (.{ "gdk-pixbuf-2.0", "gobject-2.0", "glib-2.0" }) |lib| files_tests.root_module.linkSystemLibrary(lib, .{});
-    files_tests.root_module.linkSystemLibrary("libarchive", .{});
-    addThumbCodec(b, files_tests.root_module);
-    addVolumes(b, files_tests.root_module);
-    addFilesTerminal(b, files_tests.root_module, true);
-    const run_files_tests = b.addRunArtifact(files_tests);
-    test_step.dependOn(&run_files_tests.step);
-    b.step("test-files", "Test Files editing, navigation, transfers and layout").dependOn(&run_files_tests.step);
-    const terminal_integration = b.addSystemCommand(&.{"python3"});
-    terminal_integration.addFileArg(b.path("tests/files_terminal.py"));
-    terminal_integration.setEnvironmentVariable("REDIWM_TEST_BIN", b.getInstallPath(.bin, ""));
-    terminal_integration.step.dependOn(b.getInstallStep());
-    const terminal_tests = b.step("test-files-terminal", "Test the Files terminal against isolated PTYs and a headless compositor");
-    terminal_tests.dependOn(&run_files_tests.step);
-    terminal_tests.dependOn(&terminal_integration.step);
-    const share_picker_tests = b.addTest(.{ .root_module = b.createModule(.{
-        .root_source_file = b.path("src/share_picker_tests.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    }) });
-    test_step.dependOn(&b.addRunArtifact(share_picker_tests).step);
-    test_step.dependOn(&run_ipc_tests.step);
+    const zig_tests = tests.addZig(ctx, session);
+    const ui_tests_module = zig_tests.ui_tests_module;
+    const ipc_tests_module = zig_tests.ipc_tests_module;
+    const files_tests = zig_tests.files_tests;
+    const images_tests = zig_tests.images_tests;
+    const editor_tests = zig_tests.editor_tests;
+    const pdf_tests = zig_tests.pdf_tests;
+    const session_tests = zig_tests.session_tests;
+    const share_picker_tests = zig_tests.share_picker_tests;
+    const dbus_tests = zig_tests.dbus_tests;
+    const dbus_service = zig_tests.dbus_service;
+    const polkit_service = zig_tests.polkit_service;
 
     // Hosts also rasterize app-specific content through their own C imports.
     inline for (.{ files.root_module, images.root_module, editor.root_module, pdf.root_module, share_picker.root_module, monitor.root_module, calculator.root_module, files_tests.root_module, images_tests.root_module, editor_tests.root_module, pdf_tests.root_module }) |module| {
@@ -841,87 +240,7 @@ pub fn build(b: *std.Build) void {
         module.addImport("dbus", dbus_mod);
     }
 
-    const gpu_timing_tests = b.addExecutable(.{
-        .name = "gpu-timing-tests",
-        .root_module = b.createModule(.{ .target = target, .optimize = .Debug, .link_libc = true }),
-    });
-    gpu_timing_tests.root_module.addCSourceFile(.{ .file = b.path("src/gpu_timing_test.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    inline for (.{ "wlroots-0.20", "wayland-server", "pixman-1", "egl", "glesv2" }) |lib| {
-        gpu_timing_tests.root_module.linkSystemLibrary(lib, .{});
-    }
-    const run_gpu_timing_tests = b.addRunArtifact(gpu_timing_tests);
-    test_step.dependOn(&run_gpu_timing_tests.step);
-    b.step("test-gpu-timing", "Test GPU timing query lifetime with a fake driver").dependOn(&run_gpu_timing_tests.step);
-
-    const node_tests = b.addExecutable(.{
-        .name = "node-tests",
-        .root_module = b.createModule(.{ .target = target, .optimize = .Debug, .link_libc = true }),
-    });
-    node_tests.root_module.addCSourceFile(.{ .file = b.path("src/node_test.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    node_tests.root_module.addCSourceFile(.{ .file = b.path("src/node.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    inline for (.{ "wlroots-0.20", "wayland-server", "pixman-1" }) |lib| {
-        node_tests.root_module.linkSystemLibrary(lib, .{});
-    }
-    const run_node_tests = b.addRunArtifact(node_tests);
-    test_step.dependOn(&run_node_tests.step);
-    b.step("test-node", "Test the compositor's own scene nodes").dependOn(&run_node_tests.step);
-
-    const projection_tests = b.addExecutable(.{
-        .name = "projection-tests",
-        .root_module = b.createModule(.{ .target = target, .optimize = .Debug, .link_libc = true }),
-    });
-    projection_tests.root_module.addCSourceFile(.{ .file = b.path("src/projection_test.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    projection_tests.root_module.addCSourceFile(.{ .file = b.path("src/scene_damage.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    projection_tests.root_module.addCSourceFile(.{ .file = b.path("src/scene_outputs.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    projection_tests.root_module.addCSourceFile(.{ .file = b.path("src/node.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    inline for (.{ "wlroots-0.20", "wayland-server", "pixman-1" }) |lib| {
-        projection_tests.root_module.linkSystemLibrary(lib, .{});
-    }
-    const run_projection_tests = b.addRunArtifact(projection_tests);
-    test_step.dependOn(&run_projection_tests.step);
-    b.step("test-projection", "Test projected damage with headless scene outputs").dependOn(&run_projection_tests.step);
-
-    const glass_tests = b.addExecutable(.{
-        .name = "glass-tests",
-        .root_module = b.createModule(.{ .target = target, .optimize = .Debug, .link_libc = true }),
-    });
-    glass_tests.root_module.addCSourceFile(.{ .file = b.path("src/glass_test.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    inline for (.{ "wlroots-0.20", "wayland-server", "pixman-1", "egl", "glesv2" }) |lib| {
-        glass_tests.root_module.linkSystemLibrary(lib, .{});
-    }
-    glass_tests.root_module.addCSourceFile(.{ .file = b.path("src/projection.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra" } });
-    glass_tests.root_module.addCSourceFile(.{ .file = b.path("src/scene_damage.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    glass_tests.root_module.addCSourceFile(.{ .file = b.path("src/scene_outputs.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    glass_tests.root_module.addCSourceFile(.{ .file = b.path("src/node.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    const run_glass_tests = b.addRunArtifact(glass_tests);
-    run_glass_tests.setEnvironmentVariable("WLR_RENDERER", "gles2");
-    b.step("test-glass", "Test the glass registry and its geometry in the graph (no GPU)").dependOn(&run_glass_tests.step);
-    // Stage 1 spike of docs/plans/scene-graph.md: the owned pass's primitives, pixel-tested.
-    const pass_spike_tests = b.addExecutable(.{
-        .name = "pass-spike-tests",
-        .root_module = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true }),
-    });
-    pass_spike_tests.root_module.addCSourceFile(.{ .file = b.path("src/pass_spike_test.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra" } });
-    inline for (.{ "wlroots-0.20", "wayland-server", "pixman-1", "egl", "glesv2" }) |lib| {
-        pass_spike_tests.root_module.linkSystemLibrary(lib, .{});
-    }
-    const run_pass_spike_tests = b.addRunArtifact(pass_spike_tests);
-    run_pass_spike_tests.setEnvironmentVariable("WLR_RENDERER", "gles2");
-    b.step("test-pass-spike", "Run the owned-pass spike's pixel gates on a headless GLES2 renderer").dependOn(&run_pass_spike_tests.step);
-    const scene_pass_tests = b.addExecutable(.{
-        .name = "scene-pass-tests",
-        .root_module = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true }),
-    });
-    scene_pass_tests.root_module.addCSourceFile(.{ .file = b.path("src/scene_pass_test.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    inline for (.{ "wlroots-0.20", "wayland-server", "pixman-1", "egl", "glesv2", "gbm" }) |lib| {
-        scene_pass_tests.root_module.linkSystemLibrary(lib, .{});
-    }
-    const run_scene_pass_tests = b.addRunArtifact(scene_pass_tests);
-    run_scene_pass_tests.setEnvironmentVariable("WLR_RENDERER", "gles2");
-    b.step("test-scene-pass", "Compare the owned GLES2 pass with wlroots on a headless renderer").dependOn(&run_scene_pass_tests.step);
-    const run_glass_damage_tests = b.addRunArtifact(glass_tests);
-    b.step("test-glass-damage", "Same as test-glass (kept for scripts)").dependOn(&run_glass_damage_tests.step);
-    test_step.dependOn(&run_glass_damage_tests.step);
+    tests.addC(ctx, zig_tests.test_step);
 
     const run_cmd = b.addRunArtifact(compositor);
     // The development run target is always nested in the current Wayland session.
@@ -934,134 +253,4 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| run_cmd.addArgs(args);
     const run_step = b.step("run", "Run the nested compositor (pass a client command after --)");
     run_step.dependOn(&run_cmd.step);
-}
-
-fn usePrivateWlroots(b: *std.Build, prefix: []const u8) void {
-    prependEnvPath(b, "PKG_CONFIG_PATH", b.fmt("{s}/lib/pkgconfig:{s}/share/pkgconfig", .{ prefix, prefix }));
-    // Tests and `zig build run` execute from the cache, where the installed
-    // RUNPATH doesn't reach lib/rediwm.
-    prependEnvPath(b, "LD_LIBRARY_PATH", b.pathJoin(&.{ prefix, "runtime" }));
-}
-
-fn prependEnvPath(b: *std.Build, key: []const u8, dirs: []const u8) void {
-    const env = &b.graph.environ_map;
-    const value = if (env.get(key)) |prev| b.fmt("{s}:{s}", .{ dirs, prev }) else dirs;
-    env.put(key, value) catch @panic("OOM");
-}
-
-fn addBass(b: *std.Build, module: *std.Build.Module) void {
-    module.linkSystemLibrary("libpipewire-0.3", .{});
-    module.addCSourceFile(.{ .file = b.path("src/audio/bass.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra" } });
-}
-
-/// The bass boost DSP, a LADSPA plugin that bass.c loads into its
-/// filter-chain from lib/rediwm/ladspa next to the binaries.
-fn addBassDsp(b: *std.Build, target: std.Build.ResolvedTarget) void {
-    const dsp = b.addLibrary(.{
-        .name = "rediwm-bass",
-        .linkage = .dynamic,
-        // Realtime audio code: optimized in every build mode, and no UBSan
-        // runtime for PipeWire's dlopen to resolve.
-        .root_module = b.createModule(.{ .target = target, .optimize = .ReleaseFast, .link_libc = true, .sanitize_c = .off }),
-    });
-    dsp.root_module.addCSourceFile(.{ .file = b.path("src/audio/bass_dsp.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra" } });
-    dsp.root_module.linkSystemLibrary("m", .{});
-    b.getInstallStep().dependOn(&b.addInstallArtifact(dsp, .{
-        .dest_dir = .{ .override = .lib },
-        .dest_sub_path = "rediwm/ladspa/rediwm-bass.so",
-        .dylib_symlinks = false,
-    }).step);
-}
-
-fn addGlass(b: *std.Build, module: *std.Build.Module, damage_audit: bool) void {
-    module.linkSystemLibrary("wlroots-0.20", .{});
-    module.linkSystemLibrary("egl", .{});
-    module.linkSystemLibrary("glesv2", .{});
-    module.addCSourceFile(.{ .file = b.path("src/projection.c"), .flags = if (damage_audit) &.{ "-std=c11", "-Wall", "-Wextra", "-DREDIWM_DAMAGE_AUDIT" } else &.{ "-std=c11", "-Wall", "-Wextra" } });
-    module.addCSourceFile(.{ .file = b.path("src/node.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    module.addCSourceFile(.{ .file = b.path("src/node_surface.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    module.addCSourceFile(.{ .file = b.path("src/scene_outputs.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    module.addCSourceFile(.{ .file = b.path("src/scene_pass.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    module.addCSourceFile(.{ .file = b.path("src/scene_output.c"), .flags = if (damage_audit) &.{ "-std=c11", "-Wall", "-Wextra", "-Werror", "-DREDIWM_DAMAGE_AUDIT" } else &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    module.addCSourceFile(.{ .file = b.path("src/scene_damage.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    module.addCSourceFile(.{ .file = b.path("src/glass.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra" } });
-    module.addCSourceFile(.{ .file = b.path("src/explicit_sync.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    module.addCSourceFile(.{ .file = b.path("src/extra_protocols.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-}
-
-// ui/ and text.zig for the Cairo clients (Files, Images, the share picker):
-// bundled fonts and glyphs, and what text.zig and shell_icons.zig link.
-// Files' thumbnails decode JPEG and PNG with libjpeg and libpng directly:
-// GdkPixbuf routes them through sandboxed loader processes, ~10x slower.
-fn addThumbCodec(b: *std.Build, module: *std.Build.Module) void {
-    module.addIncludePath(b.path("src/files"));
-    module.addCSourceFile(.{ .file = b.path("src/files/thumb_codec.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    inline for (.{ "libjpeg", "libpng16" }) |lib| module.linkSystemLibrary(lib, .{});
-}
-
-// Pinned, Files-only emulator. No dependency on the compositor or distro ABI.
-fn addFilesTerminal(b: *std.Build, module: *std.Build.Module, for_tests: bool) void {
-    const vterm = b.dependency("vterm", .{});
-    module.addIncludePath(vterm.path("include"));
-    module.addIncludePath(vterm.path("src"));
-    module.addCSourceFiles(.{ .root = vterm.path("src"), .files = &.{ "encoding.c", "keyboard.c", "mouse.c", "parser.c", "pen.c", "screen.c", "state.c", "unicode.c", "vterm.c" }, .flags = &.{ "-std=c99", "-DNDEBUG" } });
-    module.addIncludePath(b.path("src/files/terminal"));
-    const flags: []const []const u8 = if (for_tests) &.{ "-std=c11", "-Wall", "-Wextra", "-Werror", "-DFT_TEST" } else &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" };
-    module.addCSourceFile(.{ .file = b.path("src/files/terminal/engine.c"), .flags = flags });
-    module.linkSystemLibrary("util", .{});
-}
-
-fn addVolumes(b: *std.Build, module: *std.Build.Module) void {
-    module.addIncludePath(b.path("src/files"));
-    module.addCSourceFile(.{ .file = b.path("src/files/volumes.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    inline for (.{ "gio-2.0", "gobject-2.0", "glib-2.0" }) |lib| module.linkSystemLibrary(lib, .{});
-}
-
-fn addShellUi(b: *std.Build, module: *std.Build.Module) void {
-    addShellIcons(b, module);
-    module.addAnonymousImport("manrope", .{ .root_source_file = b.path("assets/fonts/Manrope-VariableFont_wght.ttf") });
-    module.addAnonymousImport("jetbrains_mono_regular", .{ .root_source_file = b.path("assets/fonts/JetBrainsMono-Regular.ttf") });
-    module.addAnonymousImport("jetbrains_mono_bold", .{ .root_source_file = b.path("assets/fonts/JetBrainsMono-Bold.ttf") });
-    inline for (.{ "cairo", "librsvg-2.0", "freetype2", "harfbuzz", "fontconfig" }) |lib| module.linkSystemLibrary(lib, .{});
-}
-
-// Bundle shell glyphs so installed binaries never depend on the checkout.
-fn addShellIcons(b: *std.Build, module: *std.Build.Module) void {
-    module.addAnonymousImport("redi-logo", .{ .root_source_file = b.path("assets/redi-logo.svg") });
-    module.addAnonymousImport("rediwm-settings-icon", .{ .root_source_file = b.path("assets/icons/rediwm-settings.png") });
-    inline for (.{ "git-branch", "home", "folder", "terminal", "settings", "keyboard", "edit", "mouse", "display", "music", "headphones", "wifi", "ethernet", "globe", "bluetooth", "battery", "notification-bell", "speaker", "speaker-xmark", "power-button", "clock", "lock", "logout", "restart", "eye", "eye-off", "refresh", "cut", "copy", "paste", "trash-outline", "trash", "view-grid", "view-list", "sort", "filter", "zoom-in", "zoom-out", "rotate", "crop", "undo", "save", "fit", "print", "open", "usb-stick", "drive", "eject", "users", "squares" }) |name| {
-        module.addAnonymousImport("shell-icon-" ++ name, .{ .root_source_file = b.path("assets/icons/" ++ name ++ ".svg") });
-    }
-}
-
-/// Localize installed metadata from the same reviewed catalog entries as UI.
-fn localizedData(b: *std.Build, tool: *std.Build.Step.Compile, path: []const u8) std.Build.LazyPath {
-    const run = b.addRunArtifact(tool);
-    run.setCwd(b.path("."));
-    run.addArg("data");
-    run.addFileArg(b.path(path));
-    const result = run.addOutputFileArg(std.fs.path.basename(path));
-    run.addDirectoryArg(b.path("po"));
-    addCatalogInputs(b, run);
-    return result;
-}
-
-/// Directory arguments alone do not hash their contents. Track every catalog
-/// explicitly so edits, review flags and newly added languages invalidate both
-/// compiled UI tables and installed desktop/polkit metadata.
-fn addCatalogInputs(b: *std.Build, run: *std.Build.Step.Run) void {
-    var dir = b.build_root.handle.openDir(b.graph.io, "po", .{ .iterate = true }) catch @panic("cannot open po/");
-    defer dir.close(b.graph.io);
-    var paths: std.ArrayList([]const u8) = .empty;
-    var it = dir.iterate();
-    while (it.next(b.graph.io) catch @panic("cannot read po/")) |entry| {
-        if (entry.kind != .file) continue;
-        if (std.mem.endsWith(u8, entry.name, ".po") or std.mem.eql(u8, entry.name, "rediwm.pot")) paths.append(b.allocator, b.fmt("po/{s}", .{entry.name})) catch @panic("OOM");
-    }
-    std.mem.sort([]const u8, paths.items, {}, struct {
-        fn less(_: void, left: []const u8, right: []const u8) bool {
-            return std.mem.lessThan(u8, left, right);
-        }
-    }.less);
-    for (paths.items) |path| run.addFileInput(b.path(path));
 }

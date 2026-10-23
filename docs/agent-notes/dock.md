@@ -1,10 +1,11 @@
 # Dock implementation notes
 
-Read when changing `src/Dock.zig`, `src/dock_drag.zig`, or their output,
+Read when changing `src/Dock.zig` (its methods are in `src/dock/`: reveal,
+items, paint, pointer, pins), `src/dock_drag.zig`, or their output,
 taskbar, OSD and input integration. General rules remain in
 [AGENTS.md](../../AGENTS.md); integration coverage is in `tests/dock.py`.
 
-* **The dock repaints cells, not itself** (`Dock.zig`). It keeps its last
+* **The dock repaints cells, not itself** (`dock/paint.zig`). It keeps its last
   raster and, when only some items' looks changed (hover zoom, pills), clears
   and repaints just their `itemCell`s (each item at the largest hover zoom, across
   the dock's thickness) under a clip, publishing that damage alone. Dock-wide
@@ -54,7 +55,7 @@ taskbar, OSD and input integration. General rules remain in
   ones: a press arms, motion past a threshold starts, and starting rebuilds the
   menu so its release is no click. A pinned icon acts on release (`Dock.clickPin`)
   so a drag can start from it. Closing the menu or Escape (`cancelDrag`; for a
-  dock icon `Keyboard.zig` takes it ahead of every shell panel, for a menu app
+  dock icon `keyboard/process.zig` takes it ahead of every shell panel, for a menu app
   before the menu's own Escape) abandons it. A dock
   holds resolved pins as copies (`pin_arena`); `config_index` maps a slot back
   into `dock_pinned_apps`, which also lists apps no longer installed.

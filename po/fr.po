@@ -136,7 +136,7 @@ msgstr "Un périphérique caractère correspondant existe ; l'accès par le mot
 msgid "A printer with this queue name already exists. Choose another name."
 msgstr "Une imprimante utilise déjà ce nom de file. Choisissez un autre nom."
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_add.zig
 msgid "A raw queue passes commands unchanged; ordinary PDF printing needs a compatible driver."
 msgstr "Une file brute transmet les commandes sans modification ; l'impression PDF habituelle nécessite un pilote compatible."
 
@@ -152,7 +152,7 @@ msgstr "APPARENCE"
 msgid "Aborted"
 msgstr "Abandonné"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Accept jobs"
 msgstr "Accepter les tâches"
 
@@ -240,7 +240,7 @@ msgstr "Ajout aux applications…"
 msgid "Additional setup required"
 msgstr "Configuration supplémentaire nécessaire"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_add.zig
 msgid "Address checks support IPP printers. Other connections can be tested with an explicit print after setup."
 msgstr "La vérification d'adresse prend en charge les imprimantes IPP. Les autres connexions peuvent être testées par une impression explicitement lancée après la configuration."
 
@@ -316,11 +316,11 @@ msgstr "Vitesse des animations"
 msgid "Animations"
 msgstr "Animations"
 
-#: src/session/power.zig
+#: src/session/power_requests.zig
 msgid "Another power action is already in progress."
 msgstr "Une autre action d'alimentation est déjà en cours."
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_rows.zig
 msgid "App colors"
 msgstr "Couleurs des applications"
 
@@ -344,7 +344,7 @@ msgstr "Impossible de démarrer l'application"
 msgid "Application language"
 msgstr "Langue des applications"
 
-#: src/start_menu/panel.zig
+#: src/dock/items.zig
 msgid "Applications"
 msgstr "Applications"
 
@@ -352,7 +352,7 @@ msgstr "Applications"
 msgid "Applies to output edges and the space between automatic tiles."
 msgstr "S'applique aux bords de l'écran et aux espaces entre les fenêtres disposées automatiquement."
 
-#: src/images/app.zig
+#: src/images/app_render.zig
 msgid "Apply"
 msgstr "Appliquer"
 
@@ -364,19 +364,19 @@ msgstr "Appliquer les couleurs GTK"
 msgid "Apply Qt colors"
 msgstr "Appliquer les couleurs Qt"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_add.zig
 msgid "Apply connection"
 msgstr "Appliquer la connexion"
 
-#: src/images/app.zig
+#: src/images/app_render.zig
 msgid "Apply crop"
 msgstr "Appliquer le recadrage"
 
-#: src/images/app.zig
+#: src/images/app_render.zig
 msgid "Apply crop · Enter"
 msgstr "Appliquer le recadrage · Entrée"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Apply value"
 msgstr "Appliquer la valeur"
 
@@ -388,11 +388,11 @@ msgstr "Application des couleurs…"
 msgid "Applying printer change; authorization may be required…"
 msgstr "Application de la modification de l'imprimante ; une autorisation peut être nécessaire…"
 
-#: src/start_menu/panel.zig
+#: src/start_menu/menu_tree.zig
 msgid "Apps"
 msgstr "Applis"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_rows.zig
 msgid "Apps and web pages"
 msgstr "Applications et pages web"
 
@@ -448,7 +448,7 @@ msgstr "Audio (A2DP) · Audio haute qualité"
 msgid "Audio Settings"
 msgstr "Paramètres audio"
 
-#: src/control_center/panel.zig
+#: src/control_center/search_index.zig
 msgid "Audio output"
 msgstr "Sortie audio"
 
@@ -456,11 +456,11 @@ msgstr "Sortie audio"
 msgid "Audio output device"
 msgstr "Périphérique de sortie audio"
 
-#: src/control_center/panel.zig
+#: src/control_center/tree.zig
 msgid "Audio settings"
 msgstr "Paramètres audio"
 
-#: src/control_center/panel.zig
+#: src/control_center/sections/sound.zig
 msgid "Audio unavailable"
 msgstr "Audio indisponible"
 
@@ -484,7 +484,7 @@ msgstr "Authentification"
 msgid "Authentication failed."
 msgstr "Échec de l'authentification."
 
-#: src/polkit/dialog.zig
+#: src/polkit/agent.zig
 msgid "Authentication failed. Please try again."
 msgstr "Échec de l'authentification. Réessayez."
 
@@ -496,7 +496,7 @@ msgstr "Authentification nécessaire"
 msgid "Authentication service unavailable."
 msgstr "Service d'authentification indisponible."
 
-#: src/session/lock.zig
+#: src/session/lock_input.zig
 msgid "Authentication unavailable. Try again."
 msgstr "Authentification indisponible. Réessayez."
 
@@ -504,7 +504,7 @@ msgstr "Authentification indisponible. Réessayez."
 msgid "Authentication was cancelled or denied."
 msgstr "L'authentification a été annulée ou refusée."
 
-#: src/systemd.zig
+#: src/systemd/actions.zig
 msgid "Authentication was cancelled or denied. Notify setting is unchanged."
 msgstr "L'authentification a été annulée ou refusée. Le réglage Notify reste inchangé."
 
@@ -516,7 +516,7 @@ msgstr "Autoriser l'administration des imprimantes"
 msgid "Auto"
 msgstr "Automatique"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "Auto-hide dock"
 msgstr "Masquer automatiquement le dock"
 
@@ -556,7 +556,7 @@ msgstr "Retour"
 msgid "Back to recommended apps"
 msgstr "Revenir aux applications recommandées"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Backend"
 msgstr "Moteur"
 
@@ -584,7 +584,7 @@ msgstr "Renforcement des basses"
 msgid "Black and white"
 msgstr "Noir et blanc"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_tools.zig
 msgid "Blank or no output"
 msgstr "Page blanche ou aucune sortie"
 
@@ -592,19 +592,19 @@ msgstr "Page blanche ou aucune sortie"
 msgid "Blocked"
 msgstr "Bloqué"
 
-#: src/session/power.zig
+#: src/session/power_requests.zig
 msgid "Blocked by an active inhibitor lock."
 msgstr "Bloqué par un verrou d'inhibition actif."
 
-#: src/session/power.zig
+#: src/session/power_requests.zig
 msgid "Blocked by an application."
 msgstr "Bloqué par une application."
 
-#: src/session/power.zig
+#: src/session/power_requests.zig
 msgid "Blocked by {application}."
 msgstr "Bloqué par {application}."
 
-#: src/session/power.zig
+#: src/session/power_requests.zig
 msgid "Blocked by {application}: {reason}"
 msgstr "Bloqué par {application} : {reason}"
 
@@ -628,7 +628,7 @@ msgstr "Le service Bluetooth est indisponible"
 msgid "Bold clock"
 msgstr "Horloge en gras"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "Bold clock text"
 msgstr "Texte de l'horloge en gras"
 
@@ -636,7 +636,7 @@ msgstr "Texte de l'horloge en gras"
 msgid "Boost window"
 msgstr "Mettre la fenêtre en évidence"
 
-#: src/systemd.zig
+#: src/systemd/live.zig
 msgid "Boot summary is unavailable."
 msgstr "Le résumé du démarrage est indisponible."
 
@@ -652,7 +652,7 @@ msgstr "Démarrage : depuis le lancement du noyau. Les temps d'activation peuve
 msgid "Border glow"
 msgstr "Lueur de la bordure"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "Bottom"
 msgstr "En bas"
 
@@ -672,11 +672,11 @@ msgstr "En bas à droite"
 msgid "Branch name cannot be empty"
 msgstr "Le nom de branche ne peut pas être vide"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_rows.zig
 msgid "Brief placeholder while apps start"
 msgstr "Bref indicateur au démarrage des applications"
 
-#: src/control_center/panel.zig
+#: src/control_center/search_index.zig
 msgid "Brightness"
 msgstr "Luminosité"
 
@@ -696,11 +696,11 @@ msgstr "Lien cassé"
 msgid "Browser"
 msgstr "Navigateur"
 
-#: src/images/app.zig
+#: src/images/app_render.zig
 msgid "C: crop · Ctrl+S: save · Delete: trash"
 msgstr "C : recadrer · Ctrl+S : enregistrer · Suppr : corbeille"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "CENTER"
 msgstr "CENTRE"
 
@@ -712,11 +712,11 @@ msgstr "CPU %"
 msgid "CPU: 100% = one core · Memory: resident · Ctrl+F search · Delete end · Shift+Delete force quit"
 msgstr "CPU : 100 % = un cœur · Mémoire : résidente · Ctrl+F : rechercher · Suppr : terminer · Maj+Suppr : forcer l'arrêt"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "CUPS"
 msgstr "CUPS"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_actions.zig
 msgid "CUPS accepted the change; the resulting driver value could not be verified."
 msgstr "CUPS a accepté la modification ; la valeur résultante du pilote n'a pas pu être vérifiée."
 
@@ -740,7 +740,7 @@ msgstr "CUPS ne peut pas respecter les réglages d'impression demandés. Vérifi
 msgid "CUPS completed the job with zero sheets reported; physical output is not confirmed."
 msgstr "CUPS a terminé la tâche en signalant zéro feuille ; la sortie physique n'est pas confirmée."
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "CUPS copies the queue and removes its old identifier. Finish all jobs first. Check the resulting driver options afterwards."
 msgstr "CUPS copie la file et supprime son ancien identifiant. Terminez d'abord toutes les tâches. Vérifiez ensuite les options du pilote."
 
@@ -828,15 +828,15 @@ msgstr "Annuler (C)"
 msgid "Cancel Pairing"
 msgstr "Annuler l'association"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Cancel job"
 msgstr "Annuler la tâche"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_add.zig
 msgid "Cancel setup"
 msgstr "Annuler la configuration"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_tools.zig
 msgid "Cancel test"
 msgstr "Annuler le test"
 
@@ -860,7 +860,7 @@ msgstr "Annulation de l'opération…"
 msgid "Cannot divide by zero"
 msgstr "Division par zéro impossible"
 
-#: src/files/main.zig
+#: src/files/client_dnd.zig
 msgid "Cannot drop a folder into itself"
 msgstr "Impossible de déposer un dossier dans lui-même"
 
@@ -868,7 +868,7 @@ msgstr "Impossible de déposer un dossier dans lui-même"
 msgid "Cannot insert paths containing control characters"
 msgstr "Impossible d'insérer des chemins contenant des caractères de contrôle"
 
-#: src/session/lock.zig
+#: src/session/lock_input.zig
 msgid "Cannot reach login service. Try again."
 msgstr "Impossible de joindre le service de connexion. Réessayez."
 
@@ -900,7 +900,7 @@ msgstr "Taille du canevas"
 msgid "Canvas · RediWM preset"
 msgstr "Canevas · Préréglage RediWM"
 
-#: src/session/lock.zig
+#: src/session/lock_view.zig
 msgid "Caps Lock is on"
 msgstr "Verr. Maj est activé"
 
@@ -920,7 +920,7 @@ msgstr "Centrer"
 msgid "Change Wallpaper"
 msgstr "Changer le fond d'écran"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Change connection…"
 msgstr "Modifier la connexion…"
 
@@ -932,15 +932,15 @@ msgstr "Changer le mot de passe · {name}"
 msgid "Change password…"
 msgstr "Changer le mot de passe…"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_add.zig
 msgid "Change printer connection"
 msgstr "Modifier la connexion de l'imprimante"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Change queue identifier…"
 msgstr "Modifier l'identifiant de la file…"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Change this queue identifier"
 msgstr "Modifier l'identifiant de cette file"
 
@@ -948,7 +948,7 @@ msgstr "Modifier l'identifiant de cette file"
 msgid "Change window depth."
 msgstr "Modifier la profondeur de la fenêtre."
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Change {old} to {name}?"
 msgstr "Remplacer {old} par {name} ?"
 
@@ -972,7 +972,7 @@ msgstr "Modifie le calendrier de la barre des tâches."
 msgid "Charging"
 msgstr "En charge"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_add.zig
 msgid "Check IPP address"
 msgstr "Vérifier l'adresse IPP"
 
@@ -980,7 +980,7 @@ msgstr "Vérifier l'adresse IPP"
 msgid "Check NSS and /etc/login.defs."
 msgstr "Vérifiez NSS et /etc/login.defs."
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_tools.zig
 msgid "Check measured scale"
 msgstr "Vérifier l'échelle mesurée"
 
@@ -1020,7 +1020,7 @@ msgstr "Vérifiez le motif signalé pour la tâche avant de réessayer."
 msgid "Check the physical output and any document or filter failure; sheet counters can be incomplete."
 msgstr "Vérifiez la sortie physique et tout échec du document ou des filtres ; les compteurs de feuilles peuvent être incomplets."
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_tools.zig
 msgid "Check the printer's self-test sheet for its language and real resolution."
 msgstr "Consultez la page d'autotest de l'imprimante pour connaître son langage et sa résolution réelle."
 
@@ -1036,11 +1036,11 @@ msgstr "Vérifiez le pilote usblp et le chemin de périphérique de la file ; l
 msgid "Checked apps open floating. Super+V can override placement for a window. Dialogs and fixed-size windows float automatically."
 msgstr "Les applications cochées s'ouvrent en mode flottant. Super+V change le placement d'une fenêtre. Les dialogues et les fenêtres de taille fixe flottent automatiquement."
 
-#: src/control_center/panel.zig
+#: src/control_center/tree.zig
 msgid "Checking backlight…"
 msgstr "Vérification du rétroéclairage…"
 
-#: src/session/lock.zig
+#: src/session/lock_input.zig
 msgid "Checking password…"
 msgstr "Vérification du mot de passe…"
 
@@ -1048,7 +1048,7 @@ msgstr "Vérification du mot de passe…"
 msgid "Checking printer administration…"
 msgstr "Vérification de l'administration des imprimantes…"
 
-#: src/session/lock.zig
+#: src/session/lock_input.zig
 msgid "Checking…"
 msgstr "Vérification…"
 
@@ -1060,11 +1060,11 @@ msgstr "Choisir un dossier"
 msgid "Choose Start button logo"
 msgstr "Choisir le logo du bouton de démarrage"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_add.zig
 msgid "Choose a driver…"
 msgstr "Choisir un pilote…"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_tools.zig
 msgid "Choose a language from the self-test sheet or try one sample. Record the outcome before choosing another language."
 msgstr "Choisissez un langage indiqué par la page d'autotest ou essayez un échantillon. Notez le résultat avant de choisir un autre langage."
 
@@ -1096,7 +1096,7 @@ msgstr "Choisir les fichiers"
 msgid "Choose files to download"
 msgstr "Choisir les fichiers à télécharger"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "Choose file…"
 msgstr "Choisir un fichier…"
 
@@ -1144,7 +1144,7 @@ msgstr "Classique (superposition)"
 msgid "Clear search"
 msgstr "Effacer la recherche"
 
-#: src/editor/app.zig
+#: src/editor/app_input.zig
 msgid "Clipboard selections are limited to 1 MiB."
 msgstr "Les sélections du presse-papiers sont limitées à 1 Mio."
 
@@ -1152,11 +1152,11 @@ msgstr "Les sélections du presse-papiers sont limitées à 1 Mio."
 msgid "Clipboard text is invalid or too long"
 msgstr "Le texte du presse-papiers est invalide ou trop long"
 
-#: src/files/main.zig
+#: src/files/client_clipboard.zig
 msgid "Clipboard transfer failed or exceeded 1 MiB"
 msgstr "Échec du transfert du presse-papiers ou dépassement de 1 Mio"
 
-#: src/files/main.zig
+#: src/files/client_clipboard.zig
 msgid "Clipboard transfer timed out"
 msgstr "Le délai du transfert du presse-papiers a expiré"
 
@@ -1184,7 +1184,7 @@ msgstr "Fermer l'onglet"
 msgid "Close terminal session?"
 msgstr "Fermer la session du terminal ?"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_tools.zig
 msgid "Close test result"
 msgstr "Fermer le résultat du test"
 
@@ -1212,7 +1212,7 @@ msgstr "Température des couleurs"
 msgid "Colour"
 msgstr "Couleur"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Colour: {colour}"
 msgstr "Couleur : {colour}"
 
@@ -1288,7 +1288,7 @@ msgstr "Connecté à CUPS."
 msgid "Connected · Saved"
 msgstr "Connecté · Enregistré"
 
-#: src/network/manager.zig
+#: src/network/manager_actions.zig
 msgid "Connecting Ethernet…"
 msgstr "Connexion Ethernet…"
 
@@ -1304,11 +1304,11 @@ msgstr "Connexion"
 msgid "Connection failed"
 msgstr "Échec de la connexion"
 
-#: src/network/manager.zig
+#: src/network/manager_objects.zig
 msgid "Connection failed. Check the password and try again."
 msgstr "Échec de la connexion. Vérifiez le mot de passe et réessayez."
 
-#: src/session/lock.zig
+#: src/session/lock_view.zig
 msgid "Continue"
 msgstr "Continuer"
 
@@ -1326,7 +1326,7 @@ msgstr[1] "{count} éléments copiés"
 msgid "Copy"
 msgstr "Copier"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Copy diagnostic report"
 msgstr "Copier le rapport de diagnostic"
 
@@ -1374,7 +1374,7 @@ msgstr "Impossible d'appliquer l'option d'imprimante."
 msgid "Could not apply this choice. Please try again."
 msgstr "Impossible d'appliquer ce choix. Réessayez."
 
-#: src/session/power.zig
+#: src/session/power_requests.zig
 msgid "Could not build the request."
 msgstr "Impossible de construire la requête."
 
@@ -1390,11 +1390,11 @@ msgstr "Impossible d'effacer la valeur par défaut canonique personnalisée."
 msgid "Could not connect to Transfers"
 msgstr "Impossible de se connecter à Transferts"
 
-#: src/systemd.zig
+#: src/systemd/bus.zig
 msgid "Could not connect to systemd."
 msgstr "Impossible de se connecter à systemd."
 
-#: src/images/app.zig
+#: src/images/app_edit.zig
 msgid "Could not crop this selection."
 msgstr "Impossible de recadrer cette sélection."
 
@@ -1402,7 +1402,7 @@ msgstr "Impossible de recadrer cette sélection."
 msgid "Could not delete all items"
 msgstr "Impossible de supprimer tous les éléments"
 
-#: src/images/app.zig
+#: src/images/app_dialogs.zig
 msgid "Could not delete. The file was kept."
 msgstr "Impossible de supprimer. Le fichier a été conservé."
 
@@ -1422,7 +1422,7 @@ msgstr "Impossible d'extraire l'archive"
 msgid "Could not load applications"
 msgstr "Impossible de charger les applications"
 
-#: src/systemd.zig
+#: src/systemd/live.zig
 msgid "Could not load services. Try Refresh."
 msgstr "Impossible de charger les services. Essayez d'actualiser."
 
@@ -1434,7 +1434,7 @@ msgstr "Impossible de monter {name}"
 msgid "Could not move all items to Trash"
 msgstr "Impossible de déplacer tous les éléments vers la corbeille"
 
-#: src/images/app.zig
+#: src/images/app_dialogs.zig
 msgid "Could not move to Trash. The file was kept."
 msgstr "Impossible de déplacer vers la corbeille. Le fichier a été conservé."
 
@@ -1486,7 +1486,7 @@ msgstr "Impossible d'ouvrir la visionneuse d'images"
 msgid "Could not open new window"
 msgstr "Impossible d'ouvrir une nouvelle fenêtre"
 
-#: src/images/app.zig
+#: src/images/app_input.zig
 msgid "Could not open the delete dialog."
 msgstr "Impossible d'ouvrir le dialogue de suppression."
 
@@ -1494,7 +1494,7 @@ msgstr "Impossible d'ouvrir le dialogue de suppression."
 msgid "Could not open the file chooser."
 msgstr "Impossible d'ouvrir le sélecteur de fichiers."
 
-#: src/systemd.zig
+#: src/systemd/actions.zig
 msgid "Could not open the service edit for authorization."
 msgstr "Impossible d'ouvrir la modification du service pour autorisation."
 
@@ -1510,19 +1510,19 @@ msgstr "Impossible de préparer le mot de passe. Réessayez."
 msgid "Could not prepare the group update."
 msgstr "Impossible de préparer la modification des groupes."
 
-#: src/session/power.zig
+#: src/session/power_requests.zig
 msgid "Could not query logind."
 msgstr "Impossible d'interroger logind."
 
-#: src/session/power.zig
+#: src/session/power_requests.zig
 msgid "Could not reach logind."
 msgstr "Impossible de joindre logind."
 
-#: src/session/power.zig
+#: src/session/power_bus.zig
 msgid "Could not reach the system's power service."
 msgstr "Impossible de joindre le service d'alimentation du système."
 
-#: src/network/manager.zig
+#: src/network/manager_objects.zig
 msgid "Could not read Wi-Fi networks"
 msgstr "Impossible de lire les réseaux Wi-Fi"
 
@@ -1550,11 +1550,11 @@ msgstr "Impossible de lire les fichiers récents"
 msgid "Could not read the AppImage's application details"
 msgstr "Impossible de lire les détails de l'application dans l'AppImage"
 
-#: src/files/main.zig
+#: src/files/client_dnd.zig
 msgid "Could not read the dropped items"
 msgstr "Impossible de lire les éléments déposés"
 
-#: src/images/app.zig
+#: src/images/app_thumbs.zig
 msgid "Could not read this image"
 msgstr "Impossible de lire cette image"
 
@@ -1562,11 +1562,11 @@ msgstr "Impossible de lire cette image"
 msgid "Could not request CUPS start."
 msgstr "Impossible de demander le démarrage de CUPS."
 
-#: src/systemd.zig
+#: src/systemd/requests.zig
 msgid "Could not request authentication. Check that polkit is running."
 msgstr "Impossible de demander l'authentification. Vérifiez que polkit est actif."
 
-#: src/images/app.zig
+#: src/images/app_input.zig
 msgid "Could not rotate: not enough memory."
 msgstr "Rotation impossible : mémoire insuffisante."
 
@@ -1574,7 +1574,7 @@ msgstr "Rotation impossible : mémoire insuffisante."
 msgid "Could not run git"
 msgstr "Impossible d'exécuter git"
 
-#: src/systemd.zig
+#: src/systemd/actions.zig
 msgid "Could not save Notify. Service editing requires systemd 256 or newer."
 msgstr "Impossible d'enregistrer Notify. La modification des services nécessite systemd 256 ou plus récent."
 
@@ -1626,7 +1626,7 @@ msgstr "Impossible d'enregistrer votre disposition. Réessayez."
 msgid "Could not save. Check the configuration file and try again."
 msgstr "Échec de l'enregistrement. Vérifiez le fichier de configuration et réessayez."
 
-#: src/images/app.zig
+#: src/images/app_dialogs.zig
 msgid "Could not save. Check the folder and permissions."
 msgstr "Échec de l'enregistrement. Vérifiez le dossier et les permissions."
 
@@ -1638,15 +1638,15 @@ msgstr "Impossible d'envoyer la requête d'administration de l'imprimante."
 msgid "Could not send response. Please try again."
 msgstr "Impossible d'envoyer la réponse. Réessayez."
 
-#: src/network/manager.zig
+#: src/network/manager_actions.zig
 msgid "Could not send the Ethernet request."
 msgstr "Impossible d'envoyer la requête Ethernet."
 
-#: src/network/manager.zig
+#: src/network/manager_actions.zig
 msgid "Could not send the Wi-Fi request"
 msgstr "Impossible d'envoyer la requête Wi-Fi"
 
-#: src/systemd.zig
+#: src/systemd/actions.zig
 msgid "Could not send the service action."
 msgstr "Impossible d'envoyer l'action sur le service."
 
@@ -1662,7 +1662,7 @@ msgstr "Impossible de démarrer l'administration CUPS."
 msgid "Could not start Transfers"
 msgstr "Impossible de démarrer Transferts"
 
-#: src/images/app.zig
+#: src/images/app_dialogs.zig
 msgid "Could not start deleting this file."
 msgstr "Impossible de lancer la suppression de ce fichier."
 
@@ -1670,7 +1670,7 @@ msgstr "Impossible de lancer la suppression de ce fichier."
 msgid "Could not start extraction"
 msgstr "Impossible de lancer l'extraction"
 
-#: src/files/main.zig
+#: src/files/client_input.zig
 msgid "Could not start file drag"
 msgstr "Impossible de lancer le déplacement du fichier"
 
@@ -1678,7 +1678,7 @@ msgstr "Impossible de lancer le déplacement du fichier"
 msgid "Could not start printer diagnostics."
 msgstr "Impossible de démarrer le diagnostic de l'imprimante."
 
-#: src/images/app.zig
+#: src/images/app_dialogs.zig
 msgid "Could not start saving."
 msgstr "Impossible de lancer l'enregistrement."
 
@@ -1686,7 +1686,7 @@ msgstr "Impossible de lancer l'enregistrement."
 msgid "Could not start the authentication request."
 msgstr "Impossible de lancer la demande d'authentification."
 
-#: src/session/power.zig
+#: src/session/power_requests.zig
 msgid "Could not start the power command."
 msgstr "Impossible de lancer la commande d'alimentation."
 
@@ -1694,7 +1694,7 @@ msgstr "Impossible de lancer la commande d'alimentation."
 msgid "Could not start the request."
 msgstr "Impossible de lancer la requête."
 
-#: src/systemd.zig
+#: src/systemd/live.zig
 msgid "Could not subscribe to service updates."
 msgstr "Impossible de s'abonner aux mises à jour des services."
 
@@ -1702,19 +1702,19 @@ msgstr "Impossible de s'abonner aux mises à jour des services."
 msgid "Could not use the device"
 msgstr "Impossible d'utiliser le périphérique"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_add.zig
 msgid "Could not verify existing printers before changing the identifier."
 msgstr "Impossible de vérifier les imprimantes existantes avant de modifier l'identifiant."
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_add.zig
 msgid "Could not verify existing printers. Refresh before creating a queue."
 msgstr "Impossible de vérifier les imprimantes existantes. Actualisez avant de créer une file."
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_add.zig
 msgid "Could not verify the printer's jobs. Refresh before changing its identifier."
 msgstr "Impossible de vérifier les tâches de l'imprimante. Actualisez avant de modifier son identifiant."
 
-#: src/session/power.zig
+#: src/session/power_requests.zig
 msgid "Could not watch the power command."
 msgstr "Impossible de surveiller la commande d'alimentation."
 
@@ -1726,7 +1726,7 @@ msgstr "Impossible d'écrire le fichier extrait (vérifiez l'espace et les permi
 msgid "Could not {operation}: {error}"
 msgstr "Échec de {operation} : {error}"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_add.zig
 msgid "Create printer"
 msgstr "Créer l'imprimante"
 
@@ -1750,11 +1750,11 @@ msgstr "Recadrer"
 msgid "Currency"
 msgstr "Monnaie"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_rows.zig
 msgid "Current font"
 msgstr "Police actuelle"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_rows.zig
 msgid "Current theme"
 msgstr "Thème actuel"
 
@@ -1766,7 +1766,7 @@ msgstr "Actuel : {locale}"
 msgid "Cursor theme"
 msgstr "Thème du curseur"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_rows.zig
 msgid "Custom"
 msgstr "Personnalisé"
 
@@ -1774,7 +1774,7 @@ msgstr "Personnalisé"
 msgid "Custom ({name})"
 msgstr "Personnalisé ({name})"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "Custom size"
 msgstr "Taille personnalisée"
 
@@ -1844,7 +1844,7 @@ msgstr "Réduire la taille de la fenêtre active."
 msgid "Default"
 msgstr "Par défaut"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "Default R logo · PNG or SVG"
 msgstr "Logo R par défaut · PNG ou SVG"
 
@@ -1896,11 +1896,11 @@ msgstr "Supprimer l'utilisateur…"
 msgid "Delete {name}?"
 msgstr "Supprimer {name} ?"
 
-#: src/session/power.zig
+#: src/session/power_capabilities.zig
 msgid "Denied by policy"
 msgstr "Refusé par la politique"
 
-#: src/session/power.zig
+#: src/session/power_requests.zig
 msgid "Denied by system policy."
 msgstr "Refusé par la politique du système."
 
@@ -1948,11 +1948,11 @@ msgstr "Périphérique"
 msgid "Device Settings"
 msgstr "Paramètres du périphérique"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Device node"
 msgstr "Nœud du périphérique"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_tools.zig
 msgid "Did the test produce printed output? CUPS completion alone cannot tell."
 msgstr "Le test a-t-il produit une impression ? La fin d'une tâche CUPS ne suffit pas à le savoir."
 
@@ -1960,7 +1960,7 @@ msgstr "Le test a-t-il produit une impression ? La fin d'une tâche CUPS ne suf
 msgid "Dim inactive windows"
 msgstr "Assombrir les fenêtres inactives"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Disable printer"
 msgstr "Désactiver l'imprimante"
 
@@ -1980,7 +1980,7 @@ msgstr "Désactivé"
 msgid "Disabled shortcut."
 msgstr "Raccourci désactivé."
 
-#: src/editor/app.zig
+#: src/editor/app_paint.zig
 msgid "Discard"
 msgstr "Abandonner"
 
@@ -1992,7 +1992,7 @@ msgstr "Déconnecter"
 msgid "Disconnected"
 msgstr "Déconnecté"
 
-#: src/network/manager.zig
+#: src/network/manager_actions.zig
 msgid "Disconnecting Ethernet…"
 msgstr "Déconnexion Ethernet…"
 
@@ -2008,7 +2008,7 @@ msgstr "Recherche des imprimantes ; une autorisation peut être nécessaire…"
 msgid "Disk wait"
 msgstr "Attente disque"
 
-#: src/control_center/panel.zig
+#: src/control_center/tree.zig
 msgid "Display"
 msgstr "Écran"
 
@@ -2016,7 +2016,7 @@ msgstr "Écran"
 msgid "Display arrangement"
 msgstr "Disposition des écrans"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Display name"
 msgstr "Nom affiché"
 
@@ -2024,7 +2024,7 @@ msgstr "Nom affiché"
 msgid "Display scale"
 msgstr "Échelle de l'écran"
 
-#: src/control_center/panel.zig
+#: src/control_center/tree.zig
 msgid "Display settings"
 msgstr "Paramètres d'écran"
 
@@ -2060,7 +2060,7 @@ msgstr "Hauteur du dock"
 msgid "Dock hover zoom"
 msgstr "Agrandissement du dock au survol"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "Dock hover zoom (1.00× disables)"
 msgstr "Agrandissement du dock au survol (1,00× désactive)"
 
@@ -2072,7 +2072,7 @@ msgstr "Opacité du dock"
 msgid "Dock position"
 msgstr "Position du dock"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "Dock size"
 msgstr "Taille du dock"
 
@@ -2128,11 +2128,11 @@ msgstr "Les téléchargements continuent après la fermeture de Fichiers."
 msgid "Draft"
 msgstr "Brouillon"
 
-#: src/images/app.zig
+#: src/images/app_edit.zig
 msgid "Drag a larger crop selection."
 msgstr "Sélectionnez une plus grande zone à recadrer."
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "Drag an item to reorder it or move it to another section. Switch it off to hide it. Battery appears when available."
 msgstr "Faites glisser un élément pour le réorganiser ou le changer de section. Désactivez-le pour le masquer. La batterie apparaît si elle est disponible."
 
@@ -2144,11 +2144,11 @@ msgstr "Faites glisser les écrans selon leur disposition sur votre bureau. Cliq
 msgid "Drag feedback"
 msgstr "Retour visuel du glissement"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "Drag items here"
 msgstr "Faire glisser des éléments ici"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_rows.zig
 msgid "Drag lift scale"
 msgstr "Échelle de soulèvement au glissement"
 
@@ -2156,7 +2156,7 @@ msgstr "Échelle de soulèvement au glissement"
 msgid "Drag scale"
 msgstr "Échelle pendant le glissement"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "Drag to move"
 msgstr "Faire glisser pour déplacer"
 
@@ -2164,7 +2164,7 @@ msgstr "Faire glisser pour déplacer"
 msgid "Drag to save and copy · Esc to cancel"
 msgstr "Faire glisser pour enregistrer et copier · Échap pour annuler"
 
-#: src/images/app.zig
+#: src/images/app_render.zig
 msgid "Drag to select · Enter: crop · Esc: cancel"
 msgstr "Faire glisser pour sélectionner · Entrée : recadrer · Échap : annuler"
 
@@ -2172,7 +2172,7 @@ msgstr "Faire glisser pour sélectionner · Entrée : recadrer · Échap : ann
 msgid "Dragging stops on release. Edges settle with a short animation."
 msgstr "Le glissement s'arrête au relâchement. Les bords se stabilisent avec une courte animation."
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_add.zig
 msgid "Driver"
 msgstr "Pilote"
 
@@ -2204,7 +2204,7 @@ msgstr "Temps restant : {value} min {value2} s"
 msgid "ETA: {value}s"
 msgstr "Temps restant : {value} s"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_rows.zig
 msgid "Edge glow"
 msgstr "Lueur des bords"
 
@@ -2212,7 +2212,7 @@ msgstr "Lueur des bords"
 msgid "Edit shortcut"
 msgstr "Modifier le raccourci"
 
-#: src/images/app.zig
+#: src/images/app_edit.zig
 msgid "Edits undone."
 msgstr "Modifications annulées."
 
@@ -2268,11 +2268,11 @@ msgstr "Entrée =   Échap effacer   F9 ±   % = ÷100"
 msgid "Enter Password"
 msgstr "Saisir le mot de passe"
 
-#: src/images/app.zig
+#: src/images/app_dialogs.zig
 msgid "Enter a filename or an absolute path."
 msgstr "Saisissez un nom de fichier ou un chemin absolu."
 
-#: src/images/app.zig
+#: src/images/app_dialogs.zig
 msgid "Enter a filename."
 msgstr "Saisissez un nom de fichier."
 
@@ -2356,19 +2356,19 @@ msgstr "Erreur : {value}"
 msgid "Ethernet"
 msgstr "Ethernet"
 
-#: src/network/manager.zig
+#: src/network/manager_actions.zig
 msgid "Ethernet adapter was removed."
 msgstr "L'adaptateur Ethernet a été retiré."
 
-#: src/network/manager.zig
+#: src/network/manager_actions.zig
 msgid "Ethernet connection timed out. Check the cable and try again."
 msgstr "Le délai de connexion Ethernet a expiré. Vérifiez le câble et réessayez."
 
-#: src/network/manager.zig
+#: src/network/manager_actions.zig
 msgid "Ethernet could not connect. Check the cable and connection settings."
 msgstr "Impossible de connecter Ethernet. Vérifiez le câble et les paramètres de connexion."
 
-#: src/network/manager.zig
+#: src/network/manager_actions.zig
 msgid "Ethernet request failed. Check permissions and try again."
 msgstr "Échec de la requête Ethernet. Vérifiez les permissions et réessayez."
 
@@ -2460,7 +2460,7 @@ msgstr "Gestionnaire de fichiers"
 msgid "File already exists"
 msgstr "Le fichier existe déjà"
 
-#: src/editor/app.zig
+#: src/editor/app_files.zig
 msgid "File changed on disk. Use Save As to keep your edits in another file."
 msgstr "Le fichier a changé sur le disque. Utilisez « Enregistrer sous » pour conserver vos modifications dans un autre fichier."
 
@@ -2500,7 +2500,7 @@ msgstr "Filtrer"
 msgid "Find"
 msgstr "Rechercher"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_add.zig
 msgid "Find available printers"
 msgstr "Rechercher les imprimantes disponibles"
 
@@ -2516,15 +2516,15 @@ msgstr "Rechercher dans le document…"
 msgid "Find ▲"
 msgstr "Rechercher ▲"
 
-#: src/editor/app.zig
+#: src/editor/app_paint.zig
 msgid "Find…"
 msgstr "Rechercher…"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_add.zig
 msgid "Finish or cancel the printer's jobs before changing its identifier."
 msgstr "Terminez ou annulez les tâches de l'imprimante avant de modifier son identifiant."
 
-#: src/editor/app.zig
+#: src/editor/app_files.zig
 msgid "Finish the file dialog or operation before closing."
 msgstr "Terminez le dialogue de fichiers ou l'opération avant de fermer."
 
@@ -2552,7 +2552,7 @@ msgstr "Ajuster à la page"
 msgid "Fit width"
 msgstr "Ajuster à la largeur"
 
-#: src/start_menu/panel.zig
+#: src/start_menu/menu_cards.zig
 msgid "Five applications already pinned"
 msgstr "Cinq applications sont déjà épinglées"
 
@@ -2796,7 +2796,7 @@ msgstr "Masquer après"
 msgid "High"
 msgstr "Élevée"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "Highlight active app"
 msgstr "Mettre l'application active en évidence"
 
@@ -2820,7 +2820,7 @@ msgstr "Durée du passage au bureau suivant avec Super et les touches fléchées
 msgid "INPUT"
 msgstr "SAISIE"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_add.zig
 msgid "IPP Everywhere / AirPrint"
 msgstr "IPP Everywhere / AirPrint"
 
@@ -2848,11 +2848,11 @@ msgstr "Inactif"
 msgid "Image"
 msgstr "Image"
 
-#: src/images/app.zig
+#: src/images/app_thumbs.zig
 msgid "Image exceeds the 32 megapixel preview limit"
 msgstr "L'image dépasse la limite d'aperçu de 32 mégapixels"
 
-#: src/images/app.zig
+#: src/images/app_thumbs.zig
 msgid "Images ({position}/{count})"
 msgstr "Images ({position}/{count})"
 
@@ -2864,7 +2864,7 @@ msgstr "Images du dossier choisi"
 msgid "Images in {folder}"
 msgstr "Images dans {folder}"
 
-#: src/control_center/panel.zig
+#: src/control_center/tree.zig
 msgid "In Files, click an icon to open it in list or icons view. Click the name to select."
 msgstr "Dans Fichiers, cliquez sur une icône pour ouvrir un élément en vue liste ou icônes. Cliquez sur le nom pour sélectionner."
 
@@ -2872,11 +2872,11 @@ msgstr "Dans Fichiers, cliquez sur une icône pour ouvrir un élément en vue li
 msgid "Inactive window opacity"
 msgstr "Opacité des fenêtres inactives"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_tools.zig
 msgid "Inches"
 msgstr "Pouces"
 
-#: src/session/lock.zig
+#: src/session/lock_account.zig
 msgid "Incorrect password. Try again."
 msgstr "Mot de passe incorrect. Réessayez."
 
@@ -2920,7 +2920,7 @@ msgstr "Installez squashfs-tools pour ajouter des AppImages aux applications"
 msgid "Install theme"
 msgstr "Installer le thème"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "Install theme…"
 msgstr "Installer le thème…"
 
@@ -2928,7 +2928,7 @@ msgstr "Installer le thème…"
 msgid "Installing theme…"
 msgstr "Installation du thème…"
 
-#: src/session/power.zig
+#: src/session/power_requests.zig
 msgid "Interactive authorization required."
 msgstr "Autorisation interactive nécessaire."
 
@@ -2956,11 +2956,11 @@ msgstr "Caractères invalides dans le nom"
 msgid "Invalid cups-pk-helper reply."
 msgstr "Réponse cups-pk-helper invalide."
 
-#: src/files/main.zig
+#: src/files/client_dnd.zig
 msgid "Invalid dropped list"
 msgstr "Liste de dépôt invalide"
 
-#: src/files/main.zig
+#: src/files/client_clipboard.zig
 msgid "Invalid file clipboard"
 msgstr "Presse-papiers de fichiers invalide"
 
@@ -2996,7 +2996,7 @@ msgstr "Métadonnées du transfert invalides"
 msgid "Invalid transfer update"
 msgstr "Mise à jour du transfert invalide"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_tools.zig
 msgid "It printed"
 msgstr "L'impression a fonctionné"
 
@@ -3004,7 +3004,7 @@ msgstr "L'impression a fonctionné"
 msgid "Italic clock"
 msgstr "Horloge en italique"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "Italic clock text"
 msgstr "Texte de l'horloge en italique"
 
@@ -3020,11 +3020,11 @@ msgstr "Éléments déplacés vers la corbeille"
 msgid "Items permanently deleted"
 msgstr "Éléments supprimés définitivement"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Job history · {n}"
 msgstr "Historique des tâches · {n}"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Job {id} · {state}"
 msgstr "Tâche {id} · {state}"
 
@@ -3036,7 +3036,7 @@ msgstr "Rejoindre"
 msgid "Join Hidden Network"
 msgstr "Rejoindre un réseau masqué"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_add.zig
 msgid "Keep connection"
 msgstr "Conserver la connexion"
 
@@ -3052,11 +3052,11 @@ msgstr "Conserver le dossier personnel"
 msgid "Keep icons fixed on screen while panning and zooming."
 msgstr "Garder les icônes fixes à l'écran pendant les déplacements et le zoom."
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Keep identifier"
 msgstr "Conserver l'identifiant"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Keep printer"
 msgstr "Conserver l'imprimante"
 
@@ -3084,11 +3084,11 @@ msgstr "Raccourcis clavier"
 msgid "Known peers: {value}"
 msgstr "Pairs connus : {value}"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "LEFT"
 msgstr "GAUCHE"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Label printer and advanced test tools"
 msgstr "Imprimante d'étiquettes et outils de test avancés"
 
@@ -3096,7 +3096,7 @@ msgstr "Imprimante d'étiquettes et outils de test avancés"
 msgid "Language"
 msgstr "Langue"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_tools.zig
 msgid "Language: {language}. This sample bypasses the filters and uses the queue's backend."
 msgstr "Langue : {language}. Cet échantillon contourne les filtres et utilise le moteur de la file."
 
@@ -3108,7 +3108,7 @@ msgstr "Grand"
 msgid "Largest first"
 msgstr "Plus grands d'abord"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Last job"
 msgstr "Dernière tâche"
 
@@ -3116,7 +3116,7 @@ msgstr "Dernière tâche"
 msgid "Last reported signal: {signal} dBm"
 msgstr "Dernier signal signalé : {signal} dBm"
 
-#: src/start_menu/panel.zig
+#: src/start_menu/menu_keys.zig
 msgid "Launch failed. The application may have been removed."
 msgstr "Échec du lancement. L'application a peut-être été supprimée."
 
@@ -3136,7 +3136,7 @@ msgstr "Les dispositions et tailles des séparations sont enregistrées pour vot
 msgid "Leave blank to use saved password"
 msgstr "Laisser vide pour utiliser le mot de passe enregistré"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "Left"
 msgstr "Gauche"
 
@@ -3144,7 +3144,7 @@ msgstr "Gauche"
 msgid "Lid close action"
 msgstr "Action à la fermeture du capot"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_rows.zig
 msgid "Light the active window's edge near the pointer"
 msgstr "Éclairer le bord de la fenêtre active près du pointeur"
 
@@ -3152,7 +3152,7 @@ msgstr "Éclairer le bord de la fenêtre active près du pointeur"
 msgid "Limited access"
 msgstr "Accès limité"
 
-#: src/editor/app.zig
+#: src/editor/app_paint.zig
 msgid "Line {line}, Column {column}    ·    UTF-8{bom}    ·    {ending}"
 msgstr "Ligne {line}, colonne {column}    ·    UTF-8{bom}    ·    {ending}"
 
@@ -3176,15 +3176,15 @@ msgstr "Vitesse de connexion"
 msgid "List"
 msgstr "Liste"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_tools.zig
 msgid "Loaded paper height"
 msgstr "Hauteur du papier chargé"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_tools.zig
 msgid "Loaded paper width"
 msgstr "Largeur du papier chargé"
 
-#: src/images/app.zig
+#: src/images/app_render.zig
 msgid "Loading image…"
 msgstr "Chargement de l'image…"
 
@@ -3220,7 +3220,7 @@ msgstr "Verrouille et met en veille, même avec un autre écran connecté."
 msgid "Locks, and turns off the built-in screen while another display is connected."
 msgstr "Verrouille et éteint l'écran intégré lorsqu'un autre écran est connecté."
 
-#: src/session/lock.zig
+#: src/session/lock_view.zig
 msgid "Log In"
 msgstr "Se connecter"
 
@@ -3232,23 +3232,23 @@ msgstr "Se déconnecter"
 msgid "Log out of the desktop session."
 msgstr "Se déconnecter de la session du bureau."
 
-#: src/session/power.zig
+#: src/session/power_requests.zig
 msgid "Logind refused the request."
 msgstr "Logind a refusé la requête."
 
-#: src/session/power.zig
+#: src/session/power_requests.zig
 msgid "Logind request failed."
 msgstr "Échec de la requête logind."
 
-#: src/session/power.zig
+#: src/session/power_requests.zig
 msgid "Logind returned a malformed reply."
 msgstr "Logind a renvoyé une réponse mal formée."
 
-#: src/session/power.zig
+#: src/session/power_requests.zig
 msgid "Logind returned an unrecognized reply."
 msgstr "Logind a renvoyé une réponse inconnue."
 
-#: src/session/lock.zig
+#: src/session/lock_account.zig
 msgid "Lost contact with login service. Try again."
 msgstr "Connexion au service de connexion perdue. Réessayez."
 
@@ -3276,15 +3276,15 @@ msgstr "Réglez votre souris et votre clavier à votre goût."
 msgid "Manage and analyze systemd services."
 msgstr "Gérer et analyser les services systemd."
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Manage…"
 msgstr "Gérer…"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Margins (mm): left {left}, right {right}, top {top}, bottom {bottom}"
 msgstr "Marges (mm) : gauche {left}, droite {right}, haut {top}, bas {bottom}"
 
-#: src/control_center/panel.zig
+#: src/control_center/tree.zig
 msgid "Master volume"
 msgstr "Volume principal"
 
@@ -3292,15 +3292,15 @@ msgstr "Volume principal"
 msgid "Maximize or restore the focused window."
 msgstr "Agrandir ou restaurer la fenêtre active."
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_tools.zig
 msgid "Measure the rectangle edge to edge in the selected unit. Print scaling is disabled for this test."
 msgstr "Mesurez le rectangle bord à bord dans l'unité choisie. La mise à l'échelle est désactivée pour ce test."
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_tools.zig
 msgid "Measured rectangle height"
 msgstr "Hauteur mesurée du rectangle"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_tools.zig
 msgid "Measured rectangle width"
 msgstr "Largeur mesurée du rectangle"
 
@@ -3308,7 +3308,7 @@ msgstr "Largeur mesurée du rectangle"
 msgid "Media"
 msgstr "Support"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Media and resolution"
 msgstr "Support et résolution"
 
@@ -3324,7 +3324,7 @@ msgstr "Moyen"
 msgid "Memory (resident)"
 msgstr "Mémoire (résidente)"
 
-#: src/editor/main.zig
+#: src/editor/client_render.zig
 msgid "Menu"
 msgstr "Menu"
 
@@ -3332,7 +3332,7 @@ msgstr "Menu"
 msgid "Menu bottom padding"
 msgstr "Marge inférieure du menu"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "Menu height"
 msgstr "Hauteur du menu"
 
@@ -3340,7 +3340,7 @@ msgstr "Hauteur du menu"
 msgid "Menu left padding"
 msgstr "Marge gauche du menu"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "Menu width"
 msgstr "Largeur du menu"
 
@@ -3360,7 +3360,7 @@ msgstr "Micro activé"
 msgid "Microphone volume"
 msgstr "Volume du microphone"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_tools.zig
 msgid "Millimetres"
 msgstr "Millimètres"
 
@@ -3392,7 +3392,7 @@ msgstr "Lundi"
 msgid "Monitor"
 msgstr "Moniteur"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "More printing options"
 msgstr "Autres options d'impression"
 
@@ -3424,7 +3424,7 @@ msgstr "Vitesse de la souris"
 msgid "Move To Workspace"
 msgstr "Déplacer vers un espace de travail"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_rows.zig
 msgid "Move file manager aside"
 msgstr "Écarter le gestionnaire de fichiers"
 
@@ -3452,7 +3452,7 @@ msgstr "Déplacer la fenêtre à la profondeur {depth}."
 msgid "Move the window to workspace {n} and follow it."
 msgstr "Déplacer la fenêtre vers l'espace de travail {n} et la suivre."
 
-#: src/images/app.zig
+#: src/images/app_dialogs.zig
 msgid "Move this image to Trash?"
 msgstr "Déplacer cette image vers la corbeille ?"
 
@@ -3472,11 +3472,11 @@ msgstr "Déplacer vers un espace de travail."
 msgid "Move, resize and overlap windows."
 msgstr "Déplacer, redimensionner et superposer les fenêtres."
 
-#: src/images/app.zig
+#: src/images/app_dialogs.zig
 msgid "Moved to Trash."
 msgstr "Déplacé vers la corbeille."
 
-#: src/images/app.zig
+#: src/images/app_render.zig
 msgid "Moving to Trash…"
 msgstr "Déplacement vers la corbeille…"
 
@@ -3524,7 +3524,7 @@ msgstr "Tube nommé"
 msgid "Natural scroll"
 msgstr "Défilement naturel"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_tools.zig
 msgid "Neither test produced output: check the backend, connection, printer and loaded paper."
 msgstr "Aucun test n'a imprimé : vérifiez le moteur, la connexion, l'imprimante et le papier chargé."
 
@@ -3604,11 +3604,11 @@ msgstr "Nouvel onglet"
 msgid "Newest first"
 msgstr "Plus récents d'abord"
 
-#: src/editor/app.zig
+#: src/editor/app_paint.zig
 msgid "Next"
 msgstr "Suivant"
 
-#: src/session/lock.zig
+#: src/session/lock_view.zig
 msgid "Next account"
 msgstr "Compte suivant"
 
@@ -3632,7 +3632,7 @@ msgstr "Aucun adaptateur Wi-Fi trouvé"
 msgid "No active audio streams"
 msgstr "Aucun flux audio actif"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "No active jobs"
 msgstr "Aucune tâche active"
 
@@ -3644,11 +3644,11 @@ msgstr "Aucun adaptateur"
 msgid "No applications available"
 msgstr "Aucune application disponible"
 
-#: src/start_menu/panel.zig
+#: src/start_menu/menu_tree.zig
 msgid "No applications found"
 msgstr "Aucune application trouvée"
 
-#: src/control_center/panel.zig
+#: src/control_center/tree.zig
 msgid "No audio device available"
 msgstr "Aucun périphérique audio disponible"
 
@@ -3680,7 +3680,7 @@ msgstr "Aucune connexion Internet"
 msgid "No login accounts were found."
 msgstr "Aucun compte de connexion trouvé."
 
-#: src/session/lock.zig
+#: src/session/lock_input.zig
 msgid "No login service"
 msgstr "Aucun service de connexion"
 
@@ -3720,7 +3720,7 @@ msgstr "Aucun sommaire dans le document"
 msgid "No paired devices. Choose Pair New Device to get started."
 msgstr "Aucun appareil associé. Choisissez « Associer un nouvel appareil » pour commencer."
 
-#: src/pdf/main.zig
+#: src/pdf/client_print.zig
 msgid "No print service answered (xdg-desktop-portal)."
 msgstr "Aucun service d'impression n'a répondu (xdg-desktop-portal)."
 
@@ -3740,7 +3740,7 @@ msgstr "Aucune information sur une tâche récente n'est disponible."
 msgid "No sessions available"
 msgstr "Aucune session disponible"
 
-#: src/session/lock.zig
+#: src/session/lock_account.zig
 msgid "No sessions installed"
 msgstr "Aucune session installée"
 
@@ -3752,7 +3752,7 @@ msgstr "Aucun paramètre trouvé"
 msgid "No sources available."
 msgstr "Aucune source disponible."
 
-#: src/control_center/panel.zig
+#: src/control_center/tree.zig
 msgid "No supported backlight"
 msgstr "Aucun rétroéclairage pris en charge"
 
@@ -3760,7 +3760,7 @@ msgstr "Aucun rétroéclairage pris en charge"
 msgid "No supported profiles reported"
 msgstr "Aucun profil pris en charge signalé"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_tools.zig
 msgid "No supported resolution consistently matches both measurements. Check the ruler and print scaling."
 msgstr "Aucune résolution prise en charge ne correspond aux deux mesures. Vérifiez la règle et l'échelle d'impression."
 
@@ -3772,7 +3772,7 @@ msgstr "Aucun dossier pour le terminal"
 msgid "No transfers yet. Add a .torrent file or magnet link."
 msgstr "Aucun transfert pour le moment. Ajoutez un fichier .torrent ou un lien magnet."
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_add.zig
 msgid "No unambiguous automatic driver match. Choose a listed driver, check an IPP address, or explicitly choose a raw queue."
 msgstr "Aucun pilote automatique ne correspond sans ambiguïté. Choisissez un pilote de la liste, vérifiez une adresse IPP ou choisissez explicitement une file brute."
 
@@ -3780,7 +3780,7 @@ msgstr "Aucun pilote automatique ne correspond sans ambiguïté. Choisissez un p
 msgid "No usblp node was found; CUPS may still use libusb or ipp-usb."
 msgstr "Aucun nœud usblp trouvé ; CUPS peut tout de même utiliser libusb ou ipp-usb."
 
-#: src/session/lock.zig
+#: src/session/lock_account.zig
 msgid "No user accounts found"
 msgstr "Aucun compte utilisateur trouvé"
 
@@ -3808,7 +3808,7 @@ msgstr "Normal"
 msgid "Not a directory"
 msgstr "Ce n'est pas un dossier"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Not accepting new jobs"
 msgstr "N'accepte pas de nouvelles tâches"
 
@@ -3820,7 +3820,7 @@ msgstr "Non autorisé à éjecter {name}"
 msgid "Not authorized to mount {name}"
 msgstr "Non autorisé à monter {name}"
 
-#: src/session/power.zig
+#: src/session/power_requests.zig
 msgid "Not available on this system."
 msgstr "Indisponible sur ce système."
 
@@ -3828,7 +3828,7 @@ msgstr "Indisponible sur ce système."
 msgid "Not connected"
 msgstr "Non connecté"
 
-#: src/editor/app.zig
+#: src/editor/app_files.zig
 msgid "Not enough free memory to hold this file."
 msgstr "Mémoire libre insuffisante pour contenir ce fichier."
 
@@ -3848,7 +3848,7 @@ msgstr "Mémoire insuffisante pour ouvrir ce document."
 msgid "Not enough memory to show this page."
 msgstr "Mémoire insuffisante pour afficher cette page."
 
-#: src/images/app.zig
+#: src/images/app_dialogs.zig
 msgid "Not enough memory."
 msgstr "Mémoire insuffisante."
 
@@ -3864,7 +3864,7 @@ msgstr "Non enregistré"
 msgid "Not specified"
 msgstr "Non précisé"
 
-#: src/session/power.zig
+#: src/session/power_capabilities.zig
 msgid "Not supported"
 msgstr "Non pris en charge"
 
@@ -3880,11 +3880,11 @@ msgstr "Notification"
 msgid "Notify"
 msgstr "Notify"
 
-#: src/systemd.zig
+#: src/systemd/actions.zig
 msgid "Notify override saved, but systemd could not reload it. Try Refresh after a daemon reload."
 msgstr "Personnalisation Notify enregistrée, mais systemd n'a pas pu la recharger. Essayez d'actualiser après avoir rechargé le démon."
 
-#: src/systemd.zig
+#: src/systemd/requests.zig
 msgid "Notify override saved, but the selected type is not active in systemd. Check other service overrides."
 msgstr "Personnalisation Notify enregistrée, mais le type sélectionné n'est pas actif dans systemd. Vérifiez les autres personnalisations du service."
 
@@ -3892,7 +3892,7 @@ msgstr "Personnalisation Notify enregistrée, mais le type sélectionné n'est p
 msgid "Notify sets the service type and applies on its next start. Saving requires administrator authentication."
 msgstr "Notify définit le type du service et s'applique à son prochain démarrage. L'enregistrement nécessite l'authentification d'un administrateur."
 
-#: src/systemd.zig
+#: src/systemd/requests.zig
 msgid "Notify setting saved. Applies on the next service start."
 msgstr "Réglage Notify enregistré. Il s'appliquera au prochain démarrage du service."
 
@@ -4004,7 +4004,7 @@ msgstr "Ouvert, mais impossible d'enregistrer l'application par défaut"
 msgid "Opening document..."
 msgstr "Ouverture du document…"
 
-#: src/editor/app.zig
+#: src/editor/app_files.zig
 msgid "Opening…"
 msgstr "Ouverture…"
 
@@ -4068,11 +4068,11 @@ msgstr "EMPLACEMENTS"
 msgid "PNG and SVG images"
 msgstr "Images PNG et SVG"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "Pack or system default"
 msgstr "Valeur par défaut du thème ou du système"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "Packs include colours and artwork. Personal edits are saved as overrides."
 msgstr "Les paquets contiennent des couleurs et des illustrations. Les modifications personnelles sont enregistrées séparément."
 
@@ -4132,15 +4132,15 @@ msgstr "Se déplacer vers la fenêtre sélectionnée sans changer le zoom."
 msgid "Paper size"
 msgstr "Format du papier"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Paper: {paper}"
 msgstr "Papier : {paper}"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_tools.zig
 msgid "Paper: {width} × {height} mm"
 msgstr "Papier : {width} × {height} mm"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Pass"
 msgstr "Réussi"
 
@@ -4196,7 +4196,7 @@ msgstr "Supprimer définitivement tous les fichiers et dossiers de la corbeille"
 msgid "Permission denied"
 msgstr "Permission refusée"
 
-#: src/editor/app.zig
+#: src/editor/app_files.zig
 msgid "Permission denied. Try Save As in a writable folder."
 msgstr "Permission refusée. Utilisez « Enregistrer sous » dans un dossier accessible en écriture."
 
@@ -4212,11 +4212,11 @@ msgstr "Permissions mises à jour"
 msgid "Pictures"
 msgstr "Images"
 
-#: src/start_menu/panel.zig
+#: src/start_menu/menu_cards.zig
 msgid "Pin application"
 msgstr "Épingler l'application"
 
-#: src/start_menu/panel.zig
+#: src/start_menu/menu_cards.zig
 msgid "Pinned & Recent"
 msgstr "Épinglés et récents"
 
@@ -4228,7 +4228,7 @@ msgstr "Placement"
 msgid "Places is full"
 msgstr "La liste des emplacements est pleine"
 
-#: src/images/app.zig
+#: src/images/app_edit.zig
 msgid "Please wait for the file operation to finish."
 msgstr "Attendez la fin de l'opération sur les fichiers."
 
@@ -4240,7 +4240,7 @@ msgstr "Sur secteur"
 msgid "Position"
 msgstr "Position"
 
-#: src/session/lock.zig
+#: src/session/lock_view.zig
 msgid "Power"
 msgstr "Alimentation"
 
@@ -4256,7 +4256,7 @@ msgstr "Changer de profil d'alimentation"
 msgid "Power Saver"
 msgstr "Économie d'énergie"
 
-#: src/session/power.zig
+#: src/session/power_requests.zig
 msgid "Power action failed"
 msgstr "Échec de l'action d'alimentation"
 
@@ -4264,23 +4264,23 @@ msgstr "Échec de l'action d'alimentation"
 msgid "Power off"
 msgstr "Éteindre"
 
-#: src/session/lock.zig
+#: src/session/lock_input.zig
 msgid "Power off? Activate Power again to confirm."
 msgstr "Éteindre ? Activez de nouveau Alimentation pour confirmer."
 
-#: src/session/lock.zig
+#: src/session/lock_events.zig
 msgid "Power request accepted"
 msgstr "Demande d'alimentation acceptée"
 
-#: src/session/lock.zig
+#: src/session/lock_events.zig
 msgid "Power request denied or unavailable"
 msgstr "Demande d'alimentation refusée ou indisponible"
 
-#: src/session/power.zig
+#: src/session/power_requests.zig
 msgid "Power request failed. Check permissions and applications blocking shutdown."
 msgstr "Échec de la demande d'alimentation. Vérifiez les permissions et les applications qui bloquent l'arrêt."
 
-#: src/session/lock.zig
+#: src/session/lock_input.zig
 msgid "Power service unavailable"
 msgstr "Service d'alimentation indisponible"
 
@@ -4292,7 +4292,7 @@ msgstr "Éteindre"
 msgid "Poweroff Auto"
 msgstr "Éteindre automatiquement"
 
-#: src/session/lock.zig
+#: src/session/lock_account.zig
 msgid "Press Enter to log in"
 msgstr "Appuyez sur Entrée pour vous connecter"
 
@@ -4316,7 +4316,7 @@ msgstr "Empêcher cet appareil de se connecter."
 msgid "Previous"
 msgstr "Précédent"
 
-#: src/session/lock.zig
+#: src/session/lock_view.zig
 msgid "Previous account"
 msgstr "Compte précédent"
 
@@ -4324,31 +4324,31 @@ msgstr "Compte précédent"
 msgid "Print"
 msgstr "Imprimer"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_tools.zig
 msgid "Print a 2 × 3 inch ruler…"
 msgstr "Imprimer une règle de 2 × 3 pouces…"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_tools.zig
 msgid "Print one test"
 msgstr "Imprimer un test"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_tools.zig
 msgid "Print one {kind} test on {name}?"
 msgstr "Imprimer un test {kind} sur {name} ?"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Print queue"
 msgstr "File d'impression"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Print queue · {n}"
 msgstr "File d'impression · {n}"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_tools.zig
 msgid "Print test"
 msgstr "Test d'impression"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Print test page…"
 msgstr "Imprimer une page de test…"
 
@@ -4360,7 +4360,7 @@ msgstr "Imprimante"
 msgid "Printer added, enabled and accepting jobs."
 msgstr "Imprimante ajoutée, activée et prête à accepter des tâches."
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_add.zig
 msgid "Printer address (ipp, ipps, socket or lpd)"
 msgstr "Adresse de l'imprimante (ipp, ipps, socket ou lpd)"
 
@@ -4408,7 +4408,7 @@ msgstr "Option d'imprimante appliquée."
 msgid "Printer preferences could not be saved safely. Check the existing preferences file."
 msgstr "Les préférences d'impression n'ont pas pu être enregistrées de façon sûre. Vérifiez le fichier de préférences existant."
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_actions.zig
 msgid "Printer setting verified."
 msgstr "Paramètre d'imprimante vérifié."
 
@@ -4444,15 +4444,15 @@ msgstr "Les imprimantes sont indisponibles sur l'écran de connexion."
 msgid "Printing"
 msgstr "Impression"
 
-#: src/pdf/main.zig
+#: src/pdf/client_print.zig
 msgid "Printing is not available."
 msgstr "L'impression n'est pas disponible."
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Printing preferences"
 msgstr "Préférences d'impression"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Problem"
 msgstr "Problème"
 
@@ -4516,11 +4516,11 @@ msgstr "Couleurs Qt 6 appliquées. Installez qt5ct pour les applications Qt 5. R
 msgid "Quality"
 msgstr "Qualité"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Queue"
 msgstr "File"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Queue identifier"
 msgstr "Identifiant de la file"
 
@@ -4528,11 +4528,11 @@ msgstr "Identifiant de la file"
 msgid "Queue media and resolution could not be read."
 msgstr "Impossible de lire le support et la résolution de la file."
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_add.zig
 msgid "Queue name"
 msgstr "Nom de la file"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_tools.zig
 msgid "Queue paper setting: {paper}. Check that this matches the loaded paper."
 msgstr "Papier de la file : {paper}. Vérifiez qu'il correspond au papier chargé."
 
@@ -4544,11 +4544,11 @@ msgstr "Le renommage de la file est seulement partiel. Actualisez et vérifiez l
 msgid "Queue rename request completed. Check the refreshed queues and options."
 msgstr "Demande de renommage terminée. Vérifiez les files et les options actualisées."
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Queue: {name}"
 msgstr "File : {name}"
 
-#: src/start_menu/panel.zig
+#: src/start_menu/menu_cards.zig
 msgid "Quick Launch"
 msgstr "Lancement rapide"
 
@@ -4560,19 +4560,19 @@ msgstr "Quitter"
 msgid "REDIWM_SCALE sets scaling; restart to apply Xwayland changes."
 msgstr "REDIWM_SCALE définit l'échelle ; redémarrez pour appliquer les modifications Xwayland."
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "RIGHT"
 msgstr "DROITE"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_rows.zig
 msgid "Radius"
 msgstr "Rayon"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_add.zig
 msgid "Raw queue (printer commands only)"
 msgstr "File brute (commandes d'imprimante uniquement)"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_tools.zig
 msgid "Raw sample resolution (dpi)"
 msgstr "Résolution de l'échantillon brut (ppp)"
 
@@ -4620,7 +4620,7 @@ msgstr "Fichiers RediWM"
 msgid "RediWM Files (built-in)"
 msgstr "Fichiers RediWM (intégré)"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "RediWM dock"
 msgstr "Dock RediWM"
 
@@ -4656,11 +4656,11 @@ msgstr "Formats régionaux"
 msgid "Regional formats are unavailable for this session."
 msgstr "Les formats régionaux sont indisponibles pour cette session."
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_tools.zig
 msgid "Remember loaded paper size"
 msgstr "Mémoriser le format du papier chargé"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "Remove"
 msgstr "Supprimer"
 
@@ -4672,11 +4672,11 @@ msgstr "Retirer des emplacements"
 msgid "Remove from dock"
 msgstr "Retirer du dock"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Remove printer {name} ({queue})? This deletes its queue and settings."
 msgstr "Supprimer l'imprimante {name} ({queue}) ? Sa file et ses paramètres seront supprimés."
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Remove printer…"
 msgstr "Supprimer l'imprimante…"
 
@@ -4684,7 +4684,7 @@ msgstr "Supprimer l'imprimante…"
 msgid "Remove theme"
 msgstr "Supprimer le thème"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Remove this printer"
 msgstr "Supprimer cette imprimante"
 
@@ -4728,19 +4728,19 @@ msgstr "Fréquence de répétition"
 msgid "Replace"
 msgstr "Remplacer"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "Replace installed theme"
 msgstr "Remplacer le thème installé"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Report copied"
 msgstr "Rapport copié"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Reports omit document names, user names, USB serials and private printer addresses."
 msgstr "Les rapports excluent les noms de documents, les noms d'utilisateurs, les numéros de série USB et les adresses privées des imprimantes."
 
-#: src/systemd.zig
+#: src/systemd/requests.zig
 msgid "Request accepted. Status updates when the job completes."
 msgstr "Demande acceptée. L'état sera actualisé à la fin de la tâche."
 
@@ -4748,7 +4748,7 @@ msgstr "Demande acceptée. L'état sera actualisé à la fin de la tâche."
 msgid "Requesting CUPS start; authorization may be required…"
 msgstr "Demande de démarrage de CUPS ; une autorisation peut être nécessaire…"
 
-#: src/session/lock.zig
+#: src/session/lock_input.zig
 msgid "Requesting power action…"
 msgstr "Demande d'action d'alimentation…"
 
@@ -4768,11 +4768,11 @@ msgstr "Réinitialiser le thème"
 msgid "Reset to Default"
 msgstr "Rétablir la valeur par défaut"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "Reset to default"
 msgstr "Rétablir la valeur par défaut"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "Reset to theme"
 msgstr "Rétablir depuis le thème"
 
@@ -4796,11 +4796,11 @@ msgstr "Redimensionner la séparation vers le haut"
 msgid "Resolution"
 msgstr "Résolution"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Resolution: Unavailable"
 msgstr "Résolution : indisponible"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Resolution: {x} × {y} dpi"
 msgstr "Résolution : {x} × {y} ppp"
 
@@ -4808,7 +4808,7 @@ msgstr "Résolution : {x} × {y} ppp"
 msgid "Resolve the reported printer problem before resuming the queue."
 msgstr "Résolvez le problème signalé avant de reprendre la file."
 
-#: src/session/lock.zig
+#: src/session/lock_view.zig
 msgid "Response"
 msgstr "Réponse"
 
@@ -4828,7 +4828,7 @@ msgstr "Redémarrer l'ordinateur."
 msgid "Restart the desktop shell."
 msgstr "Redémarrer l'environnement du bureau."
 
-#: src/session/lock.zig
+#: src/session/lock_input.zig
 msgid "Restart? Activate Restart again to confirm."
 msgstr "Redémarrer ? Activez de nouveau Redémarrer pour confirmer."
 
@@ -4864,7 +4864,7 @@ msgstr "Le résultat est trop grand"
 msgid "Resume"
 msgstr "Reprendre"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Resume printer"
 msgstr "Reprendre l'imprimante"
 
@@ -4876,11 +4876,11 @@ msgstr "Reprendre les mises à jour"
 msgid "Review login accounts and automatic-login settings."
 msgstr "Consulter les comptes et les paramètres de connexion automatique."
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_tools.zig
 msgid "Review the suggested resolution, then apply it explicitly."
 msgstr "Examinez la résolution suggérée, puis appliquez-la explicitement."
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "Right"
 msgstr "Droite"
 
@@ -4908,11 +4908,11 @@ msgstr "En cours"
 msgid "SOUND"
 msgstr "SON"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_rows.zig
 msgid "Same as theme"
 msgstr "Comme le thème"
 
-#: src/images/app.zig
+#: src/images/app_dialogs.zig
 msgid "Same folder, or enter an absolute path."
 msgstr "Même dossier, ou saisissez un chemin absolu."
 
@@ -4932,7 +4932,7 @@ msgstr "Enregistrer sous"
 msgid "Save Layout"
 msgstr "Enregistrer la disposition"
 
-#: src/images/app.zig
+#: src/images/app_dialogs.zig
 msgid "Save a PNG copy"
 msgstr "Enregistrer une copie PNG"
 
@@ -4940,11 +4940,11 @@ msgstr "Enregistrer une copie PNG"
 msgid "Save as"
 msgstr "Enregistrer sous"
 
-#: src/images/app.zig
+#: src/images/app_dialogs.zig
 msgid "Save as…"
 msgstr "Enregistrer sous…"
 
-#: src/editor/app.zig
+#: src/editor/app_paint.zig
 msgid "Save changes before closing?"
 msgstr "Enregistrer les modifications avant de fermer ?"
 
@@ -4952,7 +4952,7 @@ msgstr "Enregistrer les modifications avant de fermer ?"
 msgid "Save current look as theme"
 msgstr "Enregistrer l'apparence actuelle comme thème"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Save display name"
 msgstr "Enregistrer le nom affiché"
 
@@ -4964,7 +4964,7 @@ msgstr "Enregistrer les groupes"
 msgid "Save layout: {name}"
 msgstr "Enregistrer la disposition : {name}"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "Save look…"
 msgstr "Enregistrer l'apparence…"
 
@@ -4988,15 +4988,15 @@ msgstr "Enregistrer la disposition des fenêtres."
 msgid "Save theme"
 msgstr "Enregistrer le thème"
 
-#: src/images/app.zig
+#: src/images/app_dialogs.zig
 msgid "Save your edits?"
 msgstr "Enregistrer vos modifications ?"
 
-#: src/editor/app.zig
+#: src/editor/app_files.zig
 msgid "Saved"
 msgstr "Enregistré"
 
-#: src/images/app.zig
+#: src/images/app_dialogs.zig
 msgid "Saved PNG copy."
 msgstr "Copie PNG enregistrée."
 
@@ -5008,7 +5008,7 @@ msgstr "Enregistré pour RediWM, mais impossible de modifier l'association syst�
 msgid "Saved for your user’s RediWM session only; system defaults are unchanged."
 msgstr "Enregistré uniquement pour votre session RediWM ; les valeurs système par défaut restent inchangées."
 
-#: src/images/app.zig
+#: src/images/app_dialogs.zig
 msgid "Saved {name}"
 msgstr "{name} enregistré"
 
@@ -5024,15 +5024,15 @@ msgstr "Enregistré. Vous pourrez modifier ces choix dans les paramètres."
 msgid "Saved. Your choice applies immediately."
 msgstr "Enregistré. Votre choix s'applique immédiatement."
 
-#: src/editor/app.zig
+#: src/editor/app_files.zig
 msgid "Saving a large file. Editing resumes when it is written."
 msgstr "Enregistrement d'un fichier volumineux. L'édition reprendra une fois l'écriture terminée."
 
-#: src/images/app.zig
+#: src/images/app_render.zig
 msgid "Saving image…"
 msgstr "Enregistrement de l'image…"
 
-#: src/editor/app.zig
+#: src/editor/app_files.zig
 msgid "Saving…"
 msgstr "Enregistrement…"
 
@@ -5040,7 +5040,7 @@ msgstr "Enregistrement…"
 msgid "Scanning folder..."
 msgstr "Analyse du dossier…"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "Screen capture appears while recording or sharing your screen. Keeping it enabled is recommended."
 msgstr "La capture d'écran apparaît pendant l'enregistrement ou le partage de votre écran. Il est recommandé de la laisser activée."
 
@@ -5100,7 +5100,7 @@ msgstr "Passer au bureau de droite."
 msgid "Scrollbar width"
 msgstr "Largeur des barres de défilement"
 
-#: src/start_menu/panel.zig
+#: src/start_menu/menu_tree.zig
 msgid "Search applications…"
 msgstr "Rechercher des applications…"
 
@@ -5116,7 +5116,7 @@ msgstr "Rechercher un nom, un PID ou un utilisateur"
 msgid "Search services…"
 msgstr "Rechercher des services…"
 
-#: src/control_center/panel.zig
+#: src/control_center/tree.zig
 msgid "Search settings"
 msgstr "Rechercher dans les paramètres"
 
@@ -5180,7 +5180,7 @@ msgstr "Sélectionnez d'abord un processus"
 msgid "Select an existing queue or add the printer again."
 msgstr "Sélectionnez une file existante ou ajoutez de nouveau l'imprimante."
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_add.zig
 msgid "Select an installed USB backend from discovery, or enter a network address. This changes the connection for the selected queue."
 msgstr "Choisissez un moteur USB installé parmi les périphériques découverts ou saisissez une adresse réseau. La connexion de la file sélectionnée sera modifiée."
 
@@ -5220,7 +5220,7 @@ msgstr "Services mettant au moins 1 seconde à s'activer."
 msgid "Session"
 msgstr "Session"
 
-#: src/session/lock.zig
+#: src/session/lock_view.zig
 msgid "Session  ›"
 msgstr "Session  ›"
 
@@ -5228,19 +5228,19 @@ msgstr "Session  ›"
 msgid "Set Depth"
 msgstr "Définir la profondeur"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Set as my default"
 msgstr "Définir comme valeur par défaut personnelle"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Set as system default"
 msgstr "Définir par défaut pour le système"
 
-#: src/start_menu/panel.zig
+#: src/dock/items.zig
 msgid "Settings"
 msgstr "Paramètres"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_rows.zig
 msgid "Shadow"
 msgstr "Ombre"
 
@@ -5260,7 +5260,7 @@ msgstr "Raccourci déjà utilisé. Essayez-en un autre."
 msgid "Show Paired Devices"
 msgstr "Afficher les appareils associés"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "Show Trash"
 msgstr "Afficher la corbeille"
 
@@ -5292,7 +5292,7 @@ msgstr "Afficher les fichiers masqués"
 msgid "Show in folder"
 msgstr "Afficher dans le dossier"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_rows.zig
 msgid "Show launch splash"
 msgstr "Afficher l'écran de lancement"
 
@@ -5300,7 +5300,7 @@ msgstr "Afficher l'écran de lancement"
 msgid "Show mini map"
 msgstr "Afficher la mini-carte"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Show more"
 msgstr "Afficher plus"
 
@@ -5312,11 +5312,11 @@ msgstr "Afficher les secondes"
 msgid "Shut down the computer."
 msgstr "Éteindre l'ordinateur."
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Sides: {sides}"
 msgstr "Faces : {sides}"
 
-#: src/session/lock.zig
+#: src/session/lock_input.zig
 msgid "Sign-in cancelled"
 msgstr "Connexion annulée"
 
@@ -5336,7 +5336,7 @@ msgstr "Connexion nécessaire"
 msgid "Signing in…"
 msgstr "Connexion…"
 
-#: src/control_center/panel.zig
+#: src/control_center/tree.zig
 msgid "Single-click file and folder icons"
 msgstr "Cliquer une fois sur les icônes de fichiers et de dossiers"
 
@@ -5344,11 +5344,11 @@ msgstr "Cliquer une fois sur les icônes de fichiers et de dossiers"
 msgid "Size"
 msgstr "Taille"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "Size to screen"
 msgstr "Ajuster à l'écran"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "Sized to fit your screen · move a slider to set your own"
 msgstr "Adapté à votre écran · déplacez un curseur pour personnaliser"
 
@@ -5364,7 +5364,7 @@ msgstr "Veille"
 msgid "Sleeping"
 msgstr "En sommeil"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_rows.zig
 msgid "Slightly darken and mute windows that are not focused"
 msgstr "Assombrir et atténuer légèrement les fenêtres inactives"
 
@@ -5412,11 +5412,11 @@ msgstr "Doux"
 msgid "Some groups cannot be safely shown; group changes are disabled."
 msgstr "Certains groupes ne peuvent pas être affichés de façon sûre ; les modifications des groupes sont désactivées."
 
-#: src/systemd.zig
+#: src/systemd/requests.zig
 msgid "Some startup times are unavailable."
 msgstr "Certains temps de démarrage sont indisponibles."
 
-#: src/images/app.zig
+#: src/images/app_render.zig
 msgid "Space / Esc to close  ·  Arrow keys to browse"
 msgstr "Espace / Échap pour fermer  ·  Flèches pour parcourir"
 
@@ -5448,7 +5448,7 @@ msgstr "Espacement du bouton de démarrage"
 msgid "Start button icon size"
 msgstr "Taille de l'icône du bouton de démarrage"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "Start button logo"
 msgstr "Logo du bouton de démarrage"
 
@@ -5456,7 +5456,7 @@ msgstr "Logo du bouton de démarrage"
 msgid "Start download"
 msgstr "Démarrer le téléchargement"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "Start menu"
 msgstr "Menu de démarrage"
 
@@ -5484,7 +5484,7 @@ msgstr "Commencer à utiliser RediWM"
 msgid "Starting session…"
 msgstr "Démarrage de la session…"
 
-#: src/systemd.zig
+#: src/systemd/requests.zig
 msgid "Startup setting saved. Running status is unchanged."
 msgstr "Réglage de démarrage enregistré. L'état d'exécution reste inchangé."
 
@@ -5516,7 +5516,7 @@ msgstr "Arrêter"
 msgid "Stop Searching"
 msgstr "Arrêter la recherche"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Stop accepting jobs"
 msgstr "Ne plus accepter de tâches"
 
@@ -5532,7 +5532,7 @@ msgstr "Arrêté"
 msgid "Strong"
 msgstr "Fort"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_tools.zig
 msgid "Suggested supported resolution: {x} × {y} dpi"
 msgstr "Résolution prise en charge suggérée : {x} × {y} ppp"
 
@@ -5632,7 +5632,7 @@ msgstr "Connexion au bus système perdue. Rouvrez Imprimantes pour vous reconnec
 msgid "System bus disconnected during printer administration."
 msgstr "Le bus système a été déconnecté pendant l'administration de l'imprimante."
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "System default"
 msgstr "Valeur système par défaut"
 
@@ -5672,7 +5672,7 @@ msgstr "Rayon des coins de la barre des tâches"
 msgid "Taskbar edge gap"
 msgstr "Marge de la barre des tâches"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "Taskbar gap from edge"
 msgstr "Distance de la barre des tâches au bord"
 
@@ -5688,7 +5688,7 @@ msgstr "Longueur de la barre des tâches"
 msgid "Taskbar position"
 msgstr "Position de la barre des tâches"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "Taskbar sections"
 msgstr "Sections de la barre des tâches"
 
@@ -5720,7 +5720,7 @@ msgstr "L'assistant du terminal est indisponible"
 msgid "Terminal opacity"
 msgstr "Opacité du terminal"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_rows.zig
 msgid "Terminal opacity (new windows)"
 msgstr "Opacité du terminal (nouvelles fenêtres)"
 
@@ -5732,7 +5732,7 @@ msgstr "Le texte collé dépasse la file de saisie disponible du terminal"
 msgid "Termination requested"
 msgstr "Arrêt demandé"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_tools.zig
 msgid "Test without the driver…"
 msgstr "Tester sans le pilote…"
 
@@ -5740,19 +5740,19 @@ msgstr "Tester sans le pilote…"
 msgid "Text file"
 msgstr "Fichier texte"
 
-#: src/editor/app.zig
+#: src/editor/app_files.zig
 msgid "Text files are limited to 4 GiB."
 msgstr "Les fichiers texte sont limités à 4 Gio."
 
-#: src/editor/app.zig
+#: src/editor/app_input.zig
 msgid "Text not found"
 msgstr "Texte introuvable"
 
-#: src/images/app.zig
+#: src/images/app_dialogs.zig
 msgid "That file already exists. Choose another name."
 msgstr "Ce fichier existe déjà. Choisissez un autre nom."
 
-#: src/editor/app.zig
+#: src/editor/app_files.zig
 msgid "That file is open in another tab. Choose a different name."
 msgstr "Ce fichier est ouvert dans un autre onglet. Choisissez un autre nom."
 
@@ -5792,11 +5792,11 @@ msgstr "L'écran intégré s'éteint lorsqu'un autre écran est connecté."
 msgid "The character-device path used by this queue is missing."
 msgstr "Le chemin du périphérique caractère utilisé par cette file est absent."
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_tools.zig
 msgid "The current printer resolution is unavailable."
 msgstr "La résolution actuelle de l'imprimante est indisponible."
 
-#: src/files/main.zig
+#: src/files/client_dnd.zig
 msgid "The destination folder is unavailable"
 msgstr "Le dossier de destination est indisponible"
 
@@ -5804,23 +5804,23 @@ msgstr "Le dossier de destination est indisponible"
 msgid "The device address matches; successful communication has not been confirmed."
 msgstr "L'adresse du périphérique correspond ; la communication n'a pas été confirmée."
 
-#: src/pdf/main.zig
+#: src/pdf/client_print.zig
 msgid "The document could not be printed."
 msgstr "Le document n'a pas pu être imprimé."
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_actions.zig
 msgid "The driver did not report the requested value. Review its settings before printing."
 msgstr "Le pilote n'a pas signalé la valeur demandée. Vérifiez ses paramètres avant d'imprimer."
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_tools.zig
 msgid "The driver reports label media."
 msgstr "Le pilote signale un support d'étiquettes."
 
-#: src/files/main.zig
+#: src/files/client_dnd.zig
 msgid "The drop timed out"
 msgstr "Le délai du dépôt a expiré"
 
-#: src/files/main.zig
+#: src/files/client_dnd.zig
 msgid "The dropped list failed or exceeded 1 MiB"
 msgstr "Échec de la liste de dépôt ou dépassement de 1 Mio"
 
@@ -5828,7 +5828,7 @@ msgstr "Échec de la liste de dépôt ou dépassement de 1 Mio"
 msgid "The dropped paths are invalid or too long"
 msgstr "Les chemins déposés sont invalides ou trop longs"
 
-#: src/images/app.zig
+#: src/images/app_dialogs.zig
 msgid "The file changed. Please try again."
 msgstr "Le fichier a changé. Réessayez."
 
@@ -5836,7 +5836,7 @@ msgstr "Le fichier a changé. Réessayez."
 msgid "The file type of the queue's device-node path could not be read."
 msgstr "Impossible de lire le type de fichier du chemin du nœud de périphérique de la file."
 
-#: src/images/app.zig
+#: src/images/app_dialogs.zig
 msgid "The filename is too long."
 msgstr "Le nom de fichier est trop long."
 
@@ -5884,7 +5884,7 @@ msgstr "L'imprimante a répondu à une requête IPP."
 msgid "The printer change could not be requested."
 msgstr "Impossible de demander la modification de l'imprimante."
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_add.zig
 msgid "The printer no longer exists. Refresh before retrying."
 msgstr "L'imprimante n'existe plus. Actualisez avant de réessayer."
 
@@ -5916,7 +5916,7 @@ msgstr "La file existe, mais son état ou l'acceptation des tâches sont inconnu
 msgid "The queue exists, is enabled, and accepts jobs."
 msgstr "La file existe, est activée et accepte les tâches."
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_add.zig
 msgid "The queue identifier change could not be verified. Review the printer list before retrying."
 msgstr "La modification de l'identifiant de la file n'a pas pu être vérifiée. Consultez la liste des imprimantes avant de réessayer."
 
@@ -5940,7 +5940,7 @@ msgstr "L'adresse du périphérique de la file ne correspond pas à l'imprimante
 msgid "The queue's device-node path is a regular file or another wrong file type."
 msgstr "Le chemin du nœud de périphérique de la file est un fichier ordinaire ou un autre type de fichier incorrect."
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_tools.zig
 msgid "The raw sample printed but the driver test did not: investigate the driver, filters, paper size and resolution."
 msgstr "L'échantillon brut a été imprimé, mais pas le test du pilote : examinez le pilote, les filtres, le format du papier et la résolution."
 
@@ -5992,7 +5992,7 @@ msgstr "Ce moteur nécessite un périphérique caractère, mais aucun nœud corr
 msgid "This cannot be undone."
 msgstr "Cette action est irréversible."
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "This capability has no selectable queue default in the current driver."
 msgstr "Le pilote actuel ne propose pas de valeur par défaut sélectionnable pour cette fonction."
 
@@ -6000,19 +6000,19 @@ msgstr "Le pilote actuel ne propose pas de valeur par défaut sélectionnable po
 msgid "This connection has no direct presence check."
 msgstr "Cette connexion ne permet pas de vérifier directement la présence."
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_tools.zig
 msgid "This driver does not expose the suggested resolution as a queue setting. Review its quality or driver choices."
 msgstr "Ce pilote ne propose pas la résolution suggérée comme paramètre de file. Vérifiez ses options de qualité ou choisissez un autre pilote."
 
-#: src/editor/app.zig
+#: src/editor/app_files.zig
 msgid "This file contains binary data and cannot be edited as text."
 msgstr "Ce fichier contient des données binaires et ne peut pas être modifié comme du texte."
 
-#: src/editor/app.zig
+#: src/editor/app_files.zig
 msgid "This file has multiple hard links. Use Save As to create a separate copy."
 msgstr "Ce fichier a plusieurs liens physiques. Utilisez « Enregistrer sous » pour créer une copie distincte."
 
-#: src/editor/app.zig
+#: src/editor/app_files.zig
 msgid "This file is not valid UTF-8 text."
 msgstr "Ce fichier n'est pas un texte UTF-8 valide."
 
@@ -6020,11 +6020,11 @@ msgstr "Ce fichier n'est pas un texte UTF-8 valide."
 msgid "This folder is empty"
 msgstr "Ce dossier est vide"
 
-#: src/images/app.zig
+#: src/images/app_dialogs.zig
 msgid "This image has unsaved changes."
 msgstr "Cette image contient des modifications non enregistrées."
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_tools.zig
 msgid "This is a label printer"
 msgstr "C'est une imprimante d'étiquettes"
 
@@ -6040,7 +6040,7 @@ msgstr "Ce serveur d'impression nécessite une connexion chiffrée ou authentifi
 msgid "This printer belongs to a CUPS class. Manage its class membership before renaming it here."
 msgstr "Cette imprimante appartient à une classe CUPS. Gérez son appartenance à cette classe avant de la renommer ici."
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "This range has no selectable queue setting in the current driver."
 msgstr "Le pilote actuel ne propose pas de paramètre de file sélectionnable pour cette plage."
 
@@ -6052,7 +6052,7 @@ msgstr "Ce dépôt exécute ses propres programmes ; changez de branche dans un
 msgid "This security type needs a network configuration tool."
 msgstr "Ce type de sécurité nécessite un outil de configuration réseau."
 
-#: src/control_center/panel.zig
+#: src/control_center/tree.zig
 msgid "This setting is unavailable on this device or in the current mode."
 msgstr "Ce paramètre est indisponible sur cet appareil ou dans le mode actuel."
 
@@ -6140,7 +6140,7 @@ msgstr "Afficher ou masquer le volet latéral"
 msgid "Toggle the focused window between floating and automatic tiling."
 msgstr "Passer la fenêtre active du mode flottant à la mosaïque automatique et inversement."
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "Top"
 msgstr "En haut"
 
@@ -6200,7 +6200,7 @@ msgstr "Corbeille"
 msgid "Trash emptied"
 msgstr "Corbeille vidée"
 
-#: src/images/app.zig
+#: src/images/app_dialogs.zig
 msgid "Trash is unavailable: install gio to use it."
 msgstr "Corbeille indisponible : installez gio."
 
@@ -6212,7 +6212,7 @@ msgstr "Corbeille indisponible (gio non installé)"
 msgid "Treble"
 msgstr "Aigus"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Troubleshooting"
 msgstr "Dépannage"
 
@@ -6224,7 +6224,7 @@ msgstr "Appareil de confiance"
 msgid "Try a setting name, such as volume, wallpaper or scroll."
 msgstr "Essayez un nom de paramètre, comme volume, fond d'écran ou défilement."
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_tools.zig
 msgid "Try one language sample…"
 msgstr "Tester un échantillon linguistique…"
 
@@ -6260,7 +6260,7 @@ msgstr "Type"
 msgid "Type to search applications — Enter chooses"
 msgstr "Saisir pour rechercher une application — Entrée pour choisir"
 
-#: src/start_menu/panel.zig
+#: src/start_menu/menu_tree.zig
 msgid "Type to search…"
 msgstr "Saisir pour rechercher…"
 
@@ -6272,7 +6272,7 @@ msgstr "Type : de A à Z"
 msgid "Type: Z to A"
 msgstr "Type : de Z à A"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_rows.zig
 msgid "UI font"
 msgstr "Police de l'interface"
 
@@ -6284,7 +6284,7 @@ msgstr "La présence USB ou la correspondance entre file et périphérique n'a p
 msgid "Unable to prepare deletion"
 msgstr "Impossible de préparer la suppression"
 
-#: src/session/lock.zig
+#: src/session/lock_input.zig
 msgid "Unable to unlock. Try again."
 msgstr "Impossible de déverrouiller. Réessayez."
 
@@ -6308,7 +6308,7 @@ msgstr "Annuler les modifications"
 msgid "Undo the last layout change."
 msgstr "Annuler la dernière modification de disposition."
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Unknown"
 msgstr "Inconnu"
 
@@ -6336,11 +6336,11 @@ msgstr "Non géré"
 msgid "Unpin"
 msgstr "Désépingler"
 
-#: src/start_menu/panel.zig
+#: src/start_menu/menu_cards.zig
 msgid "Unpin an application first (five pins maximum)."
 msgstr "Désépinglez d'abord une application (cinq épingles maximum)."
 
-#: src/start_menu/panel.zig
+#: src/start_menu/menu_cards.zig
 msgid "Unpin application"
 msgstr "Désépingler l'application"
 
@@ -6348,11 +6348,11 @@ msgstr "Désépingler l'application"
 msgid "Unpin from dock"
 msgstr "Désépingler du dock"
 
-#: src/images/app.zig
+#: src/images/app_dialogs.zig
 msgid "Unsaved edits will be discarded."
 msgstr "Les modifications non enregistrées seront perdues."
 
-#: src/images/app.zig
+#: src/images/app_render.zig
 msgid "Unsaved edits · Ctrl+S: save · Ctrl+Z: undo"
 msgstr "Modifications non enregistrées · Ctrl+S : enregistrer · Ctrl+Z : annuler"
 
@@ -6360,7 +6360,7 @@ msgstr "Modifications non enregistrées · Ctrl+S : enregistrer · Ctrl+Z : an
 msgid "Unsaved work will be lost."
 msgstr "Le travail non enregistré sera perdu."
 
-#: src/images/app.zig
+#: src/images/app_thumbs.zig
 msgid "Unsupported image, missing decoder, or file unavailable"
 msgstr "Image non prise en charge, décodeur absent ou fichier indisponible"
 
@@ -6372,7 +6372,7 @@ msgstr "Sans titre"
 msgid "Up"
 msgstr "Monter"
 
-#: src/network/manager.zig
+#: src/network/manager_actions.zig
 msgid "Updating Wi-Fi…"
 msgstr "Mise à jour du Wi-Fi…"
 
@@ -6404,7 +6404,7 @@ msgstr "Utiliser le format 24 heures"
 msgid "Use 8–63 characters or a 64-digit hex key."
 msgstr "Utilisez 8 à 63 caractères ou une clé hexadécimale de 64 chiffres."
 
-#: src/images/app.zig
+#: src/images/app_dialogs.zig
 msgid "Use a .png filename to save a PNG copy."
 msgstr "Utilisez un nom se terminant par .png pour enregistrer une copie PNG."
 
@@ -6412,7 +6412,7 @@ msgstr "Utilisez un nom se terminant par .png pour enregistrer une copie PNG."
 msgid "Use folder"
 msgstr "Utiliser le dossier"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_add.zig
 msgid "Use letters, numbers, dots, hyphens or underscores for the queue identifier."
 msgstr "Utilisez des lettres, chiffres, points, tirets ou tirets bas pour l'identifiant de la file."
 
@@ -6424,7 +6424,7 @@ msgstr "Utilisez des lettres, chiffres, points, tirets ou tirets bas pour le nom
 msgid "Use logo"
 msgstr "Utiliser le logo"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_tools.zig
 msgid "Use suggested resolution"
 msgstr "Utiliser la résolution suggérée"
 
@@ -6512,7 +6512,7 @@ msgstr "Attente…"
 msgid "Wallpaper"
 msgstr "Fond d'écran"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "Warning: Screen capture is hidden. Recording and screen sharing can continue without a visible indicator or Stop sharing button. Hiding it is not recommended."
 msgstr "Attention : l'indicateur de capture d'écran est masqué. L'enregistrement et le partage peuvent continuer sans indicateur visible ni bouton d'arrêt. Il est déconseillé de le masquer."
 
@@ -6536,7 +6536,7 @@ msgstr "À la fermeture du capot"
 msgid "Where desktop icons appear."
 msgstr "Emplacement des icônes du bureau."
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_rows.zig
 msgid "While dragging a file out of it"
 msgstr "Lorsqu'un fichier en est glissé"
 
@@ -6556,7 +6556,7 @@ msgstr "Le Wi-Fi est désactivé"
 msgid "Wi-Fi network"
 msgstr "Réseau Wi-Fi"
 
-#: src/network/manager.zig
+#: src/network/manager_actions.zig
 msgid "Wi-Fi request failed. Check credentials and permissions."
 msgstr "Échec de la requête Wi-Fi. Vérifiez les identifiants et les permissions."
 
@@ -6564,23 +6564,23 @@ msgstr "Échec de la requête Wi-Fi. Vérifiez les identifiants et les permissio
 msgid "Window Management"
 msgstr "Gestion des fenêtres"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_rows.zig
 msgid "Window and panel transitions"
 msgstr "Transitions des fenêtres et panneaux"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_rows.zig
 msgid "Window chrome darkness"
 msgstr "Assombrissement des décorations de fenêtre"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_rows.zig
 msgid "Window chrome height"
 msgstr "Hauteur des décorations de fenêtre"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_rows.zig
 msgid "Window chrome opacity"
 msgstr "Opacité des décorations de fenêtre"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_rows.zig
 msgid "Window control gap"
 msgstr "Espacement des commandes de fenêtre"
 
@@ -6612,7 +6612,7 @@ msgstr "Ombre des fenêtres"
 msgid "Window spacing"
 msgstr "Espacement des fenêtres"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_rows.zig
 msgid "Window switching zoom"
 msgstr "Zoom au changement de fenêtre"
 
@@ -6636,7 +6636,7 @@ msgstr "Connexions sans fil"
 msgid "Word Wrap"
 msgstr "Retour à la ligne"
 
-#: src/images/app.zig
+#: src/images/app_dialogs.zig
 msgid "Working…"
 msgstr "Opération en cours…"
 
@@ -6700,7 +6700,7 @@ msgstr "Vous pourrez modifier ces choix dans les paramètres."
 msgid "You can restore it later from Trash."
 msgstr "Vous pourrez le restaurer depuis la corbeille."
 
-#: src/images/app.zig
+#: src/images/app_dialogs.zig
 msgid "You can restore the file from Trash."
 msgstr "Vous pouvez restaurer le fichier depuis la corbeille."
 
@@ -6716,7 +6716,7 @@ msgstr "Vous êtes connecté à ce réseau"
 msgid "You're online."
 msgstr "Vous êtes en ligne."
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "Your default printer"
 msgstr "Votre imprimante par défaut"
 
@@ -6728,7 +6728,7 @@ msgstr "La zone de déplacement de votre bureau."
 msgid "Your language, regional formats and calendar preferences."
 msgstr "Votre langue, vos formats régionaux et les préférences du calendrier."
 
-#: src/editor/app.zig
+#: src/editor/app_paint.zig
 msgid "Your unsaved changes will be lost if you discard them."
 msgstr "Vos modifications non enregistrées seront perdues si vous les abandonnez."
 
@@ -7232,7 +7232,7 @@ msgstr "sans fil association casque souris clavier"
 msgid "x11 legacy apps scaling"
 msgstr "x11 anciennes applications échelle"
 
-#: src/session/power.zig
+#: src/session/power_requests.zig
 msgid "{action} failed"
 msgstr "Échec de {action}"
 
@@ -7292,7 +7292,7 @@ msgstr "{kind} · {size} {unit}"
 msgid "{locale} · RediWM stays in English"
 msgstr "{locale} · RediWM reste en anglais"
 
-#: src/images/app.zig
+#: src/images/app_thumbs.zig
 msgid "{modified}{name} — Images ({position}/{count})"
 msgstr "{modified}{name} — Images ({position}/{count})"
 
@@ -7312,7 +7312,7 @@ msgstr "{name} ({locale})"
 msgid "{name} can be safely removed"
 msgstr "{name} peut être retiré en toute sécurité"
 
-#: src/control_center/sections/appearance.zig
+#: src/control_center/sections/appearance_sections.zig
 msgid "{name} could not be loaded · showing the default R"
 msgstr "Impossible de charger {name} · affichage du R par défaut"
 
@@ -7348,11 +7348,11 @@ msgstr "{name} — Visionneuse PDF ({page}/{pages})"
 msgid "{name} — RediWM Files"
 msgstr "{name} — Fichiers RediWM"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "{name}: level unavailable"
 msgstr "{name} : niveau indisponible"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "{n} completed sheet reported by CUPS"
 msgid_plural "{n} completed sheets reported by CUPS"
 msgstr[0] "{n} feuille terminée signalée par CUPS"
@@ -7388,7 +7388,7 @@ msgstr "Volume de {size}"
 msgid "{size} selected · {path}"
 msgstr "{size} sélectionnés · {path}"
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/printers_details.zig
 msgid "{value} (supported {min}–{max})"
 msgstr "{value} (pris en charge de {min} à {max})"
 
@@ -7414,7 +7414,7 @@ msgctxt "balance"
 msgid "R"
 msgstr "D"
 
-#: src/session/lock.zig
+#: src/session/lock_view.zig
 msgctxt "date"
 msgid "%A, %B %-d"
 msgstr "%A %-d %B"
@@ -7444,7 +7444,7 @@ msgctxt "desktop:Comment"
 msgid "Edit text files in tabs"
 msgstr "Modifier des fichiers texte dans des onglets"
 
-#: data/rediwm-release-safe.desktop
+#: data/rediwm.desktop
 msgctxt "desktop:Comment"
 msgid "RediWM Wayland compositor"
 msgstr "Compositeur Wayland RediWM"
@@ -7519,7 +7519,7 @@ msgctxt "desktop:Name"
 msgid "PDF Viewer"
 msgstr "Visionneuse PDF"
 
-#: data/rediwm-release-safe.desktop
+#: data/rediwm.desktop
 msgctxt "desktop:Name"
 msgid "RediWM"
 msgstr "RediWM"
@@ -7544,11 +7544,11 @@ msgctxt "polkit"
 msgid "Authentication is required to manage login accounts"
 msgstr "Une authentification est nécessaire pour gérer les comptes de connexion"
 
-#: src/Dock.zig
+#: src/dock/items.zig
 msgid "Application"
 msgstr "Application"
 
-#: src/Dock.zig
+#: src/dock/items.zig
 msgid "Files"
 msgstr "Fichiers"
 
