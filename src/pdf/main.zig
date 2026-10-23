@@ -10,15 +10,19 @@ const key_repeat = @import("ui").key_repeat;
 const ui_theme = @import("ui").theme;
 const shell_ui = @import("ui").cairo;
 const shell_text = @import("ui").text;
+const client_window = @import("client_window.zig");
+const client_input = @import("client_input.zig");
+const client_render = @import("client_render.zig");
+const client_print = @import("client_print.zig");
 
 const a = std.heap.c_allocator;
 
-const CSD_TITLEBAR_H: i32 = 32;
-const RESIZE_MARGIN: f64 = 6;
+pub const CSD_TITLEBAR_H: i32 = 32;
+pub const RESIZE_MARGIN: f64 = 6;
 
 const DecorationMode = enum { unknown, client_side, server_side };
 
-const OutputInfo = struct {
+pub const OutputInfo = struct {
     client: *Client,
     proxy: *wl.Output,
     name: u32,
@@ -74,605 +78,50 @@ pub const Client = struct {
     print_fd: c_int = -1,
     app: app_mod.App,
 
-    pub fn registryEvent(registry: *wl.Registry, event: wl.Registry.Event, self: *Client) void {
-        switch (event) {
-            .global => |g| {
-                const iface = std.mem.span(g.interface);
-                self.cursor_shape.bind(registry, g.name, iface, g.version);
-                if (std.mem.eql(u8, iface, "wl_compositor")) {
-                    self.compositor = registry.bind(g.name, wl.Compositor, @min(g.version, 5)) catch null;
-                } else if (std.mem.eql(u8, iface, "wl_shm")) {
-                    self.shm = registry.bind(g.name, wl.Shm, 1) catch null;
-                } else if (std.mem.eql(u8, iface, "wl_output")) {
-                    if (registry.bind(g.name, wl.Output, @min(g.version, 4)) catch null) |proxy| {
-                        const info = a.create(OutputInfo) catch {
-                            proxy.destroy();
-                            return;
-                        };
-                        info.* = .{ .client = self, .proxy = proxy, .name = g.name };
-                        self.outputs.append(a, info) catch {
-                            proxy.destroy();
-                            a.destroy(info);
-                            return;
-                        };
-                        proxy.setListener(*OutputInfo, outputEvent, info);
-                    }
-                } else if (std.mem.eql(u8, iface, "zxdg_output_manager_v1")) {
-                    self.output_manager = registry.bind(g.name, zxdg.OutputManagerV1, @min(g.version, 3)) catch null;
-                } else if (std.mem.eql(u8, iface, "wl_seat") and self.seat == null) {
-                    self.seat = registry.bind(g.name, wl.Seat, @min(g.version, 7)) catch null;
-                    if (self.seat) |seat| seat.setListener(*Client, seatEvent, self);
-                } else if (std.mem.eql(u8, iface, "xdg_activation_v1")) {
-                    self.activation = registry.bind(g.name, xdg.ActivationV1, 1) catch null;
-                } else if (std.mem.eql(u8, iface, "xdg_wm_base")) {
-                    self.wm_base = registry.bind(g.name, xdg.WmBase, @min(g.version, 2)) catch null;
-                    if (self.wm_base) |wm| wm.setListener(*Client, wmBaseEvent, self);
-                } else if (std.mem.eql(u8, iface, "zxdg_decoration_manager_v1")) {
-                    self.decoration_manager = registry.bind(g.name, zxdg.DecorationManagerV1, 1) catch null;
-                } else if (std.mem.eql(u8, iface, "wl_data_device_manager")) {
-                    self.data_manager = registry.bind(g.name, wl.DataDeviceManager, @min(g.version, 3)) catch null;
-                }
-            },
-            .global_remove => |ev| {
-                for (self.outputs.items, 0..) |info, i| {
-                    if (info.name == ev.name) {
-                        _ = self.outputs.swapRemove(i);
-                        self.removeEnteredOutput(info);
-                        if (info.logical) |logical| logical.destroy();
-                        info.proxy.destroy();
-                        a.destroy(info);
-                        self.recomputeScale();
-                        break;
-                    }
-                }
-            },
-        }
-    }
+    pub const registryEvent = client_window.registryEvent;
+    const logicalOutputEvent = client_window.logicalOutputEvent;
+    const surfaceEvent = client_window.surfaceEvent;
+    pub const removeEnteredOutput = client_window.removeEnteredOutput;
+    pub const recomputeScale = client_window.recomputeScale;
+    const xdgSurfaceEvent = client_window.xdgSurfaceEvent;
+    pub const wantsCsd = client_window.wantsCsd;
+    pub const titlebarHeight = client_window.titlebarHeight;
+    const decorationEvent = client_window.decorationEvent;
+    const xdgToplevelEvent = client_window.xdgToplevelEvent;
 
-    fn outputEvent(proxy: *wl.Output, event: wl.Output.Event, info: *OutputInfo) void {
-        switch (event) {
-            .scale => |ev| {
-                info.scale = ev.factor;
-                info.client.recomputeScale();
-            },
-            else => {},
-        }
-        _ = proxy;
-    }
+    pub const pointerEvent = client_input.pointerEvent;
+    pub const updateCursor = client_input.updateCursor;
+    pub const handlePointerMotion = client_input.handlePointerMotion;
+    pub const handlePointerButton = client_input.handlePointerButton;
+    pub const handleTitlebarClick = client_input.handleTitlebarClick;
+    pub const deliverKey = client_input.deliverKey;
+    pub const appRepeats = client_input.appRepeats;
+    const repeatDue = client_input.repeatDue;
+    pub const keyboardEvent = client_input.keyboardEvent;
+    pub const setCursor = client_input.setCursor;
 
-    fn logicalOutputEvent(_: *zxdg.OutputV1, event: zxdg.OutputV1.Event, info: *OutputInfo) void {
-        switch (event) {
-            .logical_size => |ev| {
-                info.logical_width = ev.width;
-                info.logical_height = ev.height;
-            },
-            else => {},
-        }
-    }
+    pub const acquireBuffer = client_render.acquireBuffer;
+    pub const render = client_render.render;
+    pub const renderTitlebar = client_render.renderTitlebar;
 
-    fn surfaceEvent(_: *wl.Surface, event: wl.Surface.Event, self: *Client) void {
-        switch (event) {
-            .enter => |ev| {
-                for (self.outputs.items) |info| {
-                    if (info.proxy == ev.output) {
-                        self.entered_outputs.append(a, info) catch return;
-                        self.recomputeScale();
-                        break;
-                    }
-                }
-            },
-            .leave => |ev| {
-                for (self.entered_outputs.items, 0..) |info, i| {
-                    if (info.proxy == ev.output) {
-                        _ = self.entered_outputs.swapRemove(i);
-                        self.recomputeScale();
-                        break;
-                    }
-                }
-            },
-        }
-    }
-
-    fn removeEnteredOutput(self: *Client, info: *OutputInfo) void {
-        for (self.entered_outputs.items, 0..) |entered, i| {
-            if (entered == info) {
-                _ = self.entered_outputs.swapRemove(i);
-                break;
-            }
-        }
-    }
-
-    fn recomputeScale(self: *Client) void {
-        var max_scale: i32 = 1;
-        for (self.entered_outputs.items) |info| {
-            if (info.scale > max_scale) max_scale = info.scale;
-        }
-        if (self.scale != max_scale) {
-            self.scale = max_scale;
-            self.app.scale = max_scale;
-            self.app.dirty = true;
-        }
-    }
-
-    fn wmBaseEvent(wm: *xdg.WmBase, event: xdg.WmBase.Event, _: *Client) void {
-        switch (event) {
-            .ping => |ev| wm.pong(ev.serial),
-        }
-    }
-
-    fn seatEvent(_: *wl.Seat, event: wl.Seat.Event, self: *Client) void {
-        switch (event) {
-            .capabilities => |ev| {
-                if (ev.capabilities.pointer and self.pointer == null) {
-                    self.pointer = self.seat.?.getPointer() catch null;
-                    if (self.pointer) |p| p.setListener(*Client, pointerEvent, self);
-                }
-                if (!ev.capabilities.pointer) {
-                    if (self.pointer) |p| p.release();
-                    self.pointer = null;
-                }
-                if (ev.capabilities.keyboard and self.keyboard == null) {
-                    self.keyboard = self.seat.?.getKeyboard() catch null;
-                    if (self.keyboard) |k| k.setListener(*Client, keyboardEvent, self);
-                }
-                if (!ev.capabilities.keyboard) {
-                    if (self.keyboard) |k| k.release();
-                    self.keyboard = null;
-                }
-                if (self.data_manager) |mgr| {
-                    if (self.data_device == null) {
-                        self.data_device = mgr.getDataDevice(self.seat.?) catch null;
-                        if (self.data_device) |device| device.setListener(*Client, dataDeviceEvent, self);
-                    }
-                }
-            },
-            else => {},
-        }
-    }
-
-    fn xdgSurfaceEvent(xdg_surf: *xdg.Surface, event: xdg.Surface.Event, self: *Client) void {
-        switch (event) {
-            .configure => |ev| {
-                xdg_surf.ackConfigure(ev.serial);
-                self.configured = true;
-                self.app.dirty = true;
-            },
-        }
-    }
-
-    fn wantsCsd(self: *const Client) bool {
-        return self.decoration_mode != .server_side;
-    }
-
-    fn titlebarHeight(self: *const Client) i32 {
-        return if (self.wantsCsd()) CSD_TITLEBAR_H else 0;
-    }
-
-    fn decorationEvent(_: *zxdg.ToplevelDecorationV1, event: zxdg.ToplevelDecorationV1.Event, self: *Client) void {
-        switch (event) {
-            .configure => |ev| {
-                self.decoration_mode = switch (ev.mode) {
-                    .server_side => .server_side,
-                    .client_side => .client_side,
-                    else => .client_side,
-                };
-                self.app.dirty = true;
-            },
-        }
-    }
-
-    fn xdgToplevelEvent(_: *xdg.Toplevel, event: xdg.Toplevel.Event, self: *Client) void {
-        switch (event) {
-            .configure => |ev| {
-                const tbh = self.titlebarHeight();
-                if (ev.width > 0 and ev.height > 0) {
-                    self.app.resize(ev.width, @max(1, ev.height - tbh));
-                } else if (!self.configured) {
-                    var width: i32 = 1000;
-                    var height: i32 = 700;
-                    if (self.outputs.items.len > 0) {
-                        const output = self.outputs.items[0];
-                        if (output.logical_width > 0) width = std.math.clamp(output.logical_width - 160, 480, 1200);
-                        if (output.logical_height > 0) height = std.math.clamp(output.logical_height - 180, 360, 800);
-                    }
-                    self.app.resize(width, height);
-                }
-                self.xdg_toplevel.setMinSize(480, 320 + tbh);
-                self.app.dirty = true;
-            },
-            .close => {
-                self.app.requestClose();
-            },
-            .configure_bounds, .wm_capabilities => {},
-        }
-    }
-
-    fn pointerEvent(_: *wl.Pointer, event: wl.Pointer.Event, self: *Client) void {
-        switch (event) {
-            .enter => |ev| {
-                self.cursor_serial = ev.serial;
-                self.input_serial = ev.serial;
-                self.inside = true;
-                self.cursor_name = "";
-                self.handlePointerMotion(ev.surface_x.toDouble(), ev.surface_y.toDouble());
-            },
-            .leave => {
-                self.inside = false;
-                self.app.cancelDrag();
-            },
-            .motion => |ev| {
-                self.handlePointerMotion(ev.surface_x.toDouble(), ev.surface_y.toDouble());
-            },
-            .button => |ev| {
-                self.input_serial = ev.serial;
-                self.handlePointerButton(ev.button, ev.state == .pressed);
-            },
-            .axis => |ev| {
-                if (ev.axis == .vertical_scroll) {
-                    if (self.app.ctrl) {
-                        self.app.handleZoomScroll(ev.value.toDouble());
-                    } else if (self.app.shift) {
-                        self.app.handleHorizontalScroll(ev.value.toDouble());
-                    } else {
-                        self.app.handleScroll(ev.value.toDouble());
-                    }
-                } else if (ev.axis == .horizontal_scroll) {
-                    self.app.handleHorizontalScroll(ev.value.toDouble());
-                }
-            },
-            else => {},
-        }
-    }
-
-    fn edgeAt(x: f64, y: f64, w: f64, h: f64) ?xdg.Toplevel.ResizeEdge {
-        const left = x <= RESIZE_MARGIN;
-        const right = x >= w - RESIZE_MARGIN;
-        const top = y <= RESIZE_MARGIN;
-        const bottom = y >= h - RESIZE_MARGIN;
-        if (top and left) return .top_left;
-        if (top and right) return .top_right;
-        if (bottom and left) return .bottom_left;
-        if (bottom and right) return .bottom_right;
-        if (top) return .top;
-        if (bottom) return .bottom;
-        if (left) return .left;
-        if (right) return .right;
-        return null;
-    }
-
-    fn updateCursor(self: *Client) void {
-        if (!self.inside) return;
-        const tbh_f: f64 = @floatFromInt(self.titlebarHeight());
-        const w_f: f64 = @floatFromInt(self.app.w);
-        const h_f: f64 = @as(f64, @floatFromInt(self.app.h)) + tbh_f;
-        if (self.wantsCsd()) {
-            if (edgeAt(self.pointer_x, self.pointer_y, w_f, h_f)) |edge| {
-                self.setCursor(switch (edge) {
-                    .top => "n-resize",
-                    .bottom => "s-resize",
-                    .left => "w-resize",
-                    .right => "e-resize",
-                    .top_left => "nw-resize",
-                    .top_right => "ne-resize",
-                    .bottom_left => "sw-resize",
-                    .bottom_right => "se-resize",
-                    .none => "default",
-                    else => "default",
-                });
-                return;
-            }
-        }
-        self.setCursor(self.app.cursorName());
-    }
-
-    fn handlePointerMotion(self: *Client, x: f64, y: f64) void {
-        self.pointer_x = x;
-        self.pointer_y = y;
-        const tbh: f64 = @floatFromInt(self.titlebarHeight());
-        self.app.handleMotion(x, y - tbh);
-        self.updateCursor();
-        if (tbh > 0 and y < tbh) self.app.dirty = true;
-    }
-
-    fn handlePointerButton(self: *Client, button: u32, pressed: bool) void {
-        if (button == 0x110 and pressed and self.wantsCsd()) {
-            const tbh_f: f64 = @floatFromInt(self.titlebarHeight());
-            const w_f: f64 = @floatFromInt(self.app.w);
-            const h_f: f64 = @as(f64, @floatFromInt(self.app.h)) + tbh_f;
-            if (edgeAt(self.pointer_x, self.pointer_y, w_f, h_f)) |edge| {
-                if (self.seat) |seat| self.xdg_toplevel.resize(seat, self.input_serial, edge);
-                return;
-            }
-            if (self.pointer_y < tbh_f) {
-                self.handleTitlebarClick(w_f, tbh_f);
-                return;
-            }
-        }
-        self.app.handleButton(button, pressed);
-        self.handlePointerMotion(self.pointer_x, self.pointer_y);
-    }
-
-    fn handleTitlebarClick(self: *Client, w_f: f64, tbh_f: f64) void {
-        const close_w: f64 = @min(tbh_f, 32.0);
-        if (self.pointer_x >= w_f - close_w) {
-            self.app.requestClose();
-            return;
-        }
-        if (self.seat) |seat| self.xdg_toplevel.move(seat, self.input_serial);
-    }
-
-    fn deliverKey(self: *Client, key: u32) void {
-        const state = self.xkb_state orelse return;
-        const sym = c.api.xkb_state_key_get_one_sym(state, key + 8);
-        var buf: [64]u8 = undefined;
-        const n = c.api.xkb_state_key_get_utf8(state, key + 8, &buf, buf.len);
-        // Dead keys have no text of their own: sequences resolve here, and a
-        // shortcut modifier abandons a half-typed one.
-        if (!self.app.ctrl and !self.app.alt) {
-            var composed: [64]u8 = undefined;
-            if (self.compose.feed(self.locale, sym, &composed)) |text| {
-                if (text.len > 0) self.app.handleKey(0, text);
-                return;
-            }
-        } else self.compose.reset();
-        self.app.handleKey(sym, buf[0..@intCast(std.math.clamp(n, 0, 63))]);
-    }
-
-    fn appRepeats(self: *Client, key: u32) bool {
-        if (self.compose.consumed) return false;
-        const state = self.xkb_state orelse return false;
-        var buf: [64]u8 = undefined;
-        const n = c.api.xkb_state_key_get_utf8(state, key + 8, &buf, buf.len);
-        return self.app.keyRepeats(c.api.xkb_state_key_get_one_sym(state, key + 8), buf[0..@intCast(std.math.clamp(n, 0, 63))]);
-    }
-
-    fn repeatDue(self: *Client) void {
-        const key = self.key_repeat.due(key_repeat.nowMs()) orelse return;
-        if (!self.appRepeats(key)) return self.key_repeat.stop();
-        self.deliverKey(key);
-    }
-
-    fn keyboardEvent(_: *wl.Keyboard, event: wl.Keyboard.Event, self: *Client) void {
-        switch (event) {
-            .leave => {
-                self.key_repeat.stop();
-                self.compose.reset();
-                self.app.cancelDrag();
-                self.app.ctrl = false;
-                self.app.shift = false;
-                self.app.alt = false;
-                self.app.dirty = true;
-            },
-            .keymap => |ev| {
-                defer _ = c.api.close(ev.fd);
-                self.key_repeat.stop();
-                if (ev.format != .xkb_v1 or ev.size == 0) return;
-                const memory = c.api.mmap(null, ev.size, c.api.PROT_READ, c.api.MAP_PRIVATE, ev.fd, 0);
-                if (memory == c.api.MAP_FAILED) return;
-                defer _ = c.api.munmap(memory, ev.size);
-
-                const bytes: [*]const u8 = @ptrCast(memory);
-                if (bytes[ev.size - 1] != 0) return;
-
-                if (self.xkb_context == null) self.xkb_context = c.api.xkb_context_new(c.api.XKB_CONTEXT_NO_FLAGS);
-                const keymap = c.api.xkb_keymap_new_from_string(
-                    self.xkb_context,
-                    @ptrCast(memory),
-                    c.api.XKB_KEYMAP_FORMAT_TEXT_V1,
-                    c.api.XKB_KEYMAP_COMPILE_NO_FLAGS,
-                ) orelse return;
-                defer c.api.xkb_keymap_unref(keymap);
-
-                if (self.xkb_state) |state| c.api.xkb_state_unref(state);
-                self.xkb_state = c.api.xkb_state_new(keymap);
-            },
-            .modifiers => |ev| {
-                if (self.xkb_state) |state| {
-                    _ = c.api.xkb_state_update_mask(state, ev.mods_depressed, ev.mods_latched, ev.mods_locked, 0, 0, ev.group);
-                    self.app.ctrl = c.api.xkb_state_mod_name_is_active(state, "Control", c.api.XKB_STATE_MODS_EFFECTIVE) > 0;
-                    self.app.shift = c.api.xkb_state_mod_name_is_active(state, "Shift", c.api.XKB_STATE_MODS_EFFECTIVE) > 0;
-                    self.app.alt = c.api.xkb_state_mod_name_is_active(state, "Mod1", c.api.XKB_STATE_MODS_EFFECTIVE) > 0 or
-                        c.api.xkb_state_mod_name_is_active(state, "Alt", c.api.XKB_STATE_MODS_EFFECTIVE) > 0;
-                }
-            },
-            .key => |ev| {
-                self.input_serial = ev.serial;
-                if (ev.state == .pressed) {
-                    const state = self.xkb_state orelse return;
-                    self.deliverKey(ev.key);
-                    const keymap_repeats = c.api.xkb_keymap_key_repeats(c.api.xkb_state_get_keymap(state), ev.key + 8) != 0;
-                    self.key_repeat.press(ev.key, keymap_repeats, self.appRepeats(ev.key), key_repeat.nowMs());
-                } else self.key_repeat.release(ev.key);
-            },
-            .repeat_info => |ev| self.key_repeat.setInfo(ev.rate, ev.delay),
-            else => {},
-        }
-    }
-
-    fn setCursor(self: *Client, name: [*:0]const u8) void {
-        if (!self.inside) return;
-        if (std.mem.eql(u8, std.mem.span(self.cursor_name), std.mem.span(name))) return;
-        const pointer = self.pointer orelse return;
-        if (self.cursor_shape.set(pointer, self.cursor_serial, std.mem.span(name))) {
-            self.cursor_name = name;
-            return;
-        }
-        const theme_ptr = self.cursor_theme orelse return;
-        const cursor = theme_ptr.getCursor(name) orelse theme_ptr.getCursor("default") orelse theme_ptr.getCursor("left_ptr") orelse return;
-        if (cursor.image_count == 0) return;
-        const img = cursor.images[0];
-        const buffer = img.getBuffer() catch return;
-
-        pointer.setCursor(self.cursor_serial, self.cursor_surface, @intCast(img.hotspot_x), @intCast(img.hotspot_y));
-        self.cursor_surface.attach(buffer, 0, 0);
-        self.cursor_surface.damage(0, 0, @intCast(img.width), @intCast(img.height));
-        self.cursor_surface.commit();
-        self.cursor_name = name;
-    }
-
-    fn acquireBuffer(self: *Client, w: i32, h: i32) !?*Buffer {
-        for (self.buffers) |slot| if (slot) |buffer| {
-            if (!buffer.busy and buffer.w == w and buffer.h == h) return buffer;
-        };
-        for (&self.buffers) |*slot| {
-            if (slot.*) |buffer| {
-                if (buffer.busy) continue;
-                buffer.destroy();
-                slot.* = null;
-            }
-            slot.* = try Buffer.create(self, w, h);
-            return slot.*;
-        }
-        return null;
-    }
-
-    fn render(self: *Client) !void {
-        self.updateCursor();
-        if (!self.configured or !self.app.dirty or self.outstanding >= 2) return;
-
-        const tbh = self.titlebarHeight();
-        const w = self.app.w;
-        const h = self.app.h + tbh;
-        const buffer = (try self.acquireBuffer(w * self.scale, h * self.scale)) orelse return;
-
-        const cr = c.api.cairo_create(buffer.image) orelse return error.CairoFailed;
-        defer c.api.cairo_destroy(cr);
-
-        c.api.cairo_scale(cr, @floatFromInt(self.scale), @floatFromInt(self.scale));
-
-        if (tbh > 0) self.renderTitlebar(cr, w, tbh);
-
-        c.api.cairo_save(cr);
-        c.api.cairo_translate(cr, 0, @floatFromInt(tbh));
-        self.app.render(cr);
-        c.api.cairo_restore(cr);
-
-        c.api.cairo_surface_flush(buffer.image);
-
-        if (self.applied_scale != self.scale) {
-            self.surface.setBufferScale(self.scale);
-            self.applied_scale = self.scale;
-        }
-        self.xdg_surface.setWindowGeometry(0, 0, w, h);
-        buffer.busy = true;
-        self.outstanding += 1;
-        self.surface.attach(buffer.wl_buffer, 0, 0);
-        self.surface.damage(0, 0, w, h);
-        self.surface.commit();
-        self.app.dirty = false;
-    }
-
-    fn renderTitlebar(self: *Client, cr: *c.api.cairo_t, w: i32, h: i32) void {
-        const w_f: f64 = @floatFromInt(w);
-        const h_f: f64 = @floatFromInt(h);
-
-        shell_ui.setSource(cr, ui_theme.global.window_bg);
-        c.api.cairo_rectangle(cr, 0, 0, w_f, h_f);
-        c.api.cairo_fill(cr);
-
-        shell_ui.setSource(cr, ui_theme.global.app_divider);
-        c.api.cairo_set_line_width(cr, 1.0);
-        c.api.cairo_move_to(cr, 0, h_f - 0.5);
-        c.api.cairo_line_to(cr, w_f, h_f - 0.5);
-        c.api.cairo_stroke(cr);
-
-        const title = std.mem.span(self.app.getTitle());
-        shell_ui.setSource(cr, ui_theme.global.window_fg);
-        const tw = shell_ui.measureText(cr, title, 12, true);
-        c.api.cairo_save(cr);
-        c.api.cairo_rectangle(cr, 36, 0, @max(0, w_f - 72), h_f);
-        c.api.cairo_clip(cr);
-        shell_ui.drawText(cr, title, @max(36.0, (w_f - tw) / 2.0), h_f / 2.0 + 4, 12, true);
-        c.api.cairo_restore(cr);
-
-        const close_w: f64 = @min(h_f, 32.0);
-        const hovered = self.inside and self.pointer_y < h_f and self.pointer_x >= w_f - close_w;
-        if (hovered) {
-            shell_ui.setSource(cr, ui_theme.global.window_close_hover);
-            c.api.cairo_rectangle(cr, w_f - close_w, 0, close_w, h_f);
-            c.api.cairo_fill(cr);
-            c.api.cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
-        } else {
-            shell_ui.setSource(cr, ui_theme.global.window_dim);
-        }
-        const cx = w_f - close_w / 2.0;
-        const cy = h_f / 2.0;
-        c.api.cairo_set_line_width(cr, 1.5);
-        c.api.cairo_move_to(cr, cx - 5, cy - 5);
-        c.api.cairo_line_to(cr, cx + 5, cy + 5);
-        c.api.cairo_move_to(cr, cx + 5, cy - 5);
-        c.api.cairo_line_to(cr, cx - 5, cy + 5);
-        c.api.cairo_stroke(cr);
-    }
-
-    /// Asks the helper for the print dialog; it answers only on failure.
-    fn requestPrint(self: *Client) void {
-        self.app.print_request = false;
-        if (self.print_fd >= 0) {
-            const request: u8 = 'p';
-            if (c.api.write(self.print_fd, &request, 1) == 1) return;
-            self.closePrint();
-        }
-        self.app.showMessage(@import("i18n").tr("Printing is not available."));
-    }
-
-    fn readPrintReplies(self: *Client) void {
-        var buf: [16]u8 = undefined;
-        const n = c.api.read(self.print_fd, &buf, buf.len);
-        if (n <= 0) {
-            if (n < 0 and std.posix.errno(n) == .INTR) return;
-            return self.closePrint();
-        }
-        for (buf[0..@intCast(n)]) |reply| switch (reply) {
-            'u' => self.app.showMessage(@import("i18n").tr("No print service answered (xdg-desktop-portal).")),
-            'f' => self.app.showMessage(@import("i18n").tr("The document could not be printed.")),
-            else => {},
-        };
-    }
-
-    fn closePrint(self: *Client) void {
-        if (self.print_fd < 0) return;
-        _ = c.api.close(self.print_fd);
-        self.print_fd = -1;
-    }
-
-    fn publishClipboard(self: *Client) void {
-        const mgr = self.data_manager orelse return;
-        const dev = self.data_device orelse return;
-        const text = self.app.clipboard_text orelse return;
-
-        const source = mgr.createDataSource() catch return;
-        errdefer source.destroy();
-
-        const clip = a.create(ClipboardSource) catch return;
-        clip.* = .{
-            .client = self,
-            .proxy = source,
-            .text = a.dupeZ(u8, text) catch return,
-        };
-        source.setListener(*ClipboardSource, ClipboardSource.event, clip);
-        source.offer("text/plain;charset=utf-8");
-        source.offer("text/plain");
-
-        dev.setSelection(source, self.input_serial);
-        if (self.clipboard_source) |cs| cs.destroy();
-        self.clipboard_source = clip;
-        self.app.clipboard_request = false;
-    }
+    const requestPrint = client_print.requestPrint;
+    const readPrintReplies = client_print.readPrintReplies;
+    pub const closePrint = client_print.closePrint;
+    const publishClipboard = client_print.publishClipboard;
 };
 
-const ClipboardSource = struct {
+pub const ClipboardSource = struct {
     client: *Client,
     proxy: *wl.DataSource,
     text: [:0]const u8,
 
-    fn destroy(self: *ClipboardSource) void {
+    pub fn destroy(self: *ClipboardSource) void {
         self.proxy.destroy();
         a.free(self.text);
         a.destroy(self);
     }
 
-    fn event(proxy: *wl.DataSource, ev: wl.DataSource.Event, self: *ClipboardSource) void {
+    pub fn event(proxy: *wl.DataSource, ev: wl.DataSource.Event, self: *ClipboardSource) void {
         switch (ev) {
             .send => |s| {
                 defer _ = c.api.close(s.fd);
@@ -690,9 +139,9 @@ const ClipboardSource = struct {
     }
 };
 
-fn dataDeviceEvent(_: *wl.DataDevice, _: wl.DataDevice.Event, _: *Client) void {}
+pub fn dataDeviceEvent(_: *wl.DataDevice, _: wl.DataDevice.Event, _: *Client) void {}
 
-const Buffer = struct {
+pub const Buffer = struct {
     client: *Client,
     wl_buffer: *wl.Buffer,
     image: *c.api.cairo_surface_t,
@@ -702,7 +151,7 @@ const Buffer = struct {
     h: i32,
     busy: bool = false,
 
-    fn create(client: *Client, w: i32, h: i32) !*Buffer {
+    pub fn create(client: *Client, w: i32, h: i32) !*Buffer {
         if (w <= 0 or h <= 0 or w > 16384 or h > 16384) return error.InvalidSize;
         const len: usize = @intCast(w * h * 4);
         const fd = c.api.memfd_create("rediwm-pdf", c.api.MFD_CLOEXEC);
@@ -749,7 +198,7 @@ const Buffer = struct {
         self.client.outstanding -= 1;
     }
 
-    fn destroy(self: *Buffer) void {
+    pub fn destroy(self: *Buffer) void {
         self.wl_buffer.destroy();
         c.api.cairo_surface_destroy(self.image);
         _ = c.api.munmap(self.memory, self.len);
