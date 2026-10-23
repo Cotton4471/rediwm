@@ -130,56 +130,110 @@ pub const Color = struct {
     }
 };
 
-pub fn paintControls(
-    base: Color,
-    px: f32,
-    py: f32,
+/// The window controls of one raster. Everything that does not depend on the
+/// pixel (the chip's box and fill, the glyph inks) is worked out once, not for
+/// every pixel of the control group.
+pub const Controls = struct {
     min_btn: Rect,
     max_btn: Rect,
     close_btn: Rect,
-    chip_pos: f32,
-    chip_alpha: f32,
     diag: f32,
     scale: f32,
-    density: f32,
     maximized: bool,
-) Color {
-    var color = base;
+    glyph_scale: f32,
+    // Every glyph lies within 7.6 glyph units of its button's centre (the
+    // close cross's corners), and its ramp reaches 0.5 / (scale * glyph_scale)
+    // beyond that: farther away on either axis its coverage is zero. 9 units
+    // leave room for rounding.
+    glyph_reach: f32,
+    show_chip: bool,
+    chip_x: f32 = 0,
+    chip_y: f32 = 0,
+    chip_width: f32 = 0,
+    chip_height: f32 = 0,
+    chip_radius: f32 = 0,
+    chip_fill: Color = undefined,
+    chip_alpha: f32 = 0,
+    min_ink: Color,
+    max_ink: Color,
+    close_ink: Color,
 
-    // Window-control hover chip, drawn under the glyph. One chip
-    // slides between the buttons; its rect and red-ness are interpolated
-    // from the slot coordinate.
-    if (chip_alpha > 0) {
-        const pos = std.math.clamp(chip_pos, 0, 2);
-        const from_max = pos >= 1;
-        const a_btn = if (from_max) max_btn else min_btn;
-        const b_btn = if (from_max) close_btn else max_btn;
-        const t = if (from_max) pos - 1 else pos;
-        const chip_width = mix(@floatFromInt(a_btn.w), @floatFromInt(b_btn.w), t);
-        const chip_height = mix(@floatFromInt(a_btn.h), @floatFromInt(b_btn.h), t);
-        const fill = Color.lerp(Color.control_hover(), Color.close_hover(), clamp01(pos - 1));
-        const chip = edgeCoverage(sdRoundedBox(
-            px,
-            py,
-            mix(@floatFromInt(a_btn.x), @floatFromInt(b_btn.x), t),
-            mix(@floatFromInt(a_btn.y), @floatFromInt(b_btn.y), t),
-            chip_width,
-            chip_height,
-            window_chrome.cornerRadius(theme.global.chrome_round_buttons, chip_width, chip_height, btn_radius * density),
-        ), scale);
-        if (chip > 0) color = fill.scaled(chip * clamp01(chip_alpha)).over(color);
+    pub fn init(
+        min_btn: Rect,
+        max_btn: Rect,
+        close_btn: Rect,
+        chip_pos: f32,
+        chip_alpha: f32,
+        diag: f32,
+        scale: f32,
+        density: f32,
+        maximized: bool,
+    ) Controls {
+        // Enlarge glyphs within the existing hover chips and hit targets.
+        const glyph_scale = density * button_glyph_scale;
+        var controls: Controls = .{
+            .min_btn = min_btn,
+            .max_btn = max_btn,
+            .close_btn = close_btn,
+            .diag = diag,
+            .scale = scale,
+            .maximized = maximized,
+            .glyph_scale = glyph_scale,
+            .glyph_reach = 9 * glyph_scale + 0.5 / scale,
+            .show_chip = chip_alpha > 0,
+            .min_ink = iconColor(chip_pos, chip_alpha, .minimize),
+            .max_ink = iconColor(chip_pos, chip_alpha, .maximize),
+            .close_ink = iconColor(chip_pos, chip_alpha, .close),
+        };
+        // Window-control hover chip, drawn under the glyph. One chip
+        // slides between the buttons; its rect and red-ness are interpolated
+        // from the slot coordinate.
+        if (controls.show_chip) {
+            const pos = std.math.clamp(chip_pos, 0, 2);
+            const from_max = pos >= 1;
+            const a_btn = if (from_max) max_btn else min_btn;
+            const b_btn = if (from_max) close_btn else max_btn;
+            const t = if (from_max) pos - 1 else pos;
+            controls.chip_width = mix(@floatFromInt(a_btn.w), @floatFromInt(b_btn.w), t);
+            controls.chip_height = mix(@floatFromInt(a_btn.h), @floatFromInt(b_btn.h), t);
+            controls.chip_x = mix(@floatFromInt(a_btn.x), @floatFromInt(b_btn.x), t);
+            controls.chip_y = mix(@floatFromInt(a_btn.y), @floatFromInt(b_btn.y), t);
+            controls.chip_radius = window_chrome.cornerRadius(theme.global.chrome_round_buttons, controls.chip_width, controls.chip_height, btn_radius * density);
+            controls.chip_fill = Color.lerp(Color.control_hover(), Color.close_hover(), clamp01(pos - 1));
+            controls.chip_alpha = clamp01(chip_alpha);
+        }
+        return controls;
     }
 
-    // Enlarge glyphs within the existing hover chips and hit targets.
-    const glyph_scale = density * button_glyph_scale;
-    const min_cov = minimizeIconCoverage(min_btn.centerX() + (px - min_btn.centerX()) / glyph_scale, min_btn.centerY() + (py - min_btn.centerY()) / glyph_scale, min_btn, scale * glyph_scale);
-    if (min_cov > 0) color = iconColor(chip_pos, chip_alpha, .minimize).scaled(min_cov).over(color);
-    const max_cov = maximizeIconCoverage(max_btn.centerX() + (px - max_btn.centerX()) / glyph_scale, max_btn.centerY() + (py - max_btn.centerY()) / glyph_scale, max_btn, scale * glyph_scale, maximized);
-    if (max_cov > 0) color = iconColor(chip_pos, chip_alpha, .maximize).scaled(max_cov).over(color);
-    const close_cov = closeIconCoverage(close_btn.centerX() + (px - close_btn.centerX()) / glyph_scale, close_btn.centerY() + (py - close_btn.centerY()) / glyph_scale, close_btn, diag, scale * glyph_scale);
-    if (close_cov > 0) color = iconColor(chip_pos, chip_alpha, .close).scaled(close_cov).over(color);
-    return color;
-}
+    fn reaches(c: *const Controls, btn: Rect, px: f32, py: f32) bool {
+        return @abs(px - btn.centerX()) <= c.glyph_reach and @abs(py - btn.centerY()) <= c.glyph_reach;
+    }
+
+    pub fn paint(c: *const Controls, base: Color, px: f32, py: f32) Color {
+        var color = base;
+        if (c.show_chip) {
+            const chip = edgeCoverage(sdRoundedBox(px, py, c.chip_x, c.chip_y, c.chip_width, c.chip_height, c.chip_radius), c.scale);
+            if (chip > 0) color = c.chip_fill.scaled(chip * c.chip_alpha).over(color);
+        }
+        const g = c.glyph_scale;
+        if (c.reaches(c.min_btn, px, py)) {
+            const btn = c.min_btn;
+            const min_cov = minimizeIconCoverage(btn.centerX() + (px - btn.centerX()) / g, btn.centerY() + (py - btn.centerY()) / g, btn, c.scale * g);
+            if (min_cov > 0) color = c.min_ink.scaled(min_cov).over(color);
+        }
+        if (c.reaches(c.max_btn, px, py)) {
+            const btn = c.max_btn;
+            const max_cov = maximizeIconCoverage(btn.centerX() + (px - btn.centerX()) / g, btn.centerY() + (py - btn.centerY()) / g, btn, c.scale * g, c.maximized);
+            if (max_cov > 0) color = c.max_ink.scaled(max_cov).over(color);
+        }
+        if (c.reaches(c.close_btn, px, py)) {
+            const btn = c.close_btn;
+            const close_cov = closeIconCoverage(btn.centerX() + (px - btn.centerX()) / g, btn.centerY() + (py - btn.centerY()) / g, btn, c.diag, c.scale * g);
+            if (close_cov > 0) color = c.close_ink.scaled(close_cov).over(color);
+        }
+        return color;
+    }
+};
 
 // Resting glyphs use neutral dim ink, --text on hover, #fff over close red.
 pub fn iconColor(chip_pos: f32, chip_alpha: f32, kind: ControlKind) Color {

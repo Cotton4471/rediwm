@@ -59,6 +59,9 @@ pub const button_widget = @import("widgets/button.zig");
 pub const checkbox_widget = @import("widgets/checkbox.zig");
 pub const scrollbar = @import("widgets/scrollbar.zig");
 
+/// Columns whose horizontal taps `drawImageSmooth` keeps at once (on the stack).
+const taps_strip = 64;
+
 /// A logical-pixel clip rectangle, intersected as scroll containers nest.
 pub const ClipRect = struct { x: f32, y: f32, w: f32, h: f32 };
 
@@ -421,25 +424,47 @@ pub const Renderer = struct {
         // blends neighbours (bilinear) rather than repeating them.
         const footprint = std.math.clamp(k, 1, max_footprint);
         const stride: usize = @intCast(image.width);
+        if (smooth) {
+            // A column shares its horizontal taps: work them out once per strip
+            // of columns, not once per pixel.
+            var across: [taps_strip]Taps = undefined;
+            var strip = x0;
+            while (strip < x1) : (strip += taps_strip) {
+                const strip_end = @min(x1, strip + taps_strip);
+                for (across[0..@intCast(strip_end - strip)], 0..) |*taps, i| {
+                    const sx = @as(f32, @floatFromInt(strip + @as(i32, @intCast(i)))) + 0.5;
+                    taps.* = Taps.init(off_x + (sx - x * s) * k, footprint / 2, image.width);
+                }
+                var py = y0;
+                while (py < y1) : (py += 1) {
+                    const sy = @as(f32, @floatFromInt(py)) + 0.5;
+                    const down = Taps.init(off_y + (sy - y * s) * k, footprint / 2, image.height);
+                    var px = strip;
+                    while (px < strip_end) : (px += 1) {
+                        const sx = @as(f32, @floatFromInt(px)) + 0.5;
+                        const cov = sdf.coverage(sdf.sdRoundedBox(sx, sy, x * s, y * s, w * s, h * s, radius * s));
+                        if (cov <= 0) continue;
+                        const sample = boxAverage(image, across[@intCast(px - strip)], down);
+                        blendPremultipliedPixel(&r.pixels[@intCast(py * r.width + px)], sample, cov);
+                    }
+                }
+            }
+            return;
+        }
         var py = y0;
         while (py < y1) : (py += 1) {
             const sy = @as(f32, @floatFromInt(py)) + 0.5;
             const v = off_y + (sy - y * s) * k;
-            // A row shares its vertical taps.
-            const down = if (smooth) Taps.init(v, footprint / 2, image.height) else undefined;
             var px = x0;
             while (px < x1) : (px += 1) {
                 const sx = @as(f32, @floatFromInt(px)) + 0.5;
                 const cov = sdf.coverage(sdf.sdRoundedBox(sx, sy, x * s, y * s, w * s, h * s, radius * s));
                 if (cov <= 0) continue;
                 const u = off_x + (sx - x * s) * k;
-                const sample = if (smooth)
-                    boxAverage(image, Taps.init(u, footprint / 2, image.width), down)
-                else
-                    image.pixels[
-                        @as(usize, @intFromFloat(std.math.clamp(@floor(v), 0, src_h - 1))) * stride +
-                            @as(usize, @intFromFloat(std.math.clamp(@floor(u), 0, src_w - 1)))
-                    ];
+                const sample = image.pixels[
+                    @as(usize, @intFromFloat(std.math.clamp(@floor(v), 0, src_h - 1))) * stride +
+                        @as(usize, @intFromFloat(std.math.clamp(@floor(u), 0, src_w - 1)))
+                ];
                 blendPremultipliedPixel(&r.pixels[@intCast(py * r.width + px)], sample, cov);
             }
         }

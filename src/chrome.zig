@@ -408,58 +408,76 @@ pub const ChromeBuffer = struct {
 
         const x0: usize = if (clip) |box| @intCast(@min(frame.width, @max(0, @as(i32, @intFromFloat(@round(@as(f32, @floatFromInt(box.x)) * scale)))))) else 0;
         const x1: usize = if (clip) |box| @intCast(@min(frame.width, @max(0, @as(i32, @intFromFloat(@round(@as(f32, @floatFromInt(box.x + box.w)) * scale)))))) else stride;
+        const controls = Controls.init(min_btn, max_btn, close_btn, frame.state.chip_pos, frame.state.chip_alpha, diag, scale, m.contentScale(), frame.state.maximized);
+        const icon_right = icon_left + @as(f32, @floatFromInt(m.iconSize()));
+        // The columns of the control group and of the icon. A column's centre
+        // grows with x, so each is one run; the rest of a row is the flat fill.
+        var control_run: ColumnRun = .{ .start = x1, .end = x1 };
+        var icon_run: ColumnRun = .{ .start = x1, .end = x1 };
+        for (x0..x1) |x| {
+            const px = (@as(f32, @floatFromInt(x)) + 0.5) / scale;
+            if (px >= control_left and px <= control_right) control_run.add(x);
+            if (px >= icon_left and px < icon_right) icon_run.add(x);
+        }
         for (0..@intCast(frame.height)) |device_y| {
             const py = (@as(f32, @floatFromInt(device_y)) + 0.5) / scale;
             const yi: i32 = @intFromFloat(@floor(py));
-            const row = device_y * stride;
+            const row = frame.pixels[device_y * stride ..][0..stride];
             var row_color = base;
             if (yi == m.titlebarHeight() - 1) row_color = Color.divider().over(row_color);
             const flat_color = row_color.argb();
             const control_row = py >= control_top and py <= control_bottom;
             const icon_row = frame.state.tabs.tabs.len == 0 and frame.state.icon != null and
                 py >= icon_top and py < icon_top + @as(f32, @floatFromInt(m.iconSize()));
-            for (x0..x1) |x| {
-                const px = (@as(f32, @floatFromInt(x)) + 0.5) / scale;
-                const in_controls = control_row and px >= control_left and px <= control_right;
-                const in_icon = icon_row and px >= icon_left and px < icon_left + @as(f32, @floatFromInt(m.iconSize()));
-                if (!in_controls and !in_icon) {
-                    frame.pixels[row + x] = flat_color;
-                    continue;
+            // The icon is left of the controls, but a narrow frame can make
+            // the two overlap.
+            var runs: [2]ColumnRun = undefined;
+            var count: usize = 0;
+            if (icon_row and icon_run.start < icon_run.end) {
+                runs[count] = icon_run;
+                count += 1;
+            }
+            if (control_row and control_run.start < control_run.end) {
+                if (count > 0 and control_run.start <= runs[0].end) {
+                    runs[0] = .{ .start = @min(runs[0].start, control_run.start), .end = @max(runs[0].end, control_run.end) };
+                } else {
+                    runs[count] = control_run;
+                    count += 1;
                 }
+            }
+            var x = x0;
+            for (runs[0..count]) |run| {
+                @memset(row[x..run.start], flat_color);
+                for (run.start..run.end) |shaded| {
+                    const px = (@as(f32, @floatFromInt(shaded)) + 0.5) / scale;
+                    const in_controls = control_row and px >= control_left and px <= control_right;
+                    const in_icon = icon_row and px >= icon_left and px < icon_right;
+                    if (!in_controls and !in_icon) {
+                        row[shaded] = flat_color;
+                        continue;
+                    }
 
-                var color = row_color;
-                if (in_controls) {
-                    color = paintControls(
-                        color,
-                        px,
-                        py,
-                        min_btn,
-                        max_btn,
-                        close_btn,
-                        frame.state.chip_pos,
-                        frame.state.chip_alpha,
-                        diag,
-                        scale,
-                        m.contentScale(),
-                        frame.state.maximized,
-                    );
-                }
+                    var color = row_color;
+                    if (in_controls) color = controls.paint(color, px, py);
 
-                if (if (frame.state.tabs.tabs.len == 0) frame.state.icon else null) |icon| {
-                    if (px >= icon_left and px < icon_left + @as(f32, @floatFromInt(m.iconSize())) and
-                        py >= icon_top and py < icon_top + @as(f32, @floatFromInt(m.iconSize())))
-                    {
-                        const ix: i32 = @intFromFloat(@floor((px - icon_left) * scale));
-                        const iy: i32 = @intFromFloat(@floor((py - icon_top) * scale));
-                        if (ix >= 0 and ix < icon.size and iy >= 0 and iy < icon.size) {
-                            const sample = icon.pixels[@intCast(iy * icon.size + ix)];
-                            color = Color.fromPremultiplied(sample).over(color);
+                    if (if (frame.state.tabs.tabs.len == 0) frame.state.icon else null) |icon| {
+                        if (px >= icon_left and px < icon_right and
+                            py >= icon_top and py < icon_top + @as(f32, @floatFromInt(m.iconSize())))
+                        {
+                            const ix: i32 = @intFromFloat(@floor((px - icon_left) * scale));
+                            const iy: i32 = @intFromFloat(@floor((py - icon_top) * scale));
+                            if (ix >= 0 and ix < icon.size and iy >= 0 and iy < icon.size) {
+                                const sample = icon.pixels[@intCast(iy * icon.size + ix)];
+                                color = Color.fromPremultiplied(sample).over(color);
+                            }
                         }
                     }
-                }
 
-                frame.pixels[row + x] = color.argb();
+                    row[shaded] = color.argb();
+                }
+                x = run.end;
             }
+            @memset(row[x..x1], flat_color);
         }
 
         if (frame.state.tabs.tabs.len > 0) {
@@ -536,7 +554,18 @@ pub const borderColor = chrome_paint.borderColor;
 pub const windowBorderColor = chrome_paint.windowBorderColor;
 pub const fillColor = chrome_paint.fillColor;
 const Color = chrome_paint.Color;
-const paintControls = chrome_paint.paintControls;
+const Controls = chrome_paint.Controls;
+
+/// Device columns `start..end` of a raster; empty while `start == end`.
+const ColumnRun = struct {
+    start: usize,
+    end: usize,
+
+    fn add(run: *ColumnRun, x: usize) void {
+        if (run.start == run.end) run.start = x;
+        run.end = x + 1;
+    }
+};
 pub const sdQuad = chrome_paint.sdQuad;
 pub const sdRoundedBox = chrome_paint.sdRoundedBox;
 pub const coverage = chrome_paint.coverage;
