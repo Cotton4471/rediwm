@@ -16,8 +16,13 @@ are free functions taking `self: *App` in `app_*.zig`, grouped by concern:
 `app_git_sidebar`, `app_scroll`, `app_opening`, `app_pointer`,
 `app_keyboard`, `app_menu`, `app_paint`, `app_items`. Shared enums and
 records are in `app_model.zig`, drawing helpers in `app_draw.zig`, tests in
-`app_tests.zig`. A new method goes in its group file plus an alias line in
-`App`; a file that calls a sibling's non-method helper imports it directly.
+`app_tests.zig` (with `app_*_tests.zig` by area). A new method goes in its
+group file plus an alias line in `App`; a file that calls a sibling's
+non-method helper imports it directly.
+
+The window is `Client.zig` (Wayland globals, seat, buffers), re-exported by
+`main.zig`, with its handlers in `client_window`, `client_input`,
+`client_dnd`, `client_clipboard` and `client_render.zig`.
 
 ## Terminal drawer
 

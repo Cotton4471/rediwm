@@ -1,7 +1,8 @@
 # Notes for agents working on RediWM
 
 Details that are easy to get wrong; read the section for what you touch.
-Tests: `TESTING.md`. Area notes are in an `AGENTS.md` beside the code; read
+Tests: `TESTING.md`. Where code lives: [source map](docs/agent-notes/map.md).
+Area notes are in an `AGENTS.md` beside the code; read
 the one for the directory you work in: `src/files`, `src/editor`,
 `src/desktop`, `src/input`, `src/control_center`, `src/ui`, `src/session`,
 `src/dm`, `src/accounts_helper`, `src/printing`, `scripts`.
@@ -13,6 +14,12 @@ the one for the directory you work in: `src/files`, `src/editor`,
 * Tool use is costly: no tight polling (wait 15–30 s between checks of long
   operations), batch checks, don't re-read unchanged files.
 * Add tests only when really needed or asked; prefer extending existing ones.
+* Keep files small enough to read whole. When a file you touch grows past
+  ~800 lines or a function past ~150, split it by concern (below), moving
+  code verbatim. Tests go in a `*_tests.zig` beside the code once they
+  outgrow a screen. Exempt: generated or table files (`ui/fold_data.zig`,
+  `ipc/commands.zig`) and the C rendering core, whose static state splitting
+  would have to share across translation units.
 * Before finishing: build Debug and `-Doptimize=ReleaseSafe`, run
   `zig build test` and the integration tests for what you touched. Some
   suites fail on HEAD: compare with a `git worktree` of HEAD before calling a
@@ -20,16 +27,30 @@ the one for the directory you work in: `src/files`, `src/editor`,
 
 ## Split files
 
-Large types are spread over sibling files by concern. `Toplevel.zig` (`toplevel/`),
+Large types are spread over sibling files by concern. A TitleCase host keeps
+its methods in a lowercase directory: `Toplevel.zig` (`toplevel/`),
 `Input.zig` (`input/`), `Taskbar.zig` (`taskbar/`), `Server.zig` (`server/`),
-`Output.zig` (`output/`), `files/app.zig`, `pdf/app.zig` and `desktop/app.zig`
-(`app_*.zig` beside them) keep the fields, `init`/`deinit` and one
+`Output.zig` (`output/`), `World.zig` (`world/`), `Dock.zig` (`dock/`),
+`Keyboard.zig` (`keyboard/`). Other hosts keep them beside them under a
+prefix: `files/app.zig`, `pdf/app.zig`, `desktop/app.zig`, `images/app.zig`,
+`editor/app.zig` (`app_*.zig`); `files/Client.zig` and the `Client` in
+`editor/main.zig` and `pdf/main.zig` (`client_*.zig`);
+`control_center/ControlCenter.zig` (`tree`, `keys`, `relayout`, `paint.zig`);
+`start_menu/StartMenu.zig` (`menu_*.zig`); `session/lock.zig`, `power.zig`
+(`lock_*`, `power_*.zig`); `systemd.zig` (`systemd/`); `network/manager.zig`,
+`dbus/connection.zig`, `ipc/wait.zig`, `ui/input.zig` (`<name>_*.zig`).
+Hosts keep the fields, `init`/`deinit` and one
 `pub const name = group.name;` alias per method, so `self.name()` is unchanged;
 the bodies are free functions taking the struct pointer. A new method goes in
 its group file plus an alias line. `ipc/protocol_*.zig`, `ipc/handlers_*.zig`,
-`config/loader_*.zig`, `control_center/sections/appearance_*.zig` and
-`msg/msg_*.zig`, `ui/paint_*.zig` and `ui/anim_*.zig` re-export their public
-declarations from the original file.
+`config/loader_*.zig`, `control_center/sections/appearance_*.zig`,
+`printers_*.zig` and `msg/msg_*.zig`, `ui/paint_*.zig`, `ui/text_*.zig`,
+`ui/theme_*.zig`, `ui/anim_*.zig`, `chrome_paint.zig` re-export their public
+declarations from the original file. `handleRequest`/`handleAction` dispatch
+groups of tags to `handlers_*.zig`, each a `switch` with `else => unreachable`.
+`build.zig` keeps the options and shared modules; programs, data, session
+binaries and test steps are in `build/` and run in the order `build()` calls
+them.
 Tests that used to sit in the big file are in a `*tests.zig` file reached by a
 `test { _ = @import(...); }` block: a file nothing imports contributes no tests.
 State (`var`) stays in the file that uses it; an alias would copy it.

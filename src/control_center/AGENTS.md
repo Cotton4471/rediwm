@@ -1,6 +1,9 @@
 # Settings (`ControlCenter`)
 
 Settings is an ordinary window with a compositor-drawn body (`Backend.shell`).
+`ControlCenter.zig` holds its state and lifecycle; `tree.zig`, `keys.zig`,
+`relayout.zig` and `paint.zig` its methods; `panel.zig` the shared widget
+helpers (and `panel.ControlCenter`); `sections/` one file per page.
 
 * The body paints into `scene_tree` at `render_scale` and presents with
   `presentOwned`.
@@ -31,7 +34,7 @@ Settings is an ordinary window with a compositor-drawn body (`Backend.shell`).
   `control_center.py` emits no such floods; a pass-through proxy that decodes bus
   messages shows the real traffic without root (`BecomeMonitor` and
   `Debug.Stats` need it).
-* Saving a theme slider rebuilds the page on release: `panel.rebuildTree`
+* Saving a theme slider rebuilds the page on release: `ControlCenter.rebuildTree` (`relayout.zig`)
   carries named sliders' state across (`src/ui/AGENTS.md`, "Sliders").
 * A rebuild of Appearance costs milliseconds (preset, wallpaper and icon-theme
   scans) plus a full repaint: background wakes refresh only pages that show
