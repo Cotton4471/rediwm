@@ -16,10 +16,14 @@ const Document = @import("document.zig").Document;
 const view = @import("view.zig");
 const lines = @import("lines.zig");
 const op = @import("operation.zig");
+const app_files = @import("app_files.zig");
+const app_view = @import("app_view.zig");
+const app_input = @import("app_input.zig");
+const app_paint = @import("app_paint.zig");
 const a = std.heap.c_allocator;
-const top: f64 = 40;
-const status_h: f64 = 26;
-const tab_w: f64 = 176;
+pub const top: f64 = 40;
+pub const status_h: f64 = 26;
+pub const tab_w: f64 = 176;
 const Status = struct {
     revision: usize = std.math.maxInt(usize),
     cursor: usize = 0,
@@ -27,10 +31,10 @@ const Status = struct {
     column: usize = 0,
 };
 /// Stand-in for the position of a cursor too far from the view to measure.
-const far: c_int = 1_000_000 * 1024;
-const Action = enum { new, open, save, save_as, find, wrap };
-const labels = [_]i18n.Message{ i18n.msg("New"), i18n.msg("Open"), i18n.msg("Save"), i18n.msg("Save As"), i18n.msg("Find"), i18n.msg("Word Wrap") };
-const Tab = struct {
+pub const far: c_int = 1_000_000 * 1024;
+pub const Action = enum { new, open, save, save_as, find, wrap };
+pub const labels = [_]i18n.Message{ i18n.msg("New"), i18n.msg("Open"), i18n.msg("Save"), i18n.msg("Save As"), i18n.msg("Find"), i18n.msg("Word Wrap") };
+pub const Tab = struct {
     id: usize,
     doc: Document = .{},
     path: ?[:0]u8 = null,
@@ -41,12 +45,12 @@ const Tab = struct {
     measure: view.Measure = .{},
     /// The status bar's line and column, recomputed only when the cursor or text moves.
     status: Status = .{},
-    fn deinit(t: *Tab) void {
+    pub fn deinit(t: *Tab) void {
         t.doc.deinit();
         if (t.path) |path| a.free(path);
         a.destroy(t);
     }
-    fn name(t: *Tab) []const u8 {
+    pub fn name(t: *Tab) []const u8 {
         return if (t.path) |path| std.fs.path.basename(path) else tr("Untitled");
     }
 };
@@ -121,7 +125,7 @@ pub const App = struct {
         self.rows.deinit(a);
         self.layouts.deinit();
     }
-    fn current(self: *App) *Tab {
+    pub fn current(self: *App) *Tab {
         return self.tabs.items[self.selected];
     }
     pub fn tabId(self: *App) usize {
@@ -133,7 +137,7 @@ pub const App = struct {
     pub fn document(self: *App) *Document {
         return &self.current().doc;
     }
-    fn findTab(self: *App, id: usize) ?usize {
+    pub fn findTab(self: *App, id: usize) ?usize {
         for (self.tabs.items, 0..) |t, i| if (t.id == id) return i;
         return null;
     }
@@ -147,7 +151,7 @@ pub const App = struct {
         self.selected = self.tabs.items.len - 1;
         self.changed();
     }
-    fn changed(self: *App) void {
+    pub fn changed(self: *App) void {
         self.dirty = true;
         if (self.tabs.items.len == 0) return;
         const t = self.current();
@@ -165,899 +169,65 @@ pub const App = struct {
         if (self.selected < self.first_tab) self.first_tab = self.selected;
         if (self.selected >= self.first_tab + visible) self.first_tab = self.selected - visible + 1;
     }
-    pub const CaretState = struct {
-        active: bool,
-        tab: usize,
-        revision: usize,
-        cursor: usize,
-        anchor: usize,
-        find: bool,
-        query_hash: u64,
-        activity: usize,
-        top: usize,
-        dy: f64,
-        scroll_x: f64,
-        width: i32,
-        height: i32,
-        scale: i32,
-    };
-    pub fn caretState(self: *App) CaretState {
-        const d = self.document();
-        const r = self.inputRectangle();
-        const in_view = @as(f64, @floatFromInt(r.y + r.height)) > self.viewTop() and @as(f64, @floatFromInt(r.y)) < self.viewTop() + self.viewHeight();
-        return .{
-            .active = self.focused and !self.menu_open and self.close_tab == null and self.preedit.items.len == 0 and (self.find_open or (d.cursor == d.anchor and in_view)),
-            .tab = self.tabId(),
-            .revision = d.revision,
-            .cursor = if (self.find_open) self.query.cursor else d.cursor,
-            .anchor = if (self.find_open) self.query.anchor else d.anchor,
-            .find = self.find_open,
-            .activity = self.caret_activity,
-            .top = d.top,
-            .dy = self.current().dy,
-            .scroll_x = self.current().scroll_x,
-            .width = self.w,
-            .height = self.h,
-            .scale = self.scale,
-            .query_hash = if (self.find_open) std.hash.Wyhash.hash(0, self.query.text.items) else 0,
-        };
-    }
-    pub fn stepCaret(self: *App, now: i64, active: bool, restart: bool, snap: bool) void {
-        const r = self.caretRect();
-        var target: caret_mod.Rect = .{
-            .x = @floatCast(@as(f64, @floatFromInt(r.x)) / 1024 + 16 - self.current().scroll_x),
-            .y = @floatCast(@as(f64, @floatFromInt(r.y)) / 1024 + self.viewTop()),
-            .h = @as(f32, @floatFromInt(r.height)) / 1024,
-        };
-        if (self.find_open) {
-            if (self.layouts.cr) |cr| target = .{
-                .x = @floatCast(22 + ui.measureText(cr, self.query.text.items[0..@min(self.query.cursor, self.query.text.items.len)], ui.textSize(), false)),
-                .y = 48,
-                .w = 1,
-                .h = 18,
-            };
-        }
-        if (self.caret.update(now, active, restart, target, snap or self.caret_snap)) self.caret_dirty = true;
-        self.caret_snap = false;
-    }
-    pub fn caretDamage(self: *App) p.Rectangle {
-        const before = self.caret_painted;
-        const after = self.caret.box;
-        const x: i32 = @intFromFloat(@floor(@min(before.x, after.x)) - 1);
-        const y: i32 = @intFromFloat(@floor(@min(before.y, after.y)) - 1);
-        return .{
-            .x = x,
-            .y = y,
-            .width = @as(i32, @intFromFloat(@ceil(@max(before.x + before.w, after.x + after.w)) + 1)) - x,
-            .height = @as(i32, @intFromFloat(@ceil(@max(before.y + before.h, after.y + after.h)) + 1)) - y,
-        };
-    }
-    fn paintCaret(self: *App, cr: *c.cairo_t) void {
-        if (!self.caret.visible) return;
-        const r = self.caret.box;
-        fill(cr, r.x, r.y, r.w, r.h, theme.global.window_fg);
-    }
+
+    pub const CaretState = app_paint.CaretState;
+    pub const caretState = app_paint.caretState;
+    pub const stepCaret = app_paint.stepCaret;
+    pub const caretDamage = app_paint.caretDamage;
+    pub const paintCaret = app_paint.paintCaret;
+    pub const tabRight = app_paint.tabRight;
+    pub const dismissMenu = app_paint.dismissMenu;
+    pub const toggleMenu = app_paint.toggleMenu;
+    pub const menuBox = app_paint.menuBox;
+    pub const menuRow = app_paint.menuRow;
+    pub const menuHit = app_paint.menuHit;
+    pub const paintMenu = app_paint.paintMenu;
+    pub const paintButton = app_paint.paintButton;
+    pub const render = app_paint.render;
+    pub const paintLine = app_paint.paintLine;
+    pub const paintClose = app_paint.paintClose;
     pub fn getTitle(self: *App) [*:0]const u8 {
         return &self.title;
     }
-    pub fn message(self: *App, value: []const u8) void {
-        self.notice_len = @min(value.len, self.notice.len);
-        @memcpy(self.notice[0..self.notice_len], value[0..self.notice_len]);
-        self.dirty = true;
-    }
-    fn failure(self: *App, err: anyerror) void {
-        self.message(switch (err) {
-            error.FileChanged => tr("File changed on disk. Use Save As to keep your edits in another file."),
-            error.BinaryFile => tr("This file contains binary data and cannot be edited as text."),
-            error.UnsupportedEncoding => tr("This file is not valid UTF-8 text."),
-            error.FileTooLarge => tr("Text files are limited to 4 GiB."),
-            error.OutOfMemory => tr("Not enough free memory to hold this file."),
-            error.Busy => tr("Saving a large file. Editing resumes when it is written."),
-            error.PermissionDenied => tr("Permission denied. Try Save As in a writable folder."),
-            error.HardLinkedFile => tr("This file has multiple hard links. Use Save As to create a separate copy."),
-            else => @errorName(err),
-        });
-    }
-    pub fn open(self: *App, path: []const u8) void {
-        if (self.close_tab == null) for (self.tabs.items, 0..) |t, i| {
-            if (t.path != null and std.mem.eql(u8, t.path.?, path)) {
-                self.selected = i;
-                self.changed();
-                return;
-            }
-        };
-        const owned = a.dupeZ(u8, path) catch return;
-        self.queue.append(a, owned) catch {
-            a.free(owned);
-            return;
-        };
-    }
-    pub fn sync(self: *App) void {
-        if (self.operation) |job| {
-            if (!job.done.load(.acquire)) return;
-            self.operation = null;
-            defer job.deinit();
-            self.dirty = true;
-            if (job.kind == .save) if (self.findTab(job.tab_id)) |i| {
-                self.tabs.items[i].doc.locked = false;
-            };
-            if (job.err) |err| {
-                self.close_all = false;
-                self.failure(err);
-                return;
-            }
-            if (job.cancelled) {
-                self.close_all = false;
-                return;
-            }
-            switch (job.kind) {
-                .load => {
-                    for (self.tabs.items, 0..) |t, i| if (t.path != null and std.mem.eql(u8, t.path.?, job.path)) {
-                        self.selected = i;
-                        self.changed();
-                        return;
-                    };
-                    if (self.current().path != null or self.current().doc.text.items.len > 0 or self.current().doc.modified()) self.newTab() catch return;
-                    const t = self.current();
-                    const path = a.dupeZ(u8, job.path) catch return;
-                    t.doc.deinit();
-                    t.doc = job.document.?;
-                    job.document = null;
-                    t.path = path;
-                    t.stamp = job.stamp;
-                    t.dy = 0;
-                    t.scroll_x = 0;
-                    t.measure = .{};
-                    self.notice_len = 0;
-                    self.changed();
-                },
-                .save => if (self.findTab(job.tab_id)) |i| {
-                    const t = self.tabs.items[i];
-                    const path = a.dupeZ(u8, job.path) catch return;
-                    if (t.path) |old| a.free(old);
-                    t.path = path;
-                    t.stamp = job.stamp;
-                    if (t.doc.revision == job.revision) t.doc.saved = t.doc.position;
-                    self.message(tr("Saved"));
-                    self.changed();
-                    if (self.close_tab == t.id and !t.doc.modified()) self.finishClose();
-                },
-                .open_dialog => self.open(job.path),
-                .save_dialog => if (self.findTab(job.tab_id)) |i| {
-                    for (self.tabs.items) |other| if (other.id != job.tab_id and other.path != null and std.mem.eql(u8, other.path.?, job.path)) {
-                        self.message(tr("That file is open in another tab. Choose a different name."));
-                        return;
-                    };
-                    self.startSave(self.tabs.items[i], job.path, job.stamp);
-                },
-            }
-        }
-        if (self.operation == null and self.queue.items.len > 0 and self.close_tab == null) {
-            const path = self.queue.orderedRemove(0);
-            defer a.free(path);
-            self.operation = op.Operation.start(.load, self.io, 0, path, "", null) catch |err| {
-                self.failure(err);
-                return;
-            };
-            self.message(tr("Opening…"));
-        }
-    }
-    fn choose(self: *App, saving: bool) void {
-        if (self.operation != null) return;
-        const t = self.current();
-        self.operation = op.Operation.start(if (saving) .save_dialog else .open_dialog, self.io, t.id, t.path orelse "", "", null) catch |err| {
-            self.failure(err);
-            return;
-        };
-    }
-    fn startSave(self: *App, t: *Tab, path: []const u8, stamp: ?op.Stamp) void {
-        // A small document is copied so typing can continue while it is
-        // written. A large one is written where it is, which needs the text to
-        // stay put until the save finishes (see `Document.locked`).
-        const borrow = t.doc.text.items.len > op.copy_limit;
-        self.operation = op.Operation.startSave(self.io, t.id, path, t.doc.bom, t.doc.text.items, borrow, stamp) catch |err| {
-            self.failure(err);
-            return;
-        };
-        self.operation.?.revision = t.doc.revision;
-        t.doc.locked = borrow;
-        self.message(tr("Saving…"));
-    }
-    fn save(self: *App, as: bool) void {
-        if (self.operation != null) return;
-        const t = self.current();
-        if (as or t.path == null) self.choose(true) else self.startSave(t, t.path.?, t.stamp);
-    }
-    pub fn requestClose(self: *App) void {
-        if (self.operation != null) {
-            self.message(tr("Finish the file dialog or operation before closing."));
-            return;
-        }
-        self.close_all = true;
-        self.closeSelected();
-    }
-    fn closeSelected(self: *App) void {
-        if (self.operation != null) return;
-        self.close_tab = self.current().id;
-        self.close_choice = 2;
-        if (!self.current().doc.modified()) self.finishClose() else self.dirty = true;
-    }
-    fn finishClose(self: *App) void {
-        const id = self.close_tab orelse return;
-        self.close_tab = null;
-        const idx = self.findTab(id) orelse return;
-        self.tabs.orderedRemove(idx).deinit();
-        if (self.tabs.items.len == 0) {
-            self.closed = true;
-            return;
-        }
-        self.selected = @min(idx, self.tabs.items.len - 1);
-        self.changed();
-        if (self.close_all) self.closeSelected();
-    }
-    fn act(self: *App, action: Action) void {
-        switch (action) {
-            .new => self.newTab() catch |err| self.failure(err),
-            .open => self.choose(false),
-            .save => self.save(false),
-            .save_as => self.save(true),
-            .find => {
-                self.find_open = !self.find_open;
-                self.query.select_all = true;
-            },
-            .wrap => {
-                self.wrap = !self.wrap;
-                self.current().scroll_x = 0;
-                self.port().clamp();
-            },
-        }
-        self.dirty = true;
-    }
-    pub fn resize(self: *App, w: i32, h: i32) void {
-        self.w = w;
-        self.h = h;
-        self.menu_open = false;
-        self.changed();
-    }
-    fn viewTop(self: *App) f64 {
-        return top + if (self.find_open) @as(f64, 40) else 0;
-    }
-    fn viewHeight(self: *App) f64 {
-        return @max(1, @as(f64, @floatFromInt(self.h)) - self.viewTop() - status_h - 8);
-    }
-    pub fn cancelDrag(self: *App) void {
-        self.dragging = false;
-        self.drag_word = null;
-        self.scroll_drag.end();
-    }
-    pub fn cursorName(self: *App) [*:0]const u8 {
-        return if (!self.menu_open and self.py >= self.viewTop() and self.py < @as(f64, @floatFromInt(self.h)) - status_h and self.px < @as(f64, @floatFromInt(self.w)) - 16) "text" else "default";
-    }
-    /// The current tab's bar, along the right edge of the text view; null
-    /// while the document fits.
-    fn scrollbarGeometry(self: *App) ?scrollbar.Geometry {
-        if (self.tabs.items.len == 0) return null;
-        const strip = scrollbar.gutter(theme.global.scrollbar_width);
-        const track: scrollbar.Rect = .{ .x = @as(f32, @floatFromInt(self.w)) - strip, .y = @floatCast(self.viewTop()), .w = strip, .h = @floatCast(self.viewHeight()) };
-        const e = self.port().extent(&self.current().measure);
-        return scrollbar.Geometry.compute(.vertical, track, @floatCast(e.viewport), @floatCast(e.content), @floatCast(e.offset));
-    }
-    /// The current tab's scroll offset in the scrollbar's units.
-    fn scrollOffset(self: *App) f32 {
-        return @floatCast(self.port().extent(&self.current().measure).offset);
-    }
-    fn seekScroll(self: *App, offset: f32) void {
-        self.port().seek(&self.current().measure, offset);
-    }
-    /// The current tab as something to scroll, lay out and hit-test.
-    fn port(self: *App) view.Port {
-        const t = self.current();
-        self.layouts.configure(theme.global.mono_font, ui.textSize(), if (self.wrap) self.w - 40 else null, self.scale);
-        return .{ .doc = &t.doc, .layouts = &self.layouts, .height = self.viewHeight(), .dy = &t.dy };
-    }
 
-    /// Advances the scrollbar's hover and scroll feedback.
-    pub fn stepBar(self: *App, now: i64) void {
-        if (self.tabs.items.len == 0) return;
-        const tab = self.current();
-        const bar = self.scrollbarGeometry();
-        const position = @as(f64, @floatFromInt(tab.doc.top)) * 1024 + tab.dy;
-        if (self.bar_tab != tab) {
-            self.bar_tab = tab;
-            self.bar_observed = position;
-        }
-        const hovered = !self.menu_open and self.close_tab == null and if (bar) |b| b.overThumb(@floatCast(self.px), @floatCast(self.py)) else false;
-        if (self.bar_appearance.step(now, position != self.bar_observed, hovered, self.scroll_drag.active, bar != null)) self.dirty = true;
-        self.bar_observed = position;
-    }
+    pub const message = app_files.message;
+    pub const failure = app_files.failure;
+    pub const open = app_files.open;
+    pub const sync = app_files.sync;
+    pub const choose = app_files.choose;
+    pub const startSave = app_files.startSave;
+    pub const save = app_files.save;
+    pub const requestClose = app_files.requestClose;
+    pub const closeSelected = app_files.closeSelected;
+    pub const finishClose = app_files.finishClose;
+    pub const act = app_files.act;
 
-    /// How long the event loop may sleep before the scrollbar needs a frame.
-    pub fn barTimeout(self: *const App, now: i64) ?u32 {
-        if (self.bar_appearance.active) return 16;
-        if (self.bar_appearance.deadline) |deadline| return @intCast(std.math.clamp(deadline - now, 0, 60_000));
-        return null;
-    }
+    pub const resize = app_view.resize;
+    pub const viewTop = app_view.viewTop;
+    pub const viewHeight = app_view.viewHeight;
+    pub const cancelDrag = app_view.cancelDrag;
+    pub const cursorName = app_view.cursorName;
+    pub const scrollbarGeometry = app_view.scrollbarGeometry;
+    pub const scrollOffset = app_view.scrollOffset;
+    pub const seekScroll = app_view.seekScroll;
+    pub const port = app_view.port;
+    pub const stepBar = app_view.stepBar;
+    pub const barTimeout = app_view.barTimeout;
+    pub const handleScroll = app_view.handleScroll;
+    pub const caretRect = app_view.caretRect;
+    pub const caretRectNear = app_view.caretRectNear;
+    pub const inputRectangle = app_view.inputRectangle;
+    pub const reveal = app_view.reveal;
 
-    pub fn handleScroll(self: *App, amount: f64) void {
-        if (self.close_tab != null or self.menu_open) return;
-        if (self.py >= 0 and self.py < top) {
-            if (amount > 0) self.first_tab = @min(self.tabs.items.len - 1, self.first_tab + 1) else self.first_tab -|= 1;
-        } else if (self.shift and !self.wrap) {
-            self.current().scroll_x = @max(0, self.current().scroll_x + amount * 3);
-        } else {
-            self.port().scrollBy(amount * 3);
-        }
-        self.dirty = true;
-    }
-    /// The cursor's rectangle in Pango units, with `y` measured from the top
-    /// of the text view. A cursor too far away to measure without scrolling
-    /// is reported well outside the view, above or below it.
-    pub fn caretRect(self: *App) p.Rectangle {
-        const d = self.document();
-        const row = self.port().locate(d.cursor) orelse return .{ .x = 0, .y = if (d.cursor < d.top) -far else far, .width = 0, .height = 18 * 1024 };
-        var r: p.Rectangle = undefined;
-        p.pango_layout_get_cursor_pos(row.line.layout, row.line.index(d.cursor), &r, null);
-        r.y += @intFromFloat(row.y * 1024);
-        return r;
-    }
-    /// Like `caretRect`, but first scrolls to a cursor that is far away.
-    fn caretRectNear(self: *App) p.Rectangle {
-        var r = self.caretRect();
-        if (r.y <= -far / 2 or r.y >= far / 2) {
-            self.port().jumpTo(self.document().cursor);
-            r = self.caretRect();
-        }
-        return r;
-    }
-    pub fn inputRectangle(self: *App) p.Rectangle {
-        const r = self.caretRect();
-        return .{ .x = @intFromFloat(@as(f64, @floatFromInt(r.x)) / 1024 + 16 - self.current().scroll_x), .y = @intFromFloat(@as(f64, @floatFromInt(r.y)) / 1024 + self.viewTop()), .width = 2, .height = @max(1, @divTrunc(r.height, 1024)) };
-    }
-    fn reveal(self: *App) void {
-        const r = self.caretRectNear();
-        const t = self.current();
-        const y = @as(f64, @floatFromInt(r.y)) / 1024;
-        const h = @as(f64, @floatFromInt(r.height)) / 1024;
-        const pt = self.port();
-        if (y < 0) pt.scrollBy(y) else if (y + h > pt.height) pt.scrollBy(y + h - pt.height);
-        if (!self.wrap) {
-            const x = @as(f64, @floatFromInt(r.x)) / 1024;
-            t.scroll_x = @max(0, @max(x - @as(f64, @floatFromInt(self.w)) + 48, @min(t.scroll_x, x)));
-        }
-        self.changed();
-    }
-    /// The byte offset nearest a point given relative to the text origin.
-    fn indexAt(self: *App, x: f64, y: f64) usize {
-        return self.port().indexAt(x, y);
-    }
-    pub fn handleMotion(self: *App, x: f64, y: f64) void {
-        const changed_hover = ((self.py < top or y < top) and @divFloor(self.px, 76) != @divFloor(x, 76)) or (self.py < top) != (y < top);
-        self.px = x;
-        self.py = y;
-        if (self.menu_open) {
-            const hovered = self.menuHit(x, y);
-            if (hovered != self.menu_selected) {
-                self.menu_selected = hovered;
-                self.dirty = true;
-            }
-            return;
-        }
-        if (self.dragging) {
-            const t = self.current();
-            if (y < self.viewTop()) self.port().scrollBy(-18) else if (y > self.viewTop() + self.viewHeight()) self.port().scrollBy(18);
-            const pos = self.indexAt(x - 16 + t.scroll_x, y - self.viewTop());
-            if (self.drag_word) |initial| {
-                const range = t.doc.wordRange(self.port().characterAt(x - 16 + t.scroll_x, y - self.viewTop()));
-                const backwards = pos < initial[0];
-                t.doc.anchor = if (backwards) initial[1] else initial[0];
-                t.doc.cursor = if (backwards) range[0] else @max(initial[1], range[1]);
-            } else t.doc.move(pos, true);
-            self.changed();
-        }
-        if (self.scroll_drag.active) {
-            if (self.scrollbarGeometry()) |bar| self.seekScroll(self.scroll_drag.offsetAt(bar, @floatCast(x), @floatCast(y)));
-            self.dirty = true;
-        }
-        if (changed_hover) self.dirty = true;
-    }
-    pub fn handleButton(self: *App, code: u32, pressed: bool) void {
-        if (code != 0x110) return;
-        if (pressed) self.caret_activity +%= 1;
-        if (!pressed) {
-            self.cancelDrag();
-            return;
-        }
-        const last_click = self.last_text_click;
-        self.last_text_click = null;
-        self.caret_snap = true;
-        if (self.close_tab != null) {
-            const x = (@as(f64, @floatFromInt(self.w)) - 420) / 2;
-            const y = (@as(f64, @floatFromInt(self.h)) - 170) / 2;
-            if (self.py >= y + 112 and self.py <= y + 150 and self.operation == null) {
-                if (self.px >= x + 20 and self.px < x + 135) {
-                    self.close_tab = null;
-                    self.close_all = false;
-                } else if (self.px >= x + 145 and self.px < x + 270) self.finishClose() else if (self.px >= x + 280 and self.px < x + 400) self.save(false);
-                self.dirty = true;
-            }
-            return;
-        }
-        if (self.menu_open) {
-            const row = self.menuHit(self.px, self.py);
-            self.dismissMenu();
-            if (row) |i| self.act(@enumFromInt(i));
-            return;
-        }
-        if (self.py < 0) return;
-        if (self.py < top) {
-            if (!self.has_titlebar and self.px >= @as(f64, @floatFromInt(self.w)) - 34) {
-                self.toggleMenu(@as(f64, @floatFromInt(self.w)) - 8);
-                return;
-            }
-            if (self.px >= self.tabRight()) {
-                self.act(.new);
-                return;
-            }
-            const i = self.first_tab + @as(usize, @intFromFloat(@max(0, self.px) / tab_w));
-            if (i < self.tabs.items.len) {
-                self.selected = i;
-                self.changed();
-                if (@mod(self.px, tab_w) > tab_w - 28) self.closeSelected();
-            }
-        } else if (self.find_open and self.py < self.viewTop()) {
-            if (self.px > @as(f64, @floatFromInt(self.w)) - 90) self.findNext(self.shift);
-        } else if (self.py < @as(f64, @floatFromInt(self.h)) - status_h) {
-            if (self.px > @as(f64, @floatFromInt(self.w)) - scrollbar.gutter(theme.global.scrollbar_width)) {
-                if (self.scrollbarGeometry()) |bar| {
-                    const scroll = self.scrollOffset();
-                    if (scrollbar.press(bar, @floatCast(self.px), @floatCast(self.py), scroll)) |action| {
-                        switch (action) {
-                            .grab => self.scroll_drag.begin(bar, @floatCast(self.px), @floatCast(self.py), scroll),
-                            .page => |offset| self.seekScroll(offset),
-                        }
-                        self.dirty = true;
-                    }
-                }
-                return;
-            }
-            self.find_open = false;
-            const t = self.current();
-            const pos = self.indexAt(self.px - 16 + t.scroll_x, self.py - self.viewTop());
-            const now = @import("ui").key_repeat.nowMs();
-            const double = if (last_click) |last| last.tab == t.id and now - last.time <= input.multi_click_ms and
-                @abs(self.px - last.x) <= input.multi_click_slop and @abs(self.py - last.y) <= input.multi_click_slop else false;
-            if (double and !self.shift) {
-                const range = t.doc.wordRange(self.port().characterAt(self.px - 16 + t.scroll_x, self.py - self.viewTop()));
-                t.doc.anchor = range[0];
-                t.doc.cursor = range[1];
-                self.drag_word = range;
-            } else {
-                t.doc.move(pos, self.shift);
-                self.last_text_click = .{ .time = now, .x = self.px, .y = self.py, .tab = t.id };
-            }
-            self.dragging = true;
-            self.changed();
-        }
-    }
-    pub fn pasteText(self: *App, bytes: []const u8) void {
-        self.caret_activity +%= 1;
-        if (self.close_tab != null or self.menu_open) return;
-        if (self.find_open) {
-            self.query.insert(a, bytes) catch |err| self.failure(err);
-            self.dirty = true;
-            return;
-        }
-        self.document().insert(bytes) catch |err| {
-            self.failure(err);
-            return;
-        };
-        self.notice_len = 0;
-        self.reveal();
-    }
-    fn findNext(self: *App, backwards: bool) void {
-        const q = self.query.text.items;
-        if (q.len == 0) return;
-        const d = self.document();
-        const sel = d.selection();
-        const found = if (backwards) std.mem.lastIndexOf(u8, d.text.items[0..sel[0]], q) orelse std.mem.lastIndexOf(u8, d.text.items, q) else std.mem.indexOfPos(u8, d.text.items, sel[1], q) orelse std.mem.indexOf(u8, d.text.items, q);
-        if (found) |pos| {
-            d.anchor = pos;
-            d.cursor = pos + q.len;
-            self.reveal();
-        } else self.message(tr("Text not found"));
-    }
-    pub fn keyRepeats(self: *App, sym: u32, utf8: []const u8) bool {
-        if (self.close_tab != null or self.menu_open or self.alt) return false;
-        if (self.ctrl) return switch (sym) {
-            c.XKB_KEY_Left, c.XKB_KEY_Right, c.XKB_KEY_BackSpace, c.XKB_KEY_Delete => !self.find_open,
-            else => false,
-        };
-        if (!self.find_open) switch (sym) {
-            c.XKB_KEY_Return, c.XKB_KEY_KP_Enter, c.XKB_KEY_Tab, c.XKB_KEY_Home, c.XKB_KEY_End, c.XKB_KEY_Page_Up, c.XKB_KEY_Page_Down => return true,
-            else => {},
-        };
-        return @import("ui").key_repeat.editingKey(switch (sym) {
-            c.XKB_KEY_Left, c.XKB_KEY_Right, c.XKB_KEY_Up, c.XKB_KEY_Down, c.XKB_KEY_BackSpace, c.XKB_KEY_Delete => true,
-            else => false,
-        }, utf8);
-    }
-    pub fn handleKey(self: *App, sym: u32, utf8: []const u8) void {
-        self.caret_activity +%= 1;
-        self.last_text_click = null;
-        if (self.close_tab != null) {
-            if (sym == c.XKB_KEY_Escape and self.operation == null) {
-                self.close_tab = null;
-                self.close_all = false;
-                self.dirty = true;
-            }
-            if (self.operation == null) {
-                if (sym == c.XKB_KEY_Tab or sym == c.XKB_KEY_ISO_Left_Tab or sym == c.XKB_KEY_Left or sym == c.XKB_KEY_Right) {
-                    self.close_choice = (self.close_choice + @as(usize, if (self.shift or sym == c.XKB_KEY_Left) 2 else 1)) % 3;
-                    self.dirty = true;
-                }
-                if (sym == c.XKB_KEY_Return or sym == c.XKB_KEY_space) switch (self.close_choice) {
-                    0 => {
-                        self.close_tab = null;
-                        self.close_all = false;
-                        self.dirty = true;
-                    },
-                    1 => self.finishClose(),
-                    else => self.save(false),
-                };
-            }
-            return;
-        }
-        if (sym == c.XKB_KEY_F10 and !self.ctrl and !self.alt) {
-            self.toggleMenu(self.menu_anchor);
-            return;
-        }
-        if (self.menu_open) {
-            switch (sym) {
-                c.XKB_KEY_Escape => self.dismissMenu(),
-                c.XKB_KEY_Down => self.menu_selected = if (self.menu_selected) |i| (i + 1) % labels.len else 0,
-                c.XKB_KEY_Up => self.menu_selected = if (self.menu_selected) |i| (i + labels.len - 1) % labels.len else labels.len - 1,
-                c.XKB_KEY_Home => self.menu_selected = 0,
-                c.XKB_KEY_End => self.menu_selected = labels.len - 1,
-                c.XKB_KEY_Return, c.XKB_KEY_KP_Enter, c.XKB_KEY_space => if (self.menu_selected) |i| {
-                    self.dismissMenu();
-                    self.act(@enumFromInt(i));
-                },
-                else => {},
-            }
-            self.dirty = true;
-            if (!self.ctrl) return;
-            self.dismissMenu();
-        }
-        if (self.ctrl) switch (sym) {
-            c.XKB_KEY_n, c.XKB_KEY_N, c.XKB_KEY_t, c.XKB_KEY_T => {
-                self.act(.new);
-                return;
-            },
-            c.XKB_KEY_o, c.XKB_KEY_O => {
-                self.act(.open);
-                return;
-            },
-            c.XKB_KEY_s, c.XKB_KEY_S => {
-                self.save(self.shift);
-                return;
-            },
-            c.XKB_KEY_w, c.XKB_KEY_W => {
-                self.closeSelected();
-                return;
-            },
-            c.XKB_KEY_q, c.XKB_KEY_Q => {
-                self.requestClose();
-                return;
-            },
-            c.XKB_KEY_f, c.XKB_KEY_F => {
-                self.find_open = true;
-                self.query.select_all = true;
-                self.dirty = true;
-                return;
-            },
-            c.XKB_KEY_Tab, c.XKB_KEY_ISO_Left_Tab, c.XKB_KEY_Page_Up, c.XKB_KEY_Page_Down => {
-                self.selected = if (self.shift or sym == c.XKB_KEY_Page_Up) (self.selected + self.tabs.items.len - 1) % self.tabs.items.len else (self.selected + 1) % self.tabs.items.len;
-                self.changed();
-                return;
-            },
-            else => {},
-        };
-        if (sym == c.XKB_KEY_Escape) {
-            self.find_open = false;
-            self.notice_len = 0;
-            self.dirty = true;
-            return;
-        }
-        if (self.find_open) {
-            if (sym == c.XKB_KEY_Return) self.findNext(self.shift) else if (self.ctrl and (sym == c.XKB_KEY_v or sym == c.XKB_KEY_V)) self.paste_requested = true else self.query.key(a, sym, utf8, self.ctrl, self.shift, self.alt);
-            self.dirty = true;
-            return;
-        }
-        const d = self.document();
-        const sel = d.selection();
-        if (self.ctrl) switch (sym) {
-            c.XKB_KEY_a, c.XKB_KEY_A => {
-                d.anchor = 0;
-                d.cursor = d.text.items.len;
-                self.reveal();
-                return;
-            },
-            c.XKB_KEY_c, c.XKB_KEY_C, c.XKB_KEY_x, c.XKB_KEY_X => {
-                if (sel[0] == sel[1]) return;
-                if (sel[1] - sel[0] > @import("../files/transfer.zig").limit) {
-                    self.message(tr("Clipboard selections are limited to 1 MiB."));
-                    return;
-                }
-                self.clipboard.clearRetainingCapacity();
-                self.clipboard.appendSlice(a, d.text.items[sel[0]..sel[1]]) catch return;
-                self.clipboard_revision += 1;
-                if (sym == c.XKB_KEY_x or sym == c.XKB_KEY_X) {
-                    d.insert("") catch |err| self.failure(err);
-                    self.reveal();
-                }
-                return;
-            },
-            c.XKB_KEY_v, c.XKB_KEY_V => {
-                self.paste_requested = true;
-                return;
-            },
-            c.XKB_KEY_z, c.XKB_KEY_Z, c.XKB_KEY_y, c.XKB_KEY_Y => {
-                d.undo(self.shift or sym == c.XKB_KEY_y or sym == c.XKB_KEY_Y) catch |err| self.failure(err);
-                self.reveal();
-                return;
-            },
-            else => {},
-        };
-        switch (sym) {
-            c.XKB_KEY_Left, c.XKB_KEY_Right => {
-                const right = sym == c.XKB_KEY_Right;
-                d.move(if (!self.shift and !self.ctrl and sel[0] != sel[1]) (if (right) sel[1] else sel[0]) else d.boundary(right, self.ctrl), self.shift);
-            },
-            c.XKB_KEY_Home => d.move(if (self.ctrl) 0 else d.lineStart(d.cursor), self.shift),
-            c.XKB_KEY_End => d.move(if (self.ctrl) d.text.items.len else d.lineEnd(d.cursor), self.shift),
-            c.XKB_KEY_Up, c.XKB_KEY_Down, c.XKB_KEY_Page_Up, c.XKB_KEY_Page_Down => {
-                const r = self.caretRectNear();
-                const down = sym == c.XKB_KEY_Down or sym == c.XKB_KEY_Page_Down;
-                const distance = if (sym == c.XKB_KEY_Page_Up or sym == c.XKB_KEY_Page_Down) self.viewHeight() else @as(f64, @floatFromInt(r.height)) / 1024;
-                d.move(self.indexAt(@as(f64, @floatFromInt(r.x)) / 1024, @as(f64, @floatFromInt(r.y)) / 1024 + @as(f64, @floatFromInt(r.height)) / 2048 + (if (down) distance else -distance)), self.shift);
-            },
-            c.XKB_KEY_BackSpace, c.XKB_KEY_Delete => {
-                if (sel[0] == sel[1]) d.anchor = d.boundary(sym == c.XKB_KEY_Delete, self.ctrl);
-                d.insert("") catch |err| self.failure(err);
-            },
-            c.XKB_KEY_Return, c.XKB_KEY_KP_Enter => {
-                if (!self.ctrl and !self.alt) d.insert(if (d.crlf) "\r\n" else "\n") catch |err| self.failure(err);
-            },
-            c.XKB_KEY_Tab => {
-                if (!self.ctrl and !self.alt) d.insert("\t") catch |err| self.failure(err);
-            },
-            c.XKB_KEY_F3 => self.findNext(self.shift),
-            else => {
-                if (!self.ctrl and !self.alt and utf8.len > 0 and utf8[0] >= 32) d.insert(utf8) catch |err| self.failure(err);
-            },
-        }
-        self.reveal();
-    }
-    fn tabRight(self: *const App) f64 {
-        return @as(f64, @floatFromInt(self.w)) - @as(f64, if (self.has_titlebar) 34 else 70);
-    }
-    pub fn dismissMenu(self: *App) void {
-        if (!self.menu_open) return;
-        self.menu_open = false;
-        self.dirty = true;
-    }
-    pub fn toggleMenu(self: *App, anchor: f64) void {
-        if (self.close_tab != null) return;
-        self.cancelDrag();
-        self.menu_anchor = anchor;
-        self.menu_open = !self.menu_open;
-        self.menu_selected = null;
-        self.dirty = true;
-    }
-    fn menuBox(self: *const App) menu.Rect {
-        const height = labels.len * menu.row_height + 2 * menu.padding + 2 * menu.separator_space;
-        return .{
-            .x = std.math.clamp(self.menu_anchor - menu.width, 6, @max(6, @as(f64, @floatFromInt(self.w)) - menu.width - 6)),
-            .y = @min(if (self.has_titlebar) @as(f64, 6) else top + 4, @max(6, @as(f64, @floatFromInt(self.h)) - height - 6)),
-            .w = menu.width,
-            .h = height,
-        };
-    }
-    fn menuRow(self: *const App, i: usize) menu.Rect {
-        const box = self.menuBox();
-        const separators: usize = @as(usize, if (i >= 2) 1 else 0) + @as(usize, if (i >= 4) 1 else 0);
-        return .{ .x = box.x + menu.padding, .y = box.y + @as(f64, @floatFromInt(menu.padding + i * menu.row_height + separators * menu.separator_space)), .w = box.w - 2 * menu.padding, .h = menu.row_height };
-    }
-    fn menuHit(self: *const App, x: f64, y: f64) ?usize {
-        for (0..labels.len) |i| if (self.menuRow(i).contains(x, y)) return i;
-        return null;
-    }
-    fn paintMenu(self: *App, cr: *c.cairo_t) void {
-        menu.frame(cr, self.menuBox(), true);
-        const IconId = @import("ui").layout.IconId;
-        const icons = [_]?IconId{ .plus, .open, .save, .save, .search, if (self.wrap) .checkmark else null };
-        const hints = [_]?[]const u8{ "CTRL+N", "CTRL+O", "CTRL+S", "CTRL+SHIFT+S", "CTRL+F", null };
-        for (labels, 0..) |label, i| menu.row(cr, self.menuRow(i), .{
-            .label = label.get(),
-            .hint = hints[i],
-            .icon = icons[i],
-            .selected = self.menu_selected == i,
-            .separator = i == 2 or i == 4,
-        }, true);
-    }
-    fn paintButton(self: *App, cr: *c.cairo_t, r: field.Rect, label: []const u8, selected: bool) void {
-        var layer = ui.Layer.begin(cr, r) orelse return;
-        defer layer.finish();
-        layer.renderer.palette = theme.shellPalette();
-        button.paint(&layer.renderer, layer.local(), .{ .label = label, .variant = .ghost, .size = .sm }, .{ .selected = selected, .pointer = if (self.px >= r.x and self.px < r.x + r.w and self.py >= r.y and self.py < r.y + r.h) .hover else .idle });
-    }
-    pub fn render(self: *App, cr: *c.cairo_t) void {
-        const t = theme.global;
-        fill(cr, 0, 0, @floatFromInt(self.w), @floatFromInt(self.h), t.app_bg);
-        fill(cr, 0, 0, @floatFromInt(self.w), 38, t.app_bar);
-        var i = self.first_tab;
-        while (i < self.tabs.items.len) : (i += 1) {
-            const x = @as(f64, @floatFromInt(i - self.first_tab)) * tab_w;
-            if (x + tab_w > self.tabRight()) break;
-            const tab = self.tabs.items[i];
-            if (i == self.selected) {
-                fill(cr, x, 0, tab_w, 38, t.app_bg);
-                fill(cr, x + 8, 35, tab_w - 16, 2, theme.shellPalette().accent);
-            }
-            var buf: [512]u8 = undefined;
-            const label = std.fmt.bufPrint(&buf, "{s}{s}", .{ tab.name(), if (tab.doc.modified()) " •" else "" }) catch tr("Text file");
-            c.cairo_save(cr);
-            c.cairo_rectangle(cr, x + 12, 2, tab_w - 42, 32);
-            c.cairo_clip(cr);
-            ui.setSource(cr, t.window_fg);
-            ui.drawText(cr, label, x + 12, 24, ui.textSize(), false);
-            c.cairo_restore(cr);
-            self.paintButton(cr, .{ .x = @floatCast(x + tab_w - 28), .y = 5, .w = 24, .h = 26 }, "×", false);
-        }
-        self.paintButton(cr, .{ .x = @floatCast(self.tabRight() + 2), .y = 5, .w = 28, .h = 26 }, "+", false);
-        if (!self.has_titlebar) self.paintButton(cr, .{ .x = @floatFromInt(self.w - 32), .y = 5, .w = 28, .h = 26 }, "…", self.menu_open);
-        if (self.find_open) {
-            const box: field.Rect = .{ .x = 12, .y = 43, .w = @floatFromInt(self.w - 110), .h = 30 };
-            if (ui.Layer.begin(cr, box)) |l| {
-                var layer = l;
-                _ = field.paintFrame(&layer.renderer, layer.local(), .{}, .{ .focused = true });
-                layer.finish();
-            }
-            c.cairo_save(cr);
-            c.cairo_rectangle(cr, 22, 43, @floatFromInt(self.w - 130), 30);
-            c.cairo_clip(cr);
-            const bytes = self.query.text.items;
-            const selected = self.query.selection();
-            if (selected[0] != selected[1]) {
-                const x = 22 + ui.measureText(cr, bytes[0..selected[0]], ui.textSize(), false);
-                const width = ui.measureText(cr, bytes[selected[0]..selected[1]], ui.textSize(), false);
-                fill(cr, x, 46, width, 24, t.app_item_selected);
-            }
-            var ink = t.window_fg;
-            if (bytes.len == 0) ink[3] *= 0.5;
-            ui.setSource(cr, ink);
-            ui.drawText(cr, if (bytes.len == 0) tr("Find…") else bytes, 22, 64, ui.textSize(), false);
-            self.paintCaret(cr);
-            c.cairo_restore(cr);
-            self.paintButton(cr, .{ .x = @floatFromInt(self.w - 90), .y = 43, .w = 78, .h = 30 }, tr("Next"), false);
-        }
-        self.layouts.beginFrame();
-        const pt = self.port();
-        pt.clamp();
-        pt.visible(&self.rows);
-        const tab = self.current();
-        const sel = tab.doc.selection();
-        c.cairo_save(cr);
-        c.cairo_rectangle(cr, 12, self.viewTop(), @floatFromInt(self.w - 30), self.viewHeight());
-        c.cairo_clip(cr);
-        for (self.rows.items) |row| self.paintLine(cr, tab, row, sel);
-        if (!self.find_open) self.paintCaret(cr);
-        c.cairo_restore(cr);
-        if (self.scrollbarGeometry()) |bar| ui.drawScrollbar(cr, scrollbar.look(bar, self.bar_appearance, theme.global.scrollbar_width, theme.shellPalette()));
-        fill(cr, 0, @as(f64, @floatFromInt(self.h)) - status_h, @floatFromInt(self.w), status_h, t.app_bar);
-        var info: [256]u8 = undefined;
-        if (tab.status.revision != tab.doc.revision or tab.status.cursor != tab.doc.cursor) {
-            const d = &tab.doc;
-            tab.status = .{
-                .revision = d.revision,
-                .cursor = d.cursor,
-                .line = d.linesBefore(d.cursor) + 1,
-                .column = (std.unicode.utf8CountCodepoints(d.text.items[d.lineStart(d.cursor)..d.cursor]) catch 0) + 1,
-            };
-        }
-        const text = if (self.notice_len > 0) self.notice[0..self.notice_len] else i18n.fmt(&info, tr("Line {line}, Column {column}    ·    UTF-8{bom}    ·    {ending}"), .{ .line = tab.status.line, .column = tab.status.column, .bom = if (tab.doc.bom) " BOM" else "", .ending = if (tab.doc.crlf) "CRLF" else "LF" }) catch "";
-        ui.setSource(cr, t.window_fg);
-        ui.drawText(cr, text, 12, @floatFromInt(self.h - 8), ui.statusSize(), false);
-        if (self.menu_open) self.paintMenu(cr);
-        if (self.close_tab != null) self.paintClose(cr);
-    }
-    /// Draws one segment's selection, text and any preedit at the cursor.
-    fn paintLine(self: *App, cr: *c.cairo_t, tab: *Tab, row: view.Row, sel: [2]usize) void {
-        const t = theme.global;
-        const l = row.line;
-        const seg = l.seg;
-        const iter = p.pango_layout_get_iter(l.layout) orelse return;
-        defer p.pango_layout_iter_free(iter);
-        c.cairo_save(cr);
-        defer c.cairo_restore(cr);
-        c.cairo_translate(cr, 16 - tab.scroll_x, self.viewTop() + row.y);
-        const text_len = l.textLen();
-        // The selection as indices into this layout, which holds the text
-        // without its line break. With wrapping, a selected break is drawn as
-        // highlight out to the right margin, as Pango does when the break is
-        // in the layout; without it Pango stops at the end of the text.
-        const margin: f64 = @floatFromInt(self.w - 40);
-        const s0 = sel[0] -| seg.start;
-        const s1 = @min(sel[1] -| seg.start, text_len);
-        const covers_break = seg.terminated() and sel[0] <= seg.text_end and sel[1] > seg.text_end;
-        var accent = theme.shellPalette().accent;
-        accent[3] = 0.35;
-        var line_index: c_int = 0;
-        while (true) : (line_index += 1) {
-            var rect: p.Rectangle = undefined;
-            p.pango_layout_iter_get_line_extents(iter, null, &rect);
-            const y = @as(f64, @floatFromInt(rect.y)) / 1024;
-            const h = @as(f64, @floatFromInt(rect.height)) / 1024;
-            if (row.y + y > self.viewHeight()) break;
-            if (row.y + y + h >= 0) {
-                const line = p.pango_layout_iter_get_line_readonly(iter);
-                const first: usize = @intCast(p.pango_layout_line_get_start_index(line));
-                const next = p.pango_layout_get_line_readonly(l.layout, line_index + 1);
-                const end: usize = if (next) |n| @intCast(p.pango_layout_line_get_start_index(n)) else text_len;
-                // Pango extends ranges to the right margin even for lines
-                // entirely before the selection, so only ask for lines it intersects.
-                if (sel[0] != sel[1] and s0 < s1 and s0 < end and s1 > first) {
-                    var ranges: ?[*]c_int = null;
-                    var count: c_int = 0;
-                    p.pango_layout_line_get_x_ranges(line, @intCast(s0), @intCast(s1), &ranges, &count);
-                    if (ranges) |r| {
-                        defer p.g_free(r);
-                        var n: usize = 0;
-                        while (n < @as(usize, @intCast(count))) : (n += 1) {
-                            fill(cr, @as(f64, @floatFromInt(r[n * 2])) / 1024, y, @as(f64, @floatFromInt(r[n * 2 + 1] - r[n * 2])) / 1024, h, accent);
-                        }
-                    }
-                }
-                if (covers_break and next == null and self.wrap) {
-                    const x = @as(f64, @floatFromInt(rect.x + rect.width)) / 1024;
-                    if (margin > x) fill(cr, x, y, margin - x, h, accent);
-                }
-                ui.setSource(cr, t.window_fg);
-                c.cairo_move_to(cr, @as(f64, @floatFromInt(rect.x)) / 1024, @as(f64, @floatFromInt(p.pango_layout_iter_get_baseline(iter))) / 1024);
-                p.pango_cairo_show_layout_line(cr, line);
-            }
-            if (p.pango_layout_iter_next_line(iter) == 0) break;
-        }
-        if (self.focused and !self.find_open and self.close_tab == null and lines.holds(seg, tab.doc.cursor, tab.doc.text.items.len)) {
-            var r: p.Rectangle = undefined;
-            p.pango_layout_get_cursor_pos(l.layout, l.index(tab.doc.cursor), &r, null);
-            if (self.preedit.items.len > 0) {
-                const x = @as(f64, @floatFromInt(r.x)) / 1024;
-                const py = @as(f64, @floatFromInt(r.y + r.height)) / 1024;
-                ui.setSource(cr, t.window_fg);
-                ui.drawText(cr, self.preedit.items, x, py, ui.textSize(), false);
-                fill(cr, x, py + 2, ui.measureText(cr, self.preedit.items, ui.textSize(), false), 1, theme.shellPalette().accent);
-            }
-        }
-    }
-    fn paintClose(self: *App, cr: *c.cairo_t) void {
-        fill(cr, 0, 0, @floatFromInt(self.w), @floatFromInt(self.h), .{ 0, 0, 0, 0.45 });
-        const x: f32 = @as(f32, @floatFromInt(self.w - 420)) / 2;
-        const y: f32 = @as(f32, @floatFromInt(self.h - 170)) / 2;
-        if (ui.Layer.begin(cr, .{ .x = x, .y = y, .w = 420, .h = 170 })) |l| {
-            var layer = l;
-            dialog.paintFrame(&layer.renderer, layer.local());
-            layer.finish();
-        }
-        ui.setSource(cr, theme.global.window_fg);
-        ui.drawText(cr, tr("Save changes before closing?"), x + 20, y + 36, ui.textSize(), true);
-        ui.drawText(cr, tr("Your unsaved changes will be lost if you discard them."), x + 20, y + 72, ui.textSize(), false);
-        self.paintButton(cr, .{ .x = x + 20, .y = y + 112, .w = 115, .h = 38 }, tr("Cancel"), self.close_choice == 0);
-        self.paintButton(cr, .{ .x = x + 145, .y = y + 112, .w = 125, .h = 38 }, tr("Discard"), self.close_choice == 1);
-        self.paintButton(cr, .{ .x = x + 280, .y = y + 112, .w = 120, .h = 38 }, tr("Save"), self.close_choice == 2);
-    }
+    pub const indexAt = app_input.indexAt;
+    pub const handleMotion = app_input.handleMotion;
+    pub const handleButton = app_input.handleButton;
+    pub const pasteText = app_input.pasteText;
+    pub const findNext = app_input.findNext;
+    pub const keyRepeats = app_input.keyRepeats;
+    pub const handleKey = app_input.handleKey;
 };
-fn fill(cr: *c.cairo_t, x: f64, y: f64, w: f64, h: f64, color: [4]f32) void {
+pub fn fill(cr: *c.cairo_t, x: f64, y: f64, w: f64, h: f64, color: [4]f32) void {
     ui.setSource(cr, color);
     c.cairo_rectangle(cr, x, y, w, h);
     c.cairo_fill(cr);
