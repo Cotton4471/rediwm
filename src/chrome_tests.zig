@@ -257,3 +257,34 @@ test "tab title updates preserve neighbouring pixels and match a full raster" {
         }
     }
 }
+
+test "control glyphs have no coverage beyond the reach the raster gives them" {
+    const chrome_paint = @import("chrome_paint.zig");
+    for ([_]f32{ 1, 0.75, 1.0 / 1.7, 1.3 }) |density| {
+        for ([_]f32{ 1, 1.5, 2, 3 }) |scale| {
+            for ([_]bool{ false, true }) |maximized| {
+                const m: Metrics = .{ .density = density };
+                const btn = [_]window_chrome.Rect{ controlRectScaled(400, .minimize, density), controlRectScaled(400, .maximize, density), controlRectScaled(400, .close, density) };
+                const controls = chrome_paint.Controls.init(btn[0], btn[1], btn[2], 0, 0, std.math.sqrt1_2, scale, m.contentScale(), maximized);
+                const g = controls.glyph_scale;
+                var py: f32 = 0;
+                while (py < @as(f32, @floatFromInt(m.titlebarHeight()))) : (py += 0.25 / scale) {
+                    var px: f32 = @floatFromInt(btn[0].x - 10);
+                    while (px < @as(f32, @floatFromInt(btn[2].x + btn[2].w + 10))) : (px += 0.25 / scale) {
+                        for (btn, 0..) |b, kind| {
+                            if (@abs(px - b.centerX()) <= controls.glyph_reach and @abs(py - b.centerY()) <= controls.glyph_reach) continue;
+                            const gx = b.centerX() + (px - b.centerX()) / g;
+                            const gy = b.centerY() + (py - b.centerY()) / g;
+                            const cov = switch (kind) {
+                                0 => chrome_paint.minimizeIconCoverage(gx, gy, b, scale * g),
+                                1 => chrome_paint.maximizeIconCoverage(gx, gy, b, scale * g, maximized),
+                                else => chrome_paint.closeIconCoverage(gx, gy, b, std.math.sqrt1_2, scale * g),
+                            };
+                            try std.testing.expect(cov <= 0);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
