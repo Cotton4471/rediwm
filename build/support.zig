@@ -40,16 +40,23 @@ pub fn addBassDsp(b: *std.Build, target: std.Build.ResolvedTarget) void {
     }).step);
 }
 
+/// projection.c and its parts (projection_internal.h); projection_test.c
+/// includes them all.
+pub const projection_sources = [_][]const u8{ "src/projection.c", "src/projection_props.c", "src/projection_resolve.c", "src/projection_present.c", "src/projection_pass.c", "src/projection_pick.c" };
+
+/// scene_output.c and its parts (scene_output_internal.h).
+pub const scene_output_sources = [_][]const u8{ "src/scene_output.c", "src/scene_output_collect.c", "src/scene_output_effects.c", "src/scene_output_draw.c" };
+
 pub fn addGlass(b: *std.Build, module: *std.Build.Module, damage_audit: bool) void {
     module.linkSystemLibrary("wlroots-0.20", .{});
     module.linkSystemLibrary("egl", .{});
     module.linkSystemLibrary("glesv2", .{});
-    module.addCSourceFile(.{ .file = b.path("src/projection.c"), .flags = if (damage_audit) &.{ "-std=c11", "-Wall", "-Wextra", "-DREDIWM_DAMAGE_AUDIT" } else &.{ "-std=c11", "-Wall", "-Wextra" } });
+    module.addCSourceFiles(.{ .files = &projection_sources, .flags = if (damage_audit) &.{ "-std=c11", "-Wall", "-Wextra", "-DREDIWM_DAMAGE_AUDIT" } else &.{ "-std=c11", "-Wall", "-Wextra" } });
     module.addCSourceFile(.{ .file = b.path("src/node.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     module.addCSourceFile(.{ .file = b.path("src/node_surface.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     module.addCSourceFile(.{ .file = b.path("src/scene_outputs.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     module.addCSourceFile(.{ .file = b.path("src/scene_pass.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    module.addCSourceFile(.{ .file = b.path("src/scene_output.c"), .flags = if (damage_audit) &.{ "-std=c11", "-Wall", "-Wextra", "-Werror", "-DREDIWM_DAMAGE_AUDIT" } else &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    module.addCSourceFiles(.{ .files = &scene_output_sources, .flags = if (damage_audit) &.{ "-std=c11", "-Wall", "-Wextra", "-Werror", "-DREDIWM_DAMAGE_AUDIT" } else &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     module.addCSourceFile(.{ .file = b.path("src/scene_damage.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     module.addCSourceFile(.{ .file = b.path("src/glass.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra" } });
     module.addCSourceFile(.{ .file = b.path("src/explicit_sync.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
