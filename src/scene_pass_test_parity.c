@@ -108,7 +108,7 @@ static void damage(struct rediwm_scene_renderer *r, struct wlr_buffer *actual,
 }
 static void state_restoration(struct rediwm_scene_renderer *r, struct wlr_buffer *buffer) {
     struct gl_state original;
-    assert(enter(r, &original));
+    assert(scene_pass_enter(r, &original));
     GLuint vbo, textures[2], caller_vao = 0;
     if (r->has_vao) {
         r->gen_vertex_arrays(1, &caller_vao);
@@ -133,8 +133,8 @@ static void state_restoration(struct rediwm_scene_renderer *r, struct wlr_buffer
     glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE, GL_ZERO, GL_ONE_MINUS_SRC_ALPHA);
     glBlendEquationSeparate(GL_FUNC_REVERSE_SUBTRACT, GL_FUNC_SUBTRACT);
     struct gl_state before = {0}, after = {0};
-    assert(enter(r, &before));
-    leave(r, &before);
+    assert(scene_pass_enter(r, &before));
+    scene_pass_leave(r, &before);
     struct wlr_texture *t = texture_create(r->renderer, false);
     struct wlr_render_pass *pass = rediwm_scene_pass_begin(r, buffer, NULL);
     assert(pass);
@@ -142,8 +142,8 @@ static void state_restoration(struct rediwm_scene_renderer *r, struct wlr_buffer
     clear(pass);
     paint(pass, t, 1, 0, 1, .5, NULL, NULL);
     assert(wlr_render_pass_submit(pass));
-    assert(enter(r, &after));
-    leave(r, &after);
+    assert(scene_pass_enter(r, &after));
+    scene_pass_leave(r, &after);
     assert(memcmp(&before, &after, sizeof(before)) == 0);
     GLint value;
     glGetVertexAttribiv(0, GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING, &value);
@@ -163,7 +163,7 @@ static void state_restoration(struct rediwm_scene_renderer *r, struct wlr_buffer
     glDeleteBuffers(1, &vbo);
     glDeleteTextures(2, textures);
     if (caller_vao) r->delete_vertex_arrays(1, &caller_vao);
-    leave(r, &original);
+    scene_pass_leave(r, &original);
     puts("PASS: GL bindings, attributes, blend/scissor/viewport and EGL context restored");
 }
 static void external_texture(struct rediwm_scene_renderer *r, struct wlr_allocator *allocator,
@@ -198,7 +198,7 @@ static void external_texture(struct rediwm_scene_renderer *r, struct wlr_allocat
         (PFNGLEGLIMAGETARGETTEXTURE2DOESPROC)eglGetProcAddress("glEGLImageTargetTexture2DOES");
     assert(create_image && destroy_image && bind_image);
     struct gl_state state;
-    assert(enter(r, &state));
+    assert(scene_pass_enter(r, &state));
     EGLImageKHR image = create_image(state.display, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT, NULL, attrs);
     assert(image != EGL_NO_IMAGE_KHR);
     struct wlr_gles2_texture_attribs a = {.target = GL_TEXTURE_EXTERNAL_OES, .has_alpha = true};
@@ -207,7 +207,7 @@ static void external_texture(struct rediwm_scene_renderer *r, struct wlr_allocat
     bind_image(a.target, image);
     glTexParameteri(a.target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(a.target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    leave(r, &state);
+    scene_pass_leave(r, &state);
     for (int tr = 0; tr < 8; tr++) for (int filter = 0; filter < 2; filter++) {
         float alpha = .73;
         struct wlr_render_texture_options o = {
@@ -259,10 +259,10 @@ static void external_texture(struct rediwm_scene_renderer *r, struct wlr_allocat
         assert(memcmp(&shown[4 * (15 * WIDTH + 13)], &shown[0], 4) == 0);
         assert(memcmp(&shown[4 * (50 * WIDTH + 60)], &shown[0], 4) != 0);
     }
-    assert(enter(r, &state));
+    assert(scene_pass_enter(r, &state));
     glDeleteTextures(1, &a.tex);
     destroy_image(state.display, image);
-    leave(r, &state);
+    scene_pass_leave(r, &state);
     wlr_texture_destroy(reference);
     wlr_buffer_drop(source);
     puts("PASS: external-OES EGLImage matches wlroots across all transforms and filters, plain and shaped");

@@ -28,7 +28,7 @@ static uint8_t *at(const struct image *img, int x, int y) { return img->p + 4 * 
 static int diff(int a, int b) { return abs(a - b); }
 static void read_image(struct rediwm_scene_renderer *r, struct wlr_buffer *b, struct image *img) {
     struct gl_state state;
-    assert(enter(r, &state));
+    assert(scene_pass_enter(r, &state));
     img->w = b->width;
     img->h = b->height;
     img->p = realloc(img->p, 4 * (size_t)img->w * img->h);
@@ -36,7 +36,7 @@ static void read_image(struct rediwm_scene_renderer *r, struct wlr_buffer *b, st
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glReadPixels(0, 0, img->w, img->h, GL_RGBA, GL_UNSIGNED_BYTE, img->p);
     assert(glGetError() == GL_NO_ERROR);
-    leave(r, &state);
+    scene_pass_leave(r, &state);
 }
 static struct wlr_buffer *target_sized(struct wlr_allocator *allocator, int w, int h) {
     uint64_t modifier = DRM_FORMAT_MOD_INVALID;

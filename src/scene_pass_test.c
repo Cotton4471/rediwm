@@ -1,6 +1,8 @@
 // Compare the actual owned drawing backend with wlroots, independently of
 // scene traversal and output policy. A noninstalled, real-GPU fixture.
 #include "scene_pass.c"
+#include "scene_pass_draw.c"
+#include "scene_pass_backdrop.c"
 #include "scene_graph.h"
 #include <math.h>
 #include <stdarg.h>
@@ -29,11 +31,11 @@ static struct wlr_buffer *target(struct wlr_allocator *allocator) {
 }
 static void read_pixels(struct rediwm_scene_renderer *r, struct wlr_buffer *b, uint8_t *pixels) {
     struct gl_state state;
-    assert(enter(r, &state));
+    assert(scene_pass_enter(r, &state));
     glBindFramebuffer(GL_FRAMEBUFFER, wlr_gles2_renderer_get_buffer_fbo(r->renderer, b));
     glReadPixels(0, 0, WIDTH, HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
     assert(glGetError() == GL_NO_ERROR);
-    leave(r, &state);
+    scene_pass_leave(r, &state);
 }
 static int compare(struct rediwm_scene_renderer *r, struct wlr_buffer *a, struct wlr_buffer *b) {
     uint8_t actual[WIDTH * HEIGHT * 4], expected[sizeof(actual)];
