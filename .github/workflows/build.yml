@@ -1,0 +1,49 @@
+name: Build RediWM (Arch Baseline)
+
+on:
+  push:
+    branches:
+      - mine
+  workflow_dispatch: # Allows you to click a button to start the build manually
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest # Runs the job inside Arch Linux
+      options: --privileged
+
+    steps:
+      - name: Install Dependencies (excluding Zig)
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm base-devel git wget xz wlroots0.20 wayland wayland-protocols \
+            libxkbcommon pixman freetype2 harfbuzz fontconfig librsvg gdk-pixbuf2 \
+            pango cairo libinput pam libpulse pipewire poppler glib2 libseccomp \
+            libarchive libjpeg-turbo libpng libwebp readline boost boost-libs \
+            libtorrent-rasterbar json-glib libcups
+
+      - name: Download and Install Zig 0.16.0
+        run: |
+          # Download the official 0.16.0 tarball
+          wget https://ziglang.org/download/0.16.0/zig-linux-x86_64-0.16.0.tar.xz
+          tar -xf zig-linux-x86_64-0.16.0.tar.xz
+          mv zig-linux-x86_64-0.16.0 /opt/zig0.16
+          ln -s /opt/zig0.16/zig /usr/local/bin/zig
+          
+          # Verify it worked
+          zig version
+
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Build RediWM
+        # Using ReleaseSafe and baseline CPU for your AMD Athlon II X2
+        run: |
+          zig build -Doptimize=ReleaseSafe -Dcpu=baseline
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rediwm-baseline-binaries
+          path: zig-out/
