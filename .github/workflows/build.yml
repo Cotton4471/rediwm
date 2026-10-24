@@ -26,7 +26,8 @@ jobs:
       - name: Download and Install Zig 0.16.0
         run: |
           # Download the official 0.16.0 tarball
-          wget https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz          tar -xf zig-x86_64-linux-0.16.0.tar.xz
+          wget https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
+          tar -xf zig-x86_64-linux-0.16.0.tar.xz
           mv zig-x86_64-linux-0.16.0 /opt/zig0.16
           ln -s /opt/zig0.16/zig /usr/local/bin/zig
           
