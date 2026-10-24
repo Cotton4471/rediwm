@@ -21,7 +21,7 @@ jobs:
             libxkbcommon pixman freetype2 harfbuzz fontconfig librsvg gdk-pixbuf2 \
             pango cairo libinput pam libpulse pipewire poppler glib2 libseccomp \
             libarchive libjpeg-turbo libpng libwebp readline boost boost-libs \
-            libtorrent-rasterbar json-glib libcups
+            libtorrent-rasterbar json-glib libcups poppler-glib
 
       - name: Download and Install Zig 0.16.0
         run: |
