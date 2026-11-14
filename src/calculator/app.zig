@@ -6,9 +6,15 @@ const W = ui.layout.Widget;
 const c = @import("../files/c.zig").api;
 const Model = @import("model.zig").Model;
 
-/// The entry line is set in the keypad's own label size.
+/// Give the entry twice the usual large-button label size.
 fn entrySize() f32 {
-    return ui.widgets.button.metrics(.lg, theme.global).font_size;
+    return ui.widgets.button.metrics(.lg, theme.global).font_size * 2;
+}
+
+fn keypadTheme() theme.Theme {
+    var palette = theme.shellPalette();
+    palette.button_font_size *= 1.5;
+    return palette;
 }
 
 const labels = [_][]const u8{
@@ -73,6 +79,7 @@ pub const App = struct {
         for (&self.buttons, labels, 0..) |*button, label, id| {
             button.* = .{ .kind = .{ .button = .{
                 .label = label,
+                .icon = if (id == 6) .divide else null,
                 .size = .lg,
                 .variant = if (id == 19) .primary else .secondary,
                 .owner = self,
@@ -90,8 +97,9 @@ pub const App = struct {
         const height: f32 = @floatFromInt(self.h);
         const gap: f32 = 8;
         const cell_w = (width - 32 - gap * 3) / 4;
-        const top: f32 = @max(112, entrySize() + cairo.statusSize() * 3 + 56);
+        const top: f32 = @max(112, entrySize() + cairo.statusSize() + 56);
         const cell_h = @max(24, (height - top - 16 - gap * 5) / 6);
+        const icon_size = ui.widgets.button.metrics(.lg, keypadTheme()).font_size;
         self.root.computed_width = width;
         self.root.computed_height = height;
         for (&self.buttons, 0..) |*button, id| {
@@ -113,6 +121,8 @@ pub const App = struct {
                 y = top + 5 * (cell_h + gap);
             }
             ui.arrange.arrange(button, x, y, w, h);
+            // Keep the operator icon at the label size when the keypad resizes.
+            if (button.kind.button.icon != null) button.kind.button.icon_scale = icon_size / @min(w, h);
         }
     }
     pub fn resize(self: *App, width: i32, height: i32) void {
@@ -209,14 +219,15 @@ pub const App = struct {
         c.cairo_paint(cr);
         const status = cairo.statusSize();
         const heading = entrySize();
-        if (self.model.history_len > 0) self.textRight(cr, self.model.history[0..self.model.history_len], 16 + status, status, false);
+        const history = if (self.model.notice.len > 0) self.model.notice else self.model.history[0..self.model.history_len];
+        if (history.len > 0) self.textRight(cr, history, 16 + status, status, false);
         const expression = self.model.display();
         self.textRight(cr, if (expression.len == 0) "0" else expression, 28 + status + heading, heading, true);
-        self.textRight(cr, if (self.model.notice.len > 0) self.model.notice else @import("i18n").tr("Enter =   Esc clear   F9 ±   % = ÷100"), 40 + status * 2 + heading, status, false);
         ui.input.active_dispatcher = &self.dispatcher;
         defer ui.input.active_dispatcher = null;
         if (cairo.Layer.begin(cr, .{ .x = 0, .y = 0, .w = @floatFromInt(self.w), .h = @floatFromInt(self.h) })) |value| {
             var layer = value;
+            layer.renderer.palette = keypadTheme();
             ui.paint.paint(&self.root, &layer.renderer);
             layer.finish();
         }

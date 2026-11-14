@@ -223,7 +223,7 @@ pub const Worker = struct {
         self.clearPendingLocked();
 
         const dup_pass = if (password) |p| blk: {
-            const copy = try std.heap.page_allocator.dupeZ(u8, p);
+            const copy = try std.heap.page_allocator.dupeSentinel(u8, p, 0);
             if (c.api.mlock(copy.ptr, copy.len + 1) != 0) {
                 std.crypto.secureZero(u8, copy);
                 std.heap.page_allocator.free(copy);
@@ -297,7 +297,7 @@ pub const Worker = struct {
 
         if (generation != self.generation or self.job_count >= self.jobs.len) return;
 
-        const q = try a.dupeZ(u8, query);
+        const q = try a.dupeSentinel(u8, query, 0);
         self.jobs[self.job_count] = .{
             .kind = .search,
             .priority = 4,

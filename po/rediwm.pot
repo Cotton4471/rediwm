@@ -3,23 +3,23 @@ msgid ""
 msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 
-#: src/system_monitor/app.zig
-msgid " · /proc unavailable"
-msgstr ""
-
 #: src/control_center/sections/printers.zig
 msgid " · Default"
 msgstr ""
 
-#: src/system_monitor/app.zig
+#: src/system_monitor/app_footer.zig
 msgid " · List limited"
 msgstr ""
 
-#: src/system_monitor/app.zig
+#: src/system_monitor/app_footer.zig
 msgid " · Paused"
 msgstr ""
 
-#: src/system_monitor/app.zig
+#: src/system_monitor/app_footer.zig
+msgid " · Process data unavailable"
+msgstr ""
+
+#: src/system_monitor/app_footer.zig
 msgid " · Some processes unavailable"
 msgstr ""
 
@@ -29,6 +29,10 @@ msgstr ""
 
 #: src/control_center/sections/desktop.zig
 msgid "1 second"
+msgstr ""
+
+#: src/control_center/sections/network_editor.zig
+msgid "1.1.1.1, 2606:4700:4700::1111"
 msgstr ""
 
 #: src/control_center/sections/desktop.zig
@@ -55,12 +59,28 @@ msgstr ""
 msgid "180°"
 msgstr ""
 
+#: src/control_center/sections/network_editor.zig
+msgid "192.168.1.1"
+msgstr ""
+
+#: src/control_center/sections/network_editor.zig
+msgid "192.168.1.20"
+msgstr ""
+
 #: src/control_center/sections/desktop.zig
 msgid "2 seconds"
 msgstr ""
 
 #: src/control_center/welcome.zig
 msgid "200%"
+msgstr ""
+
+#: src/control_center/sections/network_editor.zig
+msgid "2001:db8::20"
+msgstr ""
+
+#: src/control_center/sections/network_editor.zig
+msgid "24"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -87,8 +107,16 @@ msgstr ""
 msgid "5 seconds"
 msgstr ""
 
-#: src/system_monitor/app.zig
+#: src/system_monitor/app_summary.zig
 msgid "60 seconds"
+msgstr ""
+
+#: src/control_center/sections/network_editor.zig
+msgid "64"
+msgstr ""
+
+#: src/control_center/sections/network_proxy.zig
+msgid "8080"
 msgstr ""
 
 #: src/control_center/sections/display.zig
@@ -99,12 +127,20 @@ msgstr ""
 msgid "A USB character device is not applicable to this connection."
 msgstr ""
 
+#: src/control_center/sections/keys.zig
+msgid "A file already exists at that location. Choose another name."
+msgstr ""
+
 #: src/files/app_opening.zig
 msgid "A file operation is already running"
 msgstr ""
 
 #: src/files/app_chooser.zig
 msgid "A file with this name exists. Replace it?"
+msgstr ""
+
+#: src/control_center/sections/network.zig
+msgid "A hardware switch is blocking a radio."
 msgstr ""
 
 #: src/printing/ladder.zig
@@ -143,6 +179,10 @@ msgstr ""
 msgid "Accept jobs"
 msgstr ""
 
+#: src/control_center/sections/network_details.zig
+msgid "Access point"
+msgstr ""
+
 #: src/control_center/sections/users.zig
 msgid "Account details · {name}"
 msgstr ""
@@ -177,6 +217,10 @@ msgstr ""
 
 #: src/control_center/sections/printers.zig
 msgid "Add a printer"
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+msgid "Add layout…"
 msgstr ""
 
 #: src/files/app_model.zig
@@ -227,6 +271,10 @@ msgstr ""
 msgid "Additional setup required"
 msgstr ""
 
+#: src/control_center/sections/network_editor.zig
+msgid "Address"
+msgstr ""
+
 #: src/control_center/sections/printers_add.zig
 msgid "Address checks support IPP printers. Other connections can be tested with an explicit print after setup."
 msgstr ""
@@ -237,6 +285,10 @@ msgstr ""
 
 #: src/polkit/dialog.zig
 msgid "Administrator privileges are required to continue."
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "Airplane mode"
 msgstr ""
 
 #: src/control_center/sections/services.zig
@@ -275,6 +327,19 @@ msgstr ""
 msgid "Already in Places"
 msgstr ""
 
+#: src/control_center/sections/input_sources.zig
+msgid "Also switch with"
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+#.  raw
+msgid "Alt+Shift"
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+msgid "Always"
+msgstr ""
+
 #: src/files/open_with.zig
 msgid "Always use this app for this file type"
 msgstr ""
@@ -285,6 +350,10 @@ msgstr ""
 
 #: src/files/app_opening.zig
 msgid "An application is already being added"
+msgstr ""
+
+#: src/control_center/sections/keys_forms.zig
+msgid "An empty passphrase leaves the private key unencrypted."
 msgstr ""
 
 #: src/control_center/sections/services.zig
@@ -339,11 +408,19 @@ msgstr ""
 msgid "Applications"
 msgstr ""
 
+#: src/control_center/sections/network_proxy.zig
+msgid "Applied."
+msgstr ""
+
+#: src/control_center/sections/network_proxy.zig
+msgid "Applied. Apps you start from now on use this proxy."
+msgstr ""
+
 #: src/control_center/sections/desktop.zig
 msgid "Applies to output edges and the space between automatic tiles."
 msgstr ""
 
-#: src/images/app_render.zig
+#: src/control_center/sections/network_proxy.zig
 msgid "Apply"
 msgstr ""
 
@@ -387,6 +464,10 @@ msgstr ""
 msgid "Apps and web pages"
 msgstr ""
 
+#: src/control_center/sections/network_proxy.zig
+msgid "Apps that follow the system proxy use this. A manual proxy is also given to apps started from RediWM."
+msgstr ""
+
 #: src/files/archive.zig
 msgid "Archive contains an unsafe path"
 msgstr ""
@@ -417,6 +498,14 @@ msgstr ""
 
 #: src/control_center/sections/desktop.zig
 msgid "Assigned to the current output when first used."
+msgstr ""
+
+#: src/control_center/sections/power.zig
+msgid "At critical battery level"
+msgstr ""
+
+#: src/files/trash_properties.zig
+msgid "At least {size}"
 msgstr ""
 
 #: src/control_center/sections/printers.zig
@@ -491,7 +580,7 @@ msgstr ""
 msgid "Authentication unavailable. Try again."
 msgstr ""
 
-#: src/control_center/sections/users.zig
+#: src/control_center/sections/users_helper.zig
 msgid "Authentication was cancelled or denied."
 msgstr ""
 
@@ -515,7 +604,7 @@ msgstr ""
 msgid "Auto-join this network"
 msgstr ""
 
-#: src/printing/options.zig
+#: src/control_center/sections/input_sources.zig
 msgid "Automatic"
 msgstr ""
 
@@ -524,7 +613,23 @@ msgid "Automatic ($TERMINAL / Foot)"
 msgstr ""
 
 #: src/control_center/search_index.zig
+msgid "Automatic Power Saver"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "Automatic brightness"
+msgstr ""
+
+#: src/control_center/search_index.zig
 msgid "Automatic login"
+msgstr ""
+
+#: src/control_center/sections/power.zig
+msgid "Automatic power actions are inactive in this session."
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+msgid "Automatic shows it while there is more than one source."
 msgstr ""
 
 #: src/control_center/sections/desktop.zig
@@ -535,12 +640,24 @@ msgstr ""
 msgid "Automatic tiling"
 msgstr ""
 
+#: src/control_center/sections/appearance_colors.zig
+msgid "Automatic updates are off. Applications keep the last applied colors."
+msgstr ""
+
+#: src/system_monitor/app_summary_ram.zig
+msgid "Available"
+msgstr ""
+
 #: src/control_center/sections/bluetooth.zig
 msgid "Available Devices"
 msgstr ""
 
 #: src/files/app_torrents.zig
 msgid "Back"
+msgstr ""
+
+#: src/control_center/sections/keys_details.zig
+msgid "Back to SSH keys"
 msgstr ""
 
 #: src/files/open_with.zig
@@ -559,8 +676,12 @@ msgstr ""
 msgid "Balance"
 msgstr ""
 
-#: src/power_profiles.zig
+#: src/control_center/sections/power.zig
 msgid "Balanced"
+msgstr ""
+
+#: src/control_center/sections/network_details.zig
+msgid "Band"
 msgstr ""
 
 #: src/control_center/sections/sound.zig
@@ -569,6 +690,18 @@ msgstr ""
 
 #: src/control_center/search_index.zig
 msgid "Bass boost"
+msgstr ""
+
+#: src/control_center/sections/power.zig
+msgid "Battery health: {percent}%"
+msgstr ""
+
+#: src/server/wakeups.zig
+msgid "Battery is at {percent}%. Plug in your charger."
+msgstr ""
+
+#: src/session/power_policy.zig
+msgid "Battery is critically low. Plug in your charger."
 msgstr ""
 
 #: src/printing/options.zig
@@ -643,6 +776,10 @@ msgstr ""
 msgid "Border glow"
 msgstr ""
 
+#: src/control_center/sections/input_sources.zig
+msgid "Both Shift keys"
+msgstr ""
+
 #: src/control_center/sections/appearance_sections.zig
 msgid "Bottom"
 msgstr ""
@@ -679,12 +816,28 @@ msgstr ""
 msgid "Brightness Up"
 msgstr ""
 
+#: src/control_center/sections/power.zig
+msgid "Brightness and power mode apply on login and when the power source changes. Manual changes last until the next source change."
+msgstr ""
+
+#: src/brightness.zig
+msgid "Brightness could not be changed. Check backlight support and permissions."
+msgstr ""
+
 #: src/files/app_listing.zig
 msgid "Broken link"
 msgstr ""
 
 #: src/control_center/welcome.zig
 msgid "Browser"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "Built-in audio player"
+msgstr ""
+
+#: src/control_center/sections/network_proxy.zig
+msgid "Bypass the proxy for"
 msgstr ""
 
 #: src/images/app_render.zig
@@ -695,11 +848,15 @@ msgstr ""
 msgid "CENTER"
 msgstr ""
 
+#: src/system_monitor/app_footer.zig
+msgid "CPU"
+msgstr ""
+
 #: src/system_monitor/app.zig
 msgid "CPU %"
 msgstr ""
 
-#: src/system_monitor/app.zig
+#: src/system_monitor/app_footer.zig
 msgid "CPU: 100% = one core · Memory: resident · Ctrl+F search · Delete end · Shift+Delete force quit"
 msgstr ""
 
@@ -787,8 +944,16 @@ msgstr ""
 msgid "Cable unplugged"
 msgstr ""
 
+#: src/system_monitor/app_summary_ram.zig
+msgid "Cached"
+msgstr ""
+
 #: src/files/app_model.zig
 msgid "Calculate size"
+msgstr ""
+
+#: src/files/trash_properties.zig
+msgid "Calculating…"
 msgstr ""
 
 #: src/calculator/app.zig
@@ -891,6 +1056,10 @@ msgstr ""
 msgid "Canvas · RediWM preset"
 msgstr ""
 
+#: src/control_center/sections/input_sources.zig
+msgid "Caps Lock"
+msgstr ""
+
 #: src/session/lock_view.zig
 msgid "Caps Lock is on"
 msgstr ""
@@ -903,6 +1072,10 @@ msgstr ""
 msgid "Capture the current display."
 msgstr ""
 
+#: src/control_center/sections/appearance_sections.zig
+msgid "Center"
+msgstr ""
+
 #: src/control_center/sections/sound.zig
 msgid "Centre"
 msgstr ""
@@ -913,6 +1086,14 @@ msgstr ""
 
 #: src/control_center/sections/printers_details.zig
 msgid "Change connection…"
+msgstr ""
+
+#: src/control_center/sections/keys_forms.zig
+msgid "Change passphrase"
+msgstr ""
+
+#: src/control_center/sections/keys_details.zig
+msgid "Change passphrase…"
 msgstr ""
 
 #: src/control_center/sections/users.zig
@@ -951,7 +1132,7 @@ msgstr ""
 msgid "Changes are saved automatically. Scroll the lists for more modes."
 msgstr ""
 
-#: src/control_center/sections/users.zig
+#: src/control_center/sections/users_helper.zig
 msgid "Changes saved."
 msgstr ""
 
@@ -961,6 +1142,18 @@ msgstr ""
 
 #: src/taskbar/battery.zig
 msgid "Charging"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "Charging limit"
+msgstr ""
+
+#: src/session/power_policy.zig
+msgid "Charging limit could not be changed. Check hardware support, permissions and the start threshold."
+msgstr ""
+
+#: src/control_center/sections/power.zig
+msgid "Charging limits require write permission from your system administrator."
 msgstr ""
 
 #: src/control_center/sections/printers_add.zig
@@ -981,6 +1174,22 @@ msgstr ""
 
 #: src/printing/ladder.zig
 msgid "Check printer power, the address, and access through the network or VPN."
+msgstr ""
+
+#: src/control_center/sections/network_editor.zig
+msgid "Check the DNS server addresses."
+msgstr ""
+
+#: src/control_center/sections/network_proxy.zig
+msgid "Check the HTTP proxy host and port (1–65535)."
+msgstr ""
+
+#: src/control_center/sections/network_proxy.zig
+msgid "Check the HTTPS proxy host and port (1–65535)."
+msgstr ""
+
+#: src/control_center/sections/network_proxy.zig
+msgid "Check the SOCKS host and port (1–65535)."
 msgstr ""
 
 #: src/printing/ladder.zig
@@ -1127,15 +1336,23 @@ msgstr ""
 msgid "Choose your window layout"
 msgstr ""
 
+#: src/control_center/sections/appearance_rows.zig
+msgid "Circular"
+msgstr ""
+
 #: src/control_center/welcome.zig
 msgid "Classic (stacking)"
+msgstr ""
+
+#: src/editor/app_recent.zig
+msgid "Clear Recent"
 msgstr ""
 
 #: src/control_center/search.zig
 msgid "Clear search"
 msgstr ""
 
-#: src/editor/app_input.zig
+#: src/editor/app_edit.zig
 msgid "Clipboard selections are limited to 1 MiB."
 msgstr ""
 
@@ -1192,6 +1409,10 @@ msgid "Closing ends this shell and its running jobs."
 msgstr ""
 
 #: src/system_monitor/app.zig
+msgid "Collapse"
+msgstr ""
+
+#: src/system_monitor/app_footer.zig
 msgid "Collecting processes…"
 msgstr ""
 
@@ -1207,6 +1428,10 @@ msgstr ""
 msgid "Colour: {colour}"
 msgstr ""
 
+#: src/control_center/sections/keys_forms.zig
+msgid "Comment"
+msgstr ""
+
 #: src/files/app_torrent_rows.zig
 msgid "Complete"
 msgstr ""
@@ -1217,6 +1442,18 @@ msgstr ""
 
 #: src/printing/cups.zig
 msgid "Completed"
+msgstr ""
+
+#: src/control_center/sections/network_details.zig
+msgid "Configuration"
+msgstr ""
+
+#: src/control_center/sections/network_proxy.zig
+msgid "Configuration URL"
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+msgid "Configure in Fcitx…"
 msgstr ""
 
 #: src/control_center/sections/network.zig
@@ -1235,12 +1472,24 @@ msgstr ""
 msgid "Confirm Pairing"
 msgstr ""
 
+#: src/control_center/sections/network.zig
+msgid "Confirm forget"
+msgstr ""
+
 #: src/control_center/sections/users.zig
 msgid "Confirm new password"
 msgstr ""
 
+#: src/control_center/sections/keys_forms.zig
+msgid "Confirm passphrase"
+msgstr ""
+
 #: src/control_center/sections/users.zig
 msgid "Confirm password"
+msgstr ""
+
+#: src/control_center/sections/network_vpn.zig
+msgid "Confirm remove"
 msgstr ""
 
 #: src/printing/ladder.zig
@@ -1283,7 +1532,7 @@ msgstr ""
 msgid "Connecting Ethernet…"
 msgstr ""
 
-#: src/files/app_paint.zig
+#: src/control_center/sections/network_vpn.zig
 msgid "Connecting…"
 msgstr ""
 
@@ -1297,6 +1546,14 @@ msgstr ""
 
 #: src/network/manager_objects.zig
 msgid "Connection failed. Check the password and try again."
+msgstr ""
+
+#: src/network/manager_edit.zig
+msgid "Connection forgotten."
+msgstr ""
+
+#: src/control_center/sections/network_editor.zig
+msgid "Connection settings"
 msgstr ""
 
 #: src/session/lock_view.zig
@@ -1319,6 +1576,10 @@ msgstr ""
 
 #: src/control_center/sections/printers_details.zig
 msgid "Copy diagnostic report"
+msgstr ""
+
+#: src/control_center/sections/keys_details.zig
+msgid "Copy public key"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -1365,12 +1626,12 @@ msgstr ""
 msgid "Could not apply this choice. Please try again."
 msgstr ""
 
-#: src/session/power_requests.zig
-msgid "Could not build the request."
-msgstr ""
-
 #: src/files/properties.zig
 msgid "Could not change permissions"
+msgstr ""
+
+#: src/control_center/sections/network.zig
+msgid "Could not change the radios. Check access to /dev/rfkill."
 msgstr ""
 
 #: src/printing/admin.zig
@@ -1407,6 +1668,18 @@ msgstr ""
 
 #: src/files/archive.zig
 msgid "Could not extract archive"
+msgstr ""
+
+#: src/network/manager_edit.zig
+msgid "Could not forget the connection."
+msgstr ""
+
+#: src/control_center/sections/keys_ssh.zig
+msgid "Could not load SSH keys."
+msgstr ""
+
+#: src/control_center/sections/keys_ssh.zig
+msgid "Could not load SSH keys. Refresh to try again."
 msgstr ""
 
 #: src/files/app_dialogs.zig
@@ -1493,6 +1766,10 @@ msgstr ""
 msgid "Could not open with this app. Choose another."
 msgstr ""
 
+#: src/files/app_audio.zig
+msgid "Could not play the file"
+msgstr ""
+
 #: src/pdf/app_document.zig
 msgid "Could not prepare password. Please try again."
 msgstr ""
@@ -1517,7 +1794,7 @@ msgstr ""
 msgid "Could not read Wi-Fi networks"
 msgstr ""
 
-#: src/files/app_dialogs.zig
+#: src/desktop/app_actions.zig
 msgid "Could not read file properties"
 msgstr ""
 
@@ -1541,6 +1818,10 @@ msgstr ""
 msgid "Could not read the AppImage's application details"
 msgstr ""
 
+#: src/network/manager_edit.zig
+msgid "Could not read the connection settings."
+msgstr ""
+
 #: src/files/client_dnd.zig
 msgid "Could not read the dropped items"
 msgstr ""
@@ -1553,8 +1834,24 @@ msgstr ""
 msgid "Could not request CUPS start."
 msgstr ""
 
-#: src/systemd/requests.zig
+#: src/network/manager_access.zig
 msgid "Could not request authentication. Check that polkit is running."
+msgstr ""
+
+#: src/control_center/sections/input.zig
+msgid "Could not reset or restore the previous settings."
+msgstr ""
+
+#: src/control_center/sections/input.zig
+msgid "Could not reset. The previous settings were restored."
+msgstr ""
+
+#: src/files/app_trash.zig
+msgid "Could not restore the items in Trash"
+msgstr ""
+
+#: src/files/app_trash.zig
+msgid "Could not restore the selected items"
 msgstr ""
 
 #: src/images/app_input.zig
@@ -1573,6 +1870,10 @@ msgstr ""
 msgid "Could not save Places"
 msgstr ""
 
+#: src/control_center/sections/appearance_colors.zig
+msgid "Could not save application color preference: {reason}."
+msgstr ""
+
 #: src/control_center/sections/desktop.zig
 msgid "Could not save desktop mode."
 msgstr ""
@@ -1581,12 +1882,24 @@ msgstr ""
 msgid "Could not save floating apps."
 msgstr ""
 
+#: src/control_center/sections/input.zig
+msgid "Could not save or restore the previous settings."
+msgstr ""
+
 #: src/control_center/sections/portals.zig
 msgid "Could not save portal preferences. Check your configuration directory."
 msgstr ""
 
+#: src/control_center/sections/power.zig
+msgid "Could not save power settings."
+msgstr ""
+
 #: src/control_center/panel.zig
 msgid "Could not save the Files setting."
+msgstr ""
+
+#: src/network/manager_edit.zig
+msgid "Could not save the connection settings."
 msgstr ""
 
 #: src/control_center/welcome.zig
@@ -1619,6 +1932,10 @@ msgstr ""
 
 #: src/images/app_dialogs.zig
 msgid "Could not save. Check the folder and permissions."
+msgstr ""
+
+#: src/control_center/sections/input.zig
+msgid "Could not save. The previous settings were restored."
 msgstr ""
 
 #: src/printing/admin.zig
@@ -1677,12 +1994,24 @@ msgstr ""
 msgid "Could not start the authentication request."
 msgstr ""
 
+#: src/network/manager_edit.zig
+msgid "Could not start the connection."
+msgstr ""
+
+#: src/control_center/sections/keys_forms.zig
+msgid "Could not start the key operation."
+msgstr ""
+
 #: src/session/power_requests.zig
 msgid "Could not start the power command."
 msgstr ""
 
 #: src/control_center/sections/users.zig
 msgid "Could not start the request."
+msgstr ""
+
+#: src/network/manager_edit.zig
+msgid "Could not stop the connection."
 msgstr ""
 
 #: src/systemd/live.zig
@@ -1733,8 +2062,20 @@ msgstr ""
 msgid "Created and switched to {name}"
 msgstr ""
 
+#: src/control_center/search_index.zig
+msgid "Critical battery"
+msgstr ""
+
+#: src/control_center/sections/power.zig
+msgid "Critical battery level"
+msgstr ""
+
 #: src/images/app.zig
 msgid "Crop"
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+msgid "Ctrl+Shift"
 msgstr ""
 
 #: src/control_center/sections/region.zig
@@ -1743,6 +2084,14 @@ msgstr ""
 
 #: src/control_center/sections/appearance_rows.zig
 msgid "Current font"
+msgstr ""
+
+#: src/control_center/sections/keys_forms.zig
+msgid "Current passphrase"
+msgstr ""
+
+#: src/control_center/sections/power.zig
+msgid "Current power mode: {mode}"
 msgstr ""
 
 #: src/control_center/sections/appearance_rows.zig
@@ -1763,6 +2112,10 @@ msgstr ""
 
 #: src/control_center/sections/portals.zig
 msgid "Custom ({name})"
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+msgid "Custom ({option})"
 msgstr ""
 
 #: src/control_center/sections/appearance_sections.zig
@@ -1799,7 +2152,7 @@ msgstr ""
 msgid "DISPLAY"
 msgstr ""
 
-#: src/control_center/sections/network.zig
+#: src/control_center/sections/network_details.zig
 msgid "DNS servers"
 msgstr ""
 
@@ -1859,6 +2212,10 @@ msgstr ""
 msgid "Deferred"
 msgstr ""
 
+#: src/files/app_model.zig
+msgid "Delete Permanently"
+msgstr ""
+
 #: src/delete_dialog.zig
 msgid "Delete file?"
 msgstr ""
@@ -1879,12 +2236,20 @@ msgstr ""
 msgid "Delete permanently"
 msgstr ""
 
+#: src/files/app_dialogs.zig
+msgid "Delete permanently?"
+msgstr ""
+
 #: src/control_center/sections/users.zig
 msgid "Delete user…"
 msgstr ""
 
 #: src/control_center/sections/users.zig
 msgid "Delete {name}?"
+msgstr ""
+
+#: src/files/trash_properties.zig
+msgid "Deleted files and folders"
 msgstr ""
 
 #: src/session/power_capabilities.zig
@@ -1947,8 +2312,16 @@ msgstr ""
 msgid "Did the test produce printed output? CUPS completion alone cannot tell."
 msgstr ""
 
+#: src/control_center/sections/power.zig
+msgid "Dim brightness"
+msgstr ""
+
 #: src/control_center/search_index.zig
 msgid "Dim inactive windows"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "Dim screen after"
 msgstr ""
 
 #: src/control_center/sections/printers_details.zig
@@ -1960,10 +2333,10 @@ msgid "Disable shortcut"
 msgstr ""
 
 #: src/control_center/search_index.zig
-msgid "Disable touchpad while typing"
+msgid "Disable while typing"
 msgstr ""
 
-#: src/control_center/sections/services.zig
+#: src/control_center/sections/network_details.zig
 msgid "Disabled"
 msgstr ""
 
@@ -1987,7 +2360,7 @@ msgstr ""
 msgid "Disconnecting Ethernet…"
 msgstr ""
 
-#: src/network/manager.zig
+#: src/control_center/sections/network_vpn.zig
 msgid "Disconnecting…"
 msgstr ""
 
@@ -1995,7 +2368,7 @@ msgstr ""
 msgid "Discovering printers; authorization may be required…"
 msgstr ""
 
-#: src/system_monitor/app.zig
+#: src/system_monitor/app_table.zig
 msgid "Disk wait"
 msgstr ""
 
@@ -2195,8 +2568,24 @@ msgstr ""
 msgid "ETA: {value}s"
 msgstr ""
 
+#: src/control_center/sections/network_proxy.zig
+msgid "Each bypass entry must be at most 64 characters."
+msgstr ""
+
 #: src/control_center/sections/appearance_rows.zig
 msgid "Edge glow"
+msgstr ""
+
+#: src/control_center/sections/keys_details.zig
+msgid "Edit comment…"
+msgstr ""
+
+#: src/control_center/sections/keys_details.zig
+msgid "Edit label…"
+msgstr ""
+
+#: src/control_center/sections/network.zig
+msgid "Edit settings…"
 msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
@@ -2205,6 +2594,10 @@ msgstr ""
 
 #: src/images/app_edit.zig
 msgid "Edits undone."
+msgstr ""
+
+#: src/control_center/sections/appearance.zig
+msgid "Effects"
 msgstr ""
 
 #: src/files/app_model.zig
@@ -2231,6 +2624,10 @@ msgstr ""
 msgid "Empty Trash…"
 msgstr ""
 
+#: src/control_center/sections/power.zig
+msgid "Enable Power Saver below"
+msgstr ""
+
 #: src/printing/ladder.zig
 msgid "Enable acceptance of jobs when the printer is ready."
 msgstr ""
@@ -2255,16 +2652,16 @@ msgstr ""
 msgid "Enlarge this window to show the terminal"
 msgstr ""
 
-#: src/calculator/app.zig
-msgid "Enter =   Esc clear   F9 ±   % = ÷100"
-msgstr ""
-
 #: src/polkit/dialog.zig
 msgid "Enter Password"
 msgstr ""
 
 #: src/images/app_dialogs.zig
 msgid "Enter a filename or an absolute path."
+msgstr ""
+
+#: src/control_center/sections/keys.zig
+msgid "Enter a filename without slashes or a leading dot."
 msgstr ""
 
 #: src/images/app_dialogs.zig
@@ -2287,6 +2684,14 @@ msgstr ""
 msgid "Enter a valid CUPS administrator username and password."
 msgstr ""
 
+#: src/control_center/sections/network_editor.zig
+msgid "Enter a valid IPv4 address."
+msgstr ""
+
+#: src/control_center/sections/network_editor.zig
+msgid "Enter a valid IPv6 address."
+msgstr ""
+
 #: src/control_center/sections/users.zig
 msgid "Enter a valid full name."
 msgstr ""
@@ -2295,8 +2700,28 @@ msgstr ""
 msgid "Enter a valid username and full name."
 msgstr ""
 
+#: src/control_center/sections/network_editor.zig
+msgid "Enter an IPv4 prefix length from 1 to 32."
+msgstr ""
+
+#: src/control_center/sections/network_editor.zig
+msgid "Enter an IPv6 prefix length from 1 to 128."
+msgstr ""
+
 #: src/control_center/sections/printers.zig
 msgid "Enter an account permitted to administer the local CUPS server."
+msgstr ""
+
+#: src/control_center/sections/network_proxy.zig
+msgid "Enter an http://, https:// or file:// address."
+msgstr ""
+
+#: src/control_center/sections/network_editor.zig
+msgid "Enter at least one DNS server, or choose Automatic."
+msgstr ""
+
+#: src/control_center/sections/network_proxy.zig
+msgid "Enter at least one proxy."
 msgstr ""
 
 #: src/files/app_paint.zig
@@ -2383,12 +2808,16 @@ msgstr ""
 msgid "Existing windows outside a smaller canvas stay reachable."
 msgstr ""
 
-#: src/system_monitor/app.zig
+#: src/system_monitor/app_table.zig
 msgid "Exited"
 msgstr ""
 
 #: src/calculator/model.zig
 msgid "Expression is full"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "External display lid action"
 msgstr ""
 
 #: src/files/app_model.zig
@@ -2429,6 +2858,18 @@ msgstr ""
 
 #: src/files/app_fileops.zig
 msgid "Failed to start transfer job"
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+msgid "Fcitx 5 is not running. Its input methods appear here while it runs."
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+msgid "Fcitx manages its own list; RediWM only switches between its methods."
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+msgid "Fcitx's current group has no input methods besides keyboards."
 msgstr ""
 
 #: src/files/torrents.zig
@@ -2483,6 +2924,10 @@ msgstr ""
 msgid "File operation failed"
 msgstr ""
 
+#: src/control_center/sections/keys_forms.zig
+msgid "Filename in ~/.ssh"
+msgstr ""
+
 #: src/dock/items.zig
 msgid "Files"
 msgstr ""
@@ -2515,7 +2960,7 @@ msgstr ""
 msgid "Find ▲"
 msgstr ""
 
-#: src/editor/app_paint.zig
+#: src/editor/app_search.zig
 msgid "Find…"
 msgstr ""
 
@@ -2529,6 +2974,10 @@ msgstr ""
 
 #: src/files/app_places.zig
 msgid "Finish the running file operation first"
+msgstr ""
+
+#: src/control_center/sections/power.zig
+msgid "Firmware charging limit: {percent}%"
 msgstr ""
 
 #: src/control_center/sections/region.zig
@@ -2555,8 +3004,24 @@ msgstr ""
 msgid "Five applications already pinned"
 msgstr ""
 
+#: src/control_center/sections/keys_details.zig
+msgid "Fix permissions"
+msgstr ""
+
 #: src/control_center/search_index.zig
 msgid "Fixed desktop icons"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "Flames when minimizing windows"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "Flames while moving windows"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "Flames while resizing windows"
 msgstr ""
 
 #: src/control_center/sections/display.zig
@@ -2660,6 +3125,26 @@ msgid "Folders only"
 msgstr ""
 
 #: src/control_center/search_index.zig
+msgid "Follow RediWM application colors"
+msgstr ""
+
+#: src/control_center/sections/power.zig
+msgid "Follow lid action"
+msgstr ""
+
+#: src/control_center/sections/appearance_colors.zig
+msgid "Following GTK colors. Install qt5ct or qt6ct to include Qt apps. Choose GTK in Brave or Chrome, or System theme in Firefox; restart apps once if needed."
+msgstr ""
+
+#: src/control_center/sections/appearance_colors.zig
+msgid "Following application colors. GTK live updates are unavailable; restart GTK apps after theme changes. Choose GTK in Brave or Chrome, System theme in Firefox, or Linux in Falkon."
+msgstr ""
+
+#: src/control_center/sections/appearance_colors.zig
+msgid "Following the main theme. Choose GTK in Brave or Chrome, System theme in Firefox, or Linux in Falkon. Restart apps once if needed; apps with their own styles may differ."
+msgstr ""
+
+#: src/control_center/search_index.zig
 msgid "Font"
 msgstr ""
 
@@ -2691,12 +3176,24 @@ msgstr ""
 msgid "Force quit…"
 msgstr ""
 
+#: src/control_center/sections/network.zig
+msgid "Forget"
+msgstr ""
+
 #: src/control_center/sections/bluetooth.zig
 msgid "Forget Device"
 msgstr ""
 
+#: src/control_center/sections/network_editor.zig
+msgid "Forget connection"
+msgstr ""
+
 #: src/control_center/sections/bluetooth.zig
 msgid "Forget this device? Pair it again to reconnect."
+msgstr ""
+
+#: src/network/manager_edit.zig
+msgid "Forgetting…"
 msgstr ""
 
 #: src/control_center/sections/region.zig
@@ -2705,6 +3202,14 @@ msgstr ""
 
 #: src/files/app_torrents.zig
 msgid "Forward"
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+msgid "Four keyboard layouts is the most XKB allows."
+msgstr ""
+
+#: src/system_monitor/app_summary_ram.zig
+msgid "Free"
 msgstr ""
 
 #: src/control_center/sections/region.zig
@@ -2727,6 +3232,10 @@ msgstr ""
 msgid "Fully Charged"
 msgstr ""
 
+#: src/system_monitor/app_footer.zig
+msgid "GPU"
+msgstr ""
+
 #: src/control_center/sections/appearance_colors.zig
 msgid "GTK colors applied. Restart GTK apps. Apps with their own styles or sandbox settings may differ."
 msgstr ""
@@ -2735,12 +3244,16 @@ msgstr ""
 msgid "Gap ({n} px)"
 msgstr ""
 
-#: src/control_center/sections/network.zig
+#: src/control_center/sections/network_details.zig
 msgid "Gateway"
 msgstr ""
 
 #: src/control_center/panel.zig
 msgid "General"
+msgstr ""
+
+#: src/control_center/sections/keys_forms.zig
+msgid "Generate key"
 msgstr ""
 
 #: src/files/app_layout.zig
@@ -2765,6 +3278,14 @@ msgstr ""
 
 #: src/control_center/sections/users.zig
 msgid "Groups"
+msgstr ""
+
+#: src/control_center/sections/network_proxy.zig
+msgid "HTTP proxy"
+msgstr ""
+
+#: src/control_center/sections/network_proxy.zig
+msgid "HTTPS proxy"
 msgstr ""
 
 #: src/control_center/sections/network.zig
@@ -2819,12 +3340,40 @@ msgstr ""
 msgid "INPUT"
 msgstr ""
 
+#: src/control_center/search_index.zig
+msgid "IP address and DNS"
+msgstr ""
+
 #: src/control_center/sections/printers_add.zig
 msgid "IPP Everywhere / AirPrint"
 msgstr ""
 
-#: src/control_center/sections/network.zig
+#: src/control_center/sections/network_editor.zig
+msgid "IPv4"
+msgstr ""
+
+#: src/control_center/sections/network_details.zig
 msgid "IPv4 address"
+msgstr ""
+
+#: src/control_center/sections/network_details.zig
+msgid "IPv4 {v4} · IPv6 {v6}"
+msgstr ""
+
+#: src/control_center/sections/network_editor.zig
+msgid "IPv6"
+msgstr ""
+
+#: src/control_center/sections/network_details.zig
+msgid "IPv6 DNS servers"
+msgstr ""
+
+#: src/control_center/sections/network_details.zig
+msgid "IPv6 address"
+msgstr ""
+
+#: src/control_center/sections/network_details.zig
+msgid "IPv6 gateway"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -2839,7 +3388,7 @@ msgstr ""
 msgid "Icon theme"
 msgstr ""
 
-#: src/system_monitor/app.zig
+#: src/system_monitor/app_table.zig
 msgid "Idle"
 msgstr ""
 
@@ -2865,6 +3414,10 @@ msgstr ""
 
 #: src/control_center/tree.zig
 msgid "In Files, click an icon to open it in list or icons view. Click the name to select."
+msgstr ""
+
+#: src/control_center/tree.zig
+msgid "In Files, show a play button on audio files and play them in the background player. A default application chosen in Open With still takes over."
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -2899,12 +3452,40 @@ msgstr ""
 msgid "Input"
 msgstr ""
 
+#: src/control_center/sections/input_sources.zig
+msgid "Input Sources"
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+msgid "Input methods (Fcitx 5)"
+msgstr ""
+
+#: src/taskbar/window_menu.zig
+msgid "Input settings…"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "Input sources"
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+msgid "Input sources are unavailable."
+msgstr ""
+
 #: src/control_center/sections/bluetooth.zig
 msgid "Input · Keyboard, mouse or controller"
 msgstr ""
 
 #: src/control_center/sections/appearance_themes.zig
 msgid "Install"
+msgstr ""
+
+#: src/control_center/sections/keys.zig
+msgid "Install OpenSSH to generate or change keys."
+msgstr ""
+
+#: src/control_center/sections/keys.zig
+msgid "Install gio to move keys to Trash."
 msgstr ""
 
 #: src/control_center/sections/appearance_colors.zig
@@ -2929,6 +3510,10 @@ msgstr ""
 
 #: src/session/power_requests.zig
 msgid "Interactive authorization required."
+msgstr ""
+
+#: src/control_center/sections/appearance_rows.zig
+msgid "Interactive surface glow"
 msgstr ""
 
 #: src/control_center/welcome.zig
@@ -3059,12 +3644,20 @@ msgstr ""
 msgid "Keep printer"
 msgstr ""
 
+#: src/control_center/sections/power.zig
+msgid "Keep working"
+msgstr ""
+
 #: src/control_center/sections/appearance.zig
 msgid "Keep zoom"
 msgstr ""
 
 #: src/control_center/panel.zig
 msgid "Keyboard Shortcuts"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "Keyboard backlight"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -3079,6 +3672,10 @@ msgstr ""
 msgid "Keyboard shortcuts"
 msgstr ""
 
+#: src/control_center/panel.zig
+msgid "Keys & Certificates"
+msgstr ""
+
 #: src/files/app_torrent_rows.zig
 msgid "Known peers: {value}"
 msgstr ""
@@ -3087,11 +3684,19 @@ msgstr ""
 msgid "LEFT"
 msgstr ""
 
+#: src/control_center/sections/keys_forms.zig
+msgid "Label"
+msgstr ""
+
 #: src/control_center/sections/printers_details.zig
 msgid "Label printer and advanced test tools"
 msgstr ""
 
-#: src/control_center/sections/region.zig
+#: src/control_center/sections/keys_forms.zig
+msgid "Labels apply to every copy of this public fingerprint."
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
 msgid "Language"
 msgstr ""
 
@@ -3127,6 +3732,10 @@ msgstr ""
 msgid "Launcher"
 msgstr ""
 
+#: src/control_center/search_index.zig
+msgid "Layout switch keys"
+msgstr ""
+
 #: src/control_center/sections/desktop.zig
 msgid "Layouts and split sizes are saved for your next session."
 msgstr ""
@@ -3135,12 +3744,28 @@ msgstr ""
 msgid "Leave blank to use saved password"
 msgstr ""
 
+#: src/control_center/sections/power.zig
+msgid "Leave unchanged"
+msgstr ""
+
 #: src/control_center/sections/appearance_sections.zig
 msgid "Left"
 msgstr ""
 
 #: src/control_center/search_index.zig
+msgid "Left-handed mode"
+msgstr ""
+
+#: src/control_center/search_index.zig
 msgid "Lid close action"
+msgstr ""
+
+#: src/control_center/sections/power.zig
+msgid "Lid closed with external display"
+msgstr ""
+
+#: src/control_center/sections/appearance_rows.zig
+msgid "Light interactive control edges near the pointer"
 msgstr ""
 
 #: src/control_center/sections/appearance_rows.zig
@@ -3155,6 +3780,10 @@ msgstr ""
 msgid "Line {line}, Column {column}    ·    UTF-8{bom}    ·    {ending}"
 msgstr ""
 
+#: src/control_center/sections/appearance_rows.zig
+msgid "Linear"
+msgstr ""
+
 #: src/files/app_listing.zig
 msgid "Link"
 msgstr ""
@@ -3167,12 +3796,20 @@ msgstr ""
 msgid "Link permissions cannot be changed"
 msgstr ""
 
-#: src/control_center/sections/network.zig
+#: src/control_center/sections/network_details.zig
 msgid "Link speed"
+msgstr ""
+
+#: src/control_center/sections/network_details.zig
+msgid "Link-local only"
 msgstr ""
 
 #: src/files/app_torrents.zig
 msgid "List"
+msgstr ""
+
+#: src/system_monitor/app_summary_cpu.zig
+msgid "Load"
 msgstr ""
 
 #: src/control_center/sections/printers_tools.zig
@@ -3183,12 +3820,24 @@ msgstr ""
 msgid "Loaded paper width"
 msgstr ""
 
+#: src/control_center/sections/keys_ssh.zig
+msgid "Loading SSH keys timed out. Refresh to try again."
+msgstr ""
+
 #: src/start_menu/search.zig
 msgid "Loading applications…"
 msgstr ""
 
+#: src/control_center/sections/network_editor.zig
+msgid "Loading connection settings…"
+msgstr ""
+
 #: src/images/app_render.zig
 msgid "Loading image…"
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+msgid "Loading layouts…"
 msgstr ""
 
 #: src/control_center/sections/printers.zig
@@ -3199,7 +3848,7 @@ msgstr ""
 msgid "Loading services…"
 msgstr ""
 
-#: src/files/properties.zig
+#: src/control_center/sections/keys_details.zig
 msgid "Location"
 msgstr ""
 
@@ -3209,6 +3858,10 @@ msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
 msgid "Lock Screen"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "Lock before sleep"
 msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
@@ -3255,8 +3908,20 @@ msgstr ""
 msgid "Lost contact with login service. Try again."
 msgstr ""
 
-#: src/control_center/sections/network.zig
+#: src/server/wakeups.zig
+msgid "Low battery"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "Low battery warning"
+msgstr ""
+
+#: src/control_center/sections/network_details.zig
 msgid "MAC address"
+msgstr ""
+
+#: src/control_center/sections/network_editor.zig
+msgid "MTU"
 msgstr ""
 
 #: src/control_center/sections/display.zig
@@ -3279,8 +3944,16 @@ msgstr ""
 msgid "Manage and analyze systemd services."
 msgstr ""
 
+#: src/control_center/sections/keys_ssh.zig
+msgid "Manage the current user's keys in ~/.ssh."
+msgstr ""
+
 #: src/control_center/sections/printers_details.zig
 msgid "Manage…"
+msgstr ""
+
+#: src/control_center/sections/network_details.zig
+msgid "Manual"
 msgstr ""
 
 #: src/control_center/sections/printers_details.zig
@@ -3289,6 +3962,10 @@ msgstr ""
 
 #: src/control_center/tree.zig
 msgid "Master volume"
+msgstr ""
+
+#: src/editor/app_search.zig
+msgid "Matches replaced: {count}"
 msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
@@ -3327,7 +4004,7 @@ msgstr ""
 msgid "Memory (resident)"
 msgstr ""
 
-#: src/editor/client_render.zig
+#: src/editor/app_paint.zig
 msgid "Menu"
 msgstr ""
 
@@ -3349,6 +4026,10 @@ msgstr ""
 
 #: src/files/app_torrent_rows.zig
 msgid "Metadata…"
+msgstr ""
+
+#: src/control_center/sections/network_editor.zig
+msgid "Metered connection"
 msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
@@ -3383,6 +4064,10 @@ msgstr ""
 msgid "Mini map position"
 msgstr ""
 
+#: src/control_center/sections/keys_ssh.zig
+msgid "Missing .pub file"
+msgstr ""
+
 #: src/files/app_layout.zig
 msgid "Modified"
 msgstr ""
@@ -3403,6 +4088,10 @@ msgstr ""
 msgid "More settings"
 msgstr ""
 
+#: src/system_monitor/app_summary_ram.zig
+msgid "Most memory"
+msgstr ""
+
 #: src/control_center/sections/appearance.zig
 msgid "Motion & feedback"
 msgstr ""
@@ -3419,12 +4108,12 @@ msgstr ""
 msgid "Mounting…"
 msgstr ""
 
-#: src/control_center/search_index.zig
-msgid "Mouse speed"
-msgstr ""
-
 #: src/control_center/sections/shortcuts.zig
 msgid "Move To Workspace"
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+msgid "Move down"
 msgstr ""
 
 #: src/control_center/sections/appearance_rows.zig
@@ -3459,7 +4148,11 @@ msgstr ""
 msgid "Move this image to Trash?"
 msgstr ""
 
-#: src/delete_dialog.zig
+#: src/control_center/sections/keys_forms.zig
+msgid "Move this key to Trash?"
+msgstr ""
+
+#: src/control_center/sections/keys_forms.zig
 msgid "Move to Trash"
 msgstr ""
 
@@ -3467,8 +4160,16 @@ msgstr ""
 msgid "Move to Trash?"
 msgstr ""
 
+#: src/control_center/sections/keys_details.zig
+msgid "Move to Trash…"
+msgstr ""
+
 #: src/control_center/sections/shortcuts.zig
 msgid "Move to workspace."
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+msgid "Move up"
 msgstr ""
 
 #: src/control_center/welcome.zig
@@ -3503,6 +4204,10 @@ msgstr ""
 msgid "My processes"
 msgstr ""
 
+#: src/system_monitor/app_footer.zig
+msgid "NET"
+msgstr ""
+
 #: src/files/app_layout.zig
 msgid "Name"
 msgstr ""
@@ -3525,6 +4230,10 @@ msgstr ""
 
 #: src/control_center/search_index.zig
 msgid "Natural scroll"
+msgstr ""
+
+#: src/control_center/sections/appearance_rows.zig
+msgid "Needs Animations to be on"
 msgstr ""
 
 #: src/control_center/sections/printers_tools.zig
@@ -3567,12 +4276,20 @@ msgstr ""
 msgid "NetworkManager unavailable"
 msgstr ""
 
+#: src/control_center/sections/input_sources.zig
+msgid "Never"
+msgstr ""
+
 #: src/editor/app.zig
 msgid "New"
 msgstr ""
 
 #: src/files/app_dialogs.zig
 msgid "New Branch"
+msgstr ""
+
+#: src/control_center/sections/keys_forms.zig
+msgid "New Ed25519 key"
 msgstr ""
 
 #: src/desktop/app_actions.zig
@@ -3591,8 +4308,24 @@ msgstr ""
 msgid "New Folder"
 msgstr ""
 
+#: src/control_center/search_index.zig
+msgid "New SSH key"
+msgstr ""
+
 #: src/files/app_git_sidebar.zig
 msgid "New branch"
+msgstr ""
+
+#: src/control_center/sections/keys_ssh.zig
+msgid "New key…"
+msgstr ""
+
+#: src/control_center/sections/keys_forms.zig
+msgid "New passphrase"
+msgstr ""
+
+#: src/control_center/sections/keys_forms.zig
+msgid "New passphrase (optional)"
 msgstr ""
 
 #: src/control_center/sections/users.zig
@@ -3607,8 +4340,12 @@ msgstr ""
 msgid "Newest first"
 msgstr ""
 
-#: src/editor/app_paint.zig
+#: src/editor/app_search.zig
 msgid "Next"
+msgstr ""
+
+#: src/control_center/sections/shortcuts.zig
+msgid "Next Input Source"
 msgstr ""
 
 #: src/session/lock_view.zig
@@ -3623,8 +4360,16 @@ msgstr ""
 msgid "Night light temperature"
 msgstr ""
 
+#: src/control_center/sections/network_editor.zig
+msgid "No"
+msgstr ""
+
 #: src/control_center/sections/bluetooth.zig
 msgid "No Bluetooth adapter found"
+msgstr ""
+
+#: src/control_center/sections/network_vpn.zig
+msgid "No VPN connections. Add one with your VPN's NetworkManager plugin or nmcli; it then appears here."
 msgstr ""
 
 #: src/control_center/sections/network.zig
@@ -3655,12 +4400,20 @@ msgstr ""
 msgid "No audio device available"
 msgstr ""
 
+#: src/files/app_audio_playlist.zig
+msgid "No audio files"
+msgstr ""
+
 #: src/files/app_paint.zig
 msgid "No changed files"
 msgstr ""
 
-#: src/control_center/sections/users.zig
+#: src/control_center/sections/users_helper.zig
 msgid "No changes were made. Authentication was cancelled or the request failed."
+msgstr ""
+
+#: src/control_center/sections/input.zig
+msgid "No devices"
 msgstr ""
 
 #: src/pdf/app_paint.zig
@@ -3677,6 +4430,14 @@ msgstr ""
 
 #: src/control_center/sections/network.zig
 msgid "No internet connection"
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+msgid "No layouts match this search."
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+msgid "No layouts match."
 msgstr ""
 
 #: src/control_center/sections/users.zig
@@ -3699,7 +4460,7 @@ msgstr ""
 msgid "No matching items"
 msgstr ""
 
-#: src/system_monitor/app.zig
+#: src/system_monitor/app_table.zig
 msgid "No matching processes"
 msgstr ""
 
@@ -3721,6 +4482,14 @@ msgstr ""
 
 #: src/control_center/sections/bluetooth.zig
 msgid "No paired devices. Choose Pair New Device to get started."
+msgstr ""
+
+#: src/control_center/sections/keys_ssh.zig
+msgid "No passphrase"
+msgstr ""
+
+#: src/control_center/sections/input.zig
+msgid "No pointer devices connected."
 msgstr ""
 
 #: src/battery_popup.zig
@@ -3759,6 +4528,10 @@ msgstr ""
 msgid "No sources available."
 msgstr ""
 
+#: src/control_center/sections/keys_ssh.zig
+msgid "No supported SSH keys found."
+msgstr ""
+
 #: src/control_center/tree.zig
 msgid "No supported backlight"
 msgstr ""
@@ -3781,6 +4554,10 @@ msgstr ""
 
 #: src/control_center/sections/printers_add.zig
 msgid "No unambiguous automatic driver match. Choose a listed driver, check an IPP address, or explicitly choose a raw queue."
+msgstr ""
+
+#: src/control_center/sections/input.zig
+msgid "No unique device identity; settings are unavailable."
 msgstr ""
 
 #: src/control_center/sections/printers.zig
@@ -3871,7 +4648,7 @@ msgstr ""
 msgid "Not specified"
 msgstr ""
 
-#: src/session/power_capabilities.zig
+#: src/control_center/sections/input.zig
 msgid "Not supported"
 msgstr ""
 
@@ -3885,6 +4662,10 @@ msgstr ""
 
 #: src/control_center/sections/services.zig
 msgid "Notify"
+msgstr ""
+
+#: src/control_center/sections/power.zig
+msgid "Notify only"
 msgstr ""
 
 #: src/systemd/actions.zig
@@ -3935,12 +4716,21 @@ msgstr ""
 msgid "On Battery"
 msgstr ""
 
+#: src/control_center/sections/power.zig
+msgid "On battery"
+msgstr ""
+
 #: src/printing/options.zig
 msgid "One-sided"
 msgstr ""
 
 #: src/files/properties.zig
 msgid "Only the owner can change permissions"
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+#.  raw
+msgid "Only the shortcut (Super+Shift+Space)"
 msgstr ""
 
 #: src/files/appimage.zig
@@ -3953,6 +4743,10 @@ msgstr ""
 
 #: src/files/app.zig
 msgid "Open File"
+msgstr ""
+
+#: src/editor/app.zig
+msgid "Open Recent"
 msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
@@ -4017,6 +4811,18 @@ msgstr ""
 
 #: src/control_center/sections/services.zig
 msgid "Optimize"
+msgstr ""
+
+#: src/files/app_menu.zig
+msgid "Original location unknown: these items have no Trash information"
+msgstr ""
+
+#: src/control_center/sections/network_details.zig
+msgid "Other"
+msgstr ""
+
+#: src/control_center/sections/network_editor.zig
+msgid "Other (unchanged)"
 msgstr ""
 
 #: src/files/properties.zig
@@ -4151,6 +4957,10 @@ msgstr ""
 msgid "Pass"
 msgstr ""
 
+#: src/control_center/sections/keys_ssh.zig
+msgid "Passphrase protected"
+msgstr ""
+
 #: src/control_center/sections/network.zig
 msgid "Password"
 msgstr ""
@@ -4171,7 +4981,7 @@ msgstr ""
 msgid "Paste"
 msgstr ""
 
-#: src/files/app_torrent_rows.zig
+#: src/files/app_audio.zig
 msgid "Pause"
 msgstr ""
 
@@ -4191,7 +5001,11 @@ msgstr ""
 msgid "Pending"
 msgstr ""
 
-#: src/power_profiles.zig
+#: src/system_monitor/app_summary_cpu.zig
+msgid "Per-core load is unavailable"
+msgstr ""
+
+#: src/control_center/sections/power.zig
 msgid "Performance"
 msgstr ""
 
@@ -4235,20 +5049,56 @@ msgstr ""
 msgid "Places is full"
 msgstr ""
 
+#: src/files/app_audio.zig
+msgid "Play"
+msgstr ""
+
+#: src/files/app_audio_bar.zig
+msgid "Playlist"
+msgstr ""
+
 #: src/images/app_edit.zig
 msgid "Please wait for the file operation to finish."
+msgstr ""
+
+#: src/server/wakeups.zig
+msgid "Plug in your charger."
 msgstr ""
 
 #: src/taskbar/battery.zig
 msgid "Plugged In"
 msgstr ""
 
+#: src/control_center/sections/power.zig
+msgid "Plugged in"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "Pointer device"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "Pointer speed"
+msgstr ""
+
+#: src/control_center/sections/network_proxy.zig
+msgid "Port"
+msgstr ""
+
 #: src/control_center/sections/desktop.zig
 msgid "Position"
 msgstr ""
 
-#: src/session/lock_view.zig
+#: src/control_center/tree.zig
 msgid "Power"
+msgstr ""
+
+#: src/control_center/panel.zig
+msgid "Power & Battery"
+msgstr ""
+
+#: src/battery_popup.zig
+msgid "Power & Battery settings"
 msgstr ""
 
 #: src/power_menu.zig
@@ -4259,7 +5109,7 @@ msgstr ""
 msgid "Power Profile Cycle"
 msgstr ""
 
-#: src/power_profiles.zig
+#: src/control_center/sections/power.zig
 msgid "Power Saver"
 msgstr ""
 
@@ -4267,7 +5117,23 @@ msgstr ""
 msgid "Power action failed"
 msgstr ""
 
-#: src/session/power.zig
+#: src/control_center/tree.zig
+msgid "Power and lid settings"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "Power mode"
+msgstr ""
+
+#: src/power_profiles.zig
+msgid "Power mode change was refused by the system."
+msgstr ""
+
+#: src/power_profiles.zig
+msgid "Power mode could not be changed."
+msgstr ""
+
+#: src/control_center/sections/power.zig
 msgid "Power off"
 msgstr ""
 
@@ -4295,12 +5161,20 @@ msgstr ""
 msgid "Power service unavailable"
 msgstr ""
 
+#: src/control_center/sections/power.zig
+msgid "Power settings"
+msgstr ""
+
 #: src/control_center/sections/shortcuts.zig
 msgid "Poweroff"
 msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
 msgid "Poweroff Auto"
+msgstr ""
+
+#: src/control_center/sections/network_editor.zig
+msgid "Prefix length"
 msgstr ""
 
 #: src/session/lock_account.zig
@@ -4323,8 +5197,12 @@ msgstr ""
 msgid "Prevent this device from connecting."
 msgstr ""
 
-#: src/files/app_torrents.zig
+#: src/files/app_audio_bar.zig
 msgid "Previous"
+msgstr ""
+
+#: src/control_center/sections/shortcuts.zig
+msgid "Previous Input Source"
 msgstr ""
 
 #: src/session/lock_view.zig
@@ -4467,11 +5345,11 @@ msgstr ""
 msgid "Problem"
 msgstr ""
 
-#: src/system_monitor/app.zig
+#: src/system_monitor/app_table.zig
 msgid "Process data unavailable"
 msgstr ""
 
-#: src/system_monitor/app.zig
+#: src/system_monitor/app_footer.zig
 msgid "Processes"
 msgstr ""
 
@@ -4501,6 +5379,22 @@ msgstr ""
 
 #: src/desktop/app_paint.zig
 msgid "Properties — Escape closes"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "Proxy"
+msgstr ""
+
+#: src/control_center/sections/keys_ssh.zig
+msgid "Public file does not match"
+msgstr ""
+
+#: src/control_center/sections/keys_details.zig
+msgid "Public key copied."
+msgstr ""
+
+#: src/control_center/sections/keys_ssh.zig
+msgid "Public key only"
 msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
@@ -4567,6 +5461,10 @@ msgstr ""
 msgid "Quit"
 msgstr ""
 
+#: src/system_monitor/app_footer.zig
+msgid "RAM"
+msgstr ""
+
 #: src/control_center/sections/display.zig
 msgid "REDIWM_SCALE sets scaling; restart to apply Xwayland changes."
 msgstr ""
@@ -4623,6 +5521,10 @@ msgstr ""
 msgid "Recommended Apps"
 msgstr ""
 
+#: src/control_center/sections/keys_details.zig
+msgid "Recreate missing .pub file"
+msgstr ""
+
 #: src/files/app.zig
 msgid "RediWM Files"
 msgstr ""
@@ -4647,7 +5549,7 @@ msgstr ""
 msgid "Reduced motion"
 msgstr ""
 
-#: src/control_center/sections/printers.zig
+#: src/control_center/sections/keys_ssh.zig
 msgid "Refresh"
 msgstr ""
 
@@ -4739,12 +5641,20 @@ msgstr ""
 msgid "Repeat rate"
 msgstr ""
 
-#: src/files/app_chooser.zig
+#: src/editor/app.zig
 msgid "Replace"
+msgstr ""
+
+#: src/editor/app_search.zig
+msgid "Replace All"
 msgstr ""
 
 #: src/control_center/sections/appearance_sections.zig
 msgid "Replace installed theme"
+msgstr ""
+
+#: src/editor/app_search.zig
+msgid "Replace with…"
 msgstr ""
 
 #: src/control_center/sections/printers_details.zig
@@ -4776,6 +5686,10 @@ msgid "Reserved folder name"
 msgstr ""
 
 #: src/control_center/search_index.zig
+msgid "Reset pointer settings"
+msgstr ""
+
+#: src/control_center/search_index.zig
 msgid "Reset theme"
 msgstr ""
 
@@ -4785,6 +5699,10 @@ msgstr ""
 
 #: src/control_center/sections/appearance_sections.zig
 msgid "Reset to default"
+msgstr ""
+
+#: src/control_center/sections/input.zig
+msgid "Reset to defaults"
 msgstr ""
 
 #: src/control_center/sections/appearance_sections.zig
@@ -4847,6 +5765,14 @@ msgstr ""
 msgid "Restart? Activate Restart again to confirm."
 msgstr ""
 
+#: src/files/app_model.zig
+msgid "Restore"
+msgstr ""
+
+#: src/files/app_menu.zig
+msgid "Restore All"
+msgstr ""
+
 #: src/control_center/sections/shortcuts.zig
 msgid "Restore Layout"
 msgstr ""
@@ -4870,6 +5796,20 @@ msgstr ""
 #: src/control_center/sections/shortcuts.zig
 msgid "Restore the focused window's size."
 msgstr ""
+
+#: src/files/app_dialogs.zig
+msgid "Restore the folder to change what is inside it"
+msgstr ""
+
+#: src/files/app_trash.zig
+msgid "Restored"
+msgstr ""
+
+#: src/files/app_trash.zig
+msgid "Restored {count} item"
+msgid_plural "Restored {count} items"
+msgstr[0] ""
+msgstr[1] ""
 
 #: src/calculator/model.zig
 msgid "Result is too large"
@@ -4915,12 +5855,24 @@ msgstr ""
 msgid "Round"
 msgstr ""
 
-#: src/system_monitor/app.zig
+#: src/system_monitor/app_table.zig
 msgid "Running"
+msgstr ""
+
+#: src/control_center/sections/network_proxy.zig
+msgid "SOCKS host"
 msgstr ""
 
 #: src/control_center/sections/sound.zig
 msgid "SOUND"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "SSH keys"
+msgstr ""
+
+#: src/system_monitor/app_footer.zig
+msgid "SWAP"
 msgstr ""
 
 #: src/control_center/sections/appearance_rows.zig
@@ -5027,6 +5979,10 @@ msgstr ""
 msgid "Saved {name}"
 msgstr ""
 
+#: src/network/manager_edit.zig
+msgid "Saved."
+msgstr ""
+
 #: src/control_center/sections/portals.zig
 msgid "Saved. Changes apply next time you sign in."
 msgstr ""
@@ -5061,6 +6017,10 @@ msgstr ""
 
 #: src/control_center/sections/appearance_sections.zig
 msgid "Screen capture appears while recording or sharing your screen. Keeping it enabled is recommended."
+msgstr ""
+
+#: src/control_center/panel.zig
+msgid "Screen, sleep and power-source preferences."
 msgstr ""
 
 #: src/control_center/sections/desktop.zig
@@ -5125,6 +6085,14 @@ msgstr ""
 
 #: src/control_center/sections/bluetooth.zig
 msgid "Search devices…"
+msgstr ""
+
+#: src/control_center/sections/network_details.zig
+msgid "Search domains"
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+msgid "Search layouts or languages…"
 msgstr ""
 
 #: src/system_monitor/app.zig
@@ -5219,6 +6187,10 @@ msgstr ""
 msgid "Selected process"
 msgstr ""
 
+#: src/control_center/sections/network_editor.zig
+msgid "Servers, separated by commas"
+msgstr ""
+
 #: src/control_center/sections/services.zig
 msgid "Service"
 msgstr ""
@@ -5255,8 +6227,16 @@ msgstr ""
 msgid "Set as system default"
 msgstr ""
 
+#: src/control_center/sections/power.zig
+msgid "Set brightness"
+msgstr ""
+
 #: src/dock/items.zig
 msgid "Settings"
+msgstr ""
+
+#: src/control_center/sections/input.zig
+msgid "Settings apply only to this device."
 msgstr ""
 
 #: src/control_center/sections/appearance_rows.zig
@@ -5265,6 +6245,10 @@ msgstr ""
 
 #: src/share_picker/client.zig
 msgid "Share screen"
+msgstr ""
+
+#: src/control_center/sections/network_details.zig
+msgid "Shared"
 msgstr ""
 
 #: src/control_center/sections/appearance.zig
@@ -5281,6 +6265,10 @@ msgstr ""
 
 #: src/control_center/sections/appearance_sections.zig
 msgid "Show Trash"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "Show all devices"
 msgstr ""
 
 #: src/control_center/sections/users.zig
@@ -5309,6 +6297,10 @@ msgstr ""
 
 #: src/files/app_torrents.zig
 msgid "Show in folder"
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+msgid "Show in taskbar"
 msgstr ""
 
 #: src/control_center/sections/appearance_rows.zig
@@ -5351,6 +6343,10 @@ msgstr ""
 msgid "Sign-in required"
 msgstr ""
 
+#: src/control_center/sections/network_details.zig
+msgid "Signal"
+msgstr ""
+
 #: src/session/greeter.zig
 msgid "Signing in…"
 msgstr ""
@@ -5379,7 +6375,15 @@ msgstr ""
 msgid "Sleep"
 msgstr ""
 
-#: src/system_monitor/app.zig
+#: src/control_center/search_index.zig
+msgid "Sleep after"
+msgstr ""
+
+#: src/control_center/sections/power.zig
+msgid "Sleep and battery"
+msgstr ""
+
+#: src/system_monitor/app_table.zig
 msgid "Sleeping"
 msgstr ""
 
@@ -5427,8 +6431,24 @@ msgstr ""
 msgid "Soft"
 msgstr ""
 
+#: src/files/app_trash.zig
+msgid "Some could not be restored"
+msgstr ""
+
+#: src/control_center/sections/keys_ssh.zig
+msgid "Some files were skipped: unsupported, unreadable, too large or unsafe to open."
+msgstr ""
+
 #: src/control_center/sections/users.zig
 msgid "Some groups cannot be safely shown; group changes are disabled."
+msgstr ""
+
+#: src/files/app_trash.zig
+msgid "Some have no Trash information"
+msgstr ""
+
+#: src/files/app_trash.zig
+msgid "Some kept under a new name"
 msgstr ""
 
 #: src/systemd/requests.zig
@@ -5445,6 +6465,10 @@ msgstr ""
 
 #: src/printing/options.zig
 msgid "Speed"
+msgstr ""
+
+#: src/control_center/sections/shortcuts.zig
+msgid "Spread all canvas windows into a grid, including minimized windows."
 msgstr ""
 
 #: src/control_center/sections/users.zig
@@ -5523,7 +6547,7 @@ msgstr ""
 msgid "State unavailable"
 msgstr ""
 
-#: src/control_center/sections/network.zig
+#: src/control_center/sections/network_details.zig
 msgid "Status"
 msgstr ""
 
@@ -5537,6 +6561,10 @@ msgstr ""
 
 #: src/control_center/sections/printers_details.zig
 msgid "Stop accepting jobs"
+msgstr ""
+
+#: src/control_center/sections/power.zig
+msgid "Stop charging at"
 msgstr ""
 
 #: src/files/app_torrents.zig
@@ -5569,6 +6597,10 @@ msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
 msgid "Suspend Auto"
+msgstr ""
+
+#: src/system_monitor/app_summary_ram.zig
+msgid "Swap"
 msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
@@ -5604,11 +6636,19 @@ msgid "Swap the focused tile up."
 msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
+msgid "Switch to the next keyboard layout or input method."
+msgstr ""
+
+#: src/control_center/sections/shortcuts.zig
 msgid "Switch to the next power profile."
 msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
 msgid "Switch to the next window."
+msgstr ""
+
+#: src/control_center/sections/shortcuts.zig
+msgid "Switch to the previous keyboard layout or input method."
 msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
@@ -5659,8 +6699,16 @@ msgstr ""
 msgid "System preferences, display, appearance and input"
 msgstr ""
 
+#: src/control_center/sections/network_proxy.zig
+msgid "System proxy settings need the gsettings-desktop-schemas package."
+msgstr ""
+
 #: src/control_center/sections/services.zig
 msgid "Systemd is unavailable."
+msgstr ""
+
+#: src/system_monitor/app_footer.zig
+msgid "TEMP"
 msgstr ""
 
 #: src/control_center/sections/shortcuts.zig
@@ -5669,6 +6717,10 @@ msgstr ""
 
 #: src/control_center/sections/users.zig
 msgid "Takes effect at next boot. The keyring will not unlock automatically."
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "Tap and drag"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -5681,6 +6733,10 @@ msgstr ""
 
 #: src/control_center/search_index.zig
 msgid "Taskbar"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "Taskbar alignment"
 msgstr ""
 
 #: src/control_center/sections/region.zig
@@ -5767,7 +6823,7 @@ msgstr ""
 msgid "Text files are limited to 4 GiB."
 msgstr ""
 
-#: src/editor/app_input.zig
+#: src/editor/app_search.zig
 msgid "Text not found"
 msgstr ""
 
@@ -5777,6 +6833,10 @@ msgstr ""
 
 #: src/editor/app_files.zig
 msgid "That file is open in another tab. Choose a different name."
+msgstr ""
+
+#: src/control_center/sections/keys_ssh.zig
+msgid "The .ssh directory is accessible to other users. Fix permissions from a key's details."
 msgstr ""
 
 #: src/files/appimage.zig
@@ -5793,6 +6853,18 @@ msgstr ""
 
 #: src/printing/cups.zig
 msgid "The CUPS client configuration could not be read or is invalid."
+msgstr ""
+
+#: src/control_center/sections/network_editor.zig
+msgid "The IPv4 gateway is not a valid address."
+msgstr ""
+
+#: src/control_center/sections/network_editor.zig
+msgid "The IPv6 gateway is not a valid address."
+msgstr ""
+
+#: src/control_center/sections/network_editor.zig
+msgid "The MTU must be between 576 and 9000, or empty."
 msgstr ""
 
 #: src/control_center/sections/appearance_colors.zig
@@ -5815,6 +6887,14 @@ msgstr ""
 msgid "The character-device path used by this queue is missing."
 msgstr ""
 
+#: src/session/power_policy.zig
+msgid "The configured power mode is unavailable."
+msgstr ""
+
+#: src/network/manager_edit.zig
+msgid "The connection request was refused."
+msgstr ""
+
 #: src/control_center/sections/printers_tools.zig
 msgid "The current printer resolution is unavailable."
 msgstr ""
@@ -5825,6 +6905,10 @@ msgstr ""
 
 #: src/printing/ladder.zig
 msgid "The device address matches; successful communication has not been confirmed."
+msgstr ""
+
+#: src/control_center/sections/input.zig
+msgid "The device could not apply this setting."
 msgstr ""
 
 #: src/pdf/client_print.zig
@@ -5863,6 +6947,18 @@ msgstr ""
 msgid "The filename is too long."
 msgstr ""
 
+#: src/control_center/sections/keys.zig
+msgid "The key changed since it was selected. Refresh and try again."
+msgstr ""
+
+#: src/control_center/sections/keys.zig
+msgid "The key could not be changed. Check the current passphrase."
+msgstr ""
+
+#: src/control_center/sections/keys.zig
+msgid "The key operation could not be completed. Refresh and try again."
+msgstr ""
+
 #: src/printing/ladder.zig
 msgid "The last job has not completed."
 msgstr ""
@@ -5897,6 +6993,10 @@ msgstr ""
 
 #: src/printing/ladder.zig
 msgid "The network printer did not answer."
+msgstr ""
+
+#: src/control_center/sections/keys_forms.zig
+msgid "The passphrases do not match. Enter them again."
 msgstr ""
 
 #: src/printing/ladder.zig
@@ -5979,6 +7079,10 @@ msgstr ""
 msgid "The system service manager is unavailable; start CUPS using your distribution's service tools."
 msgstr ""
 
+#: src/control_center/sections/input_sources.zig
+msgid "The taskbar shows the active source. Click it, or press Super+Shift+Space, to switch."
+msgstr ""
+
 #: src/control_center/search_index.zig
 msgid "Theme"
 msgstr ""
@@ -6051,6 +7155,10 @@ msgstr ""
 msgid "This is a label printer"
 msgstr ""
 
+#: src/control_center/sections/keys_forms.zig
+msgid "This location and its matching .pub file will move to Trash. Other copies stay where they are. References in SSH configuration and servers may still need this key."
+msgstr ""
+
 #: src/control_center/sections/display.zig
 msgid "This output does not advertise editable display modes."
 msgstr ""
@@ -6073,6 +7181,10 @@ msgstr ""
 
 #: src/network/manager.zig
 msgid "This security type needs a network configuration tool."
+msgstr ""
+
+#: src/control_center/sections/input.zig
+msgid "This setting is unavailable on the selected device."
 msgstr ""
 
 #: src/control_center/tree.zig
@@ -6171,10 +7283,6 @@ msgstr ""
 msgid "Torrent file or magnet link"
 msgstr ""
 
-#: src/control_center/search_index.zig
-msgid "Touchpad speed"
-msgstr ""
-
 #: src/files/app_torrents.zig
 msgid "Transfer"
 msgstr ""
@@ -6219,8 +7327,16 @@ msgstr ""
 msgid "Trash"
 msgstr ""
 
+#: src/files/app_trash.zig
+msgid "Trash can't be edited. Restore items to change them."
+msgstr ""
+
 #: src/files/app_fileops.zig
 msgid "Trash emptied"
+msgstr ""
+
+#: src/files/app_trash.zig
+msgid "Trash is empty"
 msgstr ""
 
 #: src/images/app_dialogs.zig
@@ -6255,12 +7371,24 @@ msgstr ""
 msgid "Tuesday"
 msgstr ""
 
+#: src/control_center/sections/power.zig
+msgid "Turn off built-in screen"
+msgstr ""
+
 #: src/control_center/sections/display.zig
 msgid "Turn off screen"
 msgstr ""
 
+#: src/control_center/search_index.zig
+msgid "Turn off screen after"
+msgstr ""
+
 #: src/control_center/sections/network.zig
 msgid "Turned off"
+msgstr ""
+
+#: src/control_center/sections/network.zig
+msgid "Turns off Wi-Fi, Bluetooth and other radios."
 msgstr ""
 
 #: src/printing/options.zig
@@ -6297,6 +7425,10 @@ msgstr ""
 
 #: src/control_center/sections/appearance_rows.zig
 msgid "UI font"
+msgstr ""
+
+#: src/system_monitor/app_footer.zig
+msgid "UPTIME"
 msgstr ""
 
 #: src/printing/ladder.zig
@@ -6339,8 +7471,12 @@ msgstr ""
 msgid "Unknown key"
 msgstr ""
 
-#: src/control_center/sections/services.zig
+#: src/control_center/sections/network.zig
 msgid "Unlock"
+msgstr ""
+
+#: src/control_center/sections/network.zig
+msgid "Unlock to change connection settings."
 msgstr ""
 
 #: src/control_center/sections/users.zig
@@ -6369,6 +7505,10 @@ msgstr ""
 
 #: src/taskbar/window_menu.zig
 msgid "Unpin from dock"
+msgstr ""
+
+#: src/control_center/sections/keys_ssh.zig
+msgid "Unsafe permissions"
 msgstr ""
 
 #: src/images/app_dialogs.zig
@@ -6427,8 +7567,16 @@ msgstr ""
 msgid "Use 8–63 characters or a 64-digit hex key."
 msgstr ""
 
+#: src/files/app_fileops.zig
+msgid "Use Move to Trash to put items in Trash"
+msgstr ""
+
 #: src/images/app_dialogs.zig
 msgid "Use a .png filename to save a PNG copy."
+msgstr ""
+
+#: src/control_center/sections/keys.zig
+msgid "Use at most 512 bytes without line breaks or control characters."
 msgstr ""
 
 #: src/control_center/folder_picker.zig
@@ -6451,6 +7599,10 @@ msgstr ""
 msgid "Use suggested resolution"
 msgstr ""
 
+#: src/system_monitor/app_summary_ram.zig
+msgid "Used"
+msgstr ""
+
 #: src/control_center/sections/default_apps.zig
 msgid "Used for desktop folders, app shortcuts and apps that run in a terminal."
 msgstr ""
@@ -6469,6 +7621,10 @@ msgstr ""
 
 #: src/control_center/sections/appearance_colors.zig
 msgid "Uses the main theme. Apply again after changing it; restart apps to see the colors."
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "VPN"
 msgstr ""
 
 #: src/control_center/sections/desktop.zig
@@ -6507,6 +7663,10 @@ msgstr ""
 msgid "WPA2 / WPA3 Personal"
 msgstr ""
 
+#: src/control_center/sections/network_details.zig
+msgid "WPA2/WPA3 Personal"
+msgstr ""
+
 #: src/control_center/sections/network.zig
 msgid "WPA3 Personal"
 msgstr ""
@@ -6519,7 +7679,7 @@ msgstr ""
 msgid "Waiting for authentication service…"
 msgstr ""
 
-#: src/control_center/sections/services.zig
+#: src/control_center/sections/network.zig
 msgid "Waiting for authentication…"
 msgstr ""
 
@@ -6535,6 +7695,10 @@ msgstr ""
 msgid "Wallpaper"
 msgstr ""
 
+#: src/control_center/sections/power.zig
+msgid "Warn when battery reaches"
+msgstr ""
+
 #: src/control_center/sections/appearance_sections.zig
 msgid "Warning: Screen capture is hidden. Recording and screen sharing can continue without a visible indicator or Stop sharing button. Hiding it is not recommended."
 msgstr ""
@@ -6543,12 +7707,20 @@ msgstr ""
 msgid "Weak"
 msgstr ""
 
+#: src/control_center/sections/keys_ssh.zig
+msgid "Weak algorithm or key size"
+msgstr ""
+
 #: src/control_center/sections/region.zig
 msgid "Wednesday"
 msgstr ""
 
 #: src/control_center/welcome.zig
 msgid "Welcome to RediWM"
+msgstr ""
+
+#: src/control_center/sections/power.zig
+msgid "When the lid closes"
 msgstr ""
 
 #: src/control_center/sections/display.zig
@@ -6583,8 +7755,16 @@ msgstr ""
 msgid "Wi-Fi request failed. Check credentials and permissions."
 msgstr ""
 
+#: src/switcher/circular.zig
+msgid "Window"
+msgstr ""
+
 #: src/control_center/sections/shortcuts.zig
 msgid "Window Management"
+msgstr ""
+
+#: src/control_center/sections/shortcuts.zig
+msgid "Window Overview"
 msgstr ""
 
 #: src/control_center/sections/appearance_rows.zig
@@ -6635,6 +7815,10 @@ msgstr ""
 msgid "Window spacing"
 msgstr ""
 
+#: src/control_center/search_index.zig
+msgid "Window switcher"
+msgstr ""
+
 #: src/control_center/sections/appearance_rows.zig
 msgid "Window switching zoom"
 msgstr ""
@@ -6659,7 +7843,7 @@ msgstr ""
 msgid "Word Wrap"
 msgstr ""
 
-#: src/images/app_dialogs.zig
+#: src/control_center/sections/keys_ssh.zig
 msgid "Working…"
 msgstr ""
 
@@ -6695,6 +7879,10 @@ msgstr ""
 msgid "Write"
 msgstr ""
 
+#: src/control_center/sections/input_sources.zig
+msgid "XKB switch keys change keyboard layouts only."
+msgstr ""
+
 #: src/control_center/search_index.zig
 msgid "Xwayland scale"
 msgstr ""
@@ -6709,6 +7897,10 @@ msgstr ""
 
 #: src/control_center/sections/display.zig
 msgid "Xwayland: {active}× active. Restart the compositor to apply {pending}×."
+msgstr ""
+
+#: src/control_center/sections/network_editor.zig
+msgid "Yes"
 msgstr ""
 
 #: src/control_center/sections/users.zig
@@ -6731,12 +7923,20 @@ msgstr ""
 msgid "You can restore them later from Trash."
 msgstr ""
 
-#: src/control_center/sections/network.zig
+#: src/network/popup.zig
 msgid "You're connected to this network"
 msgstr ""
 
 #: src/control_center/sections/network.zig
 msgid "You're online."
+msgstr ""
+
+#: src/control_center/panel.zig
+msgid "Your SSH keys, public identities and passphrases."
+msgstr ""
+
+#: src/control_center/sections/network.zig
+msgid "Your account is not allowed to change network connections."
 msgstr ""
 
 #: src/control_center/sections/printers_details.zig
@@ -6755,7 +7955,7 @@ msgstr ""
 msgid "Your unsaved changes will be lost if you discard them."
 msgstr ""
 
-#: src/system_monitor/app.zig
+#: src/system_monitor/app_table.zig
 msgid "Zombie"
 msgstr ""
 
@@ -6796,6 +7996,10 @@ msgid "accessibility animations"
 msgstr ""
 
 #: src/control_center/search_index.zig
+msgid "alt tab linear circular applications"
+msgstr ""
+
+#: src/control_center/search_index.zig
 msgid "application colours theme"
 msgstr ""
 
@@ -6812,6 +8016,10 @@ msgid "autologin boot"
 msgstr ""
 
 #: src/control_center/search_index.zig
+msgid "automatic suspend idle"
+msgstr ""
+
+#: src/control_center/search_index.zig
 msgid "backend gtk kde dialogs"
 msgstr ""
 
@@ -6820,11 +8028,31 @@ msgid "background desktop image folder"
 msgstr ""
 
 #: src/control_center/search_index.zig
+msgid "backlight battery plugged"
+msgstr ""
+
+#: src/control_center/search_index.zig
 msgid "backlight screen light"
 msgstr ""
 
 #: src/control_center/search_index.zig
+msgid "battery health threshold"
+msgstr ""
+
+#: src/control_center/search_index.zig
 msgid "blue light warm screen"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "brightness idle"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "brightness plugged battery"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "browser brave chrome firefox falkon gtk qt colours theme sync"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -6860,6 +8088,10 @@ msgid "colors colours dark light preset"
 msgstr ""
 
 #: src/control_center/search_index.zig
+msgid "copy public permissions label comment delete trash"
+msgstr ""
+
+#: src/control_center/search_index.zig
 msgid "date weekday"
 msgstr ""
 
@@ -6873,6 +8105,10 @@ msgstr ""
 
 #: src/control_center/search_index.zig
 msgid "desktop panning"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "dock monitor laptop"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -6892,6 +8128,14 @@ msgid "edge pan transitions"
 msgstr ""
 
 #: src/control_center/search_index.zig
+msgid "effects fire trail ribbon animation"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "effects fire trail ribbon drag animation"
+msgstr ""
+
+#: src/control_center/search_index.zig
 msgid "effects motion"
 msgstr ""
 
@@ -6903,12 +8147,24 @@ msgstr ""
 msgid "export look"
 msgstr ""
 
+#: src/control_center/sections/network_editor.zig
+msgid "fe80::1"
+msgstr ""
+
 #: src/control_center/search_index.zig
 msgid "files folders application"
 msgstr ""
 
 #: src/control_center/search_index.zig
+msgid "flight radios bluetooth wi-fi rfkill"
+msgstr ""
+
+#: src/control_center/search_index.zig
 msgid "gaps tiling"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "generate ed25519 passphrase"
 msgstr ""
 
 #: src/files/git.zig
@@ -6924,7 +8180,19 @@ msgid "hotkeys keybindings bindings terminal screenshot volume brightness worksp
 msgstr ""
 
 #: src/control_center/search_index.zig
+msgid "http https socks pac proxy server bypass"
+msgstr ""
+
+#: src/control_center/sections/network_proxy.zig
+msgid "http://wpad.example.com/wpad.dat"
+msgstr ""
+
+#: src/control_center/search_index.zig
 msgid "icons pack"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "idle timeout display"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -6932,11 +8200,23 @@ msgid "import pack"
 msgstr ""
 
 #: src/control_center/search_index.zig
+msgid "ipv4 ipv6 static dhcp gateway mtu metered forget saved network"
+msgstr ""
+
+#: src/control_center/search_index.zig
 msgid "keep icons in place"
 msgstr ""
 
 #: src/control_center/search_index.zig
-msgid "keyboard trackpad"
+msgid "keyboard layout alt shift caps lock toggle"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "keyboard layout language input method ime fcitx switch"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "keyboard touchpad trackpad"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -6971,8 +8251,16 @@ msgstr ""
 msgid "locale translation"
 msgstr ""
 
+#: src/control_center/sections/network_proxy.zig
+msgid "localhost, 127.0.0.0/8, ::1"
+msgstr ""
+
 #: src/control_center/search_index.zig
 msgid "logo launcher"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "low battery"
 msgstr ""
 
 #: src/control_center/sections/users.zig
@@ -6989,6 +8277,30 @@ msgstr ""
 
 #: src/control_center/search_index.zig
 msgid "motion duration"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "mouse buttons swap primary"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "mouse touchpad trackball default custom inherit"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "mouse touchpad trackpad acceleration sensitivity"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "mouse touchpad trackpad select"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "music play sound mp3 flac wav files"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "notification percent"
 msgstr ""
 
 #: src/notifications/toast.zig
@@ -7016,6 +8328,10 @@ msgid "panel height"
 msgstr ""
 
 #: src/control_center/search_index.zig
+msgid "panel left center right"
+msgstr ""
+
+#: src/control_center/search_index.zig
 msgid "panel margin"
 msgstr ""
 
@@ -7032,7 +8348,7 @@ msgid "panel width"
 msgstr ""
 
 #: src/control_center/search_index.zig
-msgid "pointer acceleration sensitivity"
+msgid "performance balanced saver plugged unplugged"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -7041,6 +8357,10 @@ msgstr ""
 
 #: src/control_center/search_index.zig
 msgid "printing cups add queue jobs paper driver label"
+msgstr ""
+
+#: src/control_center/sections/network_proxy.zig
+msgid "proxy.example.com"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -7091,6 +8411,10 @@ msgstr ""
 msgid "scrolling direction reverse invert mouse touchpad"
 msgstr ""
 
+#: src/control_center/search_index.zig
+msgid "security suspend"
+msgstr ""
+
 #: src/start_menu/search.zig
 msgid "settings;control;panel;preferences;display;appearance;mouse;keyboard;printer;printers;printing"
 msgstr ""
@@ -7101,6 +8425,14 @@ msgstr ""
 
 #: src/control_center/search_index.zig
 msgid "size"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "sleep battery charging energy"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "sleep shutdown"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -7125,6 +8457,10 @@ msgstr ""
 
 #: src/control_center/search_index.zig
 msgid "speakers headphones sound default"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "ssh security public private identity fingerprint passphrase"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -7181,10 +8517,6 @@ msgstr ""
 
 #: src/control_center/search_index.zig
 msgid "touchpad trackpad"
-msgstr ""
-
-#: src/control_center/search_index.zig
-msgid "trackpad acceleration sensitivity"
 msgstr ""
 
 #: src/control_center/search_index.zig
@@ -7248,6 +8580,10 @@ msgid "wired internet adapter"
 msgstr ""
 
 #: src/control_center/search_index.zig
+msgid "wireguard openvpn tunnel private network"
+msgstr ""
+
+#: src/control_center/search_index.zig
 msgid "wireless internet wlan hotspot hidden network"
 msgstr ""
 
@@ -7263,9 +8599,29 @@ msgstr ""
 msgid "{action} failed"
 msgstr ""
 
+#: src/control_center/sections/network_details.zig
+msgid "{band} · channel {channel}"
+msgstr ""
+
 #: src/control_center/sections/desktop.zig
 msgid "{columns} × {rows}  ·  {n} screen total"
 msgid_plural "{columns} × {rows}  ·  {n} screens total"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/files/app_trash.zig
+msgid "{count} could not be restored"
+msgstr ""
+
+#: src/files/app_trash.zig
+msgid "{count} has no Trash information"
+msgid_plural "{count} have no Trash information"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/files/trash_properties.zig
+msgid "{count} item"
+msgid_plural "{count} items"
 msgstr[0] ""
 msgstr[1] ""
 
@@ -7274,6 +8630,10 @@ msgid "{count} item selected  ·  {size}"
 msgid_plural "{count} items selected  ·  {size}"
 msgstr[0] ""
 msgstr[1] ""
+
+#: src/files/app_trash.zig
+msgid "{count} kept under a new name"
+msgstr ""
 
 #: src/files/open_with.zig
 msgid "{count} selected file"
@@ -7307,6 +8667,14 @@ msgid_plural "{count}{more} items"
 msgstr[0] ""
 msgstr[1] ""
 
+#: src/system_monitor/app_footer.zig
+msgid "{hours}h {minutes}m"
+msgstr ""
+
+#: src/taskbar/battery.zig
+msgid "{hours}h {minutes}min"
+msgstr ""
+
 #: src/desktop/app_paint.zig
 msgid "{kind} · {bytes} bytes"
 msgstr ""
@@ -7317,6 +8685,10 @@ msgstr ""
 
 #: src/control_center/sections/region.zig
 msgid "{locale} · RediWM stays in English"
+msgstr ""
+
+#: src/taskbar/battery.zig
+msgid "{minutes}min"
 msgstr ""
 
 #: src/images/app_thumbs.zig
@@ -7379,15 +8751,33 @@ msgstr ""
 msgid "{name}: level unavailable"
 msgstr ""
 
+#: src/system_monitor/app_footer.zig
+msgid "{n} CPU"
+msgid_plural "{n} CPUs"
+msgstr[0] ""
+msgstr[1] ""
+
 #: src/control_center/sections/printers_details.zig
 msgid "{n} completed sheet reported by CUPS"
 msgid_plural "{n} completed sheets reported by CUPS"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/system_monitor/app.zig
-msgid "{n} process · Swap {swap}{status}"
-msgid_plural "{n} processes · Swap {swap}{status}"
+#: src/control_center/sections/power.zig
+msgid "{n} minute"
+msgid_plural "{n} minutes"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/system_monitor/app_footer.zig
+msgid "{n} process{status}"
+msgid_plural "{n} processes{status}"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/control_center/sections/power.zig
+msgid "{n} second"
+msgid_plural "{n} seconds"
 msgstr[0] ""
 msgstr[1] ""
 
@@ -7397,8 +8787,18 @@ msgid_plural "{n} services, {enabled} enabled"
 msgstr[0] ""
 msgstr[1] ""
 
+#: src/system_monitor/app_summary_cpu.zig
+msgid "{n} thread"
+msgid_plural "{n} threads"
+msgstr[0] ""
+msgstr[1] ""
+
 #: src/files/app_torrents.zig
 msgid "{rate} KiB/s"
+msgstr ""
+
+#: src/control_center/sections/input_sources.zig
+msgid "{shown} of {total} layouts; type to narrow the list."
 msgstr ""
 
 #: src/files/properties.zig
@@ -7425,6 +8825,10 @@ msgstr ""
 
 #: src/files/app_torrents.zig
 msgid "{value}% · ↓ {rate} KiB/s · ↑ {rate3} KiB/s"
+msgstr ""
+
+#: src/taskbar/battery.zig
+msgid "~{time} left"
 msgstr ""
 
 #: src/files/app_torrent_rows.zig
@@ -7471,7 +8875,12 @@ msgctxt "desktop:Comment"
 msgid "Edit text files in tabs"
 msgstr ""
 
-#: data/rediwm.desktop
+#: data/rediwm-player.desktop
+msgctxt "desktop:Comment"
+msgid "Play audio files in the background with RediWM"
+msgstr ""
+
+#: data/rediwm-release-safe.desktop
 msgctxt "desktop:Comment"
 msgid "RediWM Wayland compositor"
 msgstr ""
@@ -7521,6 +8930,11 @@ msgctxt "desktop:Keywords"
 msgid "process;task;CPU;memory;performance;"
 msgstr ""
 
+#: data/rediwm-player.desktop
+msgctxt "desktop:Name"
+msgid "Audio Player"
+msgstr ""
+
 #: data/rediwm-calculator.desktop
 msgctxt "desktop:Name"
 msgid "Calculator"
@@ -7546,7 +8960,7 @@ msgctxt "desktop:Name"
 msgid "PDF Viewer"
 msgstr ""
 
-#: data/rediwm.desktop
+#: data/rediwm-release-safe.desktop
 msgctxt "desktop:Name"
 msgid "RediWM"
 msgstr ""

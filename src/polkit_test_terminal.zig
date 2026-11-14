@@ -4,11 +4,7 @@ const std = @import("std");
 const wl = @import("wayland").server.wl;
 const Agent = @import("polkit/agent.zig").Agent;
 const helper = @import("polkit/helper.zig");
-const c = @cImport({
-    @cInclude("unistd.h");
-    @cInclude("fcntl.h");
-    @cInclude("termios.h");
-});
+const c = @import("c");
 extern fn rediwm_polkit_secret_new() ?*anyopaque;
 extern fn rediwm_polkit_secret_free(*anyopaque) void;
 extern fn rediwm_polkit_clear(*anyopaque, usize) void;

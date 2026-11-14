@@ -1,29 +1,6 @@
 //! C ABI bindings for Poppler, GLib and libc/Cairo.
-//! GLib/GObject headers are intentionally hand-declared (no @cInclude per AGENTS.md).
-pub const api = @cImport({
-    // Translate libc declarations, not glibc's fortified inline wrappers: Zig
-    // 0.16 rejects their attribute(error) calls in ReleaseSafe.
-    @cUndef("_FORTIFY_SOURCE");
-    @cDefine("_GNU_SOURCE", "1");
-    @cInclude("cairo.h");
-    @cInclude("cairo-pdf.h");
-    @cInclude("sys/mman.h");
-    @cInclude("sys/eventfd.h");
-    @cInclude("sys/stat.h");
-    @cInclude("sys/socket.h");
-    @cInclude("sys/un.h");
-    @cInclude("poll.h");
-    @cInclude("unistd.h");
-    @cInclude("fcntl.h");
-    @cInclude("pthread.h");
-    @cInclude("time.h");
-    @cInclude("stdlib.h");
-    @cInclude("errno.h");
-    @cInclude("stdio.h");
-    @cInclude("signal.h");
-    @cInclude("xkbcommon/xkbcommon.h");
-    @cInclude("xkbcommon/xkbcommon-keysyms.h");
-});
+//! GLib/GObject headers are intentionally hand-declared (never translated, per AGENTS.md).
+pub const api = @import("c_gfx");
 
 pub extern fn rediwm_pdf_open_document(path: [*:0]const u8) c_int;
 /// `print_fd` is the print helper's socket or -1; it stays open in the sandbox.
@@ -32,7 +9,7 @@ pub extern fn rediwm_pdf_sandbox_enter(document_fd: c_int, display_fd: c_int, pr
 /// its socket, or -1.
 pub extern fn rediwm_pdf_print_start(document_fd: c_int, path: [*:0]const u8) c_int;
 
-// GLib & Poppler types declared by hand without @cInclude.
+// GLib & Poppler types declared by hand, not translated.
 pub const PopplerDocument = opaque {};
 pub const PopplerPage = opaque {};
 pub const GBytes = opaque {};

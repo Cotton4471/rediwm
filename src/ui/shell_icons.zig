@@ -2,9 +2,7 @@
 //! tinting happens at paint time, so hover/selection never rerasterizes SVGs.
 const std = @import("std");
 const IconId = @import("layout.zig").IconId;
-const c = @cImport({
-    @cInclude("cairo.h");
-});
+const c = @import("c_gfx");
 /// The start-button logo; not an `IconId` glyph because it keeps its own colours.
 pub const redi_logo = @embedFile("redi-logo");
 /// The Settings app's colour icon (`settings_icon_name`), for when neither the
@@ -43,7 +41,7 @@ const Entry = struct { id: IconId, mask: Mask };
 var cache: [64]?Entry = @splat(null);
 var next: usize = 0;
 
-var overrides: [std.meta.fields(IconId).len]?[]u8 = @splat(null);
+var overrides: [@typeInfo(IconId).@"enum".field_names.len]?[]u8 = @splat(null);
 var pack_root: []const u8 = "";
 var source_mutex: std.posix.system.pthread_mutex_t = .{};
 
@@ -62,6 +60,8 @@ pub fn configure(io: std.Io, root: []const u8) void {
         .{ IconId.keyboard, "keyboard" },
         .{ IconId.settings, "settings" },
         .{ IconId.mouse, "mouse" },
+        .{ IconId.touchpad, "touchpad" },
+        .{ IconId.trackball, "trackball" },
         .{ IconId.display, "display" },
         .{ IconId.headphones, "headphones" },
         .{ IconId.music, "music" },
@@ -74,6 +74,8 @@ pub fn configure(io: std.Io, root: []const u8) void {
         .{ IconId.volume_low, "speaker" },
         .{ IconId.volume_muted, "speaker-xmark" },
         .{ IconId.clock, "clock" },
+        .{ IconId.cpu, "cpu" },
+        .{ IconId.ram, "ram" },
         .{ IconId.lock, "lock" },
         .{ IconId.logout, "logout" },
         .{ IconId.reboot, "restart" },
@@ -104,6 +106,7 @@ pub fn configure(io: std.Io, root: []const u8) void {
         .{ IconId.eject, "eject" },
         .{ IconId.users, "users" },
         .{ IconId.squares, "squares" },
+        .{ IconId.divide, "divide" },
     }) |pair| {
         loadOverride(io, root, pair[0], pair[1]);
     }
@@ -119,7 +122,7 @@ fn loadOverride(io: std.Io, root: []const u8, id: IconId, name: []const u8) void
     };
     const stat = std.Io.Dir.cwd().statFile(io, path, .{ .follow_symlinks = false }) catch return;
     if (stat.kind != .file) return;
-    overrides[@intFromEnum(id)] = std.Io.Dir.cwd().readFileAlloc(io, path, std.heap.c_allocator, .limited(64 * 1024)) catch null;
+    overrides[@backingInt(id)] = std.Io.Dir.cwd().readFileAlloc(io, path, std.heap.c_allocator, .limited(64 * 1024)) catch null;
 }
 
 pub fn deinitPack() void {
@@ -139,7 +142,7 @@ fn clearPack() void {
 }
 
 fn source(id: IconId) ?[]const u8 {
-    if (overrides[@intFromEnum(id)]) |bytes| return bytes;
+    if (overrides[@backingInt(id)]) |bytes| return bytes;
     return builtinSource(id);
 }
 
@@ -153,6 +156,8 @@ fn builtinSource(id: IconId) ?[]const u8 {
         .keyboard => @embedFile("shell-icon-keyboard"),
         .settings => @embedFile("shell-icon-settings"),
         .mouse => @embedFile("shell-icon-mouse"),
+        .touchpad => @embedFile("shell-icon-touchpad"),
+        .trackball => @embedFile("shell-icon-trackball"),
         .display => @embedFile("shell-icon-display"),
         .headphones => @embedFile("shell-icon-headphones"),
         .music => @embedFile("shell-icon-music"),
@@ -165,6 +170,8 @@ fn builtinSource(id: IconId) ?[]const u8 {
         .volume, .volume_low => @embedFile("shell-icon-speaker"),
         .volume_muted => @embedFile("shell-icon-speaker-xmark"),
         .clock => @embedFile("shell-icon-clock"),
+        .cpu => @embedFile("shell-icon-cpu"),
+        .ram => @embedFile("shell-icon-ram"),
         .lock => @embedFile("shell-icon-lock"),
         .logout => @embedFile("shell-icon-logout"),
         .reboot => @embedFile("shell-icon-restart"),
@@ -195,6 +202,7 @@ fn builtinSource(id: IconId) ?[]const u8 {
         .eject => @embedFile("shell-icon-eject"),
         .users => @embedFile("shell-icon-users"),
         .squares => @embedFile("shell-icon-squares"),
+        .divide => @embedFile("shell-icon-divide"),
         else => null,
     };
 }
@@ -254,7 +262,7 @@ fn rasterize(svg: []const u8, size: i32) ?Mask {
 
 test "bundled shell SVGs render nonempty transparent masks at fractional scales" {
     defer deinit();
-    for ([_]IconId{ .print, .usb_stick, .drive, .eject, .home, .settings, .mouse, .display, .music, .headphones, .wifi, .bluetooth, .battery, .notification, .volume, .volume_muted, .power, .clock, .lock, .logout, .reboot }) |id| {
+    for ([_]IconId{ .print, .usb_stick, .drive, .eject, .home, .settings, .mouse, .touchpad, .trackball, .display, .music, .headphones, .wifi, .bluetooth, .battery, .notification, .volume, .volume_muted, .power, .clock, .cpu, .ram, .lock, .logout, .reboot, .divide }) |id| {
         for ([_]i32{ 24, 36, 48 }) |size| {
             const mask = get(id, size) orelse return error.InvalidShellIcon;
             var visible = false;

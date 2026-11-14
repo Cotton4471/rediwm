@@ -9,14 +9,8 @@ const Server = @import("../Server.zig");
 const model = @import("../files/chooser.zig");
 const protocol = @import("file_chooser_protocol.zig");
 const settings = @import("settings_portal.zig");
-const c = @cImport({
-    @cUndef("_FORTIFY_SOURCE");
-    @cDefine("_GNU_SOURCE", "1");
-    @cInclude("sys/mman.h");
-    @cInclude("unistd.h");
-    @cInclude("fcntl.h");
-    @cInclude("signal.h");
-});
+const c = @import("c");
+const platform = @import("platform");
 const a = std.heap.c_allocator;
 const interface = "org.freedesktop.impl.portal.FileChooser";
 const Request = struct {
@@ -26,7 +20,7 @@ const Request = struct {
     options: model.Options,
     deferred: dbus.Connection.Deferred,
     fd: c_int,
-    pidfd: c_int,
+    process: platform.child.Handle,
     source: ?*wl.EventSource = null,
     output: std.ArrayList(u8) = .empty,
 
@@ -35,8 +29,8 @@ const Request = struct {
         conn.unregisterMethodsByOwner(self);
         conn.releaseDeferred(&self.deferred);
         if (self.source) |s| s.remove();
-        _ = std.os.linux.pidfd_send_signal(self.pidfd, .TERM, null, 0);
-        _ = c.close(self.pidfd);
+        self.process.signal(.TERM) catch {};
+        self.process.close();
         _ = c.close(self.fd);
         self.output.deinit(a);
         self.arena.deinit();
@@ -176,20 +170,17 @@ fn open(owner: ?*anyopaque, conn: *dbus.Connection, msg: wire.Message) !void {
     var env = try self.server.environ.createMap(a);
     defer env.deinit();
     try self.server.applyChildEnv(&env);
-    var pathbuf: [4096]u8 = undefined;
-    const n = c.readlink("/proc/self/exe", &pathbuf, pathbuf.len);
-    const executable = if (n > 0 and n < pathbuf.len) try std.fmt.allocPrint(alloc, "{s}/rediwm-files", .{std.fs.path.dirname(pathbuf[0..@intCast(n)]).?}) else "rediwm-files";
+    var pathbuf: [platform.exe.max_path]u8 = undefined;
+    const executable: []const u8 = platform.exe.sibling(&pathbuf, "rediwm-files") orelse "rediwm-files";
     var child = try std.process.spawn(self.server.io, .{ .argv = &.{ executable, "--chooser-stdin" }, .environ_map = &env, .stdin = .{ .file = .{ .handle = input, .flags = .{ .nonblocking = false } } }, .stdout = .pipe });
     errdefer child.kill(self.server.io);
-    const pidfd_result = std.os.linux.pidfd_open(child.id.?, 0);
-    if (std.os.linux.errno(pidfd_result) != .SUCCESS) return error.PidfdFailed;
-    const pidfd: c_int = @intCast(pidfd_result);
-    errdefer _ = c.close(pidfd);
+    const process = try platform.child.Handle.open(child.id.?);
+    errdefer process.close();
     const fd = child.stdout.?.handle;
     if (c.fcntl(fd, c.F_SETFL, @as(c_int, c.O_NONBLOCK)) < 0) return error.NonblockingFailed;
     const r = try a.create(Request);
     errdefer a.destroy(r);
-    r.* = .{ .manager = self, .arena = arena, .handle = handle, .options = opts, .deferred = try conn.deferReply(msg), .fd = fd, .pidfd = pidfd };
+    r.* = .{ .manager = self, .arena = arena, .handle = handle, .options = opts, .deferred = try conn.deferReply(msg), .fd = fd, .process = process };
     errdefer conn.releaseDeferred(&r.deferred);
     try conn.register(.{ .path = handle, .interface = "org.freedesktop.impl.portal.Request", .member = "Close", .owner = r, .callback = close });
     errdefer conn.unregisterMethodsByOwner(r);

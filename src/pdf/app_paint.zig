@@ -3,7 +3,9 @@
 const std = @import("std");
 const i18n = @import("i18n");
 const tr = i18n.tr;
-const App = @import("app.zig").App;
+const app_mod = @import("app.zig");
+const App = app_mod.App;
+const Action = @import("app.zig").Action;
 const c = @import("c.zig");
 const document = @import("document.zig");
 const layout = @import("layout.zig");
@@ -19,6 +21,23 @@ const a = @import("app.zig").a;
 const toolbar_buttons = @import("app.zig").toolbar_buttons;
 const toolbar_button_y = @import("app.zig").toolbar_button_y;
 const toolbar_button_h = @import("app.zig").toolbar_button_h;
+
+fn drawContentGlow(
+    cr: *c.api.cairo_t,
+    rect: app_mod.Rect,
+    px: f64,
+    py: f64,
+    clip: ?app_mod.Rect,
+) void {
+    const shell_clip: ?shell_ui.Rect = if (clip) |r| app_mod.shellRect(r) else null;
+    shell_ui.drawProximityGlow(
+        cr,
+        app_mod.shellRect(rect),
+        7,
+        .{ .x = px, .y = py },
+        shell_clip,
+    );
+}
 
 pub fn render(self: *App, cr: *c.api.cairo_t) void {
     // Render reading canvas
@@ -182,7 +201,7 @@ pub fn renderCanvas(self: *App, cr: *c.api.cairo_t) void {
         }
     }
 
-    if (self.hbar()) |bar| shell_ui.drawScrollbar(cr, scrollbar.look(bar, self.hbar_appearance, ui_theme.global.scrollbar_width, ui_theme.shellPalette()));
+    if (self.hbar()) |bar| shell_ui.drawScrollbarAt(cr, scrollbar.look(bar, self.hbar_appearance, ui_theme.global.scrollbar_width, ui_theme.shellPalette()), .{ .x = self.px, .y = self.py });
 }
 
 /// Draws a raster at the current zoom one pixel per device pixel, with
@@ -241,6 +260,9 @@ pub fn renderSidebar(self: *App, cr: *c.api.cairo_t) void {
     shell_ui.setSource(cr, if (self.sidebar_tab == .outline) ui_theme.global.sidebarSelected() else idle_tab);
     c.api.cairo_rectangle(cr, sb.x + tab_w + 2.0, sb.y + 4.0, tab_w - 6.0, tab_h - 8.0);
     c.api.cairo_fill(cr);
+
+    drawContentGlow(cr, .{ .x = sb.x + 4.0, .y = sb.y + 4.0, .w = tab_w - 6.0, .h = tab_h - 8.0 }, self.px, self.py, sb);
+    drawContentGlow(cr, .{ .x = sb.x + tab_w + 2.0, .y = sb.y + 4.0, .w = tab_w - 6.0, .h = tab_h - 8.0 }, self.px, self.py, sb);
 
     // The selected tab is told apart by its fill, not by a dimmer label.
     shell_ui.setSource(cr, ui_theme.global.sidebarForeground());
@@ -318,6 +340,14 @@ pub fn renderThumbnailCards(self: *App, cr: *c.api.cairo_t) void {
             }
         }
 
+        drawContentGlow(
+            cr,
+            .{ .x = card_x, .y = card_y, .w = card_w, .h = card.card_h },
+            self.px,
+            self.py,
+            sb,
+        );
+
         // Highlight border if active or hover
         const is_current = i == self.current_page;
         const is_hover = self.hover_thumb == i;
@@ -363,6 +393,14 @@ pub fn renderOutlineList(self: *App, cr: *c.api.cairo_t) void {
             c.api.cairo_fill(cr);
         }
 
+        drawContentGlow(
+            cr,
+            .{ .x = sb.x + 4.0, .y = row_y, .w = sb.w - 8.0, .h = row_h },
+            self.px,
+            self.py,
+            sb,
+        );
+
         const indent = @as(f64, @floatFromInt(it.level)) * 12.0;
         shell_ui.setSource(cr, ui_theme.global.sidebarForeground());
         c.api.cairo_save(cr);
@@ -393,16 +431,16 @@ pub fn renderToolbar(self: *App, cr: *c.api.cairo_t) void {
         const w = item.w;
         const h = toolbar_button_h;
         switch (item.act) {
-            .toggle_sidebar => self.renderButtonIcon(cr, x, y, w, h, .view_grid, tr("Toggle sidebar")),
-            .prev_page => self.renderButtonText(cr, x, y, w, h, "◀"),
-            .next_page => self.renderButtonText(cr, x, y, w, h, "▶"),
-            .zoom_out => self.renderButtonText(cr, x, y, w, h, "−"),
-            .zoom_in => self.renderButtonText(cr, x, y, w, h, "+"),
-            .fit_width => self.renderToggle(cr, x, y, w, h, tr("Fit width"), self.zoom_mode == .fit_width),
-            .fit_page => self.renderToggle(cr, x, y, w, h, tr("Fit page"), self.zoom_mode == .fit_page),
-            .rotate => self.renderButtonIcon(cr, x, y, w, h, .rotate, tr("Rotate")),
-            .find_toggle => self.renderButtonText(cr, x, y, w, h, if (self.search_open) tr("Find ▲") else tr("Find")),
-            .print => self.renderButtonIcon(cr, x, y, w, h, .print, tr("Print")),
+            .toggle_sidebar => self.renderButtonIcon(cr, x, y, w, h, .view_grid, tr("Toggle sidebar"), item.act),
+            .prev_page => self.renderButtonText(cr, x, y, w, h, "◀", item.act),
+            .next_page => self.renderButtonText(cr, x, y, w, h, "▶", item.act),
+            .zoom_out => self.renderButtonText(cr, x, y, w, h, "−", item.act),
+            .zoom_in => self.renderButtonText(cr, x, y, w, h, "+", item.act),
+            .fit_width => self.renderToggle(cr, x, y, w, h, tr("Fit width"), self.zoom_mode == .fit_width, item.act),
+            .fit_page => self.renderToggle(cr, x, y, w, h, tr("Fit page"), self.zoom_mode == .fit_page, item.act),
+            .rotate => self.renderButtonIcon(cr, x, y, w, h, .rotate, tr("Rotate"), item.act),
+            .find_toggle => self.renderButtonText(cr, x, y, w, h, if (self.search_open) tr("Find ▲") else tr("Find"), item.act),
+            .print => self.renderButtonIcon(cr, x, y, w, h, .print, tr("Print"), item.act),
             else => {},
         }
     }
@@ -417,6 +455,13 @@ pub fn renderToolbar(self: *App, cr: *c.api.cairo_t) void {
     shell_ui.setSource(cr, ui_theme.global.field_bg);
     c.api.cairo_rectangle(cr, 126.0, 8.0, 48.0, 28.0);
     c.api.cairo_fill(cr);
+    drawContentGlow(
+        cr,
+        .{ .x = 126, .y = 8, .w = 48, .h = 28 },
+        self.px,
+        self.py,
+        null,
+    );
 
     shell_ui.setSource(cr, if (self.focus == .page_number) ui_theme.shellPalette().fieldFocusColor() else ui_theme.global.field_border);
     c.api.cairo_set_line_width(cr, 1.0);
@@ -450,6 +495,14 @@ pub fn renderSearchBar(self: *App, cr: *c.api.cairo_t) void {
     shell_ui.setSource(cr, ui_theme.global.window_bg);
     c.api.cairo_rectangle(cr, sr.x, sr.y, sr.w, sr.h);
     c.api.cairo_fill(cr);
+
+    drawContentGlow(cr, .{ .x = sr.x + 10.0, .y = sr.y, .w = sr.w - 110.0, .h = sr.h }, self.px, self.py, sr);
+    const close_x = sr.x + sr.w - 28.0;
+    const next_x = close_x - 28.0;
+    const prev_x = next_x - 28.0;
+    for ([_]f64{ prev_x, next_x, close_x }) |x| {
+        drawContentGlow(cr, .{ .x = x, .y = sr.y, .w = 28, .h = sr.h }, self.px, self.py, sr);
+    }
 
     shell_ui.setSource(cr, ui_theme.global.field_border);
     c.api.cairo_set_line_width(cr, 1.0);
@@ -533,41 +586,77 @@ pub fn renderDialog(self: *App, cr: *c.api.cairo_t) void {
             _ = ui_field.paintSecret(&field.renderer, field.local(), .{}, .{ .focused = true, .external_caret = true }, &self.password_input, tr("Password"));
             field.finish();
         }
+        // Paint over the completed field layer so its opaque frame cannot
+        // cover the shared glow. The glow is edge-weighted and leaves text legible.
+        drawContentGlow(
+            cr,
+            .{ .x = dx + 24, .y = dy + 80, .w = dw - 48, .h = 44 },
+            self.px,
+            self.py,
+            .{ .x = dx, .y = dy, .w = dw, .h = dh },
+        );
     }
 
-    self.renderButtonText(cr, dx + dw - 180, dy + dh - 46, 80, 32, tr("Cancel"));
+    self.renderButtonText(cr, dx + dw - 180, dy + dh - 46, 80, 32, tr("Cancel"), null);
     const btn_label = if (self.dialog == .password) tr("Unlock") else tr("OK");
-    self.renderButtonText(cr, dx + dw - 90, dy + dh - 46, 70, 32, btn_label);
+    self.renderButtonText(cr, dx + dw - 90, dy + dh - 46, 70, 32, btn_label, null);
 }
 
-pub fn renderButtonText(self: *App, cr: *c.api.cairo_t, x: f64, y: f64, w: f64, h: f64, label: []const u8) void {
+pub fn renderButtonText(self: *App, cr: *c.api.cairo_t, x: f64, y: f64, w: f64, h: f64, label: []const u8, action: ?Action) void {
+    const proximity: ui_button.ProximitySample = if (action) |act|
+        self.buttonProximity(act, self.px, self.py)
+    else
+        ui_button.sampleProximity(
+            .{ .x = @floatCast(x), .y = @floatCast(y), .w = @floatCast(w), .h = @floatCast(h) },
+            @floatCast(self.px),
+            @floatCast(self.py),
+            .{ .x = 0, .y = 0, .w = @floatFromInt(self.w), .h = @floatFromInt(self.h) },
+        );
     const is_hover = self.px >= x and self.px <= x + w and self.py >= y and self.py <= y + h;
-    var layer = shell_ui.Layer.begin(cr, .{ .x = @floatCast(x), .y = @floatCast(y), .w = @floatCast(w), .h = @floatCast(h) }) orelse return;
+    var layer = shell_ui.Layer.beginVisible(cr, .{ .x = @floatCast(x), .y = @floatCast(y), .w = @floatCast(w), .h = @floatCast(h) }) orelse return;
     defer layer.finish();
     ui_button.paint(&layer.renderer, layer.local(), .{
-        .variant = .ghost,
+        .variant = .secondary,
         .label = label,
-    }, .{ .pointer = if (is_hover) .hover else .idle });
+    }, .{
+        .pointer = if (is_hover) .hover else .idle,
+        .proximity_distance = proximity.distance,
+        .proximity_x = proximity.x,
+        .proximity_y = proximity.y,
+    });
 }
 
 /// A text button shown selected while its mode is active.
-pub fn renderToggle(self: *App, cr: *c.api.cairo_t, x: f64, y: f64, w: f64, h: f64, label: []const u8, selected: bool) void {
+pub fn renderToggle(self: *App, cr: *c.api.cairo_t, x: f64, y: f64, w: f64, h: f64, label: []const u8, selected: bool, action: Action) void {
+    const proximity = self.buttonProximity(action, self.px, self.py);
     const is_hover = self.px >= x and self.px <= x + w and self.py >= y and self.py <= y + h;
-    var layer = shell_ui.Layer.begin(cr, .{ .x = @floatCast(x), .y = @floatCast(y), .w = @floatCast(w), .h = @floatCast(h) }) orelse return;
+    var layer = shell_ui.Layer.beginVisible(cr, .{ .x = @floatCast(x), .y = @floatCast(y), .w = @floatCast(w), .h = @floatCast(h) }) orelse return;
     defer layer.finish();
     ui_button.paint(&layer.renderer, layer.local(), .{
         .variant = .ghost,
         .label = label,
-    }, .{ .pointer = if (is_hover) .hover else .idle, .selected = selected });
+    }, .{
+        .pointer = if (is_hover) .hover else .idle,
+        .selected = selected,
+        .proximity_distance = proximity.distance,
+        .proximity_x = proximity.x,
+        .proximity_y = proximity.y,
+    });
 }
 
-pub fn renderButtonIcon(self: *App, cr: *c.api.cairo_t, x: f64, y: f64, w: f64, h: f64, icon: IconId, tooltip: []const u8) void {
+pub fn renderButtonIcon(self: *App, cr: *c.api.cairo_t, x: f64, y: f64, w: f64, h: f64, icon: IconId, tooltip: []const u8, action: Action) void {
+    const proximity = self.buttonProximity(action, self.px, self.py);
     const is_hover = self.px >= x and self.px <= x + w and self.py >= y and self.py <= y + h;
-    var layer = shell_ui.Layer.begin(cr, .{ .x = @floatCast(x), .y = @floatCast(y), .w = @floatCast(w), .h = @floatCast(h) }) orelse return;
+    var layer = shell_ui.Layer.beginVisible(cr, .{ .x = @floatCast(x), .y = @floatCast(y), .w = @floatCast(w), .h = @floatCast(h) }) orelse return;
     defer layer.finish();
     ui_button.paint(&layer.renderer, layer.local(), .{
         .variant = .ghost,
         .icon = icon,
         .label = tooltip,
-    }, .{ .pointer = if (is_hover) .hover else .idle });
+    }, .{
+        .pointer = if (is_hover) .hover else .idle,
+        .proximity_distance = proximity.distance,
+        .proximity_x = proximity.x,
+        .proximity_y = proximity.y,
+    });
 }

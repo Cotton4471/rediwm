@@ -2,7 +2,7 @@
 Type=Application
 Name=Text Editor
 Comment=Edit text files in tabs
-Exec=rediwm-editor %F
+Exec=@BINDIR@/rediwm-editor %F
 Icon=accessories-text-editor
 Terminal=false
 Categories=Utility;TextEditor;

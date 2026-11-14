@@ -1,8 +1,6 @@
 const std = @import("std");
 
-const c = @cImport({
-    @cInclude("png.h");
-});
+const c = @import("c_png");
 
 const PngWriteCtx = struct {
     list: *std.ArrayList(u8),

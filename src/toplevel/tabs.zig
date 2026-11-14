@@ -32,7 +32,7 @@ fn fillTabs(toplevel: *Toplevel, storage: *[@import("../window_tabs.zig").max_ta
 pub fn tabAt(toplevel: *Toplevel, x: f64, y: f64) @import("../chrome_tabs.zig").Hit {
     if (!toplevel.hasServerDecorations() or toplevel.tab_group == 0) return .none;
     var storage: [@import("../window_tabs.zig").max_tabs]@import("../chrome_tabs.zig").Tab = undefined;
-    return @import("../chrome_tabs.zig").hit(toplevel.chrome_width, toplevel.chromeDensity(), toplevel.tabStrip(&storage), x, y);
+    return @import("../chrome_tabs.zig").hit(toplevel.chrome_width - toplevel.controlInsets().right, toplevel.chromeDensity(), toplevel.tabStrip(&storage), x, y);
 }
 
 pub fn hoverTab(toplevel: *Toplevel, x: f64, y: f64) void {

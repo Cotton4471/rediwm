@@ -7,11 +7,7 @@ const std = @import("std");
 const wl = @import("wayland").server.wl;
 const dm_ipc = @import("dm_ipc.zig");
 const ws = @import("wayland_sessions.zig");
-const c = @cImport({
-    @cInclude("pwd.h");
-    @cInclude("unistd.h");
-    @cInclude("sys/mman.h");
-});
+const c = @import("c");
 
 extern fn rediwm_secret_clear([*]u8, usize) void;
 
@@ -58,6 +54,9 @@ pub const Greeter = struct {
     client: ?dm_ipc.Client = null,
     source: ?*wl.EventSource = null,
     phase: Phase = .idle,
+    ready_sent: bool = false,
+    ready_pending: bool = false,
+    ready_pointer_required: bool = true,
     /// The first answer, typed before the daemon asks for it.
     pending: [512]u8 = @splat(0),
     pending_len: ?usize = null,
@@ -71,10 +70,14 @@ pub const Greeter = struct {
         self.* = .{ .arena = .init(gpa), .io = io, .loop = loop };
         _ = c.mlock(&self.pending, self.pending.len);
         const a = self.arena.allocator();
+        // An explicit administrator choice for keyboard-only seats. Unknown
+        // values keep the conservative desktop keyboard + pointer policy.
+        if (environ.getPosix("REDIWM_GREETER_READY_INPUT")) |policy|
+            self.ready_pointer_required = !std.mem.eql(u8, policy, "keyboard");
         if (environ.getPosix("REDIWM_GREETER_FD")) |fd_str| {
             if (std.fmt.parseInt(c_int, fd_str, 10)) |fd| {
                 // Nothing the greeter might spawn inherits the daemon socket.
-                _ = std.os.linux.fcntl(fd, std.os.linux.F.SETFD, std.os.linux.FD_CLOEXEC);
+                _ = c.fcntl(fd, c.F_SETFD, c.FD_CLOEXEC);
                 self.client = dm_ipc.Client.fromFd(fd);
                 self.watch() catch {
                     self.client.?.close();
@@ -86,8 +89,8 @@ pub const Greeter = struct {
             log.err("cannot list accounts: {}", .{err});
             break :blk &.{};
         };
-        const data_dirs = environ.getPosix("XDG_DATA_DIRS") orelse "/usr/local/share:/usr/share";
-        const search = environ.getPosix("PATH") orelse "/usr/local/sbin:/usr/local/bin:/usr/bin";
+        const data_dirs = environ.getPosix("XDG_DATA_DIRS") orelse @import("install_paths").data_dirs;
+        const search = environ.getPosix("PATH") orelse @import("install_paths").search_path;
         self.sessions = ws.loadSessions(a, io, data_dirs, search) catch |err| blk: {
             log.err("cannot list sessions: {}", .{err});
             break :blk &.{};
@@ -188,6 +191,15 @@ pub const Greeter = struct {
         self.clearPending();
     }
 
+    /// Called only after presentation and seat readiness, never on a timer.
+    pub fn reportReady(self: *Greeter) void {
+        if (self.ready_sent or self.phase == .starting or self.phase == .done or self.client == null or
+            self.selectedUser() == null or self.selectedSession() == null) return;
+        self.send(.ready) catch return self.lost();
+        self.ready_sent = true;
+        self.ready_pending = true;
+    }
+
     fn send(self: *Greeter, request: dm_ipc.Request) !void {
         try (if (self.client) |*client| client else return error.NoService).send(request);
     }
@@ -233,12 +245,18 @@ pub const Greeter = struct {
     }
 
     fn handle(self: *Greeter, response: dm_ipc.Response) ?Event {
+        if (response == .ready) {
+            if (!self.ready_pending) return self.fail("unsolicited readiness acknowledgement");
+            self.ready_pending = false;
+            return null;
+        }
         switch (self.phase) {
             .cancelling => {
                 self.phase = .idle;
                 return null;
             },
             .starting => return switch (response) {
+                .ready => unreachable,
                 .ok => blk: {
                     self.phase = .done;
                     self.remember();
@@ -248,6 +266,7 @@ pub const Greeter = struct {
                 .question => self.fail("unexpected question"),
             },
             .authenticating => switch (response) {
+                .ready => unreachable,
                 .ok => {
                     self.clearPending();
                     return self.start();

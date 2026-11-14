@@ -2,7 +2,7 @@
 Type=Application
 Name=Image Viewer
 Comment=View images with RediWM
-Exec=rediwm-images %F
+Exec=@BINDIR@/rediwm-images %F
 Icon=image-x-generic
 Terminal=false
 Categories=Graphics;Viewer;

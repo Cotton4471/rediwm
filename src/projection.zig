@@ -59,9 +59,16 @@ pub const setTreeScale = rediwm_projection_set_tree_scale;
 /// One rounded-rectangle shape for every leaf under a tree (see scene_graph.h):
 /// source units, anchored at the tree's origin. `border_color` is premultiplied,
 /// with the window's opacity applied.
+pub const poly_max = 16;
+
 pub const ClipSpec = extern struct {
     width: c_int,
     height: c_int,
+    /// 0 for the rounded rectangle; otherwise the first `poly_count` of `poly`
+    /// are the shape, from the tree's origin, inside the box (`radii` is then
+    /// unused). Three to `poly_max`, none the same as the next.
+    poly_count: c_int = 0,
+    reserved: c_int = 0,
     /// Top-left, top-right, bottom-right, bottom-left.
     radii: [4]f64,
     border: f64,
@@ -73,6 +80,12 @@ pub const ClipSpec = extern struct {
     glow_radius: f64 = 0,
     glow_depth: f64 = 0,
     glow_color: [4]f32 = .{ 0, 0, 0, 0 },
+    poly: [poly_max][2]f64 = @splat(.{ 0, 0 }),
+    /// An analytic annular sector instead of a polygon or rounded rectangle.
+    sector: @import("scene_sector.zig").Spec = .{},
+    /// Positive: map texture width around the outer arc, with this full source
+    /// height extending inward. Zero keeps ordinary rectangular sampling.
+    sector_texture_height: f64 = 0,
 };
 extern fn rediwm_projection_set_tree_clip(target: *node.Node, spec: ?*const ClipSpec) bool;
 /// A null spec removes the clip. False for a size that is not positive or a
@@ -88,11 +101,14 @@ pub fn setTreeClip(target: *node.Node, spec: ?ClipSpec) bool {
 pub const ShadowSpec = extern struct {
     width: c_int,
     height: c_int,
+    poly_count: c_int = 0,
+    reserved: c_int = 0,
     radii: [4]f64,
     offset_x: f64,
     offset_y: f64,
     softness: f64,
     color: [4]f32,
+    poly: [poly_max][2]f64 = @splat(.{ 0, 0 }),
 };
 extern fn rediwm_projection_set_tree_shadow(target: *node.Node, spec: ?*const ShadowSpec) bool;
 /// A null spec removes the shadow. False for a size that is not positive or a

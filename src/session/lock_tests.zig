@@ -36,17 +36,17 @@ test "lock password editing clears complete UTF-8 characters and Escape never un
     lock.key(@enumFromInt('a'), "a", .{});
     lock.key(@enumFromInt('e'), "é", .{});
     try std.testing.expectEqualStrings("aé", lock.field().value());
-    lock.key(@enumFromInt(xkb.Keysym.BackSpace), "", .{});
+    lock.key(xkb.Keysym.BackSpace, "", .{});
     try std.testing.expectEqualStrings("a", lock.field().value());
     try std.testing.expectEqual(@as(u8, 0), lock.password[2]);
     lock.reveal = true;
-    lock.key(@enumFromInt(xkb.Keysym.Escape), "", .{});
+    lock.key(xkb.Keysym.Escape, "", .{});
     try std.testing.expect(server.locker == &lock);
     try std.testing.expect(!lock.reveal);
     try std.testing.expectEqual(@as(usize, 0), lock.input.len);
     for (lock.password) |byte| try std.testing.expectEqual(@as(u8, 0), byte);
     // Oversized input must not produce a partial UTF-8 sequence or overrun.
-    const full = [_]u8{'a'} ** 511;
+    const full = @as([511]u8, @splat('a'));
     lock.key(@enumFromInt('a'), &full, .{});
     lock.key(@enumFromInt('e'), "é", .{});
     try std.testing.expectEqual(@as(usize, 511), lock.input.len);
@@ -146,9 +146,7 @@ test "lock raster scales to small outputs and renders a solid accent unlock butt
             try std.testing.expectApproxEqAbs(ui.theme.shellPalette().accent[channel] * 255, got, 1);
         }
         if (size[0] == 1672) {
-            const env = @cImport({
-                @cInclude("stdlib.h");
-            });
+            const env = @import("c");
             if (env.getenv("REDIWM_LOCK_PREVIEW")) |path| {
                 const bytes = try @import("../screenshot/encode.zig").encodePng(std.testing.allocator, @intCast(buf.width), @intCast(buf.height), buf.pixels, @intCast(buf.width));
                 defer std.testing.allocator.free(bytes);
@@ -266,10 +264,7 @@ test "lock covers new outputs and follows layout and mode changes without UI" {
 }
 
 test "greeter signs in through rediwm-dm and exits only once the session starts" {
-    const sock = @cImport({
-        @cInclude("sys/socket.h");
-        @cInclude("unistd.h");
-    });
+    const sock = @import("c");
     const peer = struct {
         fd: c_int,
         buf: [4096]u8 = undefined,
@@ -330,24 +325,24 @@ test "greeter signs in through rediwm-dm and exits only once the session starts"
     try std.testing.expectEqualStrings("rediwm-test-a", std.mem.sliceTo(&lock.user, 0));
 
     // Account and session choice.
-    lock.key(@enumFromInt(xkb.Keysym.Down), "", .{});
+    lock.key(xkb.Keysym.Down, "", .{});
     try std.testing.expectEqualStrings("rediwm-test-b", std.mem.sliceTo(&lock.user, 0));
-    lock.key(@enumFromInt(xkb.Keysym.Up), "", .{});
+    lock.key(xkb.Keysym.Up, "", .{});
     try std.testing.expectEqualStrings("Test A", std.mem.sliceTo(&lock.name, 0));
-    lock.key(@enumFromInt(xkb.Keysym.ISO_Left_Tab), "", .{ .shift = true });
+    lock.key(xkb.Keysym.ISO_Left_Tab, "", .{ .shift = true });
     try std.testing.expectEqual(focus_account, lock.focus);
-    lock.key(@enumFromInt(xkb.Keysym.Tab), "", .{});
+    lock.key(xkb.Keysym.Tab, "", .{});
     try std.testing.expectEqual(@as(u8, 0), lock.focus);
-    for (0..3) |_| lock.key(@enumFromInt(xkb.Keysym.Tab), "", .{});
+    for (0..3) |_| lock.key(xkb.Keysym.Tab, "", .{});
     try std.testing.expectEqual(focus_session, lock.focus);
-    lock.key(@enumFromInt(xkb.Keysym.Right), "", .{});
+    lock.key(xkb.Keysym.Right, "", .{});
     try std.testing.expectEqualStrings("sway", greeter.selectedSession().?.id);
-    lock.key(@enumFromInt(xkb.Keysym.Left), "", .{});
+    lock.key(xkb.Keysym.Left, "", .{});
     lock.focus = 0;
 
     // The password typed up front answers dm's first question.
     for ("pw") |ch| lock.key(@enumFromInt(ch), &.{ch}, .{});
-    lock.key(@enumFromInt(xkb.Keysym.Return), "", .{});
+    lock.key(xkb.Keysym.Return, "", .{});
     try std.testing.expectEqualStrings("{\"type\":\"login\",\"user\":\"rediwm-test-a\"}", try daemon.read());
     try std.testing.expectEqual(@as(usize, 0), lock.input.len);
     lock.key(@enumFromInt('x'), "x", .{});
@@ -369,7 +364,7 @@ test "greeter signs in through rediwm-dm and exits only once the session starts"
     try std.testing.expect(lock.prompting() and lock.reveal and !lock.busy());
     for ("123") |ch| lock.key(@enumFromInt(ch), &.{ch}, .{});
     try std.testing.expectEqualStrings("Code:", lock.status);
-    lock.key(@enumFromInt(xkb.Keysym.Return), "", .{});
+    lock.key(xkb.Keysym.Return, "", .{});
     try std.testing.expectEqualStrings("{\"type\":\"answer\",\"response\":\"123\"}", try daemon.read());
 
     // Wrong answers cancel the attempt and never start a session.
@@ -385,14 +380,14 @@ test "greeter signs in through rediwm-dm and exits only once the session starts"
     // Escape abandons a question.
     lock.retry_at = 0;
     for ("pw") |ch| lock.key(@enumFromInt(ch), &.{ch}, .{});
-    lock.key(@enumFromInt(xkb.Keysym.Return), "", .{});
+    lock.key(xkb.Keysym.Return, "", .{});
     _ = try daemon.read();
     daemon.write("{\"type\":\"question\",\"kind\":\"secret\",\"text\":\"Password:\"}");
     greeter.pump();
     _ = try daemon.read();
     daemon.write("{\"type\":\"question\",\"kind\":\"secret\",\"text\":\"New password:\"}");
     greeter.pump();
-    lock.key(@enumFromInt(xkb.Keysym.Escape), "", .{});
+    lock.key(xkb.Keysym.Escape, "", .{});
     try std.testing.expectEqualStrings("{\"type\":\"cancel\"}", try daemon.read());
     daemon.write("{\"type\":\"ok\"}");
     greeter.pump();
@@ -401,7 +396,7 @@ test "greeter signs in through rediwm-dm and exits only once the session starts"
     // Success starts the chosen session with its desktop identity, and the
     // greeter exits only after dm accepts it.
     for ("pw") |ch| lock.key(@enumFromInt(ch), &.{ch}, .{});
-    lock.key(@enumFromInt(xkb.Keysym.Return), "", .{});
+    lock.key(xkb.Keysym.Return, "", .{});
     _ = try daemon.read();
     daemon.write("{\"type\":\"ok\"}");
     greeter.pump();
@@ -411,7 +406,7 @@ test "greeter signs in through rediwm-dm and exits only once the session starts"
     );
     for (greeter.pending) |byte| try std.testing.expectEqual(@as(u8, 0), byte);
     try std.testing.expect(!server.shutting_down);
-    lock.key(@enumFromInt(xkb.Keysym.Down), "", .{});
+    lock.key(xkb.Keysym.Down, "", .{});
     try std.testing.expectEqualStrings("rediwm-test-a", std.mem.sliceTo(&lock.user, 0));
     daemon.write("{\"type\":\"ok\"}");
     greeter.pump();
@@ -420,10 +415,7 @@ test "greeter signs in through rediwm-dm and exits only once the session starts"
 }
 
 test "greeter reports a lost login service and exits to be replaced" {
-    const sock = @cImport({
-        @cInclude("sys/socket.h");
-        @cInclude("unistd.h");
-    });
+    const sock = @import("c");
     const display = try wl.Server.create();
     defer display.destroy();
     var server: Server = undefined;
@@ -445,7 +437,7 @@ test "greeter reports a lost login service and exits to be replaced" {
     }
     // No REDIWM_GREETER_FD: a clear message, not a crash or an unlock.
     for ("pw") |ch| lock.key(@enumFromInt(ch), &.{ch}, .{});
-    lock.key(@enumFromInt(xkb.Keysym.Return), "", .{});
+    lock.key(xkb.Keysym.Return, "", .{});
     try std.testing.expectEqualStrings("No login service", lock.status);
     try std.testing.expectEqual(@as(usize, 0), lock.input.len);
     try std.testing.expectEqual(greeter_mod.Phase.idle, greeter.phase);
@@ -454,7 +446,7 @@ test "greeter reports a lost login service and exits to be replaced" {
     try std.testing.expectEqual(@as(c_int, 0), sock.socketpair(sock.AF_UNIX, sock.SOCK_STREAM | sock.SOCK_CLOEXEC, 0, &fds));
     try greeter.adopt(fds[0]);
     for ("pw") |ch| lock.key(@enumFromInt(ch), &.{ch}, .{});
-    lock.key(@enumFromInt(xkb.Keysym.Return), "", .{});
+    lock.key(xkb.Keysym.Return, "", .{});
     try std.testing.expect(lock.busy());
     _ = sock.close(fds[1]);
     greeter.pump();
@@ -502,9 +494,7 @@ test "greeter raster shows account arrows and the session chooser" {
     };
     try std.testing.expect(lit.any(buf, 30 * geo.s, height - 90 * geo.s, 120 * geo.s, height - 60 * geo.s));
     try std.testing.expect(lit.any(buf, width / 2 - 130 * geo.s, geo.top + 244 * geo.s, width / 2 - 90 * geo.s, geo.top + 304 * geo.s));
-    const env = @cImport({
-        @cInclude("stdlib.h");
-    });
+    const env = @import("c");
     if (env.getenv("REDIWM_GREETER_PREVIEW")) |path| {
         const bytes = try @import("../screenshot/encode.zig").encodePng(std.testing.allocator, @intCast(buf.width), @intCast(buf.height), buf.pixels, @intCast(buf.width));
         defer std.testing.allocator.free(bytes);
@@ -563,4 +553,34 @@ test "greeter appearance follows account selection and resets missing or broken 
     lock.applyAccountAppearance(uid);
     try std.testing.expect(lock.greeter_appearance == null);
     try std.testing.expectEqual(lock.greeter_default_theme.lock_bg, ui.theme.global.lock_bg);
+}
+
+test "the lock shows the active keyboard layout only while there are several" {
+    var lock = Lock{ .server = undefined, .timer = undefined };
+    const width: i32 = 1280;
+    const height: i32 = 720;
+    const geo = Geometry.init(@floatFromInt(width), @floatFromInt(height));
+    const button = geo.layoutButton();
+    var counts: [2]usize = undefined;
+    for ([_][]const u8{ "", "DE" }, 0..) |label, i| {
+        @memcpy(lock.layout_label[0..label.len], label);
+        lock.layout_label_len = @intCast(label.len);
+        const buf = try Buffer.create(width, height, 1);
+        defer buf.base.drop();
+        @memset(buf.pixels, 0xff090b12);
+        var renderer = ui.paint.Renderer{ .pixels = buf.pixels, .width = buf.width, .height = buf.height, .scale = 1 };
+        _ = paint(&renderer, &lock, @floatFromInt(width), @floatFromInt(height), true);
+        var changed: usize = 0;
+        const x0: usize = @intFromFloat(button.x * geo.s);
+        const y0: usize = @intFromFloat(button.y * geo.s);
+        for (y0..y0 + @as(usize, @intFromFloat(button.h * geo.s))) |y| {
+            for (x0..x0 + @as(usize, @intFromFloat(button.w * geo.s))) |x| {
+                if (buf.pixels[y * @as(usize, @intCast(width)) + x] != 0xff090b12) changed += 1;
+            }
+        }
+        counts[i] = changed;
+    }
+    // One layout draws nothing there; several draw the keyboard and its code.
+    try std.testing.expectEqual(@as(usize, 0), counts[0]);
+    try std.testing.expect(counts[1] > 50);
 }

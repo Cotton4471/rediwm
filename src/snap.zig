@@ -285,8 +285,8 @@ test "tiles share their splits and keep the gap" {
 
 test "a huge gap leaves every tile at least a pixel" {
     const tiny: wlr.Box = .{ .x = 0, .y = 0, .width = 20, .height = 11 };
-    inline for (std.meta.fields(Tile)) |field| {
-        const rect = tileRect(tiny, @field(Tile, field.name), 512);
+    inline for (@typeInfo(Tile).@"enum".field_names) |field_name| {
+        const rect = tileRect(tiny, @field(Tile, field_name), 512);
         try testing.expect(rect.width >= 1 and rect.height >= 1);
     }
 }

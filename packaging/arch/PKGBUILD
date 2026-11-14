@@ -1,0 +1,88 @@
+# Maintainer: Local package build
+_pkgname=rediwm
+pkgname=rediwm-git
+pkgver=0.1.7.r77.82ed26e
+pkgrel=1
+pkgdesc='Wayland compositor and desktop shell written in Zig'
+arch=('x86_64')
+url='https://github.com/oxydizer/rediwm'
+license=('MIT' 'Apache-2.0')
+depends=(
+  'wlroots0.20'
+  'wayland'
+  'wayland-protocols'
+  'xkeyboard-config'
+  'pixman'
+  'freetype2'
+  'harfbuzz'
+  'fontconfig'
+  'librsvg'
+  'gdk-pixbuf2'
+  'libinput'
+  'libpulse'
+  'pipewire'
+  'poppler-glib'
+  'libarchive'
+  'libjpeg-turbo'
+  'libpng'
+  'libwebp'
+  'readline'
+  'glib2'
+  'json-glib'
+  'libtorrent-rasterbar'
+  'boost-libs'
+  'pam'
+  'cups'
+)
+makedepends=(
+  'git'
+  'zig>=0.17.0'
+  'pkgconf'
+  'boost'
+  # The RediWM Qt style plugins; Qt apps bring their own Qt at run time.
+  'qt5-base'
+  'qt6-base'
+)
+optdepends=(
+  'xorg-xwayland: run X11 applications'
+  'xdg-desktop-portal-wlr: screen sharing and portal integration'
+  'foot: default terminal application'
+  'brightnessctl: brightness controls'
+)
+provides=('rediwm')
+conflicts=('rediwm')
+source=("git+${url}.git")
+sha256sums=('SKIP')
+
+backup=('etc/rediwm/dm.conf'
+        'etc/pam.d/rediwm-greeter'
+        'etc/pam.d/rediwm-dm'
+        'etc/pam.d/rediwm-dm-autologin')
+
+pkgver() {
+  cd "$_pkgname"
+  git describe --long --tags --match 'v[0-9]*' |
+    sed -E 's/^v//; s/-([0-9]+)-g/.r\1./'
+}
+
+build() {
+  cd "$_pkgname"
+  zig build -Doptimize=ReleaseSafe -j"$(nproc)" \
+    -Dinstall-prefix=/usr -Dqt-style=true \
+    --prefix "$srcdir/rediwm-build-prefix"
+}
+
+package() {
+  cd "$_pkgname"
+
+  # Use the upstream installer to stage the complete /usr layout and
+  # Arch-specific display-manager integration without touching the host.
+  REDIWM_PAM_PROFILE=arch DESTDIR="$pkgdir" \
+    sh scripts/install-session-root.sh \
+    "$PWD" "$srcdir/rediwm-build-prefix" yes
+
+  install -Dm644 LICENSE-MIT \
+    "$pkgdir/usr/share/licenses/$pkgname/LICENSE-MIT"
+  install -Dm644 LICENSE-APACHE \
+    "$pkgdir/usr/share/licenses/$pkgname/LICENSE-APACHE"
+}

@@ -135,6 +135,7 @@ pub fn sync(self: *App) void {
         self.setStatusNotice(notice, false);
     }
     self.syncFolderSizes();
+    if (self.dialog) |*dlg| if (dlg.trash_properties) |*props| if (props.poll()) self.invalidate();
     _ = c.pthread_mutex_lock(&self.worker.mutex);
     const animation_settings = self.worker.animation_settings;
     const new_theme = self.worker.theme;
@@ -142,6 +143,7 @@ pub fn sync(self: *App) void {
     _ = c.pthread_mutex_unlock(&self.worker.mutex);
     if (new_theme) |t| {
         self.single_click_open = t.single_click_open;
+        self.audio_player = t.audio_player;
         self.open_on_release = null;
         t.apply();
         self.theme_cfg.override_root = @import("settings.zig").iconRoot();

@@ -13,8 +13,6 @@ const geometry = @import("geometry.zig");
 const panel_present = @import("panel_present.zig");
 const panel_paint = @import("panel_paint.zig");
 
-extern "c" fn wlr_buffer_finish(buffer: *wlr.Buffer) void;
-
 pub const PanelBuffer = struct {
     base: wlr.Buffer,
     width: i32,
@@ -164,7 +162,7 @@ pub const PanelBuffer = struct {
     fn destroyBuffer(base: *wlr.Buffer) callconv(.c) void {
         // wlroots 0.20 leaves this to the producer. Notify texture wrappers
         // before pooling/freeing storage, so they cannot retain a stale source.
-        wlr_buffer_finish(base);
+        base.finish();
         const buf: *PanelBuffer = @fieldParentPtr("base", base);
         if (buf.sensitive) {
             std.crypto.secureZero(u32, buf.storage);

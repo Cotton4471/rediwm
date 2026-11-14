@@ -34,7 +34,7 @@ pub fn connect() !*wl.Display {
     if (c.mkdtemp(&directory) == null) return error.SocketFailed;
     defer _ = c.rmdir(&directory);
     var path_storage: [108]u8 = undefined;
-    const path = try std.fmt.bufPrintZ(&path_storage, "{s}/wayland", .{directory});
+    const path = try std.fmt.bufPrintSentinel(&path_storage, "{s}/wayland", .{directory}, 0);
     var address: c.struct_sockaddr_un = std.mem.zeroes(c.struct_sockaddr_un);
     address.sun_family = c.AF_UNIX;
     @memcpy(@as([*]u8, @ptrCast(&address.sun_path))[0..path.len], path);

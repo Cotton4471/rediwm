@@ -21,6 +21,7 @@ const onFontSizeChanged = appearance_chrome.onFontSizeChanged;
 const onRadiusChanged = appearance_chrome.onRadiusChanged;
 const onShadowChanged = appearance_chrome.onShadowChanged;
 const onBorderGlowChanged = appearance_chrome.onBorderGlowChanged;
+const onButtonHoverGlowChanged = appearance_chrome.onButtonHoverGlowChanged;
 const onChromeOpacityChanged = appearance_chrome.onChromeOpacityChanged;
 const onChromeDarknessChanged = appearance_chrome.onChromeDarknessChanged;
 const onInactiveDimChanged = appearance_chrome.onInactiveDimChanged;
@@ -36,6 +37,7 @@ const onCursorThemePicked = appearance_chrome.onCursorThemePicked;
 const onDarkModeChanged = appearance_chrome.onDarkModeChanged;
 const onSplashStartupChanged = appearance_chrome.onSplashStartupChanged;
 const onDodgeFileDragsChanged = appearance_chrome.onDodgeFileDragsChanged;
+const EffectToggle = appearance_chrome.EffectToggle;
 const appearance = @import("appearance.zig");
 const segmented_width = appearance.segmented_width;
 const font_values = appearance.font_values;
@@ -60,7 +62,7 @@ const PxHandler = appearance.PxHandler;
 
 /// The theme and taskbar theme pickers; returns the matched preset.
 pub fn buildThemeRows(out: *Section, arena: std.mem.Allocator) ?usize {
-    out.presets = theme_presets.list(arena, out.cc.server.io, out.cc.server.environ, out.cc.server.config.path) catch &.{};
+    out.presets = theme_presets.pickerList(arena, out.cc.server.io, out.cc.server.environ, out.cc.server.config.path, out.cc.server.config.theme_base) catch &.{};
     var preset_labels: [][]const u8 = &.{};
     var matched_index: ?usize = null;
     if (arena.alloc([]const u8, out.presets.len)) |labels| {
@@ -122,15 +124,26 @@ pub fn buildThemeRows(out: *Section, arena: std.mem.Allocator) ?usize {
 
 /// The app colour buttons and the dark mode toggle.
 pub fn buildColorRows(out: *Section, arena: std.mem.Allocator, pal: theme.Theme) void {
+    const following = out.cc.server.config.compositor.follow_app_colors;
+    const busy = out.cc.server.app_colors.job != null;
+    out.follow_colors_children = .{
+        labelWidget(i18n.tr("Follow RediWM application colors")),
+        .{ .name = "follow_app_colors", .kind = .{ .toggle = .{ .on = following, .owner = out, .on_change = &appearance_colors.onFollowChanged } } },
+    };
     out.app_colors_buttons = .{
-        .{ .name = "apply_gtk_colors", .kind = .{ .button = .{ .label = i18n.tr("Apply GTK colors"), .owner = out, .id = 0, .on_click = &onApplyAppColors, .state = if (out.app_colors_job != null) .disabled else .idle } }, .width = .{ .flex = 1 }, .height = .{ .fixed = 32 } },
-        .{ .name = "apply_qt_colors", .kind = .{ .button = .{ .label = i18n.tr("Apply Qt colors"), .owner = out, .id = 1, .on_click = &onApplyAppColors, .state = if (out.app_colors_job != null) .disabled else .idle } }, .width = .{ .flex = 1 }, .height = .{ .fixed = 32 } },
+        .{ .name = "apply_gtk_colors", .kind = .{ .button = .{ .label = i18n.tr("Apply GTK colors"), .owner = out, .id = 0, .on_click = &onApplyAppColors, .state = if (busy) .disabled else .idle } }, .width = .{ .flex = 1 }, .height = .{ .fixed = 32 } },
+        .{ .name = "apply_qt_colors", .kind = .{ .button = .{ .label = i18n.tr("Apply Qt colors"), .owner = out, .id = 1, .on_click = &onApplyAppColors, .state = if (busy) .disabled else .idle } }, .width = .{ .flex = 1 }, .height = .{ .fixed = 32 } },
     };
-    out.app_colors_children = .{
-        labelWidget(i18n.tr("App colors")),
-        .{ .kind = .container, .direction = .row, .gap = 8, .children = &out.app_colors_buttons },
-        appColorsNote(out, arena, pal.dim),
-    };
+    const label = labelWidget(i18n.tr("App colors"));
+    const follow_row: Widget = .{ .kind = .container, .direction = .row, .@"align" = .center, .children = &out.follow_colors_children };
+    const note = appColorsNote(out, arena, pal.dim);
+    // Following keeps both toolkits current; a manual GTK snapshot would pin
+    // newly started apps to its colors, so the buttons exist only when off.
+    out.app_colors_children = if (following)
+        .{ label, follow_row, note, undefined }
+    else
+        .{ label, follow_row, .{ .kind = .container, .direction = .row, .gap = 8, .children = &out.app_colors_buttons }, note };
+    out.app_colors_len = if (following) 3 else 4;
     const dark_mode = out.cc.server.config.compositor.dark_mode;
     out.dark_label_children = .{
         .{ .kind = .{ .text = .{ .content = i18n.tr("Dark mode"), .font_size = theme.global.app_text_size, .weight = 600, .color = pal.fg } } },
@@ -208,8 +221,17 @@ pub fn buildBehaviorRows(out: *Section, pal: theme.Theme) void {
     const focus_zoom = out.cc.server.config.compositor.focus_zoom;
     out.focus_zoom_children = .{
         labelWidget(i18n.tr("Window switching zoom")),
-        .{ .name = "focus_zoom", .kind = .{ .segmented = .{ .labels = panel.translatedLabels(&focus_zoom_labels), .selected = @intFromEnum(focus_zoom), .owner = out, .on_change = &onFocusZoomChanged } }, .width = .{ .percent = 1 } },
-        .{ .kind = .{ .text = .{ .content = focus_zoom_descriptions[@intFromEnum(focus_zoom)].get(), .font_size = theme.global.settings_description_size, .color = pal.dim } } },
+        .{ .name = "focus_zoom", .kind = .{ .segmented = .{ .labels = panel.translatedLabels(&focus_zoom_labels), .selected = @backingInt(focus_zoom), .owner = out, .on_change = &onFocusZoomChanged } }, .width = .{ .percent = 1 } },
+        .{ .kind = .{ .text = .{ .content = focus_zoom_descriptions[@backingInt(focus_zoom)].get(), .font_size = theme.global.settings_description_size, .color = pal.dim } } },
+    };
+
+    out.switcher_style_children = .{
+        labelWidget(i18n.tr("Window switcher")),
+        .{
+            .name = "switcher_style",
+            .kind = .{ .segmented = .{ .labels = panel.translatedLabels(&.{ i18n.msg("Linear"), i18n.msg("Circular") }), .selected = @backingInt(out.cc.server.config.compositor.switcher_style), .owner = out, .on_change = &appearance_chrome.onSwitcherStyleChanged } },
+            .width = .{ .fixed = segmented_width },
+        },
     };
 
     out.drag_feedback_children = .{
@@ -232,7 +254,28 @@ pub fn buildBehaviorRows(out: *Section, pal: theme.Theme) void {
     };
 }
 
-/// The UI font, cursor theme, font size, radius, shadow and edge glow rows.
+/// Optional flame effects: three independent toggles, off by default. They
+/// only run while Animations are on (and Reduced motion is not).
+pub fn buildEffectRows(out: *Section, pal: theme.Theme) void {
+    const effects = out.cc.server.config.effects;
+    const rows = .{
+        .{ "effect_window_move", i18n.msg("Flames while moving windows"), effects.window_move.enabled, &EffectToggle(.window_move).changed },
+        .{ "effect_window_resize", i18n.msg("Flames while resizing windows"), effects.resize().enabled, &EffectToggle(.window_resize).changed },
+        .{ "effect_window_minimize", i18n.msg("Flames when minimizing windows"), effects.minimize().enabled, &EffectToggle(.window_minimize).changed },
+    };
+    inline for (rows, 0..) |row, i| {
+        out.effect_label_children[i] = .{
+            .{ .kind = .{ .text = .{ .content = row[1].get(), .font_size = theme.global.app_text_size, .weight = 600, .color = pal.fg } } },
+            .{ .kind = .{ .text = .{ .content = i18n.tr("Needs Animations to be on"), .font_size = theme.global.settings_description_size, .color = pal.dim } } },
+        };
+        out.effect_row_children[i] = .{
+            .{ .kind = .container, .direction = .column, .gap = 2, .width = .{ .flex = 1 }, .children = &out.effect_label_children[i] },
+            .{ .name = row[0], .kind = .{ .toggle = .{ .on = row[2], .owner = out, .on_change = row[3] } } },
+        };
+    }
+}
+
+/// The UI font, cursor theme, font size, radius, shadow, edge glow and button hover glow rows.
 pub fn buildFontRows(out: *Section, arena: std.mem.Allocator, t: theme.Theme, pal: theme.Theme) void {
     if (out.font_families == null) {
         out.font_families = @import("ui").font_fallback.listFamilies(out.font_arena.allocator()) catch null;
@@ -297,7 +340,7 @@ pub fn buildFontRows(out: *Section, arena: std.mem.Allocator, t: theme.Theme, pa
         labelWidget(i18n.tr("Radius")),
         .{
             .name = "radius",
-            .kind = .{ .segmented = .{ .labels = panel.translatedLabels(&radius_labels), .selected = if (theme.radiusPreset(t)) |preset| @intFromEnum(preset) else radius_labels.len, .owner = out, .on_change = &onRadiusChanged } },
+            .kind = .{ .segmented = .{ .labels = panel.translatedLabels(&radius_labels), .selected = if (theme.radiusPreset(t)) |preset| @backingInt(preset) else radius_labels.len, .owner = out, .on_change = &onRadiusChanged } },
             .width = .{ .fixed = segmented_width },
         },
     };
@@ -317,6 +360,15 @@ pub fn buildFontRows(out: *Section, arena: std.mem.Allocator, t: theme.Theme, pa
     out.glow_row_children = .{
         .{ .kind = .container, .direction = .column, .gap = 2, .width = .{ .flex = 1 }, .children = &out.glow_label_children },
         .{ .name = "border_glow", .kind = .{ .toggle = .{ .on = t.border_glow_enabled, .owner = out, .on_change = &onBorderGlowChanged } } },
+    };
+
+    out.button_hover_glow_label_children = .{
+        .{ .kind = .{ .text = .{ .content = i18n.tr("Interactive surface glow"), .font_size = theme.global.app_text_size, .weight = 600, .color = pal.fg } } },
+        .{ .kind = .{ .text = .{ .content = i18n.tr("Light interactive control edges near the pointer"), .font_size = theme.global.settings_description_size, .color = pal.dim } } },
+    };
+    out.button_hover_glow_row_children = .{
+        .{ .kind = .container, .direction = .column, .gap = 2, .width = .{ .flex = 1 }, .children = &out.button_hover_glow_label_children },
+        .{ .name = "button_hover_glow", .kind = .{ .toggle = .{ .on = t.button_hover_glow_enabled, .owner = out, .on_change = &onButtonHoverGlowChanged } } },
     };
 }
 

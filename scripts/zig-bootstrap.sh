@@ -46,15 +46,18 @@ target="$zig_arch-linux"
 mkdir -p "$ZIG_ROOT"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-if command -v python3 >/dev/null 2>&1; then
-    curl -fsSL https://ziglang.org/download/index.json -o "$tmp/index.json" >&2
-    tarball=$(python3 -c "import json;print(json.load(open('$tmp/index.json'))['$ZIG_PIN']['$target']['tarball'])")
-    shasum=$(python3 -c "import json;print(json.load(open('$tmp/index.json'))['$ZIG_PIN']['$target']['shasum'])")
-else
-    log "python3 not found; guessing the tarball URL and skipping checksum verification"
-    tarball="https://ziglang.org/download/$ZIG_PIN/zig-$target-$ZIG_PIN.tar.xz"
-    shasum=""
-fi
+curl -fsSL https://ziglang.org/download/index.json -o "$tmp/index.json" >&2
+# index.json is pretty-printed: "<version>": { ... "<target>": { "tarball": ..., "shasum": ... } }
+field() {
+    awk -v ver="\"$ZIG_PIN\"" -v tgt="\"$target\"" -v key="\"$1\"" '
+        /^  "/ { in_ver = ($1 == ver ":") }
+        in_ver && $1 == tgt ":" { in_tgt = 1; next }
+        in_ver && in_tgt && $1 == key ":" { gsub(/[",]/, "", $2); print $2; exit }
+        in_tgt && /}/ { in_tgt = 0 }' "$tmp/index.json"
+}
+tarball=$(field tarball)
+shasum=$(field shasum)
+[ -n "$tarball" ] && [ -n "$shasum" ] || die "zig $ZIG_PIN for $target is not listed in ziglang.org's index.json"
 log "Downloading $tarball"
 curl -fsSL "$tarball" -o "$tmp/zig.tar.xz" >&2
 if [ -n "$shasum" ]; then

@@ -110,8 +110,8 @@ fn scan(path: []const u8, list: *List) anyerror!void {
 }
 
 fn extract(path: []const u8, list: *List) !void {
-    const source = try A.dupeZ(u8, try read(path));
-    var tree = try std.zig.Ast.parse(A, source, .zig);
+    const source = try A.dupeSentinel(u8, try read(path), 0);
+    var tree = try std.zig.Ast.parse(A, source, .{});
     defer tree.deinit(A);
     const tags = tree.tokens.items(.tag);
     var i: u32 = 0;
@@ -549,8 +549,8 @@ fn generateData(tags: []const []const u8, source: []const u8, output: []const u8
     try write(output, out.written());
 }
 fn lint(path: []const u8) !void {
-    const source = try A.dupeZ(u8, try read(path));
-    var tree = try std.zig.Ast.parse(A, source, .zig);
+    const source = try A.dupeSentinel(u8, try read(path), 0);
+    var tree = try std.zig.Ast.parse(A, source, .{});
     defer tree.deinit(A);
     const tags = tree.tokens.items(.tag);
     var test_depth: usize = 0;

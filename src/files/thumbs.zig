@@ -8,6 +8,7 @@
 //! ARGB32. The cache is keyed by path and checked against the mtime and size
 //! the folder listing reported, so an edited file misses and is re-requested.
 const std = @import("std");
+const platform = @import("platform");
 const c = @import("c.zig").api;
 const decode = @import("thumb_decode.zig");
 
@@ -22,7 +23,6 @@ const max_results: usize = 32;
 const worker_count = 2;
 const worker_nice = 5;
 
-extern fn setpriority(which: c_int, who: c_uint, prio: c_int) c_int;
 
 pub const Want = struct {
     path: []const u8,
@@ -178,7 +178,7 @@ pub const Service = struct {
         self.queue.clearRetainingCapacity();
         for (wants) |want| {
             if (self.resolved(want) or self.inFlight(want)) continue;
-            const path = a.dupeZ(u8, want.path) catch continue;
+            const path = a.dupeSentinel(u8, want.path, 0) catch continue;
             self.queue.append(a, .{ .path = path, .mtime = want.mtime, .bytes = want.bytes, .is_symlink = want.is_symlink }) catch {
                 a.free(path);
                 continue;
@@ -274,7 +274,7 @@ pub const Service = struct {
 
     fn workerLoop(self: *Service, index: usize) void {
         // Thumbnails are never urgent: yield to the UI and other programs.
-        _ = setpriority(0, @intCast(std.os.linux.gettid()), worker_nice);
+        platform.process.lowerThreadPriority(worker_nice);
         _ = c.pthread_mutex_lock(&self.mutex);
         defer _ = c.pthread_mutex_unlock(&self.mutex);
         while (!self.stopping) {
@@ -380,7 +380,7 @@ const TestDir = struct {
     fn init() !TestDir {
         var template = "/tmp/rediwm-thumbs-XXXXXX".*;
         const made = c.mkdtemp(&template) orelse return error.TmpDirFailed;
-        return .{ .path = try std.testing.allocator.dupeZ(u8, std.mem.span(made)) };
+        return .{ .path = try std.testing.allocator.dupeSentinel(u8, std.mem.span(made), 0) };
     }
 
     fn file(self: TestDir, name: []const u8) ![:0]u8 {
@@ -389,7 +389,7 @@ const TestDir = struct {
 
     fn deinit(self: TestDir) void {
         var cmd: [256]u8 = undefined;
-        const text = std.fmt.bufPrintZ(&cmd, "rm -rf '{s}'", .{self.path}) catch unreachable;
+        const text = std.fmt.bufPrintSentinel(&cmd, "rm -rf '{s}'", .{self.path}, 0) catch unreachable;
         _ = c.system(text.ptr);
         std.testing.allocator.free(self.path);
     }
@@ -552,7 +552,7 @@ test "least recently used rasters are evicted first" {
     defer service.deinit();
     const names = [_][]const u8{ "/x/a.png", "/x/b.png", "/x/c.png" };
     for (names) |name| {
-        const key = try a.dupeZ(u8, name);
+        const key = try a.dupeSentinel(u8, name, 0);
         const pixels = try a.alloc(u32, 4);
         @memset(pixels, 0xff00ff00);
         try service.entries.put(a, key, .{ .pixels = pixels, .w = 2, .h = 2, .mtime = 1, .bytes = 1, .tick = service.nextTick() });
@@ -563,7 +563,7 @@ test "least recently used rasters are evicted first" {
     // 40 bytes under the budget, leaving the three small ones 8 bytes over it.
     const big = try a.alloc(u32, (max_bytes - 40) / 4);
     @memset(big, 0);
-    try service.entries.put(a, try a.dupeZ(u8, "/x/big.png"), .{ .pixels = big, .w = 1, .h = 1, .mtime = 1, .bytes = 1, .tick = service.nextTick() });
+    try service.entries.put(a, try a.dupeSentinel(u8, "/x/big.png", 0), .{ .pixels = big, .w = 1, .h = 1, .mtime = 1, .bytes = 1, .tick = service.nextTick() });
     service.bytes += big.len * 4;
     service.evict();
     try std.testing.expect(service.bytes <= max_bytes);

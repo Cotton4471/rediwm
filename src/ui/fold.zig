@@ -208,6 +208,10 @@ test "fold matching maps expansion and decomposed accent offsets" {
     try std.testing.expect(startsWith("Æsir", "ae", .{}));
     try std.testing.expect(eql("ÉLAN", "e\u{301}lan", .{}));
     try std.testing.expectEqual(std.math.Order.lt, order("Äpfel", "Zebra", .{}));
-    const long = "Préfixe " ** 100;
+    const long = comptime blk: {
+        var repeated: []const u8 = "";
+        for (0..100) |_| repeated = repeated ++ "Préfixe ";
+        break :blk repeated;
+    };
     try std.testing.expect(contains(long ++ "Терминал", "терм", .{}));
 }

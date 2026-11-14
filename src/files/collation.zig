@@ -1,12 +1,8 @@
 //! Private name collation. Keys are frozen with each listing so UI sorting
 //! never calls libc, changes the process locale or races a worker update.
 const std = @import("std");
-const c = @cImport({
-    @cUndef("_FORTIFY_SOURCE");
-    @cDefine("_GNU_SOURCE", "1");
-    @cInclude("locale.h");
-    @cInclude("string.h");
-});
+const builtin = @import("builtin");
+const c = @import("c");
 
 pub const Locale = struct {
     handle: c.locale_t,
@@ -50,7 +46,7 @@ pub const Locale = struct {
         // key instead of passing malformed multibyte sequences to libc.
         if (!std.unicode.utf8ValidateSlice(text) or std.mem.indexOfScalar(u8, text, 0) != null) return allocator.dupe(u8, text);
         var source_buffer: [1024]u8 = undefined;
-        const owned_source = if (text.len >= source_buffer.len) try allocator.dupeZ(u8, text) else null;
+        const owned_source = if (text.len >= source_buffer.len) try allocator.dupeSentinel(u8, text, 0) else null;
         defer if (owned_source) |owned| allocator.free(owned);
         const ztext: [:0]const u8 = owned_source orelse blk: {
             @memcpy(source_buffer[0..text.len], text);
@@ -102,11 +98,19 @@ test "C name collation preserves byte order for a mixed name list" {
     try checkOrder("C", &.{ "Apfel", "Zebra", "apple", "Äpfel", "Élan", "Ёж", "Ель", "Яблоко" });
 }
 
+/// The expected orders are glibc's. FreeBSD's tables differ (see
+/// docs/plans/freebsd.md); there `strxfrm_l` still agrees with `strcoll_l`.
+fn needsGlibcTables() !void {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+}
+
 test "German name collation places accented names beside their base letters" {
+    try needsGlibcTables();
     try checkOrder("de_DE.UTF-8", &.{ "Apfel", "Äpfel", "apple", "Élan", "Zebra", "Ёж", "Ель", "Яблоко" });
 }
 
 test "Russian name collation orders Cyrillic names and yo with ye" {
+    try needsGlibcTables();
     try checkOrder("ru_RU.UTF-8", &.{ "Apfel", "Äpfel", "apple", "Élan", "Zebra", "Еж", "Ёж", "Ель", "Яблоко" });
 }
 

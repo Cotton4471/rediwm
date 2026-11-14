@@ -2,14 +2,50 @@
 
 Open **System Monitor** from the launcher, with **Ctrl+Alt+Del**, or by
 running `rediwm-monitor`. The shortcut restores and focuses an existing
-window, including one on another workspace.
+window, including one on another workspace. It dismisses open shell popups,
+the window switcher and screenshot selection, and takes focus even when a
+client has inhibited compositor shortcuts.
 
-CPU and RAM summaries have 60-second graphs. System RAM usage is
+CPU and RAM summary cards show large current percentages and shaded 60-second
+graphs. CPU includes its reported frequency and logical CPU count; RAM includes
+used/total capacity and a usage bar. Graph axes show CPU percentages and memory
+capacity. The cards use a compact layout in narrow windows.
+
+Click a card (or focus it with Tab and press Enter) to expand it to the full
+width; the other card slides away. Click the expanded card again, use the
+collapse button at its top-right corner, or press Escape outside the search
+field to bring both cards back.
+Expanded CPU adds a vertical load meter made of horizontal segments for every
+online logical CPU. The meters fill from the bottom and are about two digits
+wide, with kernel CPU numbers and percentages when there is room. Many-core
+machines drop the percentages, then the numbers, and use narrower meters if
+needed. The card also shows the 1, 5 and 15 minute load averages and the system's
+thread count. Expanded RAM adds a bar of used
+memory and reclaimable cache, then used, cached (buffers, page cache and
+reclaimable slab, as `free` reports buff/cache), swap, available, free and
+shared (tmpfs and shared memory) amounts, and the four processes of any user
+holding the most resident memory. Both keep the 60-second graph when the
+window is wide enough. FreeBSD reports cached memory as inactive pages and
+has no shared figure or thread count. System RAM usage is
 `MemTotal - MemAvailable`; process memory is resident memory. A process
 using one CPU core reads 100%, so multithreaded processes can exceed 100%.
 New processes and the first sample after resuming show an em dash until
 there is a second CPU measurement. Unavailable data also shows an em dash.
 Nonlocal account names fall back to their numeric UID.
+
+The bottom bar groups CPU, RAM, swap, network, uptime and CPU/GPU temperatures
+beside the process actions. It wraps the readouts and actions at smaller
+window sizes. CPU shows online logical CPUs and CPU 0's reported frequency;
+RAM and swap show used/total capacity and a percentage. Network arrows show
+total upload/download rates across non-loopback interfaces (virtual interfaces
+can count the same traffic again). The first sample after resume or an interface
+change shows a dash. Temperature has separate **CPU** and **GPU** rows. CPU
+shows the hottest supported CPU sensor. GPU shows the hottest reported GPU die
+or package temperature, using Linux hwmon for AMD, Intel and Nouveau, or the
+optional NVIDIA management library for the proprietary driver. GPU junction
+and memory channels are excluded. NVIDIA telemetry is released while paused
+or minimized. Missing metrics show a dash; FreeBSD currently provides
+CPU count, frequency and uptime, with network and temperature unavailable.
 
 The list starts with your processes, sorted by CPU usage. Click a column to
 sort; click again to reverse. **My processes / All processes** changes the
@@ -22,6 +58,12 @@ and essential RediWM session protection at execution, including after a
 confirmation has been open. Signals use a validated pidfd. Other users'
 processes can be viewed where `/proc` permits but cannot be managed here.
 The monitor never requests elevated privileges.
+
+The process table has alternating rows, column dividers, process glyphs and
+colored state indicators. CPU bars fill at one core (100%); resident-memory
+bars are relative to the largest process in the snapshot, including processes
+outside the current filter. Exact values stay visible, and bars hide when the
+window is too narrow to fit them.
 
 Process rows use Files' rounded hover and selection cards. The hover fades in
 and glides between rows; selection fades use the accent outline. Both follow
@@ -70,8 +112,8 @@ For explicit workspace overrides, use the existing section:
 "Ctrl+Alt+Delete" = "open_system_monitor"
 ```
 
-Shortcut inhibition and lock/greeter rules still apply. The app gets its
-own application scope when scope management is enabled.
+Lock, greeter, authentication prompts and shortcut editing keep priority.
+The app gets its own application scope when scope management is enabled.
 
 ## Building and testing
 

@@ -60,6 +60,7 @@ pub fn addDevice(input: *Input, device: *wlr.InputDevice) void {
         .@"switch" => input.lid.addDevice(device),
     }
     input.updateCapabilities();
+    @import("../session/greeter_ready.zig").check(input.server);
 }
 
 pub fn requestSetCursor(

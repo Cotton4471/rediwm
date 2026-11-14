@@ -4,6 +4,7 @@ const std = @import("std");
 const proc = @import("proc.zig");
 const c = proc.c;
 const a = std.heap.c_allocator;
+const GpuReader = @import("proc_gpu.zig").Reader;
 
 pub const Process = struct {
     identity: proc.Identity,
@@ -22,7 +23,12 @@ pub const Snapshot = struct {
     at_ns: u64,
     cpu: ?proc.Cpu,
     cpu_percent: ?f64 = null,
+    /// Online logical CPUs' counters and, from the second sample, their load.
+    cores: []proc.Core = &.{},
+    core_percent: []?f64 = &.{},
     memory: ?proc.Memory,
+    system: proc.System = .{},
+    network_rate: ?proc.NetworkRate = null,
     unavailable: usize = 0,
     truncated: bool = false,
     failed: bool = false,
@@ -38,14 +44,20 @@ pub fn sample(cancelled: *const std.atomic.Value(u64), generation: u64) !*Snapsh
     errdefer snapshot.deinit();
     const arena = snapshot.arena.allocator();
     var buf: [65536]u8 = undefined;
-    if (proc.readAt(c.AT_FDCWD, "/proc/stat", &buf)) |bytes| snapshot.cpu = proc.parseCpu(bytes) else |_| {}
-    if (proc.readAt(c.AT_FDCWD, "/proc/meminfo", &buf)) |bytes| snapshot.memory = proc.parseMemory(bytes) else |_| {}
-    const dir = c.opendir("/proc") orelse {
+    snapshot.cpu = proc.cpuTotals(&buf);
+    var cores: [proc.max_cores]proc.Core = undefined;
+    const core_count = proc.cpuCores(&buf, &cores);
+    snapshot.cores = try arena.dupe(proc.Core, cores[0..core_count]);
+    snapshot.core_percent = try arena.alloc(?f64, core_count);
+    @memset(snapshot.core_percent, null);
+    snapshot.memory = proc.memoryTotals(&buf);
+    snapshot.system = proc.systemStats(&buf);
+    var list = proc.List.open() orelse {
         snapshot.failed = true;
         return snapshot;
     };
-    defer _ = c.closedir(dir);
-    const page_size = c.sysconf(c._SC_PAGESIZE);
+    defer list.close();
+    const page_size = proc.pageSize();
     var rows: std.ArrayList(Process) = .empty;
     var users: std.AutoHashMapUnmanaged(u32, []const u8) = .empty;
     // Avoid NSS here: a directory service outage must never prevent stopping
@@ -60,33 +72,31 @@ pub fn sample(cancelled: *const std.atomic.Value(u64), generation: u64) !*Snapsh
             try users.put(arena, uid, try safeName(arena, user));
         }
     } else |_| {}
-    while (c.readdir(dir)) |entry| {
+    while (list.next()) |pid| {
         if (cancelled.load(.acquire) != generation) return error.Cancelled;
-        const name = std.mem.sliceTo(entry.*.d_name[0..], 0);
-        const pid = std.fmt.parseInt(i32, name, 10) catch continue;
-        if (pid <= 0) continue;
         if (rows.items.len >= 131072) {
             snapshot.truncated = true;
             break;
         }
-        const process_dir = proc.openProcess(pid) catch {
+        const process = proc.Process.open(pid) catch {
             snapshot.unavailable += 1;
             continue;
         };
-        defer _ = c.close(process_dir);
-        const stat = proc.parseStat(proc.readAt(process_dir, "stat", &buf) catch {
-            snapshot.unavailable += 1;
+        defer process.close();
+        const stat = process.stat(&buf) catch |err| {
+            // Gone or unreadable counts as unavailable; a malformed record is skipped.
+            if (err != error.IdentityUnavailable) snapshot.unavailable += 1;
             continue;
-        }) orelse continue;
+        };
         const process_name = try safeName(arena, stat.name);
-        const uids = if (proc.readAt(process_dir, "status", &buf)) |bytes| proc.parseUids(bytes) else |_| null;
+        const uids = process.uids(&buf) catch null;
         const user = if (uids) |ids| blk: {
             if (users.get(ids[0])) |value| break :blk value;
             const value = try std.fmt.allocPrint(arena, "{d}", .{ids[0]});
             try users.put(arena, ids[0], value);
             break :blk value;
         } else "Unavailable";
-        const protected = proc.protectedAt(process_dir, pid) catch true;
+        const protected = proc.isProtected(process, pid) catch true;
         try rows.append(arena, .{
             .identity = .{ .pid = pid, .start = stat.start },
             .name = process_name,
@@ -94,7 +104,7 @@ pub fn sample(cancelled: *const std.atomic.Value(u64), generation: u64) !*Snapsh
             .uids = uids,
             .state = stat.state,
             .cpu_ticks = stat.cpu,
-            .resident_bytes = if (page_size > 0) std.math.mul(u64, stat.rss, @intCast(page_size)) catch null else null,
+            .resident_bytes = if (page_size > 0) std.math.mul(u64, stat.rss, page_size) catch null else null,
             .protected = protected,
         });
     }
@@ -163,14 +173,19 @@ pub const Worker = struct {
         return result;
     }
     fn run(self: *Worker) void {
+        var gpu: ?GpuReader = null;
+        defer if (gpu) |*reader| reader.deinit();
+        var gpu_attempted = false;
         var previous: std.AutoHashMapUnmanaged(i32, Baseline) = .empty;
         defer previous.deinit(a);
         var last_at: u64 = 0;
         var last_cpu: ?proc.Cpu = null;
+        var last_cores: [proc.max_cores]proc.Core = undefined;
+        var last_core_count: usize = 0;
+        var last_network: ?proc.Network = null;
         var observed: u64 = std.math.maxInt(u64);
         var deadline: u64 = 0;
-        const hz_raw = c.sysconf(c._SC_CLK_TCK);
-        const hz: u64 = @intCast(@max(0, hz_raw));
+        const hz = proc.ticksPerSecond();
         while (!self.stopping.load(.acquire)) {
             const generation = self.generation.load(.acquire);
             if (generation != observed) {
@@ -178,12 +193,21 @@ pub const Worker = struct {
                 previous.clearRetainingCapacity();
                 last_at = 0;
                 last_cpu = null;
+                last_core_count = 0;
+                last_network = null;
                 deadline = 0;
             }
             if (self.active.load(.acquire) and proc.nowNs() >= deadline) {
+                if (!gpu_attempted) {
+                    gpu = GpuReader.init();
+                    gpu_attempted = true;
+                }
                 const snap = sample(&self.generation, generation) catch {
                     deadline = proc.nowNs() + 1_000_000_000;
                     continue;
+                };
+                if (gpu) |*reader| if (reader.sample()) |temperature| {
+                    snap.system.gpu_temperature_c = @max(snap.system.gpu_temperature_c orelse temperature, temperature);
                 };
                 if (self.generation.load(.acquire) != generation) {
                     snap.deinit();
@@ -191,6 +215,12 @@ pub const Worker = struct {
                 }
                 if (last_cpu) |before| if (snap.cpu) |after| {
                     snap.cpu_percent = proc.cpuPercent(before, after);
+                };
+                corePercents(snap, last_cores[0..last_core_count]);
+                last_core_count = snap.cores.len;
+                @memcpy(last_cores[0..last_core_count], snap.cores);
+                if (last_network) |before| if (snap.system.network) |after| {
+                    snap.network_rate = proc.networkRate(before, after, snap.at_ns -| last_at);
                 };
                 for (snap.processes) |*row| {
                     if (previous.get(row.identity.pid)) |before| {
@@ -201,6 +231,7 @@ pub const Worker = struct {
                 for (snap.processes) |row| previous.put(a, row.identity.pid, .{ .start = row.identity.start, .cpu = row.cpu_ticks }) catch {};
                 last_at = snap.at_ns;
                 last_cpu = snap.cpu;
+                last_network = snap.system.network;
                 deadline = snap.at_ns + 1_000_000_000;
                 self.mutex.lockUncancelable(self.io);
                 if (self.generation.load(.acquire) == generation and self.active.load(.acquire)) {
@@ -210,6 +241,11 @@ pub const Worker = struct {
                 } else snap.deinit();
                 self.mutex.unlock(self.io);
             }
+            if (!self.active.load(.acquire)) {
+                if (gpu) |*reader| reader.deinit();
+                gpu = null;
+                gpu_attempted = false;
+            }
             var fd = c.struct_pollfd{ .fd = self.wake_fd, .events = c.POLLIN, .revents = 0 };
             const timeout: c_int = if (!self.active.load(.acquire)) -1 else @intCast(@min(1000, (deadline -| proc.nowNs() + 999_999) / 1_000_000));
             _ = c.poll(&fd, 1, timeout);
@@ -217,6 +253,16 @@ pub const Worker = struct {
         }
     }
 };
+
+/// Pairs cores by id: one going offline shifts the rest of the list.
+pub fn corePercents(snap: *Snapshot, before: []const proc.Core) void {
+    for (snap.cores, snap.core_percent, 0..) |core, *percent, i| {
+        const previous = if (i < before.len and before[i].id == core.id) before[i] else for (before) |other| {
+            if (other.id == core.id) break other;
+        } else continue;
+        percent.* = proc.cpuPercent(previous.cpu, core.cpu);
+    }
+}
 
 pub fn wake(fd: c_int) void {
     const one: u64 = 1;

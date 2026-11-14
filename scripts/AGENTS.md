@@ -21,7 +21,7 @@
   (no network sandbox, no systemd), which are harmless.
 * **`DEPENDS` is generated from the built binaries' `NEEDED` libraries**
   (`release-build.sh`), never hand-kept; only the extras (Xwayland, portals,
-  Python, Mesa drivers) are listed by hand. Libraries bundled in `lib/rediwm`
+  Mesa drivers) are listed by hand. Libraries bundled in `lib/rediwm`
   are excluded, and which ones get bundled depends on what the build container
   has installed, so never install the distro's own wlroots there.
 * **Releases always use the pinned, patched wlroots** from `build-wlroots.sh`,
@@ -34,3 +34,8 @@
   only; other CPUs build from source.
 * Checksums come from the same GitHub release as the tarballs, so they catch
   corruption, not a compromised release. Signing is not done yet.
+* **Programs to install come from the build's `programs` list**
+  (`build/install_paths.zig`: every exe or file the install step puts in
+  `bin/`), beside `install-prefix`. The install, deb and verify scripts read
+  it; never hand-list programs or glob `bin/` (zig build leaves retired ones
+  there). A new helper needs only its install step in `build/`.

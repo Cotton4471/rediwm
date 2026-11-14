@@ -10,8 +10,9 @@ const fromSurface = Toplevel.fromSurface;
 
 pub fn controlAt(toplevel: *Toplevel, sx: f64, sy: f64) ?chrome.ControlKind {
     if (!toplevel.hasServerDecorations() or sy >= @as(f64, @floatFromInt(toplevel.titlebarHeight()))) return null;
+    const width = toplevel.chrome_width - toplevel.controlInsets().right;
     inline for (.{ chrome.ControlKind.close, .maximize, .minimize }) |kind| {
-        if (chrome.controlRectScaled(toplevel.chrome_width, kind, toplevel.chromeDensity()).contains(sx, sy)) return kind;
+        if (chrome.controlRectScaled(width, kind, toplevel.chromeDensity()).contains(sx, sy)) return kind;
     }
     return null;
 }
@@ -54,12 +55,22 @@ pub fn minimize(toplevel: *Toplevel) void {
     // X11 clients can ask for this while withdrawn; the stack reorder below
     // needs the window to be in it.
     if (toplevel.minimized or !toplevel.in_world) return;
-    toplevel.minimized = true;
+    // The flame snapshots the shown window, and a minimized window's frame is
+    // hidden by the visual sync in detachInput (window_tabs.visible), so with
+    // the flame on the flag is set after the snapshot. Off, it is set first, as
+    // it always was.
+    const flame = @import("../effects/window_minimize.zig").wanted(toplevel.server);
+    if (!flame) toplevel.minimized = true;
     toplevel.detachInput();
     toplevel.finishSwitch();
+    if (flame) {
+        @import("../effects/window_minimize.zig").start(toplevel);
+        toplevel.minimized = true;
+    }
     toplevel.frame_tree.node.setEnabled(false);
 
     const server = toplevel.server;
+    const held_focus = server.world.toplevels.first() == toplevel and toplevel.activated;
     if (server.input.seat.keyboard_state.focused_surface) |focused| {
         if (fromSurface(server, focused) == toplevel) server.input.seat.keyboardNotifyClearFocus();
     }
@@ -91,7 +102,11 @@ pub fn minimize(toplevel: *Toplevel) void {
     }
 
     if (toplevel.tab_group != 0) @import("../window_tabs.zig").refreshVisibility(server);
-    if (server.world.workspaces.active) @import("../workspaces.zig").focusFallback(server, toplevel.workspace_id);
+    if (server.world.workspaces.active) {
+        @import("../workspaces.zig").focusFallback(server, toplevel.workspace_id);
+    } else if (held_focus) {
+        @import("../workspaces.zig").focusFallback(server, null);
+    }
     // Must run last: content_tree stays alive and rendering-ready while
     // minimized (only the frame is hidden), so a window-capture source
     // over it wouldn't otherwise notice — unlike a real close, nothing
@@ -110,6 +125,7 @@ pub fn restore(toplevel: *Toplevel) void {
     toplevel.server.window_tabs.select(toplevel);
     defer if (toplevel.tab_group != 0) @import("../window_tabs.zig").refreshVisibility(toplevel.server);
     if (!toplevel.minimized or !toplevel.in_world) return;
+    @import("../effects/window_minimize.zig").cancelFor(toplevel.server, toplevel.id);
     toplevel.minimized = false;
     toplevel.frame_tree.node.setEnabled(@import("../window_tabs.zig").visible(toplevel));
     switch (toplevel.backend) {

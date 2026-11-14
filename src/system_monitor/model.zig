@@ -31,7 +31,7 @@ pub const Model = struct {
             if (self.query.len > 0) {
                 var pid_buf: [32]u8 = undefined;
                 const pid = std.fmt.bufPrint(&pid_buf, "{d}", .{row.identity.pid}) catch unreachable;
-                if (std.ascii.indexOfIgnoreCase(row.name, self.query) == null and std.ascii.indexOfIgnoreCase(row.user, self.query) == null and std.mem.indexOf(u8, pid, self.query) == null) continue;
+                if (std.ascii.findIgnoreCase(row.name, self.query) == null and std.ascii.findIgnoreCase(row.user, self.query) == null and std.mem.indexOf(u8, pid, self.query) == null) continue;
             }
             try self.rows.append(self.allocator, i);
         }

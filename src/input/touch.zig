@@ -94,7 +94,7 @@ pub fn remap(self: *Self) void {
 
 fn mapDevice(self: *Self, device: *wlr.InputDevice) void {
     const touch = device.toTouch();
-    const wanted: ?[]const u8 = if (touch.output_name[0] != 0) std.mem.span(touch.output_name) else null;
+    const wanted: ?[]const u8 = if (touch.output_name) |name| (if (name[0] != 0) std.mem.span(name) else null) else null;
     var target: ?*Output = null;
     var it = self.input.server.outputs.iterator(.forward);
     while (it.next()) |output| {
@@ -143,13 +143,13 @@ fn handleDown(listener: *wl.Listener(*wlr.Touch.event.Down), event: *wlr.Touch.e
     if (self.find(event.touch_id)) |stale| self.endPoint(stale, event.time_msec, true);
     if (self.point_count == max_points) return;
 
-    var point: Point = .{ .id = event.touch_id, .device = event.device, .route = .ignored };
+    var point: Point = .{ .id = event.touch_id, .device = &event.touch.base, .route = .ignored };
     defer {
         self.points[self.point_count] = point;
         self.point_count += 1;
     }
     if (server.idle) |im| {
-        if (im.state != .active) {
+        if (im.isBlanked()) {
             // Like a mouse button, the waking touch does nothing else.
             im.notifyActivity(.touch);
             return;
@@ -159,7 +159,7 @@ fn handleDown(listener: *wl.Listener(*wlr.Touch.event.Down), event: *wlr.Touch.e
 
     var lx: f64 = undefined;
     var ly: f64 = undefined;
-    input.cursor.absoluteToLayoutCoords(event.device, event.x, event.y, &lx, &ly);
+    input.cursor.absoluteToLayoutCoords(&event.touch.base, event.x, event.y, &lx, &ly);
     if (self.emulating == null and input.directInputReachesClients()) {
         const hit = scene_data.hitTest(server, lx, ly);
         if (input.clientTarget(hit, lx, ly)) |target| {
@@ -176,8 +176,8 @@ fn handleDown(listener: *wl.Listener(*wlr.Touch.event.Down), event: *wlr.Touch.e
     if (self.emulating != null or input.seat.touchNumPoints() > 0) return;
     self.emulating = event.touch_id;
     point.route = .pointer;
-    input.layoutMotion(event.device, lx, ly, event.time_msec);
-    input.processButton(event.device, Input.btn_left, .pressed, event.time_msec);
+    input.layoutMotion(&event.touch.base, lx, ly, event.time_msec);
+    input.processButton(&event.touch.base, Input.btn_left, .pressed, event.time_msec);
     input.seat.pointerNotifyFrame();
 }
 
@@ -204,14 +204,14 @@ fn handleMotion(listener: *wl.Listener(*wlr.Touch.event.Motion), event: *wlr.Tou
     if (input.server.idle) |im| im.notifyActivity(.touch);
     var lx: f64 = undefined;
     var ly: f64 = undefined;
-    input.cursor.absoluteToLayoutCoords(event.device, event.x, event.y, &lx, &ly);
+    input.cursor.absoluteToLayoutCoords(&event.touch.base, event.x, event.y, &lx, &ly);
     switch (point.route) {
         .client => |anchor| {
             const local = anchor.local(input, lx, ly);
             input.seat.touchNotifyMotion(event.time_msec, event.touch_id, local.x, local.y);
         },
         .pointer => {
-            input.layoutMotion(event.device, lx, ly, event.time_msec);
+            input.layoutMotion(&event.touch.base, lx, ly, event.time_msec);
             input.seat.pointerNotifyFrame();
         },
         .ignored => {},

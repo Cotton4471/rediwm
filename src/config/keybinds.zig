@@ -44,6 +44,9 @@ pub const Action = union(enum) {
     brightness_up,
     brightness_down,
     power_profile_cycle,
+    /// The next or previous keyboard layout or input method (`input_sources.zig`).
+    input_source_next,
+    input_source_prev,
     spawn: []const u8,
     close_window,
     toggle_fullscreen,
@@ -59,6 +62,7 @@ pub const Action = union(enum) {
     zoom_in,
     zoom_out,
     zoom_reset,
+    toggle_overview,
     camera_zoom_in,
     camera_zoom_out,
     camera_zoom_reset,
@@ -99,6 +103,12 @@ pub fn isHardwareAction(action: Action) bool {
     };
 }
 
+/// Switching keyboard layouts also works on the lock screen (layouts only:
+/// input methods never reach it), where passwords are typed.
+pub fn worksWhileLocked(action: Action) bool {
+    return isHardwareAction(action) or action == .input_source_next or action == .input_source_prev;
+}
+
 pub fn repeats(action: Action) bool {
     return switch (action) {
         .volume_up, .volume_down, .brightness_up, .brightness_down => true,
@@ -134,31 +144,31 @@ pub fn parseAction(str: []const u8, allocator: Allocator) !Action {
         return .poweroff;
     }
 
-    inline for (std.meta.fields(Action)) |field| {
-        if (std.mem.eql(u8, name, field.name)) {
-            return switch (field.type) {
+    inline for (@typeInfo(Action).@"union".field_names) |field_name| {
+        if (std.mem.eql(u8, name, field_name)) {
+            return switch (@FieldType(Action, field_name)) {
                 void => blk: {
                     if (arg.len != 0) {
                         log.warn("unknown action string: '{s}'", .{trimmed});
                         return error.UnknownAction;
                     }
-                    break :blk @unionInit(Action, field.name, {});
+                    break :blk @unionInit(Action, field_name, {});
                 },
                 []const u8 => blk: {
                     if (arg.len == 0) {
-                        log.warn(field.name ++ " requires " ++ argumentHelp(field.name, "an argument"), .{});
+                        log.warn(field_name ++ " requires " ++ argumentHelp(field_name, "an argument"), .{});
                         return error.UnknownAction;
                     }
-                    break :blk @unionInit(Action, field.name, try allocator.dupe(u8, arg));
+                    break :blk @unionInit(Action, field_name, try allocator.dupe(u8, arg));
                 },
                 u8 => blk: {
                     const n = std.fmt.parseInt(u8, arg, 10) catch {
-                        log.warn(field.name ++ " requires " ++ argumentHelp(field.name, "an integer 0-255") ++ ", got '{s}'", .{arg});
+                        log.warn(field_name ++ " requires " ++ argumentHelp(field_name, "an integer 0-255") ++ ", got '{s}'", .{arg});
                         return error.UnknownAction;
                     };
-                    break :blk @unionInit(Action, field.name, n);
+                    break :blk @unionInit(Action, field_name, n);
                 },
-                else => @compileError("no action parser for " ++ field.name ++ ": " ++ @typeName(field.type)),
+                else => @compileError("no action parser for " ++ field_name ++ ": " ++ @typeName(@FieldType(Action, field_name))),
             };
         }
     }
@@ -241,11 +251,10 @@ pub fn relevantMods(mods: anytype) ModifierMask {
 
 pub fn normalizeSym(sym: xkb.Keysym) xkb.Keysym {
     const lower = xkb.Keysym.toLower(sym);
-    const raw = @intFromEnum(lower);
-    if (raw == xkb.Keysym.plus) return @enumFromInt(xkb.Keysym.equal);
-    if (raw == xkb.Keysym.underscore) return @enumFromInt(xkb.Keysym.minus);
-    if (raw == xkb.Keysym.ISO_Left_Tab) return @enumFromInt(xkb.Keysym.Tab);
-    if (raw == xkb.Keysym.Sys_Req) return @enumFromInt(xkb.Keysym.Print);
+    if (lower == xkb.Keysym.plus) return xkb.Keysym.equal;
+    if (lower == xkb.Keysym.underscore) return xkb.Keysym.minus;
+    if (lower == xkb.Keysym.ISO_Left_Tab) return xkb.Keysym.Tab;
+    if (lower == xkb.Keysym.Sys_Req) return xkb.Keysym.Print;
     return lower;
 }
 
@@ -263,13 +272,13 @@ fn argumentHelp(comptime name: []const u8, comptime fallback: []const u8) []cons
 
 pub fn actionEql(a: Action, b: Action) bool {
     if (std.meta.activeTag(a) != std.meta.activeTag(b)) return false;
-    inline for (std.meta.fields(Action)) |field| {
-        if (std.meta.activeTag(a) == @field(std.meta.Tag(Action), field.name)) {
-            return switch (field.type) {
+    inline for (@typeInfo(Action).@"union".field_names) |field_name| {
+        if (std.meta.activeTag(a) == @field(std.meta.Tag(Action), field_name)) {
+            return switch (@FieldType(Action, field_name)) {
                 void => true,
-                []const u8 => std.mem.eql(u8, @field(a, field.name), @field(b, field.name)),
-                u8 => @field(a, field.name) == @field(b, field.name),
-                else => @compileError("no action equality for " ++ field.name),
+                []const u8 => std.mem.eql(u8, @field(a, field_name), @field(b, field_name)),
+                u8 => @field(a, field_name) == @field(b, field_name),
+                else => @compileError("no action equality for " ++ field_name),
             };
         }
     }
@@ -277,13 +286,13 @@ pub fn actionEql(a: Action, b: Action) bool {
 }
 
 pub fn describeAction(action: Action, buf: []u8) []const u8 {
-    inline for (std.meta.fields(Action)) |field| {
-        if (std.meta.activeTag(action) == @field(std.meta.Tag(Action), field.name)) {
-            return switch (field.type) {
-                void => field.name,
-                []const u8 => std.fmt.bufPrint(buf, field.name ++ " {s}", .{@field(action, field.name)}) catch field.name,
-                u8 => std.fmt.bufPrint(buf, field.name ++ " {d}", .{@field(action, field.name)}) catch field.name,
-                else => @compileError("no action description for " ++ field.name),
+    inline for (@typeInfo(Action).@"union".field_names) |field_name| {
+        if (std.meta.activeTag(action) == @field(std.meta.Tag(Action), field_name)) {
+            return switch (@FieldType(Action, field_name)) {
+                void => field_name,
+                []const u8 => std.fmt.bufPrint(buf, field_name ++ " {s}", .{@field(action, field_name)}) catch field_name,
+                u8 => std.fmt.bufPrint(buf, field_name ++ " {d}", .{@field(action, field_name)}) catch field_name,
+                else => @compileError("no action description for " ++ field_name),
             };
         }
     }
@@ -333,48 +342,48 @@ test "parseKeybind maps modifiers and is case insensitive" {
     const a = try parseKeybind("super+t");
     try std.testing.expect(a.modifiers.logo);
     try std.testing.expect(!a.modifiers.shift);
-    try std.testing.expectEqual(@as(u32, xkb.Keysym.t), @intFromEnum(a.sym));
+    try std.testing.expectEqual(@intFromEnum(xkb.Keysym.t), @intFromEnum(a.sym));
 
     const b = try parseKeybind("SUPER+SHIFT+S");
     try std.testing.expect(b.modifiers.logo and b.modifiers.shift);
-    try std.testing.expectEqual(@as(u32, xkb.Keysym.s), @intFromEnum(b.sym));
+    try std.testing.expectEqual(@intFromEnum(xkb.Keysym.s), @intFromEnum(b.sym));
 
     const c = try parseKeybind("alt+tab");
     try std.testing.expect(c.modifiers.alt);
-    try std.testing.expectEqual(@as(u32, xkb.Keysym.Tab), @intFromEnum(c.sym));
+    try std.testing.expectEqual(@intFromEnum(xkb.Keysym.Tab), @intFromEnum(c.sym));
 
     const d = try parseKeybind("ctrl+alt+delete");
     try std.testing.expect(d.modifiers.ctrl and d.modifiers.alt);
-    try std.testing.expectEqual(@as(u32, xkb.Keysym.Delete), @intFromEnum(d.sym));
+    try std.testing.expectEqual(@intFromEnum(xkb.Keysym.Delete), @intFromEnum(d.sym));
 
     const e = try parseKeybind("mod+F1");
     try std.testing.expect(e.modifiers.logo);
-    try std.testing.expectEqual(@as(u32, xkb.Keysym.F1), @intFromEnum(e.sym));
+    try std.testing.expectEqual(@intFromEnum(xkb.Keysym.F1), @intFromEnum(e.sym));
 
     try std.testing.expectError(error.InvalidKeybind, parseKeybind("super+notakey"));
     try std.testing.expectError(error.InvalidKeybind, parseKeybind("hyper+t"));
 }
 
 test "every action round trips and compares its payload" {
-    inline for (std.meta.fields(Action)) |field| {
-        const original = @unionInit(Action, field.name, switch (field.type) {
+    inline for (@typeInfo(Action).@"union".field_names) |field_name| {
+        const original = @unionInit(Action, field_name, switch (@FieldType(Action, field_name)) {
             void => {},
             []const u8 => "example with spaces",
             u8 => 4,
-            else => @compileError("add an action fixture for " ++ field.name),
+            else => @compileError("add an action fixture for " ++ field_name),
         });
         var buf: [128]u8 = undefined;
         const parsed = try parseAction(describeAction(original, &buf), std.testing.allocator);
-        defer if (field.type == []const u8) std.testing.allocator.free(@field(parsed, field.name));
+        defer if (@FieldType(Action, field_name) == []const u8) std.testing.allocator.free(@field(parsed, field_name));
         try std.testing.expect(actionEql(original, parsed));
         var short: [0]u8 = .{};
-        try std.testing.expectEqualStrings(field.name, describeAction(original, &short));
-        if (field.type != void) {
-            const different = @unionInit(Action, field.name, if (field.type == u8) 3 else "different");
+        try std.testing.expectEqualStrings(field_name, describeAction(original, &short));
+        if (@FieldType(Action, field_name) != void) {
+            const different = @unionInit(Action, field_name, if (@FieldType(Action, field_name) == u8) 3 else "different");
             try std.testing.expect(!actionEql(original, different));
-            try std.testing.expectError(error.UnknownAction, parseAction(field.name, std.testing.allocator));
+            try std.testing.expectError(error.UnknownAction, parseAction(field_name, std.testing.allocator));
         } else {
-            try std.testing.expectError(error.UnknownAction, parseAction(field.name ++ " extra", std.testing.allocator));
+            try std.testing.expectError(error.UnknownAction, parseAction(field_name ++ " extra", std.testing.allocator));
         }
     }
     try std.testing.expect(!actionEql(.close_window, .quit));

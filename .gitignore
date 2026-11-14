@@ -4,3 +4,5 @@ zig-pkg/
 __pycache__/
 *.pyc
 /release/
+/result
+/result-*

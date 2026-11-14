@@ -5,7 +5,7 @@ const std = @import("std");
 pub const Config = struct {
     vt: u32 = 1,
     greeter_user: []const u8 = "rediwm-greeter",
-    greeter_command: []const u8 = "/usr/local/bin/rediwm --greeter",
+    greeter_command: []const u8 = @import("install_paths").bin ++ "/rediwm --greeter",
     autologin_user: ?[]const u8 = null,
     autologin_session: ?[]const u8 = null,
 
@@ -115,7 +115,7 @@ test "default config values" {
     const conf = Config{};
     try std.testing.expectEqual(@as(u32, 1), conf.vt);
     try std.testing.expectEqualStrings("rediwm-greeter", conf.greeter_user);
-    try std.testing.expectEqualStrings("/usr/local/bin/rediwm --greeter", conf.greeter_command);
+    try std.testing.expectEqualStrings(@import("install_paths").bin ++ "/rediwm --greeter", conf.greeter_command);
     try std.testing.expect(conf.autologin_user == null);
     try std.testing.expect(conf.autologin_session == null);
 }

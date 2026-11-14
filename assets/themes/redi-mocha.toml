@@ -144,6 +144,7 @@ pdf_search_match_active = "rgba(250,179,135,0.65)"
 
 [layout]
 taskbar_position = "bottom"
+taskbar_items = ["left:start", "left:windows", "right:capture", "right:tray", "right:battery", "~right:wifi", "~right:wired", "right:volume", "right:clock", "-right:power"]
 dock_enabled = false
 
 [assets]

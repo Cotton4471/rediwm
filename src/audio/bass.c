@@ -5,6 +5,7 @@
  * the binaries. */
 #define _POSIX_C_SOURCE 200809L
 #include "bass.h"
+#include "../platform/self_exe.h"
 #include <pipewire/pipewire.h>
 #include <pipewire/impl-module.h>
 #include <pipewire/extensions/metadata.h>
@@ -210,12 +211,7 @@ static const struct pw_core_events core_events = { PW_VERSION_CORE_EVENTS, .erro
 /* The DSP plugin is installed in lib/rediwm/ladspa beside bin/. */
 static void find_plugin(struct rediwm_bass *b) {
     char exe[sizeof(b->plugin)];
-    ssize_t len = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
-    char *slash = NULL;
-    if (len > 0) {
-        exe[len] = '\0';
-        slash = strrchr(exe, '/');
-    }
+    char *slash = rediwm_self_exe(exe, sizeof(exe)) > 0 ? strrchr(exe, '/') : NULL;
     int n = slash ? snprintf(b->plugin, sizeof(b->plugin), "%.*s/../lib/rediwm/ladspa/rediwm-bass.so",
         (int)(slash - exe), exe) : -1;
     /* A quote or backslash would need escaping in the filter-chain arguments. */

@@ -4,17 +4,213 @@ const std = @import("std");
 const i18n = @import("i18n");
 const tr = i18n.tr;
 const App = @import("app.zig").App;
+const Rect = @import("app.zig").Rect;
 const layout = @import("layout.zig");
 const selection = @import("selection.zig");
 const scrollbar = @import("ui").widgets.scrollbar;
+const button_widget = @import("ui").widgets.button;
+const ui_theme = @import("ui").theme;
+const Action = @import("app.zig").Action;
 const a = @import("app.zig").a;
 const toolbar_buttons = @import("app.zig").toolbar_buttons;
 const toolbar_button_y = @import("app.zig").toolbar_button_y;
 const toolbar_button_h = @import("app.zig").toolbar_button_h;
 
+pub fn buttonProximity(
+    self: *const App,
+    action: Action,
+    x: f64,
+    y: f64,
+) button_widget.ProximitySample {
+    const absent = button_widget.ProximitySample{
+        .distance = std.math.inf(f32),
+        .x = 0,
+        .y = 0,
+    };
+    if (self.dialog != .none) return absent;
+
+    for (toolbar_buttons) |item| {
+        if (item.act != action) continue;
+
+        return button_widget.sampleProximity(
+            .{
+                .x = @floatCast(item.x),
+                .y = @floatCast(toolbar_button_y),
+                .w = @floatCast(item.w),
+                .h = @floatCast(toolbar_button_h),
+            },
+            @floatCast(x),
+            @floatCast(y),
+            .{
+                .x = 0,
+                .y = 0,
+                .w = @floatFromInt(self.w),
+                .h = @floatCast(self.toolbarRect().h),
+            },
+        );
+    }
+
+    return absent;
+}
+
+fn toolbarProximityChanged(
+    self: *const App,
+    old_x: f64,
+    old_y: f64,
+    new_x: f64,
+    new_y: f64,
+) bool {
+    const reach = ui_theme.global.border_glow_reach;
+    if (!button_widget.proximityGlowVisible(ui_theme.global) or
+        self.dialog != .none)
+        return false;
+
+    for (toolbar_buttons) |item| {
+        const before = self.buttonProximity(item.act, old_x, old_y);
+        const after = self.buttonProximity(item.act, new_x, new_y);
+        if (@min(before.distance, after.distance) <= reach) return true;
+    }
+
+    return false;
+}
+
+/// Adds `rect` to the glow damage when the pointer moving from old to new
+/// can change its glow (either position within reach).
+fn damageRectProximity(
+    self: *App,
+    rect: Rect,
+    old_x: f64,
+    old_y: f64,
+    new_x: f64,
+    new_y: f64,
+) void {
+    const box = button_widget.Rect{
+        .x = @floatCast(rect.x),
+        .y = @floatCast(rect.y),
+        .w = @floatCast(rect.w),
+        .h = @floatCast(rect.h),
+    };
+    const before = button_widget.sampleProximity(box, @floatCast(old_x), @floatCast(old_y), box);
+    const after = button_widget.sampleProximity(box, @floatCast(new_x), @floatCast(new_y), box);
+    if (@min(before.distance, after.distance) <= ui_theme.global.border_glow_reach)
+        self.pointer_damage.add(.around(rect.x, rect.y, rect.w, rect.h));
+}
+
+/// Records the content items (dialog controls, sidebar tabs, cards and rows,
+/// the page field, the search bar, the scrollbar) whose glow the motion
+/// changes, so the client repaints only those.
+fn damageContentProximity(
+    self: *App,
+    old_x: f64,
+    old_y: f64,
+    new_x: f64,
+    new_y: f64,
+) void {
+    if (old_x == new_x and old_y == new_y) return;
+    if (!button_widget.proximityGlowVisible(ui_theme.global)) return;
+
+    const ox = old_x;
+    const oy = old_y;
+    const nx = new_x;
+    const ny = new_y;
+    if (self.dialog != .none) {
+        const dw: f64 = 440;
+        const dh: f64 = 190;
+        const dx = (@as(f64, @floatFromInt(self.w)) - dw) / 2.0;
+        const dy = (@as(f64, @floatFromInt(self.h)) - dh) / 2.0;
+        if (self.dialog == .password) damageRectProximity(self, .{ .x = dx + 24, .y = dy + 80, .w = dw - 48, .h = 44 }, ox, oy, nx, ny);
+        damageRectProximity(self, .{ .x = dx + dw - 180, .y = dy + dh - 46, .w = 80, .h = 32 }, ox, oy, nx, ny);
+        damageRectProximity(self, .{ .x = dx + dw - 90, .y = dy + dh - 46, .w = 70, .h = 32 }, ox, oy, nx, ny);
+        return;
+    }
+
+    if (self.sidebar_open) {
+        const sb = self.sidebarRect();
+        const tab_w = sb.w / 2.0;
+        damageRectProximity(self, .{ .x = sb.x + 4, .y = sb.y + 4, .w = tab_w - 6, .h = 24 }, ox, oy, nx, ny);
+        damageRectProximity(self, .{ .x = sb.x + tab_w + 2, .y = sb.y + 4, .w = tab_w - 6, .h = 24 }, ox, oy, nx, ny);
+
+        if (self.sidebar_tab == .pages and self.sidebar_layout != null) {
+            const sbl = self.sidebar_layout.?;
+            if (layout.findVisibleSidebarCards(sbl.cards, self.sidebar_scroll_y, sb.h - 36.0)) |range| {
+                for (sbl.cards[range.start_index .. range.end_index + 1]) |card| damageRectProximity(self, .{
+                    .x = sb.x + 16,
+                    .y = sb.y + 36 + card.y_offset - self.sidebar_scroll_y,
+                    .w = self.sidebar_w - 32,
+                    .h = card.card_h,
+                }, ox, oy, nx, ny);
+            }
+        } else if (self.sidebar_tab == .outline and self.outline != null) {
+            // Only the rows `renderOutlineList` paints: from the first one
+            // reaching below the tabs to the last one starting above the end.
+            const row_h = 28.0;
+            const items = self.outline.?;
+            var idx: usize = @intFromFloat(@max(0, @floor((self.sidebar_scroll_y - 32.0) / row_h)));
+            while (idx < items.len) : (idx += 1) {
+                const row_y = sb.y + 40.0 + @as(f64, @floatFromInt(idx)) * row_h - self.sidebar_scroll_y;
+                if (row_y > sb.y + sb.h) break;
+                if (row_y + row_h < sb.y + 36) continue;
+                damageRectProximity(self, .{ .x = sb.x + 4, .y = row_y, .w = sb.w - 8, .h = row_h }, ox, oy, nx, ny);
+            }
+        }
+    }
+
+    // Page-number entry is a content redraw, not a toolbar-button redraw.
+    damageRectProximity(self, .{ .x = 126, .y = 8, .w = 48, .h = 28 }, ox, oy, nx, ny);
+
+    if (self.search_open) {
+        const sr = self.searchBarRect();
+        damageRectProximity(self, .{ .x = sr.x + 10, .y = sr.y, .w = sr.w - 110, .h = sr.h }, ox, oy, nx, ny);
+        const close_x = sr.x + sr.w - 28;
+        const next_x = close_x - 28;
+        const prev_x = next_x - 28;
+        for ([_]f64{ prev_x, next_x, close_x }) |x| {
+            damageRectProximity(self, .{ .x = x, .y = sr.y, .w = 28, .h = sr.h }, ox, oy, nx, ny);
+        }
+    }
+
+    if (self.hbar()) |bar| {
+        const track = bar.track;
+        damageRectProximity(self, .{ .x = track.x, .y = track.y, .w = track.w, .h = track.h }, ox, oy, nx, ny);
+    }
+}
+
+/// Damages page card `index` in the sidebar (its highlight border, which
+/// strokes the card's edge), or the whole window when it has no card.
+fn damageCard(self: *App, index: usize) void {
+    const sbl = self.sidebar_layout orelse {
+        self.dirty = true;
+        return;
+    };
+    if (!self.sidebar_open or index >= sbl.cards.len) {
+        self.dirty = true;
+        return;
+    }
+    const sb = self.sidebarRect();
+    const card = sbl.cards[index];
+    const y = sb.y + 36 + card.y_offset - self.sidebar_scroll_y;
+    self.pointer_damage.add(.around(sb.x + 16, y, self.sidebar_w - 32, card.card_h));
+}
+
+/// Damages outline row `index` in the sidebar.
+fn damageOutlineRow(self: *App, index: usize) void {
+    if (!self.sidebar_open) {
+        self.dirty = true;
+        return;
+    }
+    const sb = self.sidebarRect();
+    const y = sb.y + 40.0 + @as(f64, @floatFromInt(index)) * 28.0 - self.sidebar_scroll_y;
+    self.pointer_damage.add(.around(sb.x + 4, y, sb.w - 8, 28));
+}
+
 pub fn handleMotion(self: *App, px: f64, py: f64) void {
+    const old_x = self.px;
+    const old_y = self.py;
     self.px = px;
     self.py = py;
+
+    if (toolbarProximityChanged(self, old_x, old_y, px, py)) self.toolbar_dirty = true;
+    damageContentProximity(self, old_x, old_y, px, py);
 
     if (self.hbar_drag.active) {
         if (self.hbar()) |bar| self.scroll_x = self.hbar_drag.offsetAt(bar, @floatCast(px), @floatCast(py));
@@ -87,44 +283,55 @@ pub fn handleMotion(self: *App, px: f64, py: f64) void {
         }
     }
 
-    // Sidebar hover detection
+    // Sidebar hover detection. Only real cards and rows can remain hovered;
+    // moving over tabs or empty space clears the previous item.
     const sb = self.sidebarRect();
+    var found_thumb: ?usize = null;
+    var found_outline: ?usize = null;
     if (self.sidebar_open and sb.contains(px, py)) {
-        if (self.sidebar_tab == .pages and self.sidebar_layout != null) {
+        if (self.sidebar_tab == .pages and self.sidebar_layout != null and
+            px >= sb.x + 16 and px <= sb.x + self.sidebar_w - 16 and
+            py >= sb.y + 36)
+        {
             const sbl = self.sidebar_layout.?;
-            const vis_sb = layout.findVisibleSidebarCards(sbl.cards, self.sidebar_scroll_y, sb.h);
-            var found: ?usize = null;
-            if (vis_sb) |vsb| {
-                for (vsb.start_index..vsb.end_index + 1) |i| {
+            const visible = layout.findVisibleSidebarCards(
+                sbl.cards,
+                self.sidebar_scroll_y,
+                sb.h - 36.0,
+            );
+            if (visible) |range| {
+                for (range.start_index..range.end_index + 1) |i| {
                     const card = sbl.cards[i];
-                    const card_y = sb.y + card.y_offset - self.sidebar_scroll_y;
+                    const card_y = sb.y + 36.0 + card.y_offset - self.sidebar_scroll_y;
                     if (py >= card_y and py <= card_y + card.card_h) {
-                        found = i;
+                        found_thumb = i;
                         break;
                     }
                 }
             }
-            if (self.hover_thumb != found) {
-                self.hover_thumb = found;
-                self.dirty = true;
-            }
-        } else if (self.sidebar_tab == .outline and self.outline != null) {
-            const row_h = 28.0;
+        } else if (self.sidebar_tab == .outline and self.outline != null and
+            py >= sb.y + 40.0)
+        {
             const rel_y = py - (sb.y + 40.0) + self.sidebar_scroll_y;
-            if (rel_y >= 0) {
-                const idx: usize = @intFromFloat(rel_y / row_h);
-                if (idx < self.outline.?.len and self.hover_outline != idx) {
-                    self.hover_outline = idx;
-                    self.dirty = true;
+            const idx: usize = @intFromFloat(rel_y / 28.0);
+            if (idx < self.outline.?.len) {
+                const row_y = sb.y + 40.0 +
+                    @as(f64, @floatFromInt(idx)) * 28.0 -
+                    self.sidebar_scroll_y;
+                if (py >= row_y and py <= row_y + 28.0 and
+                    px >= sb.x + 4 and px <= sb.x + sb.w - 4)
+                {
+                    found_outline = idx;
                 }
             }
         }
-    } else {
-        if (self.hover_thumb != null or self.hover_outline != null) {
-            self.hover_thumb = null;
-            self.hover_outline = null;
-            self.dirty = true;
-        }
+    }
+    if (self.hover_thumb != found_thumb or self.hover_outline != found_outline) {
+        // Only the cards or rows whose highlight changes repaint.
+        for ([_]?usize{ self.hover_thumb, found_thumb }) |maybe| if (maybe) |i| damageCard(self, i);
+        for ([_]?usize{ self.hover_outline, found_outline }) |maybe| if (maybe) |i| damageOutlineRow(self, i);
+        self.hover_thumb = found_thumb;
+        self.hover_outline = found_outline;
     }
 }
 
@@ -171,7 +378,7 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
                         .goto_page => |target| self.goToPage(target),
                         .uri => |u| {
                             if (!std.mem.startsWith(u8, u, "http://") and !std.mem.startsWith(u8, u, "https://")) return;
-                            const copy = a.dupeZ(u8, u) catch return;
+                            const copy = a.dupeSentinel(u8, u, 0) catch return;
                             if (self.clipboard_text) |old| a.free(old);
                             self.clipboard_text = copy;
                             self.clipboard_request = true;
@@ -244,7 +451,7 @@ pub fn updateSelection(self: *App) void {
     const text = content.text orelse return;
     const selected = range.text(text);
     if (selected.len == 0) return;
-    self.selected_text = a.dupeZ(u8, selected) catch return;
+    self.selected_text = a.dupeSentinel(u8, selected, 0) catch return;
     self.selection_range = range;
     self.selection_active = true;
     self.dirty = true;
@@ -349,6 +556,35 @@ pub fn cancelDrag(self: *App) void {
     self.dragging_canvas = false;
     self.hbar_drag.end();
     self.selection_dragging = false;
+}
+
+test "PDF toolbar proximity samples buttons and detects redraws" {
+    const saved_theme = ui_theme.global;
+    defer ui_theme.global = saved_theme;
+
+    ui_theme.global.button_hover_glow_enabled = true;
+    ui_theme.global.border_glow_reach = 56;
+
+    var app: App = undefined;
+    app.w = 700;
+    app.dialog = .none;
+
+    const button = toolbar_buttons[1];
+    const x = button.x + button.w / 2;
+    const y = toolbar_button_y - 4;
+
+    const sample = buttonProximity(&app, button.act, x, y);
+    try std.testing.expectApproxEqAbs(@as(f32, 4), sample.distance, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, 16), sample.x, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, -4), sample.y, 0.001);
+
+    try std.testing.expect(toolbarProximityChanged(&app, x, y, 650, 500));
+    try std.testing.expect(!toolbarProximityChanged(&app, 650, 500, 650, 500));
+
+    app.dialog = .information;
+    const hidden = buttonProximity(&app, button.act, x, y);
+    try std.testing.expect(std.math.isInf(hidden.distance));
+    try std.testing.expect(!toolbarProximityChanged(&app, x, y, 650, 500));
 }
 
 pub fn cursorName(self: *const App) [*:0]const u8 {

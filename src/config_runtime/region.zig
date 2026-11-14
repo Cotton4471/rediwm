@@ -1,12 +1,6 @@
 //! Apply a personal timezone to libc clocks without changing system files.
 const std = @import("std");
-const c = @cImport({
-    @cUndef("_FORTIFY_SOURCE");
-    @cInclude("stdlib.h");
-    @cInclude("time.h");
-    @cInclude("fcntl.h");
-    @cInclude("unistd.h");
-});
+const c = @import("c");
 
 pub fn applyTimezone(allocator: std.mem.Allocator, zone: []const u8, inherited: ?[]const u8) !void {
     if (zone.len != 0) {
@@ -23,7 +17,7 @@ pub fn applyTimezone(allocator: std.mem.Allocator, zone: []const u8, inherited: 
     }
     const value = if (zone.len != 0) zone else inherited;
     if (value) |name| {
-        const z = try allocator.dupeZ(u8, name);
+        const z = try allocator.dupeSentinel(u8, name, 0);
         defer allocator.free(z);
         if (c.setenv("TZ", z, 1) != 0) return error.OutOfMemory;
     } else if (c.unsetenv("TZ") != 0) return error.OutOfMemory;

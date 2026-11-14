@@ -9,7 +9,7 @@ const log = std.log.scoped(.input);
 pub fn createCursorManager(theme: []const u8, size: u32) ?*wlr.XcursorManager {
     var buf: [128]u8 = undefined;
     const name: ?[*:0]const u8 = if (cursor_theme.managerTheme(theme)) |t|
-        (std.fmt.bufPrintZ(&buf, "{s}", .{t}) catch return null).ptr
+        (std.fmt.bufPrintSentinel(&buf, "{s}", .{t}, 0) catch return null).ptr
     else
         null;
     return wlr.XcursorManager.create(name, size) catch null;

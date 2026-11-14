@@ -7,6 +7,10 @@
 #include <wlr/util/box.h>
 
 struct rediwm_scene_renderer;
+struct rediwm_ribbon;
+bool rediwm_scene_renderer_set_ribbons(struct rediwm_scene_renderer *, bool);
+void rediwm_scene_pass_add_ribbon(struct wlr_render_pass *, struct wlr_box,
+    const struct rediwm_ribbon *, const pixman_region32_t *, float, struct wlr_texture *);
 // The renderer must be GLES2 and outlive this object and all its passes.
 struct rediwm_scene_renderer *rediwm_scene_renderer_create(struct wlr_renderer *);
 void rediwm_scene_renderer_destroy(struct rediwm_scene_renderer *);
@@ -27,11 +31,37 @@ struct wlr_render_pass *rediwm_scene_pass_begin(struct rediwm_scene_renderer *,
 // `box` of the draws (y down, row 0 first). The caller snaps the box (see
 // rediwm_edges_snap in scene_graph.h) and scales the radii and border; nothing
 // is rounded here, so a fractional radius or border is drawn as given.
+enum { REDIWM_PASS_POLY_MAX = 16 };
+struct rediwm_pass_sector {
+  float center[2]; // device pixels from the shape box's corner
+  float radii[2]; // inner, outer; outer 0 disables the sector
+  float axis[2]; // unit direction of the sector's centre line
+  float half_angle[2]; // cosine, sine of half its span (0 < span <= pi)
+};
 struct rediwm_pass_shape {
   struct wlr_box box;
   // Top-left, top-right, bottom-right, bottom-left. A radius larger than half
   // the short side is capped to it.
   float radii[4];
+  // A polygon instead of the rounded rectangle when `poly_count` is 3 or more:
+  // its vertices in device pixels from the box's corner, and `radii` is not used.
+  // Simple, no two neighbouring vertices the same, either winding.
+  int poly_count;
+  float poly[REDIWM_PASS_POLY_MAX][2];
+  // A circular annular sector instead of either outline above. Its outer and
+  // inner arcs are analytic circles, so no tessellation reaches the image.
+  struct rediwm_pass_sector sector;
+  // Opt-in polar texture framing: the source top follows the outer arc and
+  // source rows advance inward. Full source height in device pixels; 0 keeps
+  // ordinary rectangular texture coordinates. Output reflection and transform
+  // are tracked separately so the source is never rotated or mirrored twice.
+  float sector_texture_height, sector_texture_flip;
+  enum wl_output_transform sector_texture_transform;
+  // With polar framing: the part of that image this texture fills, as fractions
+  // of it (x, y, width, height), so several textures share one framing (a
+  // window and its subsurfaces). Nothing is drawn outside it, the ring
+  // included. A zero width is the whole image.
+  float sector_texture_rect[4];
   // Width of the ring just inside the edge. The same fragment that draws the body
   // composites the ring over it, then applies the shape's coverage, so a
   // translucent border tints the fill beneath it, as the legacy border rects do,
@@ -62,6 +92,16 @@ struct rediwm_pass_shadow {
 // first shaped draw; later calls return the first result. False when they did not
 // build: shaped draws then fail the pass at submit, plain drawing is unaffected.
 bool rediwm_scene_renderer_enable_shapes(struct rediwm_scene_renderer *);
+// Builds the program that draws external textures, which only imported client
+// buffers are, so a process with no clients (the greeter) skips its compile. Call it
+// outside a pass, before the first such draw; later calls return the first result.
+// False when it did not build. Without it an external draw fails the pass.
+bool rediwm_scene_renderer_enable_external(struct rediwm_scene_renderer *);
+// Builds the programs that draw polygons or circular sectors, which are the
+// shaped ones with the polygon distance compiled in: another 280 KiB or so, so only
+// on request, outside a pass, before the first such draw. False when they did not
+// build; a polygon draw then fails the pass, so callers must not make one.
+bool rediwm_scene_renderer_enable_polygons(struct rediwm_scene_renderer *);
 
 // These take a pass from rediwm_scene_pass_begin only (a wlroots pass is a
 // programming error). `box` of the options is the piece to draw; the shape is

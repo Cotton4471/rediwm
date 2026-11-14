@@ -7,13 +7,13 @@ pub const CommandId = blk: {
     @setEvalBranchQuota(100_000);
     var names: []const []const u8 = &.{};
     for (.{ protocol.Request, protocol.Action }) |T| {
-        for (std.meta.fields(T)) |field| {
-            if (T == protocol.Request and isInternalRequest(field.name)) continue;
+        for (@typeInfo(T).@"union".field_names) |field_name| {
+            if (T == protocol.Request and isInternalRequest(field_name)) continue;
             var exists = false;
-            for (names) |name| if (std.mem.eql(u8, name, field.name)) {
+            for (names) |name| if (std.mem.eql(u8, name, field_name)) {
                 exists = true;
             };
-            if (!exists) names = names ++ .{field.name};
+            if (!exists) names = names ++ .{field_name};
         }
     }
     break :blk @Enum(u16, .exhaustive, names, &std.simd.iota(u16, names.len));
@@ -752,6 +752,21 @@ pub const specs = [_]CommandSpec{
         .params_schema = "{\"layout\": \"next\" | \"prev\" | number}",
         .description_order = 86,
         .cli = .{ .name = "switch-layout", .synopsis = "<next|prev|index>" },
+    },
+    .{
+        .id = .get_input_sources,
+        .kind = .query,
+        .description = "Inspect keyboard layouts and Fcitx input methods, and the zero-based active source",
+        .description_order = 110,
+        .cli = .{ .name = "input-sources" },
+    },
+    .{
+        .id = .switch_input_source,
+        .kind = .action,
+        .description = "Switch to a keyboard layout or Fcitx input method; index is zero-based",
+        .params_schema = "{\"source\": \"next\" | \"prev\" | number}",
+        .description_order = 111,
+        .cli = .{ .name = "switch-input-source", .synopsis = "<next|prev|index>" },
     },
     .{
         .id = .list_panels,

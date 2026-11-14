@@ -3,12 +3,7 @@
 //! one response. Requests that carry a secret are encoded into a caller-owned
 //! buffer that is wiped after sending, so no heap copy of a password ever exists.
 const std = @import("std");
-const c = @cImport({
-    @cInclude("sys/socket.h");
-    @cInclude("sys/un.h");
-    @cInclude("unistd.h");
-    @cInclude("errno.h");
-});
+const c = @import("c");
 
 /// Protocol frames are small; anything larger is a protocol violation.
 pub const max_frame = 64 * 1024;
@@ -16,6 +11,8 @@ pub const max_frame = 64 * 1024;
 pub const request_capacity = 8 * 1024;
 
 pub const Request = union(enum) {
+    /// Presented greeter with usable seat input and login model.
+    ready,
     login: []const u8,
     /// null answers info/error messages, which carry no response.
     answer: ?[]const u8,
@@ -27,6 +24,7 @@ pub const MessageKind = enum { visible, secret, info, @"error" };
 
 pub const Response = union(enum) {
     ok,
+    ready,
     question: struct { kind: MessageKind, text: []const u8 },
     /// Wrong credentials; the conversation is over.
     denied: []const u8,
@@ -56,6 +54,8 @@ pub fn parseResponse(allocator: std.mem.Allocator, payload: []const u8) !ParsedR
     const v = wire.value;
     const response: Response = if (std.mem.eql(u8, v.type, "ok"))
         .ok
+    else if (std.mem.eql(u8, v.type, "ready"))
+        .ready
     else if (std.mem.eql(u8, v.type, "question"))
         .{ .question = .{
             .kind = std.meta.stringToEnum(MessageKind, v.kind orelse "") orelse return error.InvalidResponse,
@@ -77,6 +77,7 @@ pub fn encodeRequest(out: []u8, request: Request) ![]u8 {
     if (out.len < 4) return error.NoSpaceLeft;
     var w: std.Io.Writer = .fixed(out[4..]);
     switch (request) {
+        .ready => try std.json.Stringify.value(.{ .type = "ready" }, .{}, &w),
         .login => |user| try std.json.Stringify.value(.{ .type = "login", .user = user }, .{}, &w),
         .answer => |ans| try std.json.Stringify.value(.{ .type = "answer", .response = ans }, .{}, &w),
         .start => |session| try std.json.Stringify.value(.{ .type = "start", .session = session }, .{}, &w),
@@ -109,7 +110,9 @@ pub fn parseRequest(allocator: std.mem.Allocator, payload: []const u8) !ParsedRe
     var wire = try std.json.parseFromSlice(RequestWire, allocator, payload, .{ .ignore_unknown_fields = true, .allocate = .alloc_always });
     errdefer wire.deinit();
     const v = wire.value;
-    const request: Request = if (std.mem.eql(u8, v.type, "login"))
+    const request: Request = if (std.mem.eql(u8, v.type, "ready"))
+        .ready
+    else if (std.mem.eql(u8, v.type, "login"))
         .{ .login = v.user orelse return error.InvalidRequest }
     else if (std.mem.eql(u8, v.type, "answer"))
         .{ .answer = v.response }
@@ -127,6 +130,7 @@ pub fn encodeResponse(out: []u8, response: Response) ![]u8 {
     if (out.len < 4) return error.NoSpaceLeft;
     var w: std.Io.Writer = .fixed(out[4..]);
     switch (response) {
+        .ready => try std.json.Stringify.value(.{ .type = "ready" }, .{}, &w),
         .ok => try std.json.Stringify.value(.{ .type = "ok" }, .{}, &w),
         .question => |q| try std.json.Stringify.value(.{ .type = "question", .kind = @tagName(q.kind), .text = q.text }, .{}, &w),
         .denied => |text| try std.json.Stringify.value(.{ .type = "denied", .text = text }, .{}, &w),
@@ -230,7 +234,7 @@ test "dm requests are framed JSON in native byte order" {
         (try encodeRequest(&out, .cancel))[4..],
     );
     // The largest password the UI accepts still fits after worst-case escaping.
-    const control = [_]u8{1} ** 511;
+    const control = @as([511]u8, @splat(1));
     _ = try encodeRequest(&out, .{ .answer = &control });
 }
 

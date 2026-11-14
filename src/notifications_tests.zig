@@ -181,4 +181,37 @@ test "notifications unit: replaces_id, urgency, DND, lock suppression" {
     );
     try std.testing.expectEqual(@as(u32, 4), id4);
     try std.testing.expect(mgr.findToast(id4) != null);
+    try batteryWarnings(&server, mgr);
+}
+
+fn batteryWarnings(server: *Server, mgr: *notif.Manager) !void {
+    server.greeter_mode = false;
+    server.notifications = mgr;
+    server.battery_warning = .{};
+    server.battery_warning_id = null;
+    const initial = mgr.history.items.len;
+    server.updateBatteryWarning(.{ .percent = 11, .discharging = true });
+    try std.testing.expectEqual(initial, mgr.history.items.len);
+    server.updateBatteryWarning(.{ .percent = 10, .discharging = true });
+    const id = server.battery_warning_id.?;
+    const toast = mgr.findToast(id).?;
+    try std.testing.expectEqualStrings("Low battery", toast.summary);
+    try std.testing.expectEqualStrings("Battery is at 10%. Plug in your charger.", toast.body);
+    try std.testing.expectEqual(@as(u8, 2), toast.urgency);
+    try std.testing.expect(toast.expire_at_ms == null); // Visible even in DND.
+    server.updateBatteryWarning(.{ .percent = 9, .discharging = true });
+    try std.testing.expectEqual(initial + 1, mgr.history.items.len);
+    mgr.closeNotification(id, 2); // Dismissing does not rearm the warning.
+    server.updateBatteryWarning(.{ .percent = 8, .discharging = true });
+    try std.testing.expectEqual(initial + 1, mgr.history.items.len);
+    server.updateBatteryWarning(.{ .percent = 8, .charging = true, .plugged = true });
+    try std.testing.expect(server.battery_warning_id == null);
+    server.updateBatteryWarning(.{ .percent = 7, .discharging = true });
+    try std.testing.expectEqual(initial + 2, mgr.history.items.len);
+    const second = mgr.findToast(server.battery_warning_id.?).?;
+    server.updateBatteryWarning(.{ .percent = 12, .discharging = true });
+    try std.testing.expect(second.closing);
+    server.greeter_mode = true;
+    server.updateBatteryWarning(.{ .percent = 1, .discharging = true });
+    try std.testing.expectEqual(initial + 2, mgr.history.items.len);
 }

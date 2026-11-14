@@ -58,6 +58,7 @@ const pageClicked = panel.pageClicked;
 const deviceClicked = panel.deviceClicked;
 const brightnessChanged = panel.brightnessChanged;
 const filesSingleClickChanged = panel.filesSingleClickChanged;
+const filesAudioPlayerChanged = panel.filesAudioPlayerChanged;
 const ControlCenter = @This();
 
 server: *Server,
@@ -96,6 +97,10 @@ page: Page = .general,
 built_page: ?Page = null,
 pending_page: ?Page = null,
 refresh_pending: bool = false,
+/// Configs replaced since the page was last built. The tree's strings (the
+/// start logo's file name, a font family) point into their arenas, so each
+/// is freed only once a rebuild has dropped those pointers (`retireConfig`).
+retired_configs: std.ArrayList(@import("config").loader.Config) = .empty,
 pointer_down: bool = false,
 /// The window is activated; keys arrive only with `hasKeyboardFocus`.
 focused: bool = false,
@@ -122,6 +127,8 @@ general_display: [2]Widget = undefined,
 general_display_text: [2]Widget = undefined,
 general_files: [2]Widget = undefined,
 general_files_text: [2]Widget = undefined,
+general_audio: [2]Widget = undefined,
+general_audio_text: [2]Widget = undefined,
 brightness_children: [2]Widget = undefined,
 brightness_row: [3]Widget = undefined,
 brightness_percent: [8]u8 = undefined,
@@ -140,12 +147,15 @@ desktop: desktop_section.Section = .{},
 region: region_section.Section = .{},
 portals: portal_section.Section = .{},
 default_apps: default_apps_section.Section = .{},
-input: input_section.Section = undefined,
+input: input_section.Section = .{},
+input_sources: @import("sections/input_sources.zig").Section = .{},
 users: users_section.Section = .{},
 network: network_section.Section = .{},
 bluetooth: bluetooth_section.Section = .{},
 services: services_section.Section = .{},
 printers: printers_section.Section = .{},
+key_settings: @import("sections/keys.zig").Section = .{},
+power_settings: @import("sections/power.zig").Section = .{},
 systemd_client: ?*systemd.Client = null,
 
 pub const min_width = 420;
@@ -239,14 +249,19 @@ pub fn destroy(cc: *ControlCenter) void {
     if (cc.systemd_client) |client| client.detachSettings();
     cc.welcome.deinit();
     cc.search.deinit();
+    cc.input.arena.deinit();
+    cc.input_sources.deinit();
     cc.services.deinit();
     cc.printers.deinit();
+    cc.key_settings.deinit();
+    if (cc.server.network) |m| m.cancelUnlock();
     cc.network.deinit();
     if (cc.page == .bluetooth) if (cc.server.bluetooth) |m| m.closed();
     cc.bluetooth.deinit();
     users_section.deinit(cc);
     cc.shortcuts.arena.deinit();
     cc.desktop.arena.deinit();
+    cc.power_settings.arena.deinit();
     cc.region.deinit();
     cc.portals.arena.deinit();
     cc.default_apps.arena.deinit();
@@ -254,6 +269,8 @@ pub fn destroy(cc: *ControlCenter) void {
     appearance_section.deinit(&cc.appearance);
     cc.appearance.arena.deinit();
     cc.appearance.font_arena.deinit();
+    @import("tree.zig").releaseRetired(cc);
+    cc.retired_configs.deinit(gpa);
     cc.background.deinit(gpa);
     // The buffer node belongs to the window's tree and may outlive this
     // in the close animation's snapshot pass: unhook it from us first.
@@ -350,6 +367,7 @@ pub fn resize(cc: *ControlCenter, width: i32, height: i32) void {
 const cc_tree = @import("tree.zig");
 pub const buildTree = cc_tree.buildTree;
 pub const append = cc_tree.append;
+pub const retireConfig = cc_tree.retireConfig;
 pub const buildGeneral = cc_tree.buildGeneral;
 pub const buildDevices = cc_tree.buildDevices;
 

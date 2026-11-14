@@ -1,6 +1,13 @@
 // Compositor integration/unit-test root. Shared modules have separate test
 // targets in build.zig; their roots cannot import compositor code.
 test {
+    _ = @import("session/login_manager.zig");
+    _ = @import("effects/ribbon.zig");
+    _ = @import("effects/move_heading.zig");
+    _ = @import("effects/minimize_mesh.zig");
+    _ = @import("effects/resize_mesh.zig");
+    _ = @import("effects/resize_follow.zig");
+    _ = @import("calculator/model.zig");
     _ = @import("control_center/search_index.zig");
     _ = @import("auto_layout.zig");
     _ = @import("desktop/app.zig");
@@ -10,6 +17,9 @@ test {
     _ = @import("config").keymap;
     _ = @import("input/repeat_keys.zig");
     _ = @import("input/wheel_debounce.zig");
+    _ = @import("input_sources.zig");
+    _ = @import("pointer_identity.zig");
+    _ = @import("pointer_presentation.zig");
     _ = @import("ui").key_repeat;
     _ = @import("ui").hover_glide;
     _ = @import("input/ime_placement.zig");
@@ -48,12 +58,15 @@ test {
     _ = @import("panel_paint.zig");
     _ = @import("resize.zig");
     _ = @import("camera.zig");
+    _ = @import("world/overview_layout.zig");
     _ = @import("mini_map_geometry.zig");
+    _ = @import("switcher/layout.zig");
     _ = @import("calendar.zig");
     _ = @import("start_menu/applications.zig");
     _ = @import("start_menu/catalog_cache.zig");
     _ = @import("startup.zig");
     _ = @import("startup_tasks.zig");
+    _ = @import("gl_vendor.zig");
     _ = @import("start_menu/launch.zig");
     _ = @import("start_menu/search.zig");
     _ = @import("start_menu/model.zig");
@@ -68,6 +81,7 @@ test {
     _ = @import("color.zig");
     _ = @import("ipc/stats.zig");
     _ = @import("ipc/frame_metrics.zig");
+    _ = @import("output/late_render_tests.zig");
     _ = @import("config").keybinds;
     _ = @import("osd_paint.zig");
     _ = @import("osd.zig");
@@ -95,6 +109,7 @@ test {
     _ = @import("notifications_tests.zig");
     _ = @import("notifications/image.zig");
     _ = @import("Input.zig");
+    _ = @import("Pointer.zig");
     _ = @import("undo.zig");
     _ = @import("ipc/handlers.zig");
     _ = @import("ipc/server.zig");

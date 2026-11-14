@@ -5,7 +5,9 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const log = std.log.scoped(.theme);
 const theme = @import("theme.zig");
+const window_shape = @import("window_shape.zig");
 const Theme = theme.Theme;
+pub const Relief = theme.Relief;
 const TaskbarToken = theme.TaskbarToken;
 
 /// `REDIWM_THEME`, matching this project's existing env-var config
@@ -36,14 +38,14 @@ pub fn load(allocator: Allocator, io: Io, path: []const u8) !Theme {
 pub fn keysOf(comptime T: type) []const []const u8 {
     const keys = comptime blk: {
         var count: usize = 0;
-        for (std.meta.fields(Theme)) |field| if (field.type == T) {
+        for (@typeInfo(Theme).@"struct".field_names) |field_name| if (@FieldType(Theme, field_name) == T) {
             count += 1;
         };
         var names: [count][]const u8 = undefined;
         var i: usize = 0;
-        for (std.meta.fields(Theme)) |field| {
-            if (field.type == T) {
-                names[i] = field.name;
+        for (@typeInfo(Theme).@"struct".field_names) |field_name| {
+            if (@FieldType(Theme, field_name) == T) {
+                names[i] = field_name;
                 i += 1;
             }
         }
@@ -61,6 +63,11 @@ pub const boolean_keys = keysOf(bool);
 pub const optional_color_keys = keysOf(?[4]f32);
 
 pub const string_keys = keysOf([]const u8);
+pub const relief_keys = keysOf(Relief);
+
+pub fn parseRelief(s: []const u8) ?Relief {
+    return std.meta.stringToEnum(Relief, s);
+}
 
 /// Parses theme file bytes. String fields (`font`, `mono_font`) are duped
 /// with `allocator` and, like `icon_theme.resolveConfig`'s paths, meant to
@@ -116,11 +123,24 @@ pub fn applyKey(allocator: Allocator, t: *Theme, name_in: []const u8, value: []c
             return;
         }
     }
+    inline for (relief_keys) |name| {
+        if (std.mem.eql(u8, key, name)) {
+            const text = try unquote(value);
+            @field(t, name) = parseRelief(text) orelse return error.InvalidRelief;
+            return;
+        }
+    }
     inline for (string_keys) |name| {
         if (std.mem.eql(u8, key, name)) {
             const text = try unquote(value);
             if (comptime std.mem.eql(u8, name, "start_button_icon")) {
                 if (text.len > 0 and !std.fs.path.isAbsolute(text)) return error.InvalidIconPath;
+            }
+            if (comptime std.mem.eql(u8, name, "window_shape") or std.mem.eql(u8, name, "taskbar_shape")) {
+                _ = try window_shape.parse(text);
+            }
+            if (comptime std.mem.eql(u8, name, "window_corner_resize_ease")) {
+                _ = std.meta.stringToEnum(@import("anim.zig").Ease, text) orelse return error.InvalidEase;
             }
             @field(t, name) = try allocator.dupe(u8, text);
             return;
@@ -145,8 +165,17 @@ pub fn applyKey(allocator: Allocator, t: *Theme, name_in: []const u8, value: []c
             if (comptime std.mem.eql(u8, name, "chrome_height")) {
                 if (number < 28 or number > 84) return error.InvalidSize;
             }
+            if (comptime std.mem.eql(u8, name, "window_border_width")) {
+                if (number < 1 or number > 16) return error.InvalidSize;
+            }
+            if (comptime std.mem.eql(u8, name, "window_inner_border_width")) {
+                if (number > 16) return error.InvalidSize;
+            }
             if (comptime std.mem.eql(u8, name, "chrome_control_gap")) {
                 if (number > 24) return error.InvalidSize;
+            }
+            if (comptime std.mem.eql(u8, name, "window_title_plate_slant")) {
+                if (number > 1) return error.InvalidSize;
             }
             if (comptime std.mem.eql(u8, name, "taskbar_length")) {
                 if (number < 20 or number > 100) return error.InvalidSize;
@@ -226,7 +255,7 @@ pub fn appendColor(allocator: Allocator, buf: *std.ArrayList(u8), key: []const u
 }
 
 pub fn knownKey(key: []const u8) bool {
-    inline for (std.meta.fields(Theme)) |field| if (std.mem.eql(u8, key, field.name)) return true;
+    inline for (@typeInfo(Theme).@"struct".field_names) |field_name| if (std.mem.eql(u8, key, field_name)) return true;
     return std.mem.eql(u8, key, "taskbar_height");
 }
 
@@ -250,6 +279,11 @@ pub fn writeDiff(allocator: Allocator, buf: *std.ArrayList(u8), t: Theme, defaul
     if (base.len > 0) try appendLine(allocator, buf, "base = \"{s}\"\n", .{base});
     inline for (boolean_keys) |name| {
         if (@field(t, name) != @field(defaults, name)) try appendLine(allocator, buf, "{s} = {}\n", .{ name, @field(t, name) });
+    }
+    inline for (relief_keys) |name| {
+        if (@field(t, name) != @field(defaults, name)) {
+            try appendLine(allocator, buf, "{s} = \"{s}\"\n", .{ name, @tagName(@field(t, name)) });
+        }
     }
     inline for (string_keys) |name| {
         if (!std.mem.eql(u8, @field(t, name), @field(defaults, name))) {
@@ -288,14 +322,14 @@ pub fn writeDiff(allocator: Allocator, buf: *std.ArrayList(u8), t: Theme, defaul
 pub fn writeTaskbarInto(allocator: Allocator, buf: *std.ArrayList(u8), t: Theme) !void {
     const defaults: Theme = .{};
     try buf.appendSlice(allocator, "[taskbar_theme]\n");
-    inline for (std.meta.fields(TaskbarToken)) |field| {
-        const value = @field(t, field.name);
+    inline for (@typeInfo(TaskbarToken).@"enum".field_names) |field_name| {
+        const value = @field(t, field_name);
         if (comptime @TypeOf(value) == bool) {
-            if (value != @field(defaults, field.name)) try appendLine(allocator, buf, "{s} = {}\n", .{ field.name, value });
+            if (value != @field(defaults, field_name)) try appendLine(allocator, buf, "{s} = {}\n", .{ field_name, value });
         } else if (comptime @TypeOf(value) == ?[4]f32) {
-            if (value) |color| try appendColor(allocator, buf, field.name, color);
-        } else if (!std.meta.eql(quantize(value), quantize(@field(defaults, field.name)))) {
-            try appendColor(allocator, buf, field.name, value);
+            if (value) |color| try appendColor(allocator, buf, field_name, color);
+        } else if (!std.meta.eql(quantize(value), quantize(@field(defaults, field_name)))) {
+            try appendColor(allocator, buf, field_name, value);
         }
     }
 }

@@ -60,7 +60,7 @@ test "desktop shortcut picker searches, confirms separately and cancels without 
 
 test "desktop pointer motion repaints only when visible state changes" {
     var icons = [_]Icon{.{ .item = .{ .path = "", .name = "", .icon = null }, .cell = .{}, .born = 0 }};
-    var app = App{ .worker = undefined, .icons = .{ .items = &icons, .capacity = icons.len }, .dirty = false };
+    var app = App{ .worker = undefined, .icons = .fromOwnedSlice(&icons), .dirty = false };
     app.motion(200, 200);
     app.motion(300, 250);
     try std.testing.expect(!app.dirty);
@@ -80,6 +80,84 @@ test "desktop pointer motion repaints only when visible state changes" {
     app.dirty = true; // Motion must retain invalidation from other sources.
     app.motion(300, 250);
     try std.testing.expect(app.dirty);
+}
+
+test "desktop icon-card proximity damages only nearby cards and clears on leave" {
+    var icons = [_]Icon{
+        .{ .item = .{ .path = "", .name = "Alpha", .icon = null }, .cell = .{}, .born = 0 },
+    };
+    var app = App{
+        .worker = undefined,
+        .geometry = .{ .w = 400, .h = 240 },
+        .icons = .fromOwnedSlice(&icons),
+        .dirty = false,
+    };
+
+    // Outside the card's hit box, but within its proximity reach.
+    app.motion(250, 50);
+    try std.testing.expect(app.dirty);
+    try std.testing.expectEqual(@as(?usize, null), app.hover);
+    try std.testing.expect(app.pointer_present);
+
+    app.presented();
+    app.motion(249, 50);
+    try std.testing.expect(app.dirty);
+
+    app.presented();
+    app.leave();
+    try std.testing.expect(app.dirty);
+    try std.testing.expect(!app.pointer_present);
+
+    app.presented();
+    app.leave();
+    try std.testing.expect(!app.dirty);
+}
+
+test "desktop proximity damage stays live over desktop overlays" {
+    const picker = @import("../files/open_with.zig");
+    var icons = [_]Icon{
+        .{ .item = .{ .path = "", .name = "Near", .icon = null }, .cell = .{}, .born = 0 },
+        .{ .item = .{ .path = "", .name = "Distant", .icon = null }, .cell = .{ .col = 2 }, .born = 0 },
+    };
+    var app = App{
+        .worker = undefined,
+        .geometry = .{ .w = 400, .h = 240 },
+        .icons = .fromOwnedSlice(&icons),
+        .dirty = false,
+    };
+    defer app.closePicker();
+    defer app.closeTrashCard();
+
+    // Establish a visible pointer near the first card, then clear its damage.
+    app.motion(250, 50);
+    app.presented();
+    const near = app.iconRect(0);
+    const distant = app.iconRect(1);
+
+    // The shortcut picker handles motion without changing its hover target.
+    app.applications = picker.State.initShortcuts(a, &.{});
+    app.edit = .add_app;
+    app.motion(249, 50);
+    try std.testing.expect(!app.damage.full);
+    try std.testing.expect(app.damage.intersects(near));
+    try std.testing.expect(!app.damage.intersects(distant));
+
+    // Trash properties must keep the desktop glow current too.
+    app.presented();
+    app.trash_card = .{ .path = try a.dupe(u8, "/tmp/Trash/files") };
+    app.edit = .trash_properties;
+    app.motion(248, 50);
+    try std.testing.expect(!app.damage.full);
+    try std.testing.expect(app.damage.intersects(near));
+    try std.testing.expect(!app.damage.intersects(distant));
+
+    // The delete dialog's target tracking must not bypass glow invalidation.
+    app.presented();
+    app.edit = .trash;
+    app.motion(247, 50);
+    try std.testing.expect(!app.damage.full);
+    try std.testing.expect(app.damage.intersects(near));
+    try std.testing.expect(!app.damage.intersects(distant));
 }
 
 test "desktop motion keeps menu highlights and moving selections live" {
@@ -107,11 +185,13 @@ test "desktop motion keeps menu highlights and moving selections live" {
     try std.testing.expectEqual(@as(usize, 1), app.menuLabels().len);
     try std.testing.expectEqualStrings("Open", app.menuLabels()[0]);
     app.menu_icon = 1;
-    try std.testing.expectEqual(@as(usize, 2), app.menuLabels().len);
+    try std.testing.expectEqual(@as(usize, 3), app.menuLabels().len);
     try std.testing.expectEqualStrings("Open", app.menuLabels()[0]);
     try std.testing.expectEqualStrings("Empty Trash…", app.menuLabels()[1]);
     try std.testing.expectEqual(@import("ui").layout.IconId.trash, app.menuIcon(1));
     try std.testing.expectEqual(@as(?[]const u8, null), app.menuHint(1));
+    try std.testing.expectEqualStrings("Properties", app.menuLabels()[2]);
+    try std.testing.expectEqual(@import("ui").layout.IconId.view_list, app.menuIcon(2));
     // Opening and cancelling must not enqueue work (the worker is undefined).
     app.menuAction(1);
     try std.testing.expect(app.edit == .trash);
@@ -198,7 +278,7 @@ test "icon group cache matches fresh pixels after visual and content changes" {
         icons[0].name_cache.deinit();
         icons[0].raster.deinit();
     }
-    var app = App{ .worker = undefined, .geometry = .{ .w = 200, .h = 240 }, .icons = .{ .items = &icons, .capacity = icons.len } };
+    var app = App{ .worker = undefined, .geometry = .{ .w = 200, .h = 240 }, .icons = .fromOwnedSlice(&icons) };
     defer app.edit_text.deinit(a);
     defer app.rename_editor.deinit();
     const ic = &icons[0];
@@ -230,8 +310,8 @@ test "icon group cache matches fresh pixels after visual and content changes" {
     try expectFreshIconPixels(&app, 200, 240, 1, 0, 1, 0, 1000);
     ic.replaceItem(try copyItem(.{ .path = "", .name = "Beta icon", .icon = null }));
     try expectFreshIconPixels(&app, 200, 240, 1, 0, 1, 0, 1000);
-    const blue = [_]u32{0xff2040e0} ** 4;
-    const red = [_]u32{0xffe04020} ** 4;
+    const blue = @as([4]u32, @splat(0xff2040e0));
+    const red = @as([4]u32, @splat(0xffe04020));
     for ([_]?@import("../icon_cache.zig").Entry{ .{ .pixels = &blue, .size = 2 }, .{ .pixels = &red, .size = 2 }, null }) |icon| {
         ic.replaceItem(try copyItem(.{ .path = "", .name = "Beta icon", .icon = icon }));
         try expectFreshIconPixels(&app, 200, 240, 1, 0, 1, 0, 1000);
@@ -254,8 +334,10 @@ test "icon group cache matches fresh pixels after visual and content changes" {
     ic.removed = null;
     app.dragging = true;
     app.pressed = 0;
-    app.x = 128;
-    app.y = 64;
+    // The dragged icon is centred on the pointer: this puts it exactly on its cell.
+    const cell = app.geometry.rect(.{});
+    app.x = @floatFromInt(cell.x + @divTrunc(cell.w, 2));
+    app.y = @floatFromInt(cell.y + 40);
     try expectFreshIconPixels(&app, 200, 240, 1, 0, 1, 0, 1200);
     try std.testing.expectEqual(opaque_pattern, ic.raster.pattern);
     app.dragging = false;

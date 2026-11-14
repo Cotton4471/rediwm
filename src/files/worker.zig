@@ -3,6 +3,7 @@ const tr = @import("i18n").tr;
 const archive = @import("archive.zig");
 const appimage = @import("appimage.zig");
 const c = @import("c.zig").api;
+const platform = @import("platform");
 const theme = @import("../icon_theme.zig");
 const icons = @import("../icon_cache.zig");
 const git = @import("git.zig");
@@ -30,6 +31,18 @@ pub const Item = struct {
     owner: []const u8 = "",
     icon_name: []const u8,
     icon_candidates: []const []const u8 = &.{},
+};
+
+/// What a pass over the browsed folder's events found: whether anything
+/// changed, and whether its watch must be set up again.
+const DirScan = struct {
+    watch: platform.watch.Watch,
+    changed: bool = false,
+
+    fn event(self: *DirScan, ev: platform.watch.Event) void {
+        if (ev.flags.isChange()) self.changed = true;
+        if (ev.watch == self.watch and ev.flags.lost()) self.watch = platform.watch.none;
+    }
 };
 
 pub const Snapshot = struct {
@@ -286,17 +299,14 @@ pub const Worker = struct {
     fn run(self: *Worker) void {
         var settings: @import("settings.zig").Settings = @import("settings.zig").Settings.init(self.allocator, self.environ) catch .{};
         defer settings.deinit(self.allocator);
-        const inotify_fd = c.inotify_init1(c.IN_NONBLOCK | c.IN_CLOEXEC);
-        defer if (inotify_fd >= 0) {
-            _ = c.close(inotify_fd);
-        };
-        // Its own descriptor: the browsed folder can be the config directory,
+        // Without file watching the watchers keep fd -1 and the loop polls.
+        var dir_watcher = platform.watch.Watcher.init() catch platform.watch.Watcher{};
+        defer dir_watcher.deinit();
+        // Its own watcher: the browsed folder can be the config directory,
         // and leaving it must not drop the theme watch.
-        const theme_fd = c.inotify_init1(c.IN_NONBLOCK | c.IN_CLOEXEC);
-        defer if (theme_fd >= 0) {
-            _ = c.close(theme_fd);
-        };
-        if (theme_fd >= 0) settings.watch(theme_fd);
+        var theme_watcher = platform.watch.Watcher.init() catch platform.watch.Watcher{};
+        defer theme_watcher.deinit();
+        if (theme_watcher.fd >= 0) settings.watch(theme_watcher);
         var theme_changed = true;
 
         var watched_dir: ?[]u8 = null;
@@ -304,8 +314,8 @@ pub const Worker = struct {
 
         var archive_cache: ArchiveCache = .{};
         defer archive_cache.clear(self.allocator);
-        var inotify_wd: c_int = -1;
-        var git_watches: [4]c_int = @splat(-1);
+        var dir_watch = platform.watch.none;
+        var git_watches: [4]platform.watch.Watch = @splat(platform.watch.none);
 
         while (true) {
             _ = c.pthread_mutex_lock(&self.mutex);
@@ -333,7 +343,7 @@ pub const Worker = struct {
             var opened_storage = opened;
             opened_storage.deinit(self.allocator);
             if (self.stop.load(.acquire)) break;
-            const update = if (theme_fd < 0) settings.poll(self.allocator, self.io) else if (theme_changed) settings.reload(self.allocator, self.io) else null;
+            const update = if (theme_watcher.fd < 0) settings.poll(self.allocator, self.io) else if (theme_changed) settings.reload(self.allocator, self.io) else null;
             theme_changed = false;
             if (update) |t| {
                 const requested = collation.Locale.requested(t.region.formats, self.environ);
@@ -372,31 +382,21 @@ pub const Worker = struct {
 
             const dir_changed = watched_dir == null or !std.mem.eql(u8, watched_dir.?, cur_dir);
             if (dir_changed) {
-                if (inotify_fd >= 0 and inotify_wd >= 0) {
-                    _ = c.inotify_rm_watch(inotify_fd, inotify_wd);
-                    inotify_wd = -1;
+                if (dir_watcher.fd >= 0 and dir_watch >= 0) {
+                    dir_watcher.remove(dir_watch);
+                    dir_watch = platform.watch.none;
                 }
                 if (watched_dir) |d| self.allocator.free(d);
                 watched_dir = self.allocator.dupe(u8, cur_dir) catch null;
 
-                if (inotify_fd >= 0 and watched_dir != null) {
-                    var zpath_buf: [4096]u8 = undefined;
+                if (dir_watcher.fd >= 0 and watched_dir != null) {
                     const recent_path = if (recent.isLocation(cur_dir)) recent.path(self.allocator, self.environ) catch null else null;
                     defer if (recent_path) |p| self.allocator.free(p);
-                    var watch_path = if (recent_path) |p| std.fs.path.dirname(p).? else if (cur_archive_len > 0) std.fs.path.dirname(cur_dir[0..cur_archive_len]) orelse "/" else watched_dir.?;
-                    while (true) {
-                        const zp = std.fmt.bufPrintZ(&zpath_buf, "{s}", .{watch_path}) catch break;
-                        inotify_wd = c.inotify_add_watch(
-                            inotify_fd,
-                            zp,
-                            c.IN_CREATE | c.IN_DELETE | c.IN_MOVED_FROM | c.IN_MOVED_TO |
-                                c.IN_CLOSE_WRITE | c.IN_ATTRIB | c.IN_DELETE_SELF | c.IN_MOVE_SELF,
-                        );
-                        // A first-run data directory may not exist yet. Watch
-                        // its nearest existing parent until it is created.
-                        if (inotify_wd >= 0 or recent_path == null) break;
-                        watch_path = std.fs.path.dirname(watch_path) orelse break;
-                    }
+                    const watch_path = if (recent_path) |p| std.fs.path.dirname(p).? else if (cur_archive_len > 0) std.fs.path.dirname(cur_dir[0..cur_archive_len]) orelse "/" else watched_dir.?;
+                    // A first-run data directory may not exist yet. Watch
+                    // its nearest existing parent until it is created.
+                    const found = if (recent_path != null) dir_watcher.addOrParent(watch_path, .listing) else dir_watcher.add(watch_path, .listing);
+                    dir_watch = found orelse platform.watch.none;
                 }
             }
 
@@ -409,16 +409,15 @@ pub const Worker = struct {
                 };
                 // Register new watches before dropping old ones. Re-adding an
                 // existing path returns its descriptor and creates no events.
-                var next_watches: [4]c_int = @splat(-1);
-                if (inotify_fd >= 0) {
+                var next_watches: [4]platform.watch.Watch = @splat(platform.watch.none);
+                if (dir_watcher.fd >= 0) {
                     if (snap.repository) |repo| {
                         for (repo.watch_paths, 0..) |path, i| {
-                            const zp = snap.arena.allocator().dupeZ(u8, path) catch continue;
-                            next_watches[i] = c.inotify_add_watch(inotify_fd, zp, c.IN_CREATE | c.IN_DELETE | c.IN_MOVED_FROM | c.IN_MOVED_TO | c.IN_CLOSE_WRITE | c.IN_DELETE_SELF | c.IN_MOVE_SELF);
+                            next_watches[i] = dir_watcher.add(path, .{ .created = true, .deleted = true, .moved_from = true, .moved_to = true, .written = true }) orelse platform.watch.none;
                         }
                     }
-                    for (git_watches) |wd| {
-                        if (wd >= 0 and std.mem.indexOfScalar(c_int, &next_watches, wd) == null) _ = c.inotify_rm_watch(inotify_fd, wd);
+                    for (git_watches) |watch| {
+                        if (watch >= 0 and std.mem.indexOfScalar(platform.watch.Watch, &next_watches, watch) == null) dir_watcher.remove(watch);
                     }
                 }
                 git_watches = next_watches;
@@ -430,19 +429,18 @@ pub const Worker = struct {
                 if (old) |o| o.destroy();
             }
 
-            if (inotify_fd >= 0) {
+            if (dir_watcher.fd >= 0) {
                 var fds = [3]c.struct_pollfd{
                     .{ .fd = self.wake, .events = c.POLLIN, .revents = 0 },
-                    .{ .fd = inotify_fd, .events = c.POLLIN, .revents = 0 },
-                    .{ .fd = theme_fd, .events = c.POLLIN, .revents = 0 },
+                    .{ .fd = dir_watcher.fd, .events = c.POLLIN, .revents = 0 },
+                    .{ .fd = theme_watcher.fd, .events = c.POLLIN, .revents = 0 },
                 };
                 // Requests, directory and theme changes wake the poll. Without
                 // a theme watch the timeout paces Settings.poll's once-a-second stat.
-                const poll_res = c.poll(&fds, fds.len, if (theme_fd >= 0) -1 else 1000);
+                const poll_res = c.poll(&fds, fds.len, if (theme_watcher.fd >= 0) -1 else 1000);
                 if (poll_res > 0 and (fds[2].revents & c.POLLIN != 0)) {
-                    var buf: [4096]u8 align(@alignOf(c.struct_inotify_event)) = undefined;
-                    while (c.read(theme_fd, &buf, buf.len) > 0) {}
-                    settings.watch(theme_fd);
+                    _ = theme_watcher.flush();
+                    settings.watch(theme_watcher);
                     theme_changed = true;
                 }
                 if (poll_res > 0 and (fds[0].revents & c.POLLIN != 0)) {
@@ -450,22 +448,10 @@ pub const Worker = struct {
                     _ = c.read(self.wake, &count, @sizeOf(u64));
                 }
                 if (poll_res > 0 and (fds[1].revents & c.POLLIN != 0)) {
-                    var buf: [4096]u8 align(@alignOf(c.struct_inotify_event)) = undefined;
-                    var changed = false;
-                    while (true) {
-                        const n = c.read(inotify_fd, &buf, buf.len);
-                        if (n <= 0) break;
-                        var off: usize = 0;
-                        while (off + @sizeOf(c.struct_inotify_event) <= @as(usize, @intCast(n))) {
-                            const ev: *const c.struct_inotify_event = @ptrCast(@alignCast(&buf[off]));
-                            if (ev.mask & ~@as(u32, c.IN_IGNORED) != 0) changed = true;
-                            if (ev.wd == inotify_wd and ev.mask & (c.IN_IGNORED | c.IN_DELETE_SELF | c.IN_MOVE_SELF) != 0) {
-                                inotify_wd = -1;
-                            }
-                            off += @sizeOf(c.struct_inotify_event) + ev.len;
-                        }
-                    }
-                    if (changed) {
+                    var events: DirScan = .{ .watch = dir_watch };
+                    dir_watcher.drain(&events, DirScan.event) catch {};
+                    dir_watch = events.watch;
+                    if (events.changed) {
                         self.rescan_requested.store(true, .release);
                         if (recent.isLocation(cur_dir)) {
                             // Re-establish the watch after creation or replacement
@@ -506,7 +492,7 @@ pub const Worker = struct {
         const mem = snap.arena.allocator();
         snap.dir = try mem.dupe(u8, path);
         const source = path[0..archive_len];
-        const zsource = try mem.dupeZ(u8, source);
+        const zsource = try mem.dupeSentinel(u8, source, 0);
         var stat: c.struct_stat = undefined;
         if (c.stat(zsource, &stat) != 0) return error.OpenArchiveFailed;
         if (cache.path == null or !std.mem.eql(u8, cache.path.?, source) or

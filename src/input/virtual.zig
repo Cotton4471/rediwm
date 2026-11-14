@@ -9,18 +9,6 @@ const Pointer = @import("../Pointer.zig");
 
 const log = std.log.scoped(.virtual_input);
 
-pub const PointerImpl = extern struct {
-    name: [*:0]const u8,
-};
-
-pub const KeyboardImpl = extern struct {
-    name: [*:0]const u8,
-    led_update: ?*const fn (keyboard: *wlr.Keyboard, leds: u32) callconv(.c) void = null,
-};
-
-extern fn wlr_pointer_init(pointer: *wlr.Pointer, impl: *const PointerImpl, name: [*:0]const u8) void;
-extern fn wlr_pointer_finish(pointer: *wlr.Pointer) void;
-
 pub const KeyInfo = struct {
     evdev_keycode: u32,
     shift: bool,
@@ -45,7 +33,7 @@ pub const Sequence = struct {
 
 pub const SyntheticKeyboard = struct {
     // wlroots retains the implementation pointer for the device lifetime.
-    const impl = KeyboardImpl{ .name = "synthetic-keyboard" };
+    const impl = wlr.Keyboard.Impl{ .name = "synthetic-keyboard" };
     server: *Server,
     wlr_kbd: wlr.Keyboard = undefined,
     sym_map: std.AutoHashMap(xkb.Keysym, KeyInfo),
@@ -66,7 +54,7 @@ pub const SyntheticKeyboard = struct {
         const keymap = xkb.Keymap.newFromNames(context, &.{ .rules = null, .model = null, .layout = "us", .variant = "", .options = "" }, .no_flags) orelse return error.KeyboardInitFailed;
         defer keymap.unref();
 
-        wlr.Keyboard.init(&synthetic.wlr_kbd, @ptrCast(&impl), "synthetic-keyboard");
+        wlr.Keyboard.init(&synthetic.wlr_kbd, &impl, "synthetic-keyboard");
         errdefer wlr.Keyboard.finish(&synthetic.wlr_kbd);
         errdefer synthetic.sym_map.deinit();
 
@@ -162,16 +150,10 @@ pub const SyntheticKeyboard = struct {
 };
 
 pub const SyntheticPointer = struct {
-    const impl = PointerImpl{ .name = "synthetic-pointer" };
+    const impl = wlr.Pointer.Impl{ .name = "synthetic-pointer" };
     server: *Server,
-    wlr_ptr: CPointer = undefined,
+    wlr_ptr: wlr.Pointer = undefined,
     allocator: std.mem.Allocator,
-
-    /// zig-wlroots 0.20.1's `wlr.Pointer` omits the C struct's trailing
-    /// `void *data` (336 vs 344 bytes), which `wlr_pointer_init` zeroes. The
-    /// extern wrapper keeps that write inside this field; it used to clear
-    /// `allocator.ptr`, which only libc malloc could ignore.
-    const CPointer = extern struct { base: wlr.Pointer, data: ?*anyopaque };
 
     pub fn create(server: *Server, allocator: std.mem.Allocator) !*SyntheticPointer {
         const synthetic = try allocator.create(SyntheticPointer);
@@ -182,22 +164,22 @@ pub const SyntheticPointer = struct {
             .allocator = allocator,
         };
 
-        wlr_pointer_init(&synthetic.wlr_ptr.base, &impl, "synthetic-pointer");
-        errdefer wlr_pointer_finish(&synthetic.wlr_ptr.base);
+        wlr.Pointer.init(&synthetic.wlr_ptr, &impl, "synthetic-pointer");
+        errdefer wlr.Pointer.finish(&synthetic.wlr_ptr);
 
-        server.input.cursor.attachInputDevice(&synthetic.wlr_ptr.base.base);
-        try Pointer.create(&server.input, &synthetic.wlr_ptr.base.base);
+        server.input.cursor.attachInputDevice(&synthetic.wlr_ptr.base);
+        try Pointer.create(&server.input, &synthetic.wlr_ptr.base);
 
         return synthetic;
     }
 
     pub fn destroy(synthetic: *SyntheticPointer) void {
-        wlr_pointer_finish(&synthetic.wlr_ptr.base);
+        wlr.Pointer.finish(&synthetic.wlr_ptr);
         synthetic.allocator.destroy(synthetic);
     }
 
     pub fn sendButton(synthetic: *SyntheticPointer, time_msec: u32, button: u32, state: wl.Pointer.ButtonState) void {
-        synthetic.server.input.processButton(&synthetic.wlr_ptr.base.base, button, state, time_msec);
+        synthetic.server.input.processButton(&synthetic.wlr_ptr.base, button, state, time_msec);
         synthetic.server.input.seat.pointerNotifyFrame();
     }
 };
@@ -341,16 +323,11 @@ pub const VirtualInput = struct {
     }
 
     pub fn nowMs() u32 {
-        const timespec = extern struct {
-            tv_sec: c_long,
-            tv_nsec: c_long,
-        };
-        const clock_gettime_fn = struct {
-            extern fn clock_gettime(clk_id: c_int, tp: *timespec) c_int;
-        }.clock_gettime;
-        var ts: timespec = undefined;
-        _ = clock_gettime_fn(1, &ts); // 1 = CLOCK_MONOTONIC
-        const ms: u64 = @intCast(@as(i64, ts.tv_sec) * 1000 + @divTrunc(ts.tv_nsec, 1_000_000));
+        // The OS's own constant: 1 is CLOCK_MONOTONIC on Linux but CLOCK_VIRTUAL
+        // (process CPU time) on FreeBSD.
+        var ts: std.posix.timespec = undefined;
+        if (std.posix.errno(std.posix.system.clock_gettime(std.posix.CLOCK.MONOTONIC, &ts)) != .SUCCESS) return 0;
+        const ms: u64 = @intCast(@as(i64, ts.sec) * 1000 + @divTrunc(ts.nsec, 1_000_000));
         return @truncate(ms);
     }
 };

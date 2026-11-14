@@ -5,6 +5,8 @@ const App = @import("app.zig").App;
 const c = @import("c.zig").api;
 const recent = @import("recent.zig");
 const shell_key_repeat = @import("ui").key_repeat;
+const fold = @import("ui").fold;
+const nowMs = @import("app_draw.zig").nowMs;
 const open_with = @import("open_with.zig");
 const properties = @import("properties.zig");
 const Editor = @import("editor.zig").Editor;
@@ -22,14 +24,77 @@ pub fn keyRepeats(self: *const App, sym: u32, utf8: []const u8) bool {
         c.XKB_KEY_BackSpace, c.XKB_KEY_Delete, c.XKB_KEY_Left, c.XKB_KEY_Right => true,
         else => false,
     }, utf8);
-    if (self.dialog) |dlg| return if (dlg.kind == .open_with) vertical else dlg.kind != .properties and dlg.kind != .trash_confirm and dlg.kind != .conflict and dlg.kind != .terminal_close and typing;
+    if (self.dialog) |dlg| return if (dlg.kind == .open_with) vertical else dlg.kind != .properties and dlg.kind != .trash_properties and dlg.kind != .trash_confirm and dlg.kind != .conflict and dlg.kind != .terminal_close and typing;
     if (self.menu != null) return vertical;
     if (self.focus == .search or self.focus == .location_bar or self.focus == .filename) return typing;
     return vertical or sym == c.XKB_KEY_Left or sym == c.XKB_KEY_Right or
         sym == c.XKB_KEY_Page_Up or sym == c.XKB_KEY_Page_Down;
 }
 
+const type_select_timeout_ms: i64 = 1000;
+
+fn sameFoldedText(a: []const u8, b: []const u8) bool {
+    const options: fold.Options = .{ .turkish = @import("i18n").isTurkish() };
+    return fold.startsWith(a, b, options) and fold.startsWith(b, a, options);
+}
+
+/// Select a matching visible name without opening it. The timestamp parameter
+/// keeps timeout and cycling behavior deterministic in tests.
+pub fn typeSelectAt(self: *App, utf8: []const u8, now_ms: i64) bool {
+    if (utf8.len == 0 or self.focus != .file_view or self.ctrl or self.alt or
+        self.transfer_view.active or self.items.items.len == 0)
+    {
+        return false;
+    }
+
+    const expired = self.type_select_len == 0 or
+        now_ms - self.type_select_last_ms > type_select_timeout_ms;
+
+    // Repeating the current single-character prefix cycles through matches.
+    if (!expired and self.type_select_len == utf8.len and
+        sameFoldedText(self.type_select_buffer[0..self.type_select_len], utf8))
+    {
+        self.type_select_last_ms = now_ms;
+        const start = if (self.focused_index) |index|
+            (index + 1) % self.items.items.len
+        else
+            0;
+        const options: fold.Options = .{ .turkish = @import("i18n").isTurkish() };
+        for (0..self.items.items.len) |offset| {
+            const index = (start + offset) % self.items.items.len;
+            if (fold.startsWith(self.items.items[index].text(), utf8, options)) {
+                self.selectIndex(index);
+                return true;
+            }
+        }
+        return true;
+    }
+
+    if (expired or utf8.len > self.type_select_buffer.len - self.type_select_len) {
+        self.type_select_len = 0;
+    }
+    if (utf8.len > self.type_select_buffer.len) return true;
+
+    @memcpy(
+        self.type_select_buffer[self.type_select_len..][0..utf8.len],
+        utf8,
+    );
+    self.type_select_len += utf8.len;
+    self.type_select_last_ms = now_ms;
+
+    const prefix = self.type_select_buffer[0..self.type_select_len];
+    const options: fold.Options = .{ .turkish = @import("i18n").isTurkish() };
+    for (self.items.items, 0..) |item, index| {
+        if (fold.startsWith(item.text(), prefix, options)) {
+            self.selectIndex(index);
+            break;
+        }
+    }
+    return true;
+}
+
 pub fn handleKey(self: *App, sym: u32, utf8: []const u8) void {
+    if (@import("app_audio_playlist.zig").key(self, sym)) return;
     self.cancelWheel();
     if (sym == c.XKB_KEY_Escape and self.selection_band != null) {
         for (self.items.items) |*it| it.selected = it.selected_before_band;
@@ -167,7 +232,7 @@ pub fn handleKey(self: *App, sym: u32, utf8: []const u8) void {
         self.openRenameDialog();
         return;
     } else if (sym == c.XKB_KEY_Delete) {
-        self.openTrashConfirmDialog();
+        self.openTrashConfirmDialogWithMode(self.shift);
         return;
     } else if (sym == c.XKB_KEY_Return) {
         self.activateSelected();
@@ -200,6 +265,7 @@ pub fn handleKey(self: *App, sym: u32, utf8: []const u8) void {
 
     // Arrow keys and scrolling in file view
     if (self.items.items.len == 0) return;
+    if (typeSelectAt(self, utf8, nowMs())) return;
 
     if (sym == c.XKB_KEY_Down or sym == c.XKB_KEY_Right) {
         const step: usize = if (sym == c.XKB_KEY_Down) @intCast(self.columns()) else 1;

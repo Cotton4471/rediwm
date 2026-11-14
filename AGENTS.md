@@ -5,7 +5,8 @@ Tests: `TESTING.md`. Where code lives: [source map](docs/agent-notes/map.md).
 Area notes are in an `AGENTS.md` beside the code; read
 the one for the directory you work in: `src/files`, `src/editor`,
 `src/desktop`, `src/input`, `src/control_center`, `src/ui`, `src/session`,
-`src/dm`, `src/accounts_helper`, `src/printing`, `scripts`.
+`src/dm`, `src/accounts_helper`, `src/printing`, `src/player`, `scripts`,
+`src/wlr`, `src/platform`.
 
 ## Working rules
 
@@ -100,6 +101,19 @@ panel painting. The key rules:
 * **Commit through `Output.commitFrameState`** and build output state through
   `Server.buildOutputState`, including capture. Register new commit reasons
   in `commitIsRedundant`; skipped callbacks wait for `vblank_timer`.
+* **Late rendering is opt-in** (`[compositor] late_render`; glue in
+  `output/late.zig`, model in `late_render.zig`). Off, nothing in the frame path
+  changes. On, a frame event that finds work and a trusted presentation
+  timeline (vsync + hardware clock, a stream of frames, no VRR/tearing) is
+  deferred: frame callbacks go out *then* so clients answer inside the wait,
+  `late_timer` runs `runFrame`, which takes the plan and skips its own
+  post-commit callbacks, and frame events meanwhile are ignored. Frames after
+  idle always render at once. The deadline is `vblank - worst recent
+  cost - margin`, cost = max(CPU to commit, build + GPU elapsed from
+  `server.gpu_recent`); a missed vblank grows the margin, three in two seconds
+  pause it with backoff. Headless presents synchronously and nested pipelines
+  are deeper, so only `late_render_tests.zig` and a DRM run reach the engaged
+  path (`tests/frame_latency.py`).
 * **Window frames are shapes:** every ring pixel needs body content beneath
   it. Shadows, resize grabs, popups and other nodes outside the window need
   `setTreeUnclipped`. Capture the client alone with its shape supplied
@@ -184,7 +198,9 @@ panel painting. The key rules:
   writes nothing under `$HOME` (it disables the GLES2 shader cache), and runs no Xwayland, autostart, IPC,
   notifications, tray, portal, polkit, services, audio, desktop or
   external-tool globals: skip anything new that owns a bus name, spawns or
-  writes (`tests/greeter.py`). Secrets stay in mlocked, wiped buffers.
+  writes (`tests/greeter.py`). Secrets stay in mlocked, wiped buffers. Boot
+  waits for it: every program it builds is an uncached compile, so it builds
+  only those it draws with ([readiness](docs/greeter-readiness.md)).
 * **A crash never unlocks.** `Lock.announce` reports state on
   `REDIWM_SESSION_FD` first thing in `engage`; `rediwm-session` queues `lock`
   for a compositor that died locked, and `main.zig` locks before the backend
@@ -205,7 +221,8 @@ panel painting. The key rules:
   re-check). Synthetic input and pixel reads need `[ipc] automation`. Socket
   only in a private directory, umask 0177. Sandboxed callers need an explicit
   `[[sandbox_allow]]` `ipc` allowance, fail closed and are re-checked on
-  reload. `scroll` is natural by default (negative dy pages down).
+  reload; a connector that has exited or whose pid is not visible is refused
+  (a child may hold its socket). `scroll` is natural by default (negative dy pages down).
 * **Security context** (`global_filter.zig`) hides privileged globals from
   `wp_security_context_v1` clients (guess-binds are protocol errors) unless
   `[[sandbox_allow]]` grants the group; nested contexts are fatal.
@@ -250,17 +267,42 @@ panel painting. The key rules:
   compositor imports). Parsing/persistence is `config/`, applying and reloads
   `config_runtime/`, shared raster code (`text`, `anim`, `sdf`, icons) `ui/`.
   `memory` owns the process allocator; executables own its shutdown.
-* ReleaseSafe's `_FORTIFY_SOURCE` breaks translate-c on `bits/fcntl2.h`: use
-  `std.os.linux` or `@cUndef("_FORTIFY_SOURCE")`. Never `@cInclude`
-  glib/gobject/gio/librsvg; hand-declare the ABI. No runtime `parseColor()`
-  in comptime defaults.
+* **System paths come from `install_paths`:** `sysconfdir` (`/etc`; `/usr/local/etc`
+  targeting FreeBSD) for our own configuration and `rundir` for run state, never a
+  literal `/etc/rediwm` or `/run/...` (C gets `-DREDIWM_SYSCONFDIR`). Third-party
+  locations (`/etc/xdg`, `/etc/login.defs`) stay literal.
+* **Other processes** (list, stat, parent, uids, exe) are read through
+  `system_monitor/proc.zig`; only its Linux backend touches `/proc`.
+* **OS calls go through `src/platform/`**: use it, not `pidfd_*`, `inotify_*`,
+  `SO_PEERCRED`, `prctl`, `eventfd` flags, `renameat2`, `statx` or `/proc/self/exe` (C and C++: its
+  `child.h`, `self_exe.h`, `peer.h`, `process.h`). Elsewhere call libc or
+  `std.posix`, not `std.os.linux` (its `AGENTS.md` lists the exceptions).
+* Zig 0.17 has no `@cImport`: the build translates header roots in `src/c/`
+  into modules (`support.cHeaders`): `c` (libc), `c_gfx` (libc, cairo,
+  freetype, harfbuzz, fontconfig, xkbcommon), `c_pulse`, `c_libinput`,
+  `c_png`, `c_archive`. Add a header to its root; a module links nothing, so
+  artifacts link their libraries. A header that exists on one OS only goes
+  under `#ifdef __linux__` (or `__FreeBSD__`) at the end of `libc.h`. The roots undefine `_FORTIFY_SOURCE`
+  (fortified wrappers break translate-c in ReleaseSafe) and define
+  `_GNU_SOURCE`. glibc's socket calls take a transparent union, FreeBSD's a
+  plain pointer: call `std.c.connect(fd, @ptrCast(&addr), len)` (also `bind`,
+  `getsockname`, `accept`, `recvfrom`), never `c.connect` with
+  `.__sockaddr__`. Other differences that break FreeBSD's translation:
+  `c.SIG_IGN`/`SIG_DFL` (use `platform.process.ignoreBrokenPipes` and
+  `defaultSignal`), `mode_t` is 16 bits (`@intCast` into `chmod`, `mkdir`,
+  `fchmod`; shift with `std.math.Log2Int(c.mode_t)`), and glibc-only names
+  (`_NL_*`, `statx`, `renameat2`, `CLOCK.BOOTTIME`) need `@hasDecl` or a
+  `platform` function. Never translate glib/gobject/gio/librsvg;
+  hand-declare the ABI. No runtime `parseColor()` in comptime defaults.
 * `std.os.linux.*` return `-errno` in `usize` (`std.os.linux.errno`);
   `std.posix.system.*` are libc (`std.posix.errno`).
-* zig-wlroots: `ext.*`/`wp.*` types need the protocol in `build.zig`'s
-  scanner. `ForeignToplevelHandleV1.event.Fullscreen.output` and
-  `ScreencopyFrameV1.buffer` can be NULL: read through `*const ?*T`.
-  `wlr.Pointer` is 8 bytes short: embed it in an extern wrapper
-  (`input/virtual.zig`) or `wlr_pointer_init` overwrites the next field.
+* **wlroots bindings** live in `src/wlr/`, backed by one translation of
+  the installed headers (`src/wlr/c.h`, module `wlr_c`); read `src/wlr/AGENTS.md` before extending them.
+  `ext.*`/`wp.*` Wayland types need their protocol in `build/protocols.zig`.
+  Nullable outputs/buffers are represented explicitly. Full layout checks
+  protect embedded input devices, so no extra Pointer padding is needed.
+  `zig build test-wlroots` validates every exported binding and C input-device
+  initialization; it also runs as part of `zig build test`.
 * Debug `main.gpa` is `DebugAllocator`: freed memory reads `0xaa…` (glibc
   `MALLOC_PERTURB_`: `0xa5…`), leaks print at exit in the compositor log. Free
   process-lifetime caches in `main.start`'s defers; state workers read during

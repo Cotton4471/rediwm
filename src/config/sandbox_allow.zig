@@ -23,7 +23,7 @@ const log = std.log.scoped(.config);
 pub const SandboxAllowRule = struct {
     app_id: []const u8 = "",
     engine: ?[]const u8 = null,
-    allow: GroupSet = GroupSet.initEmpty(),
+    allow: GroupSet = GroupSet.empty,
 };
 
 pub fn parseGroup(str: []const u8) ?SandboxGroup {

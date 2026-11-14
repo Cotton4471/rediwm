@@ -49,10 +49,10 @@ pub fn wheelAccel(cfg: InputConfig) ui_wheel.Accel {
 }
 
 pub fn inputEql(a: InputConfig, b: InputConfig) bool {
-    inline for (std.meta.fields(InputConfig)) |field| {
-        const left = @field(a, field.name);
-        const right = @field(b, field.name);
-        switch (field.type) {
+    inline for (@typeInfo(InputConfig).@"struct".field_names) |field_name| {
+        const left = @field(a, field_name);
+        const right = @field(b, field_name);
+        switch (@FieldType(InputConfig, field_name)) {
             []const u8 => if (!std.mem.eql(u8, left, right)) return false,
             []const []const u8 => {
                 if (left.len != right.len) return false;
@@ -61,17 +61,17 @@ pub fn inputEql(a: InputConfig, b: InputConfig) bool {
             bool, u32, f32 => if (left != right) return false,
             AccelProfile, PanModifier => if (left != right) return false,
             [2]f32 => if (left[0] != right[0] or left[1] != right[1]) return false,
-            else => @compileError("no input equality for " ++ field.name),
+            else => @compileError("no input equality for " ++ field_name),
         }
     }
     return true;
 }
 
 pub fn themeEql(a: Theme, b: Theme) bool {
-    inline for (std.meta.fields(Theme)) |field| {
-        const left = @field(a, field.name);
-        const right = @field(b, field.name);
-        if (field.type == []const u8) {
+    inline for (@typeInfo(Theme).@"struct".field_names) |field_name| {
+        const left = @field(a, field_name);
+        const right = @field(b, field_name);
+        if (@FieldType(Theme, field_name) == []const u8) {
             if (!std.mem.eql(u8, left, right)) return false;
         } else if (!std.meta.eql(left, right)) return false;
     }

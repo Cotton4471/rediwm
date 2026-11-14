@@ -190,8 +190,9 @@ fn diff(server: *Server, output: *Output, state: *const wlr.OutputHeadV1.State) 
 
 comptime {
     // `diff` converts transforms by value.
-    for (@typeInfo(output_transform.Transform).@"enum".fields) |field| {
-        const wl_value = @intFromEnum(@field(wl.Output.Transform, field.name));
-        if (wl_value != field.value) @compileError("output_transform.Transform must match wl_output.transform");
+    const info = @typeInfo(output_transform.Transform).@"enum";
+    for (info.field_names, info.field_values) |name, value| {
+        const wl_value = @intFromEnum(@field(wl.Output.Transform, name));
+        if (wl_value != value) @compileError("output_transform.Transform must match wl_output.transform");
     }
 }

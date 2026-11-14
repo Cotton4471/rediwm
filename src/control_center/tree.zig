@@ -2,6 +2,7 @@
 
 const i18n = @import("i18n");
 const std = @import("std");
+const gpa = @import("../main.zig").gpa;
 const ui = @import("ui");
 const layout = ui.layout;
 const Widget = layout.Widget;
@@ -40,6 +41,7 @@ const pageClicked = panel.pageClicked;
 const deviceClicked = panel.deviceClicked;
 const brightnessChanged = panel.brightnessChanged;
 const filesSingleClickChanged = panel.filesSingleClickChanged;
+const filesAudioPlayerChanged = panel.filesAudioPlayerChanged;
 const ControlCenter = @import("ControlCenter.zig");
 const paintNavHighlights = ControlCenter.paintNavHighlights;
 
@@ -55,6 +57,7 @@ pub fn buildTree(cc: *ControlCenter) void {
         cc.root.linkParents();
         cc.built_page = cc.page;
         cc.refresh_pending = false;
+        releaseRetired(cc);
         return;
     }
     cc.search.capture();
@@ -64,6 +67,7 @@ pub fn buildTree(cc: *ControlCenter) void {
             cc.shortcuts.cancel();
             if (cc.page == .services) if (cc.systemd_client) |client| client.hide();
             if (cc.page == .printers) cc.printers.hide();
+            if (cc.page == .keys) cc.key_settings.hide();
             if (cc.page == .bluetooth) if (cc.server.bluetooth) |manager| manager.closed();
         } else {
             cc.search.restore_scroll = true;
@@ -74,6 +78,8 @@ pub fn buildTree(cc: *ControlCenter) void {
     if (cc.page == .bluetooth and cc.built_page == .bluetooth) cc.bluetooth.capture();
     if (cc.page == .network and cc.built_page == .network) cc.network.captureFocus();
     if (cc.page == .printers and cc.built_page == .printers) cc.printers.capture();
+    if (cc.page == .keys and cc.built_page == .keys) cc.key_settings.capture();
+    if (cc.page == .region and cc.built_page == .region) cc.input_sources.capture();
     if (cc.page == .appearance) appearance_section.captureItemFocus(&cc.appearance);
     ui.input.reset();
     const has_services = if (cc.systemd_client) |client| client.available() else false;
@@ -105,7 +111,7 @@ pub fn buildTree(cc: *ControlCenter) void {
     const narrow = cc.panel_box.width < 660;
     var nav_count: usize = 0;
     for (page_names, 0..) |_, i| {
-        const page: Page = @enumFromInt(i);
+        const page: Page = @fromBackingInt(@intCast(i));
         if (page == .services and !has_services) continue;
         if (cc.search.active and cc.search.firstInPage(page) == null) continue;
         nav_count += 1;
@@ -115,7 +121,7 @@ pub fn buildTree(cc: *ControlCenter) void {
     const nav_fg = theme.global.sidebarForeground();
     var nav_index: usize = 0;
     for (page_names, 0..) |_, i| {
-        const page: Page = @enumFromInt(i);
+        const page: Page = @fromBackingInt(@intCast(i));
         if (page == .services and !has_services) continue;
         if (cc.search.active and cc.search.firstInPage(page) == null) continue;
         const row = &cc.nav_rows[nav_index];
@@ -126,7 +132,7 @@ pub fn buildTree(cc: *ControlCenter) void {
         }
         cc.nav_children[nav_index] = .{
             .{ .kind = .{ .icon = .{ .id = page_icons[i], .color = if (selected) t.accent else nav_fg } }, .width = .{ .fixed = 22 }, .height = .{ .fixed = 22 } },
-            label(page_labels[i].get(), 14, false),
+            label(if (page == .power and !cc.server.power_policy.state.present) i18n.tr("Power") else page_labels[i].get(), 14, false),
         };
         cc.nav_children[nav_index][1].kind.text.color = nav_fg;
         cc.nav_children[nav_index][1].width = .{ .flex = 1 };
@@ -144,14 +150,22 @@ pub fn buildTree(cc: *ControlCenter) void {
     }
     if (!cc.search.empty()) {
         cc.content_count = 0;
-        var heading = label(page_labels[@intFromEnum(cc.page)].get(), 24, false);
+        var heading = label(if (cc.page == .power and !cc.server.power_policy.state.present) i18n.tr("Power") else page_labels[@backingInt(cc.page)].get(), 24, false);
         heading.kind.text.weight = 600;
         if (cc.page != .bluetooth) {
             cc.append(heading);
-            cc.append(label(page_descriptions[@intFromEnum(cc.page)].get(), 13, true));
+            cc.append(label(page_descriptions[@backingInt(cc.page)].get(), 13, true));
         }
         if (cc.search.unavailable) cc.append(label(i18n.tr("This setting is unavailable on this device or in the current mode."), t.settings_description_size, true));
         switch (cc.page) {
+            .keys => {
+                @import("sections/keys.zig").build(&cc.key_settings, cc);
+                cc.append(cc.key_settings.root);
+            },
+            .power => {
+                @import("sections/power.zig").build(&cc.power_settings, cc);
+                cc.append(cc.power_settings.root);
+            },
             .desktop => {
                 desktop_section.build(&cc.desktop, cc);
                 cc.append(cc.desktop.root);
@@ -204,11 +218,7 @@ pub fn buildTree(cc: *ControlCenter) void {
                 var nl_card = card(&cc.display.nl_group_children);
                 nl_card.name = "displays";
                 cc.append(nl_card);
-                if (cc.display.has_lid) {
-                    var lid_card = card(&cc.display.lid_group_children);
-                    lid_card.name = "displays";
-                    cc.append(lid_card);
-                }
+                cc.append(.{ .name = "power_settings_link", .kind = .{ .button = .{ .label = i18n.tr("Power and lid settings"), .owner = cc, .id = @backingInt(Page.power), .on_click = pageClicked } }, .height = .{ .fixed = 36 } });
             },
             .audio => {
                 var audio_card = card(cc.sound.top_children[1].children);
@@ -269,10 +279,15 @@ pub fn buildTree(cc: *ControlCenter) void {
     if (!cc.search.empty() and cc.page == .services and cc.services.search_focus) {
         if (cc.services.search) |field| ui.input.current.focus(&cc.root, field);
     }
+    if (cc.page == .region and cc.input_sources.search_focus) {
+        if (cc.input_sources.search) |field| ui.input.current.focus(&cc.root, field);
+    }
     if (!cc.search.empty() and cc.page == .users) {
         if (users_section.initialFormFocus(&cc.users)) |field| ui.input.current.focus(&cc.root, field);
     }
-    if (cc.search.focused or cc.search.request_focus) {
+    if (cc.page == .region and cc.input_sources.picker_open and cc.input_sources.search_focus) {
+        // The Region & Language picker owns focus while it is open.
+    } else if (cc.search.focused or cc.search.request_focus) {
         if (cc.search.initialized) ui.input.current.focus(&cc.root, &cc.search.field);
         cc.search.request_focus = false;
     }
@@ -280,6 +295,23 @@ pub fn buildTree(cc: *ControlCenter) void {
     cc.search.built_empty = cc.search.empty();
     cc.built_page = cc.page;
     cc.refresh_pending = false;
+    releaseRetired(cc);
+}
+
+/// Takes over a replaced config that the open page may still point into, and
+/// asks for the rebuild that drops those pointers. Rebuilding here would run
+/// inside whatever widget callback reloaded the config.
+pub fn retireConfig(cc: *ControlCenter, old: *@import("config").loader.Config) void {
+    cc.retired_configs.append(gpa, old.*) catch {
+        old.deinit();
+        return;
+    };
+    cc.refresh();
+}
+
+pub fn releaseRetired(cc: *ControlCenter) void {
+    for (cc.retired_configs.items) |*old| old.deinit();
+    cc.retired_configs.clearRetainingCapacity();
 }
 
 pub fn append(cc: *ControlCenter, widget: Widget) void {
@@ -314,7 +346,7 @@ pub fn buildGeneral(cc: *ControlCenter) void {
     };
     cc.general_output = .{
         .{ .kind = .container, .direction = .column, .@"align" = .stretch, .width = .{ .flex = 1 }, .gap = 5, .children = &cc.general_output_text },
-        .{ .kind = .{ .button = .{ .label = i18n.tr("Audio settings"), .owner = cc, .id = @intFromEnum(Page.audio), .on_click = pageClicked } }, .height = .{ .fixed = 32 } },
+        .{ .kind = .{ .button = .{ .label = i18n.tr("Audio settings"), .owner = cc, .id = @backingInt(Page.audio), .on_click = pageClicked } }, .height = .{ .fixed = 32 } },
     };
     var output_card = card(&cc.general_output);
     output_card.direction = .row;
@@ -323,7 +355,7 @@ pub fn buildGeneral(cc: *ControlCenter) void {
     cc.general_display_text = .{ sectionTitle(i18n.tr("Display")), label(std.mem.span(cc.wlr_output.name), 13, true) };
     cc.general_display = .{
         .{ .kind = .container, .direction = .column, .@"align" = .stretch, .width = .{ .flex = 1 }, .gap = 5, .children = &cc.general_display_text },
-        .{ .kind = .{ .button = .{ .label = i18n.tr("Display settings"), .owner = cc, .id = @intFromEnum(Page.displays), .on_click = pageClicked } }, .height = .{ .fixed = 32 } },
+        .{ .kind = .{ .button = .{ .label = i18n.tr("Display settings"), .owner = cc, .id = @backingInt(Page.displays), .on_click = pageClicked } }, .height = .{ .fixed = 32 } },
     };
     var display_card = card(&cc.general_display);
     display_card.direction = .row;
@@ -343,6 +375,18 @@ pub fn buildGeneral(cc: *ControlCenter) void {
     files_card.direction = .row;
     files_card.@"align" = .center;
     cc.append(files_card);
+    cc.general_audio_text = .{
+        label(i18n.tr("Built-in audio player"), 14, false),
+        label(i18n.tr("In Files, show a play button on audio files and play them in the background player. A default application chosen in Open With still takes over."), 12, true),
+    };
+    cc.general_audio = .{
+        .{ .kind = .container, .direction = .column, .gap = 5, .width = .{ .flex = 1 }, .children = &cc.general_audio_text },
+        .{ .name = "files_audio_player", .kind = .{ .toggle = .{ .on = cc.server.config.compositor.files_audio_player, .owner = cc, .on_change = filesAudioPlayerChanged } } },
+    };
+    var audio_card = card(&cc.general_audio);
+    audio_card.direction = .row;
+    audio_card.@"align" = .center;
+    cc.append(audio_card);
 }
 
 pub fn buildDevices(cc: *ControlCenter) void {

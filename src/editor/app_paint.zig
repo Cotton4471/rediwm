@@ -13,16 +13,19 @@ const dialog = @import("ui").widgets.dialog;
 const menu = @import("ui").context_menu;
 const p = @import("pango.zig");
 const caret_mod = @import("caret.zig");
+const reflow_mod = @import("reflow.zig");
+const input = @import("ui").input;
 const view = @import("view.zig");
 const lines = @import("lines.zig");
 const app_mod = @import("app.zig");
 const App = app_mod.App;
 const top = app_mod.top;
 const status_h = app_mod.status_h;
-const tab_w = app_mod.tab_w;
 const labels = app_mod.labels;
+const recent_row = app_mod.recent_row;
 const Tab = app_mod.Tab;
 const fill = app_mod.fill;
+const drawEllipsis = @import("../files/app_draw.zig").drawEllipsis;
 
 pub const CaretState = struct {
     active: bool,
@@ -31,6 +34,7 @@ pub const CaretState = struct {
     cursor: usize,
     anchor: usize,
     find: bool,
+    search_focus: @import("app_search.zig").Control,
     query_hash: u64,
     activity: usize,
     top: usize,
@@ -44,14 +48,16 @@ pub const CaretState = struct {
 pub fn caretState(self: *App) CaretState {
     const d = self.document();
     const r = self.inputRectangle();
+    const editor = self.searchEditor();
     const in_view = @as(f64, @floatFromInt(r.y + r.height)) > self.viewTop() and @as(f64, @floatFromInt(r.y)) < self.viewTop() + self.viewHeight();
     return .{
-        .active = self.focused and !self.menu_open and self.close_tab == null and self.preedit.items.len == 0 and (self.find_open or (d.cursor == d.anchor and in_view)),
+        .active = self.focused and !self.menu_open and self.close_tab == null and self.preedit.items.len == 0 and (editor != null or (!self.find_open and d.cursor == d.anchor and in_view)),
         .tab = self.tabId(),
         .revision = d.revision,
-        .cursor = if (self.find_open) self.query.cursor else d.cursor,
-        .anchor = if (self.find_open) self.query.anchor else d.anchor,
+        .cursor = if (editor) |e| e.cursor else d.cursor,
+        .anchor = if (editor) |e| e.anchor else d.anchor,
         .find = self.find_open,
+        .search_focus = self.search_focus,
         .activity = self.caret_activity,
         .top = d.top,
         .dy = self.current().dy,
@@ -59,7 +65,7 @@ pub fn caretState(self: *App) CaretState {
         .width = self.w,
         .height = self.h,
         .scale = self.scale,
-        .query_hash = if (self.find_open) std.hash.Wyhash.hash(0, self.query.text.items) else 0,
+        .query_hash = if (editor) |e| std.hash.Wyhash.hash(0, e.text.items) else 0,
     };
 }
 
@@ -71,15 +77,38 @@ pub fn stepCaret(self: *App, now: i64, active: bool, restart: bool, snap: bool) 
         .h = @as(f32, @floatFromInt(r.height)) / 1024,
     };
     if (self.find_open) {
-        if (self.layouts.cr) |cr| target = .{
-            .x = @floatCast(22 + ui.measureText(cr, self.query.text.items[0..@min(self.query.cursor, self.query.text.items.len)], ui.textSize(), false)),
-            .y = 48,
-            .w = 1,
-            .h = 18,
-        };
+        if (self.layouts.cr) |cr| target = self.searchCaret(cr);
     }
-    if (self.caret.update(now, active, restart, target, snap or self.caret_snap)) self.caret_dirty = true;
+    if (self.caret.update(now, active, restart, target, snap or self.caret_snap, caretShift(self, now))) self.caret_dirty = true;
     self.caret_snap = false;
+}
+
+/// How far the line holding the cursor is from rest, for a caret that rides it.
+fn caretShift(self: *App, now: i64) caret_mod.Shift {
+    // The find bar's caret sits in its own box, not in a line.
+    if (self.find_open or !self.reflow.moving(now)) return .{};
+    const row = self.port().locate(self.document().cursor) orelse return .{ .active = true };
+    const o = self.reflow.offset(row.line.seg.start, now).snapped(@floatFromInt(self.scale));
+    return .{ .dx = o.dx, .dy = o.dy, .active = true };
+}
+
+fn reflowKey(self: *App) reflow_mod.Key {
+    return .{ .tab = self.tabId(), .epoch = self.layouts.epoch, .width = @floatFromInt(self.w) };
+}
+
+/// Starts the glide of lines an edit moved and advances one in flight. Runs
+/// before `stepCaret` in each pass of the loop: the caret rides its line.
+pub fn stepReflow(self: *App, now: i64) void {
+    self.frame_ms = now;
+    if (self.document().takeChange()) |change| {
+        const pt = self.port();
+        pt.clamp();
+        pt.visible(&self.rows);
+        const motion = input.caret_config.motion_ms;
+        _ = self.reflow.apply(now, motion + motion / 2, reflowKey(self), change, self.rows.items);
+    }
+    // One more frame once it ends, so the lines are drawn at rest.
+    if (self.reflow.settle(now) or self.reflow.moving(now)) self.reflow_dirty = true;
 }
 
 pub fn caretDamage(self: *App) p.Rectangle {
@@ -102,12 +131,14 @@ pub fn paintCaret(self: *App, cr: *c.cairo_t) void {
 }
 
 pub fn tabRight(self: *const App) f64 {
-    return @as(f64, @floatFromInt(self.w)) - @as(f64, if (self.has_titlebar) 34 else 70);
+    return @as(f64, @floatFromInt(self.w)) - @as(f64, if (self.has_titlebar) 40 else 80);
 }
 
 pub fn dismissMenu(self: *App) void {
     if (!self.menu_open) return;
     self.menu_open = false;
+    self.sub_open = false;
+    self.sub_selected = null;
     self.dirty = true;
 }
 
@@ -117,6 +148,9 @@ pub fn toggleMenu(self: *App, anchor: f64) void {
     self.menu_anchor = anchor;
     self.menu_open = !self.menu_open;
     self.menu_selected = null;
+    self.sub_open = false;
+    self.sub_selected = null;
+    if (self.menu_open) self.refreshRecent();
     self.dirty = true;
 }
 
@@ -132,7 +166,7 @@ pub fn menuBox(self: *const App) menu.Rect {
 
 pub fn menuRow(self: *const App, i: usize) menu.Rect {
     const box = self.menuBox();
-    const separators: usize = @as(usize, if (i >= 2) 1 else 0) + @as(usize, if (i >= 4) 1 else 0);
+    const separators: usize = @as(usize, if (i >= 3) 1 else 0) + @as(usize, if (i >= 5) 1 else 0);
     return .{ .x = box.x + menu.padding, .y = box.y + @as(f64, @floatFromInt(menu.padding + i * menu.row_height + separators * menu.separator_space)), .w = box.w - 2 * menu.padding, .h = menu.row_height };
 }
 
@@ -144,74 +178,75 @@ pub fn menuHit(self: *const App, x: f64, y: f64) ?usize {
 pub fn paintMenu(self: *App, cr: *c.cairo_t) void {
     menu.frame(cr, self.menuBox(), true);
     const IconId = @import("ui").layout.IconId;
-    const icons = [_]?IconId{ .plus, .open, .save, .save, .search, if (self.wrap) .checkmark else null };
-    const hints = [_]?[]const u8{ "CTRL+N", "CTRL+O", "CTRL+S", "CTRL+SHIFT+S", "CTRL+F", null };
+    const icons = [_]?IconId{ .plus, .open, .clock, .save, .save, .search, .search, if (self.wrap) .checkmark else null };
+    const hints = [_]?[]const u8{ "CTRL+N", "CTRL+O", null, "CTRL+S", "CTRL+SHIFT+S", "CTRL+F", "CTRL+H", null };
     for (labels, 0..) |label, i| menu.row(cr, self.menuRow(i), .{
         .label = label.get(),
         .hint = hints[i],
         .icon = icons[i],
         .selected = self.menu_selected == i,
-        .separator = i == 2 or i == 4,
+        .separator = i == 3 or i == 5,
+        .disabled = i == recent_row and !self.recentEnabled(),
     }, true);
+    // The chevron says the row opens a submenu.
+    const row = self.menuRow(recent_row);
+    if (ui.Layer.begin(cr, .{ .x = @floatCast(row.x + row.w - 24), .y = @floatCast(row.y + (row.h - 14) / 2), .w = 14, .h = 14 })) |l| {
+        var layer = l;
+        var color = theme.global.app_fg orelse theme.global.window_fg;
+        color[3] *= if (self.recentEnabled()) 0.6 else 0.25;
+        layer.renderer.drawIcon(0, 0, 14, 14, .{ .id = .chevron_right, .color = color });
+        layer.finish();
+    }
+    if (self.sub_open) @import("app_recent.zig").paint(self, cr);
 }
 
 pub fn paintButton(self: *App, cr: *c.cairo_t, r: field.Rect, label: []const u8, selected: bool) void {
     var layer = ui.Layer.begin(cr, r) orelse return;
     defer layer.finish();
     layer.renderer.palette = theme.shellPalette();
-    button.paint(&layer.renderer, layer.local(), .{ .label = label, .variant = .ghost, .size = .sm }, .{ .selected = selected, .pointer = if (self.px >= r.x and self.px < r.x + r.w and self.py >= r.y and self.py < r.y + r.h) .hover else .idle });
+    const proximity = self.buttonProximity(.{
+        .x = @floatCast(r.x), .y = @floatCast(r.y),
+        .w = @floatCast(r.w), .h = @floatCast(r.h),
+    });
+    button.paint(&layer.renderer, layer.local(), .{ .label = label, .variant = .secondary, .size = .sm }, .{
+        .selected = selected,
+        .pointer = if (self.px >= @as(f64, r.x) and self.px < @as(f64, r.x + r.w) and self.py >= @as(f64, r.y) and self.py < @as(f64, r.y + r.h)) .hover else .idle,
+        .proximity_distance = proximity.distance,
+        .proximity_x = proximity.x,
+        .proximity_y = proximity.y,
+    });
 }
 
 pub fn render(self: *App, cr: *c.cairo_t) void {
     const t = theme.global;
     fill(cr, 0, 0, @floatFromInt(self.w), @floatFromInt(self.h), t.app_bg);
     fill(cr, 0, 0, @floatFromInt(self.w), 38, t.app_bar);
-    var i = self.first_tab;
-    while (i < self.tabs.items.len) : (i += 1) {
-        const x = @as(f64, @floatFromInt(i - self.first_tab)) * tab_w;
-        if (x + tab_w > self.tabRight()) break;
-        const tab = self.tabs.items[i];
+    c.cairo_save(cr);
+    c.cairo_rectangle(cr, 0, 0, self.tabRight(), 38);
+    c.cairo_clip(cr);
+    const width = self.tabWidth();
+    for (self.tabs.items, 0..) |tab, i| {
+        const x = self.tabX(i);
+        if (x + width <= 0 or x >= self.tabRight()) continue;
         if (i == self.selected) {
-            fill(cr, x, 0, tab_w, 38, t.app_bg);
-            fill(cr, x + 8, 35, tab_w - 16, 2, theme.shellPalette().accent);
-        }
-        var buf: [512]u8 = undefined;
-        const label = std.fmt.bufPrint(&buf, "{s}{s}", .{ tab.name(), if (tab.doc.modified()) " •" else "" }) catch tr("Text file");
-        c.cairo_save(cr);
-        c.cairo_rectangle(cr, x + 12, 2, tab_w - 42, 32);
-        c.cairo_clip(cr);
+            fill(cr, x, 0, width, 38, t.app_bg);
+            fill(cr, x + 8, 35, width - 16, 2, theme.shellPalette().accent);
+        } else if (i + 1 != self.selected and i + 1 < self.tabs.items.len) fill(cr, x + width - 1, 10, 1, 18, t.app_divider);
+        // The name gives way to the close button; the unsaved mark never does.
+        const name = if (std.unicode.utf8ValidateSlice(tab.name())) tab.name() else tr("Text file");
+        const mark: f64 = if (tab.doc.modified()) 14 else 0;
+        const room = width - 48 - mark;
         ui.setSource(cr, t.window_fg);
-        ui.drawText(cr, label, x + 12, 24, ui.textSize(), false);
-        c.cairo_restore(cr);
-        self.paintButton(cr, .{ .x = @floatCast(x + tab_w - 28), .y = 5, .w = 24, .h = 26 }, "×", false);
-    }
-    self.paintButton(cr, .{ .x = @floatCast(self.tabRight() + 2), .y = 5, .w = 28, .h = 26 }, "+", false);
-    if (!self.has_titlebar) self.paintButton(cr, .{ .x = @floatFromInt(self.w - 32), .y = 5, .w = 28, .h = 26 }, "…", self.menu_open);
-    if (self.find_open) {
-        const box: field.Rect = .{ .x = 12, .y = 43, .w = @floatFromInt(self.w - 110), .h = 30 };
-        if (ui.Layer.begin(cr, box)) |l| {
-            var layer = l;
-            _ = field.paintFrame(&layer.renderer, layer.local(), .{}, .{ .focused = true });
-            layer.finish();
+        drawEllipsis(cr, name, x + 12, 24, room, ui.textSize(), false);
+        if (mark > 0) {
+            ui.drawText(cr, "•", x + 12 + @min(ui.measureText(cr, name, ui.textSize(), false), room) + 5, 24, ui.textSize(), false);
         }
-        c.cairo_save(cr);
-        c.cairo_rectangle(cr, 22, 43, @floatFromInt(self.w - 130), 30);
-        c.cairo_clip(cr);
-        const bytes = self.query.text.items;
-        const selected = self.query.selection();
-        if (selected[0] != selected[1]) {
-            const x = 22 + ui.measureText(cr, bytes[0..selected[0]], ui.textSize(), false);
-            const width = ui.measureText(cr, bytes[selected[0]..selected[1]], ui.textSize(), false);
-            fill(cr, x, 46, width, 24, t.app_item_selected);
-        }
-        var ink = t.window_fg;
-        if (bytes.len == 0) ink[3] *= 0.5;
-        ui.setSource(cr, ink);
-        ui.drawText(cr, if (bytes.len == 0) tr("Find…") else bytes, 22, 64, ui.textSize(), false);
-        self.paintCaret(cr);
-        c.cairo_restore(cr);
-        self.paintButton(cr, .{ .x = @floatFromInt(self.w - 90), .y = 43, .w = 78, .h = 30 }, tr("Next"), false);
+        self.paintIcon(cr, self.tabCloseBox(i), .close, tr("Close tab"), false);
     }
+    c.cairo_restore(cr);
+    self.paintIcon(cr, self.newButtonBox(), .plus, tr("New tab"), false);
+    if (!self.has_titlebar) self.paintIcon(cr, self.menuButtonBox(), .more, tr("Menu"), self.menu_open);
+    if (self.find_open) self.paintSearch(cr);
     self.layouts.beginFrame();
     const pt = self.port();
     pt.clamp();
@@ -221,7 +256,17 @@ pub fn render(self: *App, cr: *c.cairo_t) void {
     c.cairo_save(cr);
     c.cairo_rectangle(cr, 12, self.viewTop(), @floatFromInt(self.w - 30), self.viewHeight());
     c.cairo_clip(cr);
-    for (self.rows.items) |row| self.paintLine(cr, tab, row, sel);
+    for (self.rows.items) |row| {
+        const o = self.reflow.offset(row.line.seg.start, self.frame_ms).snapped(@floatFromInt(self.scale));
+        // A line carried in from elsewhere fades in over the line it passes.
+        if (o.alpha < 1) c.cairo_push_group(cr);
+        self.paintLine(cr, tab, row, sel, o);
+        if (o.alpha < 1) {
+            c.cairo_pop_group_to_source(cr);
+            c.cairo_paint_with_alpha(cr, o.alpha);
+        }
+    }
+    self.reflow.remember(reflowKey(self), tab.doc.text.items.len, self.rows.items);
     if (!self.find_open) self.paintCaret(cr);
     c.cairo_restore(cr);
     if (self.scrollbarGeometry()) |bar| ui.drawScrollbar(cr, scrollbar.look(bar, self.bar_appearance, theme.global.scrollbar_width, theme.shellPalette()));
@@ -244,7 +289,7 @@ pub fn render(self: *App, cr: *c.cairo_t) void {
 }
 
 /// Draws one segment's selection, text and any preedit at the cursor.
-pub fn paintLine(self: *App, cr: *c.cairo_t, tab: *Tab, row: view.Row, sel: [2]usize) void {
+pub fn paintLine(self: *App, cr: *c.cairo_t, tab: *Tab, row: view.Row, sel: [2]usize, shift: reflow_mod.Offset) void {
     const t = theme.global;
     const l = row.line;
     const seg = l.seg;
@@ -252,7 +297,8 @@ pub fn paintLine(self: *App, cr: *c.cairo_t, tab: *Tab, row: view.Row, sel: [2]u
     defer p.pango_layout_iter_free(iter);
     c.cairo_save(cr);
     defer c.cairo_restore(cr);
-    c.cairo_translate(cr, 16 - tab.scroll_x, self.viewTop() + row.y);
+    const row_y = row.y + shift.dy;
+    c.cairo_translate(cr, 16 - tab.scroll_x + shift.dx, self.viewTop() + row_y);
     const text_len = l.textLen();
     // The selection as indices into this layout, which holds the text
     // without its line break. With wrapping, a selected break is drawn as
@@ -270,8 +316,8 @@ pub fn paintLine(self: *App, cr: *c.cairo_t, tab: *Tab, row: view.Row, sel: [2]u
         p.pango_layout_iter_get_line_extents(iter, null, &rect);
         const y = @as(f64, @floatFromInt(rect.y)) / 1024;
         const h = @as(f64, @floatFromInt(rect.height)) / 1024;
-        if (row.y + y > self.viewHeight()) break;
-        if (row.y + y + h >= 0) {
+        if (row_y + y > self.viewHeight()) break;
+        if (row_y + y + h >= 0) {
             const line = p.pango_layout_iter_get_line_readonly(iter);
             const first: usize = @intCast(p.pango_layout_line_get_start_index(line));
             const next = p.pango_layout_get_line_readonly(l.layout, line_index + 1);

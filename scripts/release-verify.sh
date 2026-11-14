@@ -45,14 +45,16 @@ chmod 440 /etc/sudoers.d/tester
 log "Running install.sh as an ordinary user"
 cd /
 runuser -u tester -- env HOME=/home/tester REDIWM_RELEASE_URL="file://$rel" \
-    sh "$installer" --no-restart
+    sh "$installer" --prebuilt-only --no-restart
 
 # Not cwd=$src: the installed copy, from outside any checkout.
 log "Checking the installed files"
 for bin in /usr/local/bin/rediwm /usr/local/bin/rediwm-*; do
     readelf -d "$bin" 2>/dev/null | grep -E 'RUNPATH|RPATH' | grep -q "/work/" && die "$bin carries a build path in its RUNPATH"
 done
-for bin in rediwm rediwm-msg rediwm-theme rediwm-files rediwm-files-terminal rediwm-transfers rediwm-images rediwm-monitor rediwm-calculator rediwm-editor rediwm-pdf rediwm-share-picker rediwm-session rediwm-dm rediwm-accounts-helper; do
+# Every program the release's build listed (build/install_paths.zig).
+programs=$(tar -xzOf "$rel/rediwm-$family-x86_64.tar.gz" rediwm/zig-out/release-safe/programs) || die "the release has no program list"
+for bin in $programs; do
     [ -x "/usr/local/bin/$bin" ] || die "/usr/local/bin/$bin is missing"
     ldd "/usr/local/bin/$bin" 2>&1 | grep -q 'not found' && die "$bin has unresolved libraries"
 done

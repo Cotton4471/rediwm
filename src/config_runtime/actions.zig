@@ -13,7 +13,11 @@ const log = std.log.scoped(.config);
 const gpa = @import("../main.zig").gpa;
 
 pub fn executeAction(server: *Server, action: Action) void {
-    if (server.locker != null and !keybinds.isHardwareAction(action)) return;
+    if (server.locker != null and !keybinds.isHardwareAction(action)) {
+        if (keybinds.worksWhileLocked(action)) if (server.input_sources) |sources| sources.cycleLayouts();
+        return;
+    }
+    if (action != .toggle_overview and !keybinds.isHardwareAction(action)) server.world.overview.cancel(&server.world);
     if (server.world.workspaces.active) switch (action) {
         .set_depth, .zoom_in, .zoom_out, .zoom_reset, .camera_zoom_in, .camera_zoom_out, .camera_zoom_reset, .pan_left, .pan_right, .pan_up, .pan_down => return,
         else => {},
@@ -30,6 +34,8 @@ pub fn executeAction(server: *Server, action: Action) void {
         },
         .volume_up, .volume_down, .volume_mute, .mic_mute, .brightness_up, .brightness_down => @import("../hardware_keys.zig").execute(server, action),
         .power_profile_cycle => if (server.power_profiles) |pp| pp.cycle(),
+        .input_source_next => if (server.input_sources) |sources| sources.cycle(true),
+        .input_source_prev => if (server.input_sources) |sources| sources.cycle(false),
         .spawn => |cmd| launchPreferred(server, cmd),
         .close_window => if (focusedToplevel(server)) |t| t.sendClose(),
         .toggle_fullscreen => if (focusedToplevel(server)) |t| t.toggleFullscreen(),
@@ -44,6 +50,7 @@ pub fn executeAction(server: *Server, action: Action) void {
         .zoom_in => zoomFocused(server, -1),
         .zoom_out => zoomFocused(server, 1),
         .zoom_reset => setFocusedZoom(server, 0),
+        .toggle_overview => server.world.overview.toggle(&server.world),
         .camera_zoom_in => cameraZoom(server, -1),
         .camera_zoom_out => cameraZoom(server, 1),
         .camera_zoom_reset => cameraZoomReset(server),
@@ -82,6 +89,30 @@ pub fn focusedToplevel(server: *Server) ?*Toplevel {
 
 fn openSystemMonitor(server: *Server) void {
     if (server.greeter_mode or server.locker != null or server.polkit_dialog != null) return;
+    // Remove transient input owners before focusing either the existing app
+    // or the one about to map. Releasing Alt must not accept an old switcher.
+    var keyboards = server.input.keyboards.iterator(.forward);
+    while (keyboards.next()) |keyboard| {
+        keyboard.stopRepeat();
+        keyboard.stopShellRepeat();
+        keyboard.stopSwitcherRepeat();
+    }
+    _ = server.input.shortcuts_inhibit.revoke();
+    _ = server.input.cancelDrag();
+    server.input.clearGrab();
+    server.input.pan_session = null;
+    server.screenshot_selector.cancel();
+    server.switcher.cancel();
+    server.input.window_menu.close();
+    if (server.tray) |tray| tray.closeMenu();
+    var outputs = server.outputs.iterator(.forward);
+    while (outputs.next()) |output| {
+        output.closeStartMenu();
+        output.closePowerMenu();
+        output.closeWifi();
+        output.closeBattery();
+        output.closeCalendar();
+    }
     var it = server.world.toplevels.iterator(.forward);
     while (it.next()) |top| {
         if (!top.in_world or !std.mem.eql(u8, top.appId(), "rediwm-monitor")) continue;

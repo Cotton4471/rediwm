@@ -23,15 +23,22 @@ case "$family" in
         # A container image is a snapshot: refresh it so the release links
         # what rolling users have today.
         pacman -Syu --noconfirm
-        extra="xorg-xwayland xdg-desktop-portal xdg-desktop-portal-wlr xdg-desktop-portal-gtk python mesa squashfs-tools"
+        extra="xorg-xwayland xdg-desktop-portal xdg-desktop-portal-wlr xdg-desktop-portal-gtk mesa squashfs-tools"
         owner() { pacman -Qqo "$1" 2>/dev/null; }
         ;;
     debian|ubuntu)
-        extra="xwayland xdg-desktop-portal xdg-desktop-portal-wlr xdg-desktop-portal-gtk python3 xkb-data libgl1-mesa-dri libegl-mesa0 squashfs-tools"
-        owner() { { dpkg-query -S "$1" 2>/dev/null || dpkg-query -S "/usr$1" 2>/dev/null; } | head -n 1 | sed 's/:.*//'; }
+        extra="xwayland xdg-desktop-portal xdg-desktop-portal-wlr xdg-desktop-portal-gtk xkb-data libgl1-mesa-dri libegl-mesa0 squashfs-tools"
+        # A diverted file (usr-merge) prints "diversion by PKG from: ..." lines
+        # first; skip them, and keep only the first package of a shared path.
+        owner() {
+            for owned in "$1" "/usr$1"; do
+                found=$(dpkg-query -S "$owned" 2>/dev/null | grep -v '^diversion ' | head -n 1 | sed 's/:.*//; s/,.*//')
+                [ -z "$found" ] || { echo "$found"; return; }
+            done
+        }
         ;;
     fedora)
-        extra="xorg-x11-server-Xwayland xdg-desktop-portal xdg-desktop-portal-wlr xdg-desktop-portal-gtk python3 mesa-dri-drivers squashfs-tools"
+        extra="xorg-x11-server-Xwayland xdg-desktop-portal xdg-desktop-portal-wlr xdg-desktop-portal-gtk mesa-dri-drivers squashfs-tools"
         owner() { rpm -qf --qf '%{NAME}\n' "$1" 2>/dev/null | head -n 1; }
         ;;
     *) die "unknown family '$family' (arch, debian, ubuntu, fedora)" ;;
@@ -56,7 +63,7 @@ jobs=${ZIG_JOBS:-$((cores > 2 ? cores - 2 : 1))}
 log "Building RediWM (ReleaseSafe, x86_64_v2)"
 release="$src/zig-out/release-safe"
 rm -rf -- "$release"
-zig build -Doptimize=ReleaseSafe -Dcpu=x86_64_v2 -j"$jobs" --prefix "$release" -Dwlroots-prefix="$wlroots"
+sh scripts/with-wlroots.sh "$wlroots" zig build -Doptimize=ReleaseSafe -Dcpu=x86_64_v2 -j"$jobs" --prefix "$release" -Dwlroots-prefix="$wlroots"
 
 # Linking the private wlroots left its build-machine prefix in rediwm's RUNPATH
 # (after $ORIGIN/../lib/rediwm, which is all an installed copy needs). A path
@@ -76,7 +83,7 @@ mkdir -p "$stage/zig-out" "$stage/scripts"
 cp -a "$release" "$stage/zig-out/release-safe"
 cp -a data "$stage/data"
 rm -rf -- "$stage/data/__pycache__"
-for f in install-session.sh install-session-root.sh restart-session.py; do
+for f in install-session.sh install-session-root.sh; do
     cp "scripts/$f" "$stage/scripts/$f"
 done
 echo "$version ${REDIWM_REVISION:-unknown}" > "$stage/VERSION"
@@ -97,6 +104,9 @@ for soname in $sonames; do
     [ -n "$path" ] || die "$soname isn't installed in this container"
     pkg=$(owner "$path")
     [ -n "$pkg" ] || die "no package owns $path ($soname)"
+    case "$pkg" in
+        *[!A-Za-z0-9.+_-]*) die "unusable package name '$pkg' for $path ($soname)" ;;
+    esac
     pkgs="$pkgs $pkg"
 done
 {

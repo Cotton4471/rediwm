@@ -73,7 +73,7 @@ pub fn parse(a: std.mem.Allocator, bytes: []const u8) !std.json.Parsed(Saved) {
     if (s.version != 2) return error.UnsupportedLayoutVersion;
     if (s.workspaces.len > 32 or s.windows.len > 4096) return error.InvalidLayout;
     if (!std.math.isFinite(s.camera.offset_x) or !std.math.isFinite(s.camera.offset_y)) return error.InvalidLayout;
-    inline for (std.meta.fields(Bounds)) |f| if (!std.math.isFinite(@field(s.bounds, f.name))) return error.InvalidLayout;
+    inline for (@typeInfo(Bounds).@"struct".field_names) |name| if (!std.math.isFinite(@field(s.bounds, name))) return error.InvalidLayout;
     var seen: [32]bool = @splat(false);
     for (s.workspaces) |w| {
         if (w.id == 0 or w.id > 32 or seen[w.id - 1] or w.nodes.len > 8191) return error.InvalidLayout;

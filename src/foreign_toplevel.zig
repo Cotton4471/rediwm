@@ -76,8 +76,8 @@ pub const Handle = struct {
             self.output
         else if (toplevel.currentOutput()) |o| o.wlr_output else null;
         if (output != self.output) {
-            if (self.output) |old| handle.outputLeave(old);
-            if (output) |new| handle.outputEnter(new);
+            if (self.output) |o| handle.outputLeave(o);
+            if (output) |o| handle.outputEnter(o);
             self.output = output;
         }
 
@@ -147,10 +147,7 @@ pub const Handle = struct {
         if (self.blocked() or self.toplevel.minimized) return;
         const toplevel = self.toplevel;
         if (event.fullscreen) {
-            // zig-wlroots declares this non-null; wlroots sends NULL when the
-            // client names no output.
-            const raw: *const ?*wlr.Output = @ptrCast(&event.output);
-            const requested = if (raw.*) |o| Output.fromWlr(o) else null;
+            const requested = if (event.output) |o| Output.fromWlr(o) else null;
             if (requested) |output| {
                 toplevel.setFullscreenOn(output);
             } else if (!toplevel.isFullscreen()) {

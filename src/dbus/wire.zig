@@ -8,7 +8,7 @@ pub const Kind = enum(u8) { method_call = 1, method_return = 2, error_reply = 3,
 pub const Writer = struct {
     allocator: std.mem.Allocator,
     bytes: std.ArrayList(u8) = .empty,
-    endian: std.builtin.Endian = .little,
+    endian: std.lang.Endian = .little,
     pub fn deinit(self: *Writer) void {
         self.bytes.deinit(self.allocator);
     }
@@ -17,7 +17,7 @@ pub const Writer = struct {
         try self.bytes.appendSlice(self.allocator, data);
     }
     pub fn alignTo(self: *Writer, n: usize) !void {
-        const zeros = [_]u8{0} ** 8;
+        const zeros = @as([8]u8, @splat(0));
         try self.raw(zeros[0..padding(self.bytes.items.len, n)]);
     }
     pub fn byte(self: *Writer, value: u8) !void {
@@ -84,7 +84,7 @@ pub const Reader = struct {
     fds: []const std.posix.fd_t = &.{},
     bytes: []const u8,
     offset: usize = 0,
-    endian: std.builtin.Endian = .little,
+    endian: std.lang.Endian = .little,
     pub fn take(self: *Reader, n: usize) Error![]const u8 {
         if (self.offset > self.bytes.len or n > self.bytes.len - self.offset) return error.Truncated;
         const value = self.bytes[self.offset..][0..n];
@@ -318,7 +318,7 @@ pub fn decodeWithFds(bytes: []const u8, fds: []const std.posix.fd_t) Error!Messa
     var fields = try r.array(8);
     var h: Headers = .{};
     var fd_count: u32 = 0;
-    var seen = [_]bool{false} ** 256;
+    var seen = @as([256]bool, @splat(false));
     while (fields.offset < fields.bytes.len) {
         try fields.alignTo(8);
         const code = try fields.byte();
@@ -421,7 +421,7 @@ pub fn encode(allocator: std.mem.Allocator, kind: Kind, flags: u8, serial: u32, 
 }
 
 test "primitive round trips in both byte orders and string alignment" {
-    for ([_]std.builtin.Endian{ .little, .big }) |endian| {
+    for ([_]std.lang.Endian{ .little, .big }) |endian| {
         var w: Writer = .{ .allocator = std.testing.allocator, .endian = endian };
         defer w.deinit();
         try w.byte(7);

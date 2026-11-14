@@ -19,6 +19,9 @@ pub fn iconPattern(cr: *c.cairo_t, ic: *Icon, key: IconRaster.Key, name: []const
         return c.cairo_pattern_reference(ic.raster.pattern);
     }
     const r = key.rect;
+    // Cells stretch to fill the output; the icon and label keep the size they
+    // were designed at (a 96px cell) and stay centred in whatever the cell got.
+    const ox = r.x + @divTrunc(r.w - grid.width, 2);
     c.cairo_save(cr);
     // Unbounded groups allocate/clear/composite an output-sized image
     // for *every icon*. Retain the group for identical alpha blending,
@@ -32,17 +35,18 @@ pub fn iconPattern(cr: *c.cairo_t, ic: *Icon, key: IconRaster.Key, name: []const
     if (ic.selection_amount > 0 or ic.hover_amount > 0) {
         rounded(cr, r.x, r.y, r.w, if (key.renaming) 68 else r.h, 8);
         const t = appearance_theme.global;
+        const selected = t.desktopSelectedColor();
         var fill: [4]f32 = undefined;
-        for (0..3) |i| fill[i] = @floatCast(t.desktop_hover[i] + (t.desktop_selected[i] - t.desktop_hover[i]) * ic.selection_amount);
-        fill[3] = @floatCast(t.desktop_selected[3] * ic.selection_amount + t.desktop_hover[3] * ic.hover_amount * (1 - ic.selection_amount));
+        for (0..3) |i| fill[i] = @floatCast(t.desktop_hover[i] + (selected[i] - t.desktop_hover[i]) * ic.selection_amount);
+        fill[3] = @floatCast(selected[3] * ic.selection_amount + t.desktop_hover[3] * ic.hover_amount * (1 - ic.selection_amount));
         shell_cairo.setSource(cr, fill);
         c.cairo_fill(cr);
     }
     c.cairo_save(cr);
     if (key.pulse != 1) {
-        c.cairo_translate(cr, @floatFromInt(r.x + 48), @floatFromInt(r.y + 36));
+        c.cairo_translate(cr, @floatFromInt(ox + 48), @floatFromInt(r.y + 36));
         c.cairo_scale(cr, key.pulse, key.pulse);
-        c.cairo_translate(cr, @floatFromInt(-r.x - 48), @floatFromInt(-r.y - 36));
+        c.cairo_translate(cr, @floatFromInt(-ox - 48), @floatFromInt(-r.y - 36));
     }
     if (ic.item.icon) |icon| {
         const surface = c.cairo_image_surface_create_for_data(@ptrCast(@constCast(icon.pixels.ptr)), c.CAIRO_FORMAT_ARGB32, icon.size, icon.size, icon.size * 4);
@@ -50,17 +54,17 @@ pub fn iconPattern(cr: *c.cairo_t, ic: *Icon, key: IconRaster.Key, name: []const
         // An icon loaded for this density (not pulsing) is copied 1:1.
         const raster = RasterScale.of(cr);
         if (raster.aligned and raster.pixels(56) == icon.size) {
-            if (surface) |image| paintRaster(cr, image, r.x + 20, r.y + 8, raster);
+            if (surface) |image| paintRaster(cr, image, ox + 20, r.y + 8, raster);
         } else {
             c.cairo_save(cr);
-            c.cairo_translate(cr, @floatFromInt(r.x + 20), @floatFromInt(r.y + 8));
+            c.cairo_translate(cr, @floatFromInt(ox + 20), @floatFromInt(r.y + 8));
             c.cairo_scale(cr, 56.0 / @as(f64, @floatFromInt(icon.size)), 56.0 / @as(f64, @floatFromInt(icon.size)));
             c.cairo_set_source_surface(cr, surface, 0, 0);
             c.cairo_paint(cr);
             c.cairo_restore(cr);
         }
     } else {
-        rounded(cr, r.x + 20, r.y + 8, 56, 56, 12);
+        rounded(cr, ox + 20, r.y + 8, 56, 56, 12);
         const grad = c.cairo_pattern_create_linear(0, @floatFromInt(r.y), 0, @floatFromInt(r.y + 64));
         const start = appearance_theme.global.desktop_icon_start;
         const end = appearance_theme.global.desktop_icon_end;
@@ -70,17 +74,17 @@ pub fn iconPattern(cr: *c.cairo_t, ic: *Icon, key: IconRaster.Key, name: []const
         c.cairo_fill(cr);
         c.cairo_pattern_destroy(grad);
         const n = if (ic.item.name.len > 0) std.unicode.utf8ByteSequenceLength(ic.item.name[0]) catch 1 else 0;
-        label(cr, ic.item.name[0..@min(n, ic.item.name.len)], r.x + 20, r.y + 20, 56, 26, false);
+        label(cr, ic.item.name[0..@min(n, ic.item.name.len)], ox + 20, r.y + 20, 56, 26, false);
     }
     c.cairo_restore(cr);
     if (ic.selection_amount > 0 and !key.renaming) {
-        rounded(cr, r.x + 4, r.y + 71, 88, 34, 3);
-        var fill = appearance_theme.global.desktop_selection;
+        rounded(cr, ox + 4, r.y + 71, 88, 34, 3);
+        var fill = appearance_theme.global.desktopSelectionColor();
         fill[3] *= @floatCast(ic.selection_amount);
         shell_cairo.setSource(cr, fill);
         c.cairo_fill(cr);
     }
-    if (!key.renaming) ic.name_cache.draw(cr, name, r.x + 4, r.y + 72);
+    if (!key.renaming) ic.name_cache.draw(cr, name, ox + 4, r.y + 72);
     const group = c.cairo_pop_group(cr);
     c.cairo_restore(cr);
     if (cached and c.cairo_pattern_status(group) == c.CAIRO_STATUS_SUCCESS) {

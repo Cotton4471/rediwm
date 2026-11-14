@@ -136,6 +136,7 @@ desktop_notice_bg = "rgba(8,42,36,0.95)"
 
 [layout]
 taskbar_position = "bottom"
+taskbar_items = ["left:start", "left:windows", "right:capture", "right:tray", "right:battery", "~right:wifi", "~right:wired", "right:volume", "right:clock", "-right:power"]
 dock_enabled = false
 
 [assets]

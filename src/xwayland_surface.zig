@@ -12,8 +12,7 @@ const resize = @import("resize.zig");
 const Adapter = @This();
 const log = std.log.scoped(.xwayland);
 
-extern fn wlr_xwayland_surface_offer_focus(surface: *wlr.XwaylandSurface) void;
-pub const offerFocus = wlr_xwayland_surface_offer_focus;
+pub const offerFocus = wlr.XwaylandSurface.offerFocus;
 
 const config_x: u16 = 1;
 const config_y: u16 = 2;
@@ -435,13 +434,11 @@ fn handleSetHints(listener: *wl.Listener(void)) void {
     adapter.window.setUrgent(urgent);
 }
 
-extern fn wlr_xwayland_surface_set_demands_attention(surface: *wlr.XwaylandSurface, demands_attention: bool) void;
-
 pub fn setDemandsAttention(adapter: *Adapter, urgent: bool) void {
     // Requests update wlroots' cached flag before emitting the signal. Also
     // compare compositor state so accepting a request publishes the X property.
     if (adapter.xsurface.demands_attention != urgent or adapter.window.needs_attention != urgent)
-        wlr_xwayland_surface_set_demands_attention(adapter.xsurface, urgent);
+        adapter.xsurface.setDemandsAttention(urgent);
 }
 
 fn handleRequestDemandsAttention(listener: *wl.Listener(void)) void {

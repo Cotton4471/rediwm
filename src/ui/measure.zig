@@ -165,7 +165,7 @@ fn naturalSize(widget: *const Widget) Natural {
         .swatch => .{ .w = swatch_size, .h = swatch_size },
         .select => |data| blk: {
             var width = textNatural(data.placeholder, .sans, 600, theme.global.font_size).w;
-            for (data.labels) |label| width = @max(width, textNatural(label, .sans, 600, theme.global.font_size).w);
+            for (data.labels, 0..) |label, i| width = @max(width, textNatural(label, .sans, 600, theme.global.font_size).w + (if (i < data.icons.len) @as(f32, 24) else 0));
             break :blk .{ .w = @max(160, width + 52), .h = @max(38, theme.global.font_size * 1.2 + 20) };
         },
         .segmented => |data| blk: {

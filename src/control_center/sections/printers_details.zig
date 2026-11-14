@@ -257,7 +257,7 @@ pub fn printingOptions(self: *Section, cc: *panel.ControlCenter, a: A, state: *c
     try options.append(a, panel.sectionTitle(i18n.tr("Printing preferences")));
     const groups: []const driver_options.Group = if (std.mem.eql(u8, state.selected, printer.name)) state.groups else &.{};
     // Prefer the driver's selectable default over an alias of the same setting.
-    var common: [@typeInfo(Preference).@"enum".fields.len]?*const driver_options.Option = @splat(null);
+    var common: [@typeInfo(Preference).@"enum".field_names.len]?*const driver_options.Option = @splat(null);
     for (groups) |option_group| for (option_group.options) |*option| {
         const kind = preference(option.*) orelse continue;
         if (option.choices.len == 0) continue;

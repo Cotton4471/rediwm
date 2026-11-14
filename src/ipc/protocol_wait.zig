@@ -20,12 +20,12 @@ pub fn waitNames(comptime name: []const u8) []const []const u8 {
 
 comptime {
     @setEvalBranchQuota(20_000);
-    for (std.meta.fields(@TypeOf(wait_aliases))) |f| {
-        if (!@hasField(WaitCondition, f.name)) @compileError("unknown wait alias target: " ++ f.name);
+    for (@typeInfo(@TypeOf(wait_aliases)).@"struct".field_names) |name| {
+        if (!@hasField(WaitCondition, name)) @compileError("unknown wait alias target: " ++ name);
     }
     var names: []const []const u8 = &.{};
-    for (std.meta.fields(WaitCondition)) |field| {
-        for (waitNames(field.name)) |name| {
+    for (@typeInfo(WaitCondition).@"union".field_names) |field_name| {
+        for (waitNames(field_name)) |name| {
             for (names) |previous| {
                 if (std.mem.eql(u8, previous, name)) @compileError("duplicate wait name: " ++ name);
             }
@@ -55,10 +55,10 @@ pub fn parseWaitCondition(allocator: std.mem.Allocator, val: std.json.Value) Par
     var value: std.json.Value = .null;
     switch (val) {
         .string => |s| {
-            inline for (std.meta.fields(WaitCondition)) |field| {
-                if (field.type == void) {
-                    inline for (comptime waitNames(field.name)) |name| {
-                        if (std.mem.eql(u8, s, name)) return @unionInit(WaitCondition, field.name, {});
+            inline for (@typeInfo(WaitCondition).@"union".field_names) |field_name| {
+                if (@FieldType(WaitCondition, field_name) == void) {
+                    inline for (comptime waitNames(field_name)) |name| {
+                        if (std.mem.eql(u8, s, name)) return @unionInit(WaitCondition, field_name, {});
                     }
                 }
             }
@@ -68,12 +68,12 @@ pub fn parseWaitCondition(allocator: std.mem.Allocator, val: std.json.Value) Par
             // Historically all no-payload conditions take precedence over
             // payload conditions, independently of object insertion order.
             inline for (.{ true, false }) |no_payload| {
-                inline for (std.meta.fields(WaitCondition)) |field| {
-                    if ((field.type == void) == no_payload) {
-                        inline for (comptime waitNames(field.name)) |name| {
+                inline for (@typeInfo(WaitCondition).@"union".field_names) |field_name| {
+                    if ((@FieldType(WaitCondition, field_name) == void) == no_payload) {
+                        inline for (comptime waitNames(field_name)) |name| {
                             if (selected == null) {
                                 if (obj.get(name)) |v| {
-                                    selected = @field(Tag, field.name);
+                                    selected = @field(Tag, field_name);
                                     value = v;
                                 }
                             }

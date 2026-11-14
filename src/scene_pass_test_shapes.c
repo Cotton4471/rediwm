@@ -269,3 +269,101 @@ static void gate_premultiplied(struct rediwm_scene_renderer *r, struct wlr_buffe
     wlr_texture_destroy(t_white);
     puts("PASS: premultiplied edges, opacity and XRGB textures blend correctly through the clip");
 }
+
+// ---- Gate 5: a polygon outline (windows with cut corners and stepped edges) --------------
+// A frame 200x120 whose top-left and bottom-right corners are cut, whose top edge
+// steps down 10 px from x = 120 to its end, and whose top-right tip is slanted: the
+// outline of a themed window. Device pixels from the shape box's corner.
+static void polygon_shape(struct rediwm_pass_shape *s, bool reversed) {
+    static const float v[][2] = {{0, 24}, {24, 0}, {118, 0}, {128, 10}, {176, 10}, {200, 34}, {200, 96}, {176, 120}, {0, 120}};
+    const int n = (int)COUNT(v);
+    *s = (struct rediwm_pass_shape){.box = {40, 40, 200, 120}, .poly_count = n};
+    for (int i = 0; i < n; i++) {
+        const int j = reversed ? n - 1 - i : i;
+        s->poly[i][0] = v[j][0];
+        s->poly[i][1] = v[j][1];
+    }
+}
+static bool inside_polygon(double px, double py, const struct rediwm_pass_shape *s) {
+    double v[REDIWM_POLY_MAX][2];
+    for (int i = 0; i < s->poly_count; i++) { v[i][0] = s->poly[i][0]; v[i][1] = s->poly[i][1]; }
+    return rediwm_sd_polygon(px - s->box.x, py - s->box.y, v, s->poly_count) < 0;
+}
+static void gate_polygon(struct rediwm_scene_renderer *r, struct wlr_buffer *buf, struct image *img,
+        struct image *ref) {
+    _Static_assert(REDIWM_PASS_POLY_MAX == REDIWM_POLY_MAX, "the pass and the graph size the outline alike");
+    struct rediwm_pass_shape s;
+    polygon_shape(&s, false);
+    // The polygon programs are built on request: before it a polygon draw fails the
+    // pass (the caller must not make one), and the next pass is unharmed.
+    struct wlr_render_pass *pass = begin_fill(r, buf, BG, NULL);
+    piece(pass, &s, s.box, BODY, NULL);
+    check(!wlr_render_pass_submit(pass), "polygon: a draw without its programs did not fail the pass");
+    check(rediwm_scene_renderer_enable_polygons(r), "polygon: the programs did not build");
+    check(rediwm_scene_renderer_enable_polygons(r), "polygon: a second request lost the programs");
+    pass = begin_fill(r, buf, BG, NULL);
+    piece(pass, &s, s.box, BODY, NULL);
+    finish(pass);
+    read_image(r, buf, img);
+    // The coverage of the outline, against sixty-four samples a pixel. The ramp is on
+    // the distance, which on a diagonal is not area coverage: allow what the arc gets.
+    int worst = 0, fringe = 0;
+    const uint8_t bg[3] = {224, 225, 232}, body[3] = {16, 18, 21};
+    for (int y = s.box.y - 2; y < s.box.y + s.box.height + 2; y++)
+    for (int x = s.box.x - 2; x < s.box.x + s.box.width + 2; x++) {
+        int hits = 0;
+        for (int j = 0; j < 8; j++) for (int i = 0; i < 8; i++) hits += inside_polygon(x + (i + .5) / 8, y + (j + .5) / 8, &s);
+        const double c = hits / 64.;
+        for (int ch = 0; ch < 3; ch++) {
+            const int got = at(img, x, y)[ch], want = (int)lround(bg[ch] * (1 - c) + body[ch] * c);
+            if (diff(got, want) > worst) worst = diff(got, want);
+            const int lo = body[ch] < bg[ch] ? body[ch] : bg[ch], hi = body[ch] < bg[ch] ? bg[ch] : body[ch];
+            if (got < lo - 1 || got > hi + 1) fringe++;
+        }
+    }
+    check(fringe == 0, "polygon: %d channel values fall outside the bg/body range", fringe);
+    check(worst <= 30, "polygon: differs from supersampled coverage by %d levels", worst);
+    // The corner the outline cuts is the backdrop, the notch too, the middle the body.
+    check(diff(at(img, s.box.x + 2, s.box.y + 2)[0], 224) <= 1, "polygon: the cut top-left corner is drawn");
+    check(diff(at(img, s.box.x + 150, s.box.y + 3)[0], 224) <= 1, "polygon: the step in the top edge is drawn");
+    check(diff(at(img, s.box.x + 150, s.box.y + 14)[0], 16) <= 1, "polygon: the body below the step is missing");
+    check(diff(at(img, s.box.x + 100, s.box.y + 60)[0], 16) <= 1, "polygon: the middle is not the body");
+    // Walked the other way round it is the same outline.
+    struct rediwm_pass_shape back;
+    polygon_shape(&back, true);
+    pass = begin_fill(r, buf, BG, NULL);
+    piece(pass, &back, back.box, BODY, NULL);
+    finish(pass);
+    read_image(r, buf, ref);
+    int moved = 0;
+    for (int i = 0; i < img->w * img->h * 4; i++) if (diff(img->p[i], ref->p[i]) > 1) moved++;
+    check(moved == 0, "polygon: the reversed outline differs in %d values", moved);
+    // A ring follows the outline: its colour on a straight edge, the body just inside.
+    struct rediwm_pass_shape ringed = s;
+    const float red[4] = {1, 0, 0, 1};
+    ringed.border = 2;
+    memcpy(ringed.border_color, red, sizeof(red));
+    pass = begin_fill(r, buf, BG, NULL);
+    piece(pass, &ringed, ringed.box, BODY, NULL);
+    finish(pass);
+    read_image(r, buf, img);
+    check(at(img, s.box.x + 60, s.box.y)[0] >= 254 && at(img, s.box.x + 60, s.box.y)[1] <= 1, "polygon: the top ring row is not the border colour");
+    check(at(img, s.box.x + 150, s.box.y + 10)[0] >= 254, "polygon: the ring does not follow the step");
+    check(diff(at(img, s.box.x + 60, s.box.y + 3)[0], 16) <= 1, "polygon: the row inside the ring is not the body");
+    // Pieces tile it: a titlebar and a client in different colours meet with no seam
+    // where the outline does not reach.
+    const float green[4] = {0, 1, 0, 1};
+    const struct wlr_box title = {s.box.x, s.box.y, s.box.width, 40}, client = {s.box.x, s.box.y + 40, s.box.width, 80};
+    pass = begin_fill(r, buf, BG, NULL);
+    piece(pass, &s, title, red, NULL);
+    piece(pass, &s, client, green, NULL);
+    finish(pass);
+    read_image(r, buf, img);
+    for (int y = 14; y < 118; y++) for (int x = 30; x < 170; x++) {
+        const bool top = y < 40;
+        const uint8_t *px = at(img, s.box.x + x, s.box.y + y);
+        check(diff(px[0], top ? 255 : 0) <= 1 && diff(px[1], top ? 0 : 255) <= 1,
+            "polygon: seam at (%d,%d): (%d,%d,%d)", x, y, px[0], px[1], px[2]);
+    }
+    printf("PASS: a polygon outline is within %d levels of area coverage, either winding, with its ring and without seams\n", worst);
+}

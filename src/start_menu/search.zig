@@ -265,7 +265,11 @@ test "search word prefix in name" {
 }
 
 test "search folds translated names aliases and arbitrarily long fields" {
-    const long_prefix = "Long " ** 80;
+    const long_prefix = comptime blk: {
+        var repeated: []const u8 = "";
+        for (0..80) |_| repeated = repeated ++ "Long ";
+        break :blk repeated;
+    };
     const apps = [_]AppEntry{
         .{ .id = "camera", .desktop_file_path = "", .name = "Cámara", .exec = "camera" },
         .{ .id = "terminal", .desktop_file_path = "", .name = "Терминал", .exec = "terminal" },

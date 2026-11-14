@@ -109,7 +109,7 @@ fn get(file: *anyopaque, key: [*:0]const u8) ?[*:0]u8 {
 }
 
 fn set(a: Allocator, file: *anyopaque, key: [*:0]const u8, value: []const u8) !void {
-    const z = try a.dupeZ(u8, value);
+    const z = try a.dupeSentinel(u8, value, 0);
     defer a.free(z);
     g_key_file_set_string(file, "Desktop Entry", key, z);
 }
@@ -207,7 +207,7 @@ fn atomicWrite(a: Allocator, io: std.Io, path: []const u8, bytes: []const u8) !v
 /// The caller owns an arena. No files are extracted from the image to disk;
 /// only bounded launcher/icon bytes are published to the user's XDG data dir.
 pub fn install(a: Allocator, io: std.Io, environ: std.process.Environ, path: []const u8) !void {
-    const zpath = try a.dupeZ(u8, path);
+    const zpath = try a.dupeSentinel(u8, path, 0);
     const canonical = c.realpath(zpath, null) orelse return error.ReadFailed;
     defer c.free(canonical);
     const image_path = std.mem.span(canonical);
@@ -283,7 +283,7 @@ pub fn install(a: Allocator, io: std.Io, environ: std.process.Environ, path: []c
         while (entries.next()) |entry| {
             if (entry.len == 0) continue;
             if (entry.len > 255 or std.mem.indexOfScalar(u8, entry, '/') == null or std.mem.indexOfAny(u8, entry, " \t\r\n\\") != null) continue;
-            const mime = try a.dupeZ(u8, entry);
+            const mime = try a.dupeSentinel(u8, entry, 0);
             if (g_app_info_add_supports_type(app, mime, null) == 0) failed = true;
             // Claim unhandled URL schemes (including Unity's sign-in callback),
             // preserving an existing user choice and all file-type defaults.

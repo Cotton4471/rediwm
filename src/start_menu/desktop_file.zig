@@ -229,7 +229,7 @@ pub fn checkTryExec(try_exec: []const u8, environ: std.process.Environ) bool {
     while (it.next()) |dir| {
         if (dir.len == 0) continue;
         var buf: [std.posix.PATH_MAX]u8 = undefined;
-        const candidate = std.fmt.bufPrintZ(&buf, "{s}/{s}", .{ dir, try_exec }) catch continue;
+        const candidate = std.fmt.bufPrintSentinel(&buf, "{s}/{s}", .{ dir, try_exec }, 0) catch continue;
         if (c.access(candidate.ptr, c.X_OK) == 0) return true;
     }
     return false;

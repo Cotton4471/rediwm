@@ -37,6 +37,7 @@ src/control_center/sections/services.zig
 src/control_center/sections/shortcuts.zig
 src/control_center/sections/sound.zig
 src/control_center/sections/users.zig
+src/control_center/sections/users_helper.zig
 src/control_center/tree.zig
 src/control_center/welcome.zig
 src/cursor_theme.zig
@@ -136,8 +137,14 @@ src/start_menu/panel.zig
 src/start_menu/scan.zig
 src/start_menu/search.zig
 src/system_monitor/app.zig
+src/system_monitor/app_footer.zig
+src/system_monitor/app_summary.zig
+src/system_monitor/app_table.zig
 src/system_monitor/client.zig
 src/system_monitor_main.zig
 src/taskbar/battery.zig
 src/taskbar/window_menu.zig
 src/toplevel/info.zig
+src/editor/app_controls.zig
+src/editor/app_search.zig
+src/editor/app_edit.zig

@@ -64,6 +64,9 @@ pub const IconId = enum {
     search,
     chevron_up,
     chevron_down,
+    /// A filled triangle pointing up, distinct from the `chevron_up` stroke:
+    /// the circular switcher's hub points toward the selected sector with it.
+    caret_up,
     close,
     minimize,
     maximize,
@@ -121,6 +124,10 @@ pub const IconId = enum {
     trash_can,
     play,
     pause,
+    /// Media transport: a bar before a leftward triangle, its mirror, and a square.
+    skip_previous,
+    skip_next,
+    stop,
     view_grid,
     view_list,
     sort,
@@ -143,6 +150,11 @@ pub const IconId = enum {
     more,
     users,
     squares,
+    divide,
+    touchpad,
+    trackball,
+    cpu,
+    ram,
 };
 
 pub const ButtonState = enum { idle, hover, press, disabled };
@@ -154,14 +166,23 @@ pub const ButtonState = enum { idle, hover, press, disabled };
 // bold Manrope face bundled to switch to.
 pub const TextFamily = enum { sans, mono };
 
+/// Neumorphic relief of a filled rect (`relief.zig`, theme `relief_*`): raised
+/// casts its shadows on the surface around it, inset inside its own edge. It
+/// draws nothing while the theme's `relief_depth` is 0.
+pub const Relief = enum { flat, raised, inset };
+
 pub const RectStyle = struct {
     color: [4]f32,
     /// Replace the covered background, preserving this fill's alpha. Rounded
     /// edges still blend by coverage; useful for translucent inset panels.
     replace: bool = false,
     radius: f32 = 0,
+    /// Straight 45-degree corners this long instead of `radius` (and without
+    /// relief or `replace`); zero keeps them rounded.
+    bevel: f32 = 0,
     border_width: f32 = 0,
     border_color: [4]f32 = .{ 0, 0, 0, 0 },
+    relief: Relief = .flat,
 };
 
 /// Padding of a value pill (`TextStyle.pill`) around its text.
@@ -188,6 +209,9 @@ pub const IconStyle = struct {
     id: IconId,
     color: [4]f32,
     stroke_width: ?f32 = null,
+    /// Radians, clockwise, about the icon box's own center. 0 costs nothing
+    /// extra; used by the circular switcher's hub arrow.
+    rotation: f32 = 0,
 };
 
 pub const ImageData = struct {
@@ -230,10 +254,20 @@ pub const ButtonData = struct {
     leading_icon: ?IconId = null,
     trailing_icon: ?IconId = null,
     stacked: bool = false,
+    alignment: @import("widgets/button.zig").Alignment = .center,
+    destructive: bool = false,
     on_click: ?*const fn (owner: ?*anyopaque, id: usize) void = null,
     owner: ?*anyopaque = null,
     id: usize = 0,
     state: ButtonState = .idle,
+    /// Cursor distance to the button's visible, clipped rectangle.
+    /// Infinity means that no part of the button is currently visible.
+    proximity_distance: f32 = std.math.inf(f32),
+    /// Last sampled cursor position relative to this button.
+    proximity_x: f32 = 0,
+    proximity_y: f32 = 0,
+    /// 0 at rest, 1 while hovering; stepped with the other retained animations.
+    hover_elevation: anim.Anim = .{},
 };
 
 pub const CheckboxData = struct {
@@ -413,6 +447,8 @@ pub const SelectData = struct {
     /// Visible placeholders that cannot be committed.
     disabled_options: []const usize = &.{},
     labels: []const []const u8,
+    /// Optional leading glyphs by option index; borrowed like labels.
+    icons: []const IconId = &.{},
     selected: ?usize = null,
     placeholder: []const u8 = "Select an option",
     disabled: bool = false,
@@ -470,6 +506,22 @@ pub const WidgetKind = union(enum) {
     container,
 };
 
+pub const ProximityRect = struct {
+    x: f32 = 0,
+    y: f32 = 0,
+    w: f32 = 0,
+    h: f32 = 0,
+};
+
+/// Pointer sample for a shared interactive surface. Coordinates are local
+/// to `rect`; an infinite distance means the pointer is outside glow reach.
+pub const ProximityData = struct {
+    rect: ProximityRect = .{},
+    distance: f32 = std.math.inf(f32),
+    x: f32 = 0,
+    y: f32 = 0,
+};
+
 pub const Widget = struct {
     // --- Layout inputs (set by caller) ---
     width: SizeConstraint = .auto,
@@ -492,6 +544,9 @@ pub const Widget = struct {
     computed_y: f32 = 0,
     computed_width: f32 = 0,
     computed_height: f32 = 0,
+
+    /// Mouse-proximity illumination state for non-button interactive surfaces.
+    proximity: ProximityData = .{},
 
     // --- Widget identity ---
     name: ?[]const u8 = null,

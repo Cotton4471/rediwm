@@ -38,7 +38,7 @@ pub fn open(self: *App, path: []const u8) void {
             return;
         }
     };
-    const owned = a.dupeZ(u8, path) catch return;
+    const owned = a.dupeSentinel(u8, path, 0) catch return;
     self.queue.append(a, owned) catch {
         a.free(owned);
         return;
@@ -72,7 +72,7 @@ pub fn sync(self: *App) void {
                 };
                 if (self.current().path != null or self.current().doc.text.items.len > 0 or self.current().doc.modified()) self.newTab() catch return;
                 const t = self.current();
-                const path = a.dupeZ(u8, job.path) catch return;
+                const path = a.dupeSentinel(u8, job.path, 0) catch return;
                 t.doc.deinit();
                 t.doc = job.document.?;
                 job.document = null;
@@ -82,16 +82,18 @@ pub fn sync(self: *App) void {
                 t.scroll_x = 0;
                 t.measure = .{};
                 self.notice_len = 0;
+                self.recordRecent(job.path);
                 self.changed();
             },
             .save => if (self.findTab(job.tab_id)) |i| {
                 const t = self.tabs.items[i];
-                const path = a.dupeZ(u8, job.path) catch return;
+                const path = a.dupeSentinel(u8, job.path, 0) catch return;
                 if (t.path) |old| a.free(old);
                 t.path = path;
                 t.stamp = job.stamp;
                 if (t.doc.revision == job.revision) t.doc.saved = t.doc.position;
                 self.message(tr("Saved"));
+                self.recordRecent(job.path);
                 self.changed();
                 if (self.close_tab == t.id and !t.doc.modified()) self.finishClose();
             },
@@ -179,12 +181,13 @@ pub fn act(self: *App, action: Action) void {
     switch (action) {
         .new => self.newTab() catch |err| self.failure(err),
         .open => self.choose(false),
+        .open_recent => {}, // the menu opens its submenu; nothing to run
         .save => self.save(false),
         .save_as => self.save(true),
         .find => {
-            self.find_open = !self.find_open;
-            self.query.select_all = true;
+            if (self.find_open) self.find_open = false else self.openSearch(false);
         },
+        .replace => self.openSearch(true),
         .wrap => {
             self.wrap = !self.wrap;
             self.current().scroll_x = 0;

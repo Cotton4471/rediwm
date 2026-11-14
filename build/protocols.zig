@@ -7,6 +7,12 @@ const Scanner = @import("wayland").Scanner;
 pub fn module(b: *std.Build) *std.Build.Module {
     const scanner = Scanner.create(b, .{});
     scanner.addSystemProtocol("stable/xdg-shell/xdg-shell.xml");
+    scanner.addSystemProtocol("stable/linux-dmabuf/linux-dmabuf-v1.xml");
+    scanner.generate("zwp_linux_dmabuf_v1", 5);
+    scanner.addSystemProtocol("staging/ext-image-capture-source/ext-image-capture-source-v1.xml");
+    scanner.generate("ext_output_image_capture_source_manager_v1", 1);
+    scanner.addSystemProtocol("staging/ext-image-copy-capture/ext-image-copy-capture-v1.xml");
+    scanner.generate("ext_image_copy_capture_manager_v1", 1);
     scanner.addSystemProtocol("unstable/text-input/text-input-unstable-v3.xml");
     scanner.generate("zwp_text_input_manager_v3", 1);
     scanner.addSystemProtocol("staging/xdg-activation/xdg-activation-v1.xml");

@@ -68,7 +68,7 @@ pub const Section = struct {
     test_kind: printing.TestKind = .driver,
     inches: bool = false,
     suggested: ?cups.ipp.Resolution = null,
-    expanded: [@typeInfo(Disclosure).@"enum".fields.len]bool = @splat(false),
+    expanded: [@typeInfo(Disclosure).@"enum".field_names.len]bool = @splat(false),
     history_limit: usize = 5,
     expanded_job: ?i32 = null,
     reveal_target: ?[]const u8 = null,
@@ -153,7 +153,7 @@ pub fn group(a: A, items: []const W) !W {
 pub fn card(a: A, items: []const W) !W {
     var result = try group(a, items);
     const t = panel.palette();
-    result.kind = .{ .rect = .{ .color = t.app_item, .radius = t.settings_card_radius, .border_width = 1, .border_color = t.app_item_border } };
+    result.kind = .{ .rect = .{ .color = t.app_item, .radius = t.settings_card_radius, .border_width = 1, .border_color = t.app_item_border, .relief = t.settings_card_relief } };
     result.padding = ui.layout.Edges.all(14);
     return result;
 }

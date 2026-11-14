@@ -7,14 +7,7 @@
 const std = @import("std");
 const gpa = @import("memory").gpa;
 const font_fallback = @import("font_fallback.zig");
-pub const c = @cImport({
-    @cInclude("ft2build.h");
-    @cInclude("freetype/freetype.h");
-    @cInclude("freetype/ftmm.h");
-    @cInclude("freetype/ftsizes.h");
-    @cInclude("hb.h");
-    @cInclude("hb-ft.h");
-});
+pub const c = @import("c_gfx");
 
 const log = std.log.scoped(.text);
 
@@ -79,7 +72,7 @@ pub const color_load_flags: c_int = c.FT_LOAD_DEFAULT | c.FT_LOAD_COLOR;
 pub var ft_library: c.FT_Library = null;
 pub var faces: std.ArrayListUnmanaged(Face) = .empty;
 pub var chains: [font_count]std.ArrayListUnmanaged(u32) = @splat(.empty);
-pub const font_count = std.meta.fields(Font).len;
+pub const font_count = @typeInfo(Font).@"enum".field_names.len;
 pub var coverage: std.AutoHashMapUnmanaged(u64, u32) = .empty;
 pub const no_face = std.math.maxInt(u32);
 

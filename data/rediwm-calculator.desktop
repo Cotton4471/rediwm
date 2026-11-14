@@ -2,7 +2,7 @@
 Type=Application
 Name=Calculator
 Comment=Simple arithmetic calculator
-Exec=rediwm-calculator
+Exec=@BINDIR@/rediwm-calculator
 Icon=rediwm-calculator
 Terminal=false
 Categories=Utility;Calculator;

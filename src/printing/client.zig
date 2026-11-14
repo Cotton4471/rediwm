@@ -235,8 +235,10 @@ pub const Client = struct {
             return state;
         };
         state.remote = (try endpoint.parseServer(socket)).unix == null;
-        state.admin_local = std.mem.eql(u8, socket, "/run/cups/cups.sock") or std.mem.eql(u8, socket, "/var/run/cups/cups.sock");
-        if (self.watch) |*watch| if (watch.fd < 0) {
+        state.admin_local = for (cups.local_sockets) |path| {
+            if (std.mem.eql(u8, socket, path)) break true;
+        } else false;
+        if (self.watch) |*watch| if (watch.fd() < 0) {
             watch.deinit(a);
             self.watch = null;
         };
@@ -384,7 +386,7 @@ pub const Client = struct {
             }
             if (self.reload.load(.acquire)) continue;
             const timeout: c_int = if (rescan_at) |deadline| @intCast(@max(0, deadline - http.nowMs())) else -1;
-            var fds = [_]c.struct_pollfd{ .{ .fd = self.wake_worker, .events = c.POLLIN, .revents = 0 }, .{ .fd = netlink, .events = c.POLLIN, .revents = 0 }, .{ .fd = if (self.watch) |watch| watch.fd else -1, .events = c.POLLIN, .revents = 0 } };
+            var fds = [_]c.struct_pollfd{ .{ .fd = self.wake_worker, .events = c.POLLIN, .revents = 0 }, .{ .fd = netlink, .events = c.POLLIN, .revents = 0 }, .{ .fd = if (self.watch) |watch| watch.fd() else -1, .events = c.POLLIN, .revents = 0 } };
             const n = c.poll(&fds, fds.len, timeout);
             if (n < 0) {
                 if (std.posix.errno(n) == .INTR) continue;
@@ -439,24 +441,27 @@ fn drain(fd: c_int) void {
     _ = c.read(fd, &count, @sizeOf(u64));
 }
 fn ueventSocket() c_int {
+    // Printer hotplug arrives as kernel uevents on Linux; elsewhere only rescans find new printers.
+    if (comptime !@hasDecl(c, "NETLINK_KOBJECT_UEVENT")) return -1;
     const fd = c.socket(c.AF_NETLINK, c.SOCK_DGRAM | c.SOCK_CLOEXEC | c.SOCK_NONBLOCK, c.NETLINK_KOBJECT_UEVENT);
     if (fd < 0) return -1;
     var addr = std.mem.zeroes(c.struct_sockaddr_nl);
     addr.nl_family = c.AF_NETLINK;
     addr.nl_groups = 1;
-    if (c.bind(fd, @ptrCast(&addr), @sizeOf(c.struct_sockaddr_nl)) != 0) {
+    if (std.c.bind(fd, @ptrCast(&addr), @sizeOf(c.struct_sockaddr_nl)) != 0) {
         _ = c.close(fd);
         return -1;
     }
     return fd;
 }
 fn drainUevents(fd: c_int) bool {
+    if (comptime !@hasDecl(c, "NETLINK_KOBJECT_UEVENT")) return false;
     var changed = false;
     for (0..256) |_| {
         var bytes: [8192]u8 = undefined;
         var sender: c.struct_sockaddr_nl = undefined;
-        var len: c.socklen_t = @sizeOf(c.struct_sockaddr_nl);
-        const n = c.recvfrom(fd, &bytes, bytes.len, 0, @ptrCast(&sender), &len);
+        var len: std.c.socklen_t = @sizeOf(c.struct_sockaddr_nl);
+        const n = std.c.recvfrom(fd, &bytes, bytes.len, 0, @ptrCast(&sender), &len);
         if (n <= 0) break;
         if (sender.nl_pid != 0) continue;
         var words = std.mem.splitScalar(u8, bytes[0..@intCast(n)], 0);

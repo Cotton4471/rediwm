@@ -14,8 +14,6 @@ step: usize = 0,
 complete: bool = false,
 failure: ?anyerror = null,
 
-extern fn wlr_backend_is_libinput(backend: *wlr.Backend) bool;
-
 pub fn start(self: *Tasks, server: *Server) !void {
     self.server = server;
     startup.markBackendStart();
@@ -31,6 +29,7 @@ pub fn start(self: *Tasks, server: *Server) !void {
     if (self.input_pending) server.input.holdCursor() else startup.markInputReady();
     if (server.greeter_mode) {
         self.complete = true;
+        @import("session/greeter_ready.zig").check(server);
         return;
     }
     self.timer = try server.wl_server.getEventLoop().addTimer(*Tasks, tick, self);
@@ -40,11 +39,11 @@ pub fn start(self: *Tasks, server: *Server) !void {
 }
 
 fn startDisplayBackend(backend: *wlr.Backend, self: *Tasks) void {
-    self.startSelectedBackend(backend, wlr_backend_is_libinput(backend), false);
+    self.startSelectedBackend(backend, backend.isLibinput(), false);
 }
 
 fn startInputBackend(backend: *wlr.Backend, self: *Tasks) void {
-    self.startSelectedBackend(backend, wlr_backend_is_libinput(backend), true);
+    self.startSelectedBackend(backend, backend.isLibinput(), true);
 }
 
 fn startSelectedBackend(self: *Tasks, backend: *wlr.Backend, is_input: bool, input_stage: bool) void {
@@ -127,12 +126,19 @@ test "staged backends retain multi ownership and only start in their own stage" 
     const Observer = struct {
         listener: wl.Listener(*wlr.Output) = .init(newOutput),
         count: usize = 0,
+        backends: usize = 0,
         fn newOutput(listener: *wl.Listener(*wlr.Output), _: *wlr.Output) void {
             const self: *@This() = @fieldParentPtr("listener", listener);
             self.count += 1;
         }
+        fn countBackend(backend: *wlr.Backend, self: *@This()) void {
+            if (backend.isHeadless()) self.backends += 1;
+        }
     };
     var observer: Observer = .{};
+    multi.multiForEachBackend(*Observer, Observer.countBackend, &observer);
+    try std.testing.expectEqual(@as(usize, 2), observer.backends);
+    try std.testing.expect(!multi.hasDrm());
     multi.events.new_output.add(&observer.listener);
     defer observer.listener.link.remove();
     var tasks: Tasks = .{};

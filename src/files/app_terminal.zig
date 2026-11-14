@@ -6,6 +6,7 @@ const App = @import("app.zig").App;
 const model = @import("terminal/model.zig");
 const tc = model.c;
 const c = @import("c.zig").api;
+const platform = @import("platform");
 const ui = @import("ui");
 const Rect = @import("header.zig").Rect;
 const scrollbar = ui.widgets.scrollbar;
@@ -116,7 +117,7 @@ fn rememberDirectory(self: *App) void {
         const current = self.history.current;
         if (std.mem.eql(u8, current, trash) or (std.mem.startsWith(u8, current, trash) and current.len > trash.len and current[trash.len] == '/')) return;
     }
-    const path_z = self.allocator.dupeZ(u8, self.history.current) catch return;
+    const path_z = self.allocator.dupeSentinel(u8, self.history.current, 0) catch return;
     defer self.allocator.free(path_z);
     var path_buf: [4096]u8 = undefined;
     const real = c.realpath(path_z, &path_buf) orelse return;
@@ -124,7 +125,7 @@ fn rememberDirectory(self: *App) void {
     if (c.stat(real, &stat) != 0 or stat.st_mode & c.S_IFMT != c.S_IFDIR) return;
     const resolved = std.mem.span(real);
     if (self.terminal.directory) |old| if (std.mem.eql(u8, old, resolved)) return;
-    const owned = self.allocator.dupeZ(u8, resolved) catch return;
+    const owned = self.allocator.dupeSentinel(u8, resolved, 0) catch return;
     if (self.terminal.directory) |old| self.allocator.free(old);
     self.terminal.directory = owned;
     if (self.terminal.session) |session| _ = tc.ft_follow(session, owned);
@@ -143,11 +144,8 @@ pub fn terminalScopes(self: *App) bool {
 }
 pub fn terminalHelper(self: *App, name: []const u8, buffer: []u8) ![:0]u8 {
     _ = self;
-    var executable: [4096]u8 = undefined;
-    const n = c.readlink("/proc/self/exe", &executable, executable.len);
-    if (n <= 0 or n >= executable.len) return error.NoExecutable;
-    const directory = std.fs.path.dirname(executable[0..@intCast(n)]) orelse return error.NoExecutable;
-    return std.fmt.bufPrintZ(buffer, "{s}/{s}", .{ directory, name });
+    const helper = platform.exe.sibling(buffer, name) orelse return error.NoExecutable;
+    return buffer[0..helper.len :0];
 }
 pub fn terminalStart(self: *App) void {
     if (self.chooser != null or self.terminal.close_at != null) return;
@@ -167,7 +165,7 @@ pub fn terminalStart(self: *App) void {
     self.terminal.session = session;
     self.terminal.generation = std.math.maxInt(u64);
     rememberDirectory(self);
-    const directory = self.terminal.directory orelse self.allocator.dupeZ(u8, self.home_dir) catch {
+    const directory = self.terminal.directory orelse self.allocator.dupeSentinel(u8, self.home_dir, 0) catch {
         self.terminal.error_message = tr("No terminal directory");
         return;
     };
@@ -470,8 +468,10 @@ pub fn terminalRequestClose(self: *App) void {
     if (self.terminal.close_at != null) return;
     if (self.terminal.session) |session| if (tc.ft_running(session)) {
         if (self.dialog != null) return;
-        // A snapshot cannot prove that no job began since it arrived. Confirm
-        // every live session, including hidden and unintegrated shells.
+        // Asked of the kernel now, not of the integration snapshot, which
+        // cannot prove that no job began since it arrived. Hidden and
+        // unintegrated shells count; an idle shell is just hung up.
+        if (!tc.ft_active(session)) return self.terminalConfirmClose();
         self.dialog = .{ .kind = .terminal_close, .title = tr("Close terminal session?") };
         self.invalidate();
         return;

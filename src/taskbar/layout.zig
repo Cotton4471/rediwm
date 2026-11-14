@@ -9,6 +9,8 @@ const taskbar_items = @import("config").taskbar_items;
 const shape = @import("../taskbar/shape.zig");
 const text = @import("ui").text;
 const ui_theme = @import("ui").theme;
+const projection = @import("../projection.zig");
+const log = std.log.scoped(.taskbar);
 const Output = @import("../Output.zig");
 const nowMs = Taskbar.nowMs;
 const tray_gap = Taskbar.tray_gap;
@@ -24,6 +26,7 @@ const battery_width = Taskbar.battery_width;
 const barHeight = Taskbar.barHeight;
 const edgeGap = Taskbar.edgeGap;
 const barRadius = Taskbar.barRadius;
+const hasPolygon = Taskbar.hasPolygon;
 const chipGap = Taskbar.chipGap;
 const chipSize = Taskbar.chipSize;
 const trayHit = Taskbar.trayHit;
@@ -37,6 +40,7 @@ pub fn placement(bar: *Taskbar, output_box: wlr.Box) shape.Placement {
         .height = barHeight(),
         .edge_gap = edgeGap(),
         .length = ui_theme.global.taskbar_length,
+        .alignment = bar.server.config.compositor.taskbar_alignment,
         .radius = barRadius(),
         .top = bar.server.config.compositor.taskbar_position == .top,
     });
@@ -47,7 +51,7 @@ pub fn placement(bar: *Taskbar, output_box: wlr.Box) shape.Placement {
 /// shows whatever is under it. It reaches one logical pixel further, where no
 /// other output starts just past that edge: the raster would draw on it.
 pub fn bleedFor(bar: *Taskbar, output_box: wlr.Box, placed: wlr.Box) Bleed {
-    if (!shape.flush(output_box, placed, barRadius())) return .{};
+    if (!shape.flush(output_box, placed, barRadius(), hasPolygon())) return .{};
     const out = bar.wlr_output;
     const turned = @intFromEnum(out.transform) & 1 != 0;
     const scale: f64 = out.scale;
@@ -75,6 +79,29 @@ pub fn boxesOverlap(a: wlr.Box, b: wlr.Box) bool {
     return a.x < b.x + b.width and b.x < a.x + a.width and a.y < b.y + b.height and b.y < a.y + a.height;
 }
 
+/// The polygon outline of the bar as the clip of its tree: every item, and the
+/// glass behind them, is cut to it on the GPU (the projection declines a pointer
+/// pick outside it too, so a notch is the window below). No clip, and no cost,
+/// for the rounded or the flush bar.
+pub fn applyClip(bar: *Taskbar) void {
+    const text_value = ui_theme.global.taskbar_shape;
+    const poly = if (hasPolygon()) shape.polygon(text_value, @floatFromInt(bar.box.width), @floatFromInt(bar.box.height)) else null;
+    const found = poly orelse {
+        _ = projection.setTreeClip(&bar.tree.node, null);
+        return;
+    };
+    var spec: projection.ClipSpec = .{
+        .width = bar.box.width,
+        .height = bar.box.height,
+        .poly_count = @intCast(found.count),
+        .radii = @splat(0),
+        .border = 0,
+        .border_color = @splat(0),
+    };
+    spec.poly = found.points;
+    if (!projection.setTreeClip(&bar.tree.node, spec)) log.warn("could not set the taskbar shape ({d}x{d})", .{ bar.box.width, bar.box.height });
+}
+
 /// Whether the bar already sits where `placement` puts it.
 pub fn isPlaced(bar: *Taskbar, output_box: wlr.Box) bool {
     const wanted = bar.placement(output_box);
@@ -90,9 +117,10 @@ pub fn relayout(bar: *Taskbar, output_box: wlr.Box) void {
     const placed = bar.placement(output_box);
     bar.box = placed.box;
     bar.reserved = placed.reserved;
-    bar.flush = shape.flush(output_box, bar.box, barRadius());
+    bar.flush = shape.flush(output_box, bar.box, barRadius(), hasPolygon());
     bar.bleed = bar.bleedFor(output_box, bar.box);
     glass.Effect.configure(bar.glass_effect, barRadius(), 1);
+    bar.applyClip();
     bar.tree.node.setPosition(bar.box.x, bar.box.y);
     const now_ms = nowMs();
     bar.pointerLeave();
@@ -148,7 +176,7 @@ pub fn calculateLayout(bar: *Taskbar, window_count: usize) taskbar_items.Layout 
     const capture_width: f32 = if (bar.capturing()) @floatFromInt(bar.captureWidth()) else 0;
     const windows_width = if (window_count == 0) 0 else @as(f32, @floatFromInt(window_count)) * @max(@as(f32, @floatFromInt(chipSize())), ui_theme.global.chip_width) +
         @as(f32, @floatFromInt(window_count - 1)) * @as(f32, @floatFromInt(chipGap()));
-    return taskbar_items.arrange(items, @floatFromInt(startButtonLeft()), @floatFromInt(bar.box.width - rightPad()), @as(f32, @floatFromInt(bar.box.width)) / 2, .{ if (bar.battery_state.percent != null) battery_width else 0, @floatFromInt(trayHit()), @floatFromInt(trayHit()), bar.clockColumnWidth(), @floatFromInt(buttonSize()), windows_width, app_width, @floatFromInt(trayHit()), capture_width, @floatFromInt(trayHit()) }, tray_gap, clock_gap);
+    return taskbar_items.arrange(items, @floatFromInt(startButtonLeft()), @floatFromInt(bar.box.width - rightPad()), @as(f32, @floatFromInt(bar.box.width)) / 2, .{ if (bar.battery_state.percent != null) battery_width else 0, @floatFromInt(trayHit()), @floatFromInt(trayHit()), bar.clockColumnWidth(), @floatFromInt(buttonSize()), windows_width, app_width, @floatFromInt(trayHit()), capture_width, @floatFromInt(trayHit()), @floatFromInt(trayHit()) }, tray_gap, clock_gap);
 }
 
 pub fn itemBox(bar: *Taskbar, item: taskbar_items.Item) ?wlr.Box {
@@ -171,6 +199,7 @@ pub fn trayItem(index: usize) taskbar_items.Item {
         .wifi => .wifi,
         .power => .power,
         .wired => .wired,
+        .input_source => .input_source,
     };
 }
 

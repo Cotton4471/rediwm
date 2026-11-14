@@ -5,9 +5,7 @@
 const std = @import("std");
 const c = @import("c.zig").api;
 const decode = @import("../images/decode.zig");
-const tc = @cImport({
-    @cInclude("thumb_codec.h");
-});
+const tc = @import("c_thumb_codec");
 
 const a = std.heap.c_allocator;
 
@@ -224,7 +222,7 @@ pub fn uriHash(uri: []const u8) [32]u8 {
 /// A cached thumbnail's path: `<cache>/thumbnails/<size>/<md5>.png`.
 fn sharedPath(buf: []u8, ctx: Context, size_dir: []const u8, hash: *const [32]u8) ?[:0]u8 {
     const root = ctx.cache_dir orelse return null;
-    return std.fmt.bufPrintZ(buf, "{s}/thumbnails/{s}/{s}.png", .{ root, size_dir, hash }) catch null;
+    return std.fmt.bufPrintSentinel(buf, "{s}/thumbnails/{s}/{s}.png", .{ root, size_dir, hash }, 0) catch null;
 }
 
 fn readShared(ctx: Context, path: []const u8, mtime: i64, size: i64) ?Decoded {
@@ -262,7 +260,7 @@ pub fn writeShared(ctx: Context, path: []const u8, decoded: Decoded) void {
     var uri: std.ArrayList(u8) = .empty;
     defer uri.deinit(a);
     fileUri(&uri, a, path) catch return;
-    const uri_z = a.dupeZ(u8, uri.items) catch return;
+    const uri_z = a.dupeSentinel(u8, uri.items, 0) catch return;
     defer a.free(uri_z);
     const hash = uriHash(uri.items);
 
@@ -272,7 +270,7 @@ pub fn writeShared(ctx: Context, path: []const u8, decoded: Decoded) void {
     var final_buf: [std.fs.max_path_bytes]u8 = undefined;
     const final = sharedPath(&final_buf, ctx, "normal", &hash) orelse return;
     var tmp_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const tmp = std.fmt.bufPrintZ(&tmp_buf, "{s}/thumbnails/normal/{s}.{d}.tmp", .{ root, &hash, c.getpid() }) catch return;
+    const tmp = std.fmt.bufPrintSentinel(&tmp_buf, "{s}/thumbnails/normal/{s}.{d}.tmp", .{ root, &hash, c.getpid() }, 0) catch return;
     _ = c.unlink(tmp.ptr);
     if (tc.tc_png_write(tmp.ptr, decoded.pixels.ptr, decoded.w, decoded.h, uri_z.ptr, decoded.file_mtime, decoded.file_size) != 0) return;
     if (c.rename(tmp.ptr, final.ptr) != 0) _ = c.unlink(tmp.ptr);

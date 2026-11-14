@@ -25,19 +25,20 @@ dm_flag=no
 # --prebuilt: install.sh unpacked a release, whose zig-out/release-safe is
 # already built (scripts/make-release.sh), so there is nothing to compile.
 prebuilt=no
+prefix=${REDIWM_INSTALL_PREFIX:-/usr/local}
 for arg in "$@"; do
     case "$arg" in
         --no-restart) restart=no ;;
         --dm) dm_flag=yes ;;
         --prebuilt) prebuilt=yes ;;
-        *) echo "Usage: $0 [--no-restart] [--dm] [--prebuilt]" >&2; exit 1 ;;
+        --prefix=*) prefix=${arg#--prefix=} ;;
+        *) echo "Usage: $0 [--no-restart] [--dm] [--prebuilt] [--prefix=/usr/local]" >&2; exit 1 ;;
     esac
 done
 
 if [ "$restart" = yes ]; then
     echo "This update restarts RediWM and closes connected applications. Save your work first."
 fi
-command -v python3 >/dev/null
 if [ "$prebuilt" = no ]; then
     # Reserve 2 CPU cores for system responsiveness unless overridden by ZIG_JOBS
     if [ -z "${ZIG_JOBS:-}" ]; then
@@ -50,15 +51,30 @@ if [ "$prebuilt" = no ]; then
     fi
     cd "$repo_dir"
     # Set by install.sh when it built the private wlroots (see scripts/build-wlroots.sh).
-    wlroots_flag=${REDIWM_WLROOTS_PREFIX:+-Dwlroots-prefix=$REDIWM_WLROOTS_PREFIX}
-    as_user zig build -Doptimize=ReleaseSafe -j"$ZIG_JOBS" --prefix "$release_dir" $wlroots_flag
+    if [ -n "${REDIWM_WLROOTS_PREFIX:-}" ]; then
+        as_user sh scripts/with-wlroots.sh "$REDIWM_WLROOTS_PREFIX" zig build -Doptimize=ReleaseSafe -j"$ZIG_JOBS" --prefix "$release_dir" -Dinstall-prefix="$prefix" -Dwlroots-prefix="$REDIWM_WLROOTS_PREFIX"
+    else
+        as_user zig build -Doptimize=ReleaseSafe -j"$ZIG_JOBS" --prefix "$release_dir" -Dinstall-prefix="$prefix"
+    fi
 fi
-for binary in rediwm rediwm-msg rediwm-theme rediwm-files rediwm-images rediwm-monitor rediwm-editor rediwm-pdf rediwm-share-picker rediwm-dm rediwm-accounts-helper; do
-    test -x "$release_dir/bin/$binary"
+built_prefix=$(cat "$release_dir/install-prefix")
+if [ "${built_prefix%/}" != "${prefix%/}" ]; then
+    echo "Build targets $built_prefix, not $prefix. Rebuild with --prefix=$prefix (prebuilt releases cannot be relocated)." >&2
+    exit 1
+fi
+# The build lists the programs it installed (build/install_paths.zig); a stale
+# file left in bin/ by an older build is not on it.
+if [ ! -f "$release_dir/programs" ]; then
+    echo "$release_dir has no program list. Rebuild it with this checkout." >&2
+    exit 1
+fi
+grep -qx rediwm "$release_dir/programs" || { echo "$release_dir/programs does not list rediwm" >&2; exit 1; }
+for binary in $(cat "$release_dir/programs"); do
+    test -x "$release_dir/bin/$binary" || { echo "$release_dir/bin/$binary is missing" >&2; exit 1; }
 done
 as_root sh "$repo_dir/scripts/install-session-root.sh" "$repo_dir" "$release_dir" "$dm_flag"
 if [ "$restart" = no ]; then
     echo 'Installed ReleaseSafe. Running session left as-is.'
 else
-    as_user python3 "$repo_dir/scripts/restart-session.py"
+    as_user "$release_dir/bin/rediwm-restart"
 fi

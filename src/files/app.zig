@@ -5,6 +5,7 @@ const scrollbar = @import("ui").widgets.scrollbar;
 const splitter = @import("ui").widgets.splitter;
 const anim = @import("ui").anim;
 const c = @import("c.zig").api;
+const platform = @import("platform");
 const worker_mod = @import("worker.zig");
 const history_mod = @import("history.zig");
 const ops_mod = @import("ops.zig");
@@ -12,10 +13,12 @@ const dirsize = @import("dirsize.zig");
 const thumbs_mod = @import("thumbs.zig");
 const thumb_decode = @import("thumb_decode.zig");
 const volumes_mod = @import("volumes.zig");
+const player_link = @import("player_link.zig");
 const theme = @import("../icon_theme.zig");
 const Allocator = std.mem.Allocator;
 const header = @import("header.zig");
 const hover_glide = @import("ui").hover_glide;
+const interaction_surface = @import("ui").interaction_surface;
 const Preferences = @import("preferences.zig").Preferences;
 const pins_mod = @import("pins.zig");
 const chooser_mod = @import("chooser.zig");
@@ -24,6 +27,7 @@ const app_hover = @import("app_hover.zig");
 const app_listing = @import("app_listing.zig");
 const app_dialogs = @import("app_dialogs.zig");
 const app_fileops = @import("app_fileops.zig");
+const app_trash = @import("app_trash.zig");
 const app_chooser = @import("app_chooser.zig");
 const app_layout = @import("app_layout.zig");
 const app_folder_size = @import("app_folder_size.zig");
@@ -34,6 +38,7 @@ const app_torrents = @import("app_torrents.zig");
 const app_torrent_rows = @import("app_torrent_rows.zig");
 const app_git_sidebar = @import("app_git_sidebar.zig");
 const app_opening = @import("app_opening.zig");
+const app_audio = @import("app_audio.zig");
 const app_pointer = @import("app_pointer.zig");
 const app_keyboard = @import("app_keyboard.zig");
 const app_menu = @import("app_menu.zig");
@@ -69,7 +74,7 @@ pub const App = struct {
     closed: bool = false,
     torrents: @import("torrents.zig").Client = .{},
     transfer_view: app_torrents.View = .{},
-    children: @import("../child_set.zig") = .{},
+    children: platform.child.Set = .{},
     chooser: ?chooser_mod.Options = null,
     filename: Editor = .{},
     chooser_done: bool = false,
@@ -137,6 +142,8 @@ pub const App = struct {
     menu_x: f64 = 0,
     menu_y: f64 = 0,
     menu_selected: usize = 0,
+    /// Set when a file menu opens in the Trash: whether Restore applies.
+    trash_restorable: bool = false,
     file_menu_labels: [12][]const u8 = undefined,
     menu_label_text: [8][]const u8 = undefined,
     column_label_text: [5][]const u8 = undefined,
@@ -150,6 +157,8 @@ pub const App = struct {
     /// While a drag hovers PLACES: the gap, among the pins, where a drop lands.
     pin_drop: ?usize = null,
     folder_drop: ?usize = null,
+    /// While a drag hovers the sidebar's Trash row (a drop there trashes).
+    trash_drop: bool = false,
 
     // Removable and external volumes (see volumes.zig), listed under DEVICES.
     // The monitor starts once the window exists; without it the list is empty.
@@ -175,6 +184,9 @@ pub const App = struct {
     // Selection & scroll
     selection_anchor: ?usize = null,
     focused_index: ?usize = null,
+    type_select_buffer: [256]u8 = undefined,
+    type_select_len: usize = 0,
+    type_select_last_ms: i64 = 0,
     scroll_y: i32 = 0,
     wheel_glide: anim.Anim = .{},
     wheel_sidebar: bool = false,
@@ -182,6 +194,11 @@ pub const App = struct {
     // between cells while visible. `stepHover` samples them once per loop and
     // damages only what changed; the painters draw `frame`, never the pointer.
     toolbar_hover: ToolbarHover = .{},
+    toolbar_surface: interaction_surface.Surface = .{},
+    sidebar_surface: interaction_surface.Surface = .{},
+    column_surface: interaction_surface.Surface = .{},
+    dialog_surface: interaction_surface.Surface = .{},
+    item_surface: interaction_surface.Surface = .{},
     nav_hover: hover_glide.Glide = .{},
     item_hover: hover_glide.Glide = .{},
     // Each path section fades independently, including when crossing a separator.
@@ -198,6 +215,13 @@ pub const App = struct {
     deselect_on_release: ?usize = null,
     open_on_release: ?usize = null,
     single_click_open: bool = true,
+    /// Audio files play in rediwm-player (`files_audio_player`).
+    audio_player: bool = true,
+    audio_link: ?player_link.Link = null,
+    audio_state: player_link.State = .{},
+    /// When the playing track's progress ring next repaints; 0 recomputes.
+    audio_tick_at: i64 = 0,
+    audio_bar: @import("app_audio_bar.zig").State = .{},
     selection_band: ?struct {
         x: f64,
         y: f64, // Content coordinates, so the anchor survives edge scrolling.
@@ -264,13 +288,17 @@ pub const App = struct {
     mouse_y: f64 = 0,
     last_click_time: i64 = 0,
     last_click_index: ?usize = null,
+    /// The item a single-click last opened, and when: the second click of a
+    /// double-click on its icon must not open it again.
+    last_open_index: ?usize = null,
+    last_open_time: i64 = 0,
     ctrl: bool = false,
     shift: bool = false,
     alt: bool = false,
 
     // Title notification
     title_changed: bool = true,
-    title_z: [256:0]u8 = [1:0]u8{0} ** 256,
+    title_z: [256:0]u8 = @splat(0),
 
     pub fn init(
         allocator: Allocator,
@@ -297,6 +325,7 @@ pub const App = struct {
             .folder_sizes = std.StringHashMap(SizeState).init(allocator),
             .thumbs_enabled = !thumb_decode.disabled(environ),
             .single_click_open = @import("settings.zig").singleClickOpen(),
+            .audio_player = @import("settings.zig").audioPlayer(),
         };
 
         self.theme_cfg.override_root = @import("settings.zig").iconRoot();
@@ -329,6 +358,7 @@ pub const App = struct {
 
     pub fn deinit(self: *App) void {
         self.torrents.deinit();
+        self.stopAudio();
         self.terminal.deinit(self.allocator);
         self.children.deinit(self.allocator);
         self.closeExtractPicker();
@@ -437,7 +467,14 @@ pub const App = struct {
     pub const itemHighlight = app_hover.itemHighlight;
     pub const toolbarButtonVisible = app_hover.toolbarButtonVisible;
     pub const toolbarButtonEnabled = app_hover.toolbarButtonEnabled;
+    pub const updateToolbarSurface = app_hover.updateToolbarSurface;
+    pub const updateSidebarSurface = app_hover.updateSidebarSurface;
+    pub const updateColumnSurface = app_hover.updateColumnSurface;
+    pub const updateDialogSurface = app_hover.updateDialogSurface;
+    pub const updateItemSurface = app_hover.updateItemSurface;
     pub const hoveredToolbarButton = app_hover.hoveredToolbarButton;
+    pub const toolbarButtonProximity = app_hover.toolbarButtonProximity;
+    pub const damageToolbarProximity = app_hover.damageToolbarProximity;
     pub const stepHover = app_hover.stepHover;
     pub const damageHighlight = app_hover.damageHighlight;
     pub const unionRect = app_hover.unionRect;
@@ -532,6 +569,8 @@ pub const App = struct {
     pub const openProperties = app_dialogs.openProperties;
     pub const openSelectedProperties = app_dialogs.openSelectedProperties;
     pub const propertiesAction = app_dialogs.propertiesAction;
+    pub const openTrashProperties = app_dialogs.openTrashProperties;
+    pub const trashPropertiesAction = app_dialogs.trashPropertiesAction;
     pub const canOpenWith = app_dialogs.canOpenWith;
     pub const openWithDialog = app_dialogs.openWithDialog;
     pub const openWithAction = app_dialogs.openWithAction;
@@ -542,6 +581,7 @@ pub const App = struct {
     pub const openRenameDialog = app_dialogs.openRenameDialog;
     pub const openEmptyTrashDialog = app_dialogs.openEmptyTrashDialog;
     pub const openTrashConfirmDialog = app_dialogs.openTrashConfirmDialog;
+    pub const openTrashConfirmDialogWithMode = app_dialogs.openTrashConfirmDialogWithMode;
     pub const openConflictDialog = app_dialogs.openConflictDialog;
     pub const confirmDialog = app_dialogs.confirmDialog;
     pub const handleDialogKey = app_dialogs.handleDialogKey;
@@ -556,6 +596,19 @@ pub const App = struct {
     pub const executePasteExternal = app_fileops.executePasteExternal;
     pub const deleteAction = app_fileops.deleteAction;
     pub const executeDeletion = app_fileops.executeDeletion;
+    pub const deleteFromTrash = app_fileops.deleteFromTrash;
+
+    // app_trash.zig
+    pub const trashRelation = app_trash.trashRelation;
+    pub const inTrash = app_trash.inTrash;
+    pub const trashReadOnly = app_trash.trashReadOnly;
+    pub const refreshTrashRestorable = app_trash.refreshTrashRestorable;
+    pub const restoreSelected = app_trash.restoreSelected;
+    pub const restoreAll = app_trash.restoreAll;
+    pub const trashDropAt = app_trash.trashDropAt;
+    pub const setTrashDrop = app_trash.setTrashDrop;
+    pub const takeTrashDrop = app_trash.takeTrashDrop;
+    pub const trashDropped = app_trash.trashDropped;
 
     // app_chooser.zig
     pub const configureChooser = app_chooser.configureChooser;
@@ -578,6 +631,7 @@ pub const App = struct {
     pub const viewTop = app_layout.viewTop;
     pub const compactList = app_layout.compactList;
     pub const itemInset = app_layout.itemInset;
+    pub const itemLeftInset = app_layout.itemLeftInset;
     pub const rowHeight = app_layout.rowHeight;
     pub const cardHeight = app_layout.cardHeight;
     pub const listBaseline = app_layout.listBaseline;
@@ -652,6 +706,8 @@ pub const App = struct {
     pub const place_labels = [_]i18n.Message{ i18n.msg("Home"), i18n.msg("Trash"), i18n.msg("Recent"), i18n.msg("Desktop"), i18n.msg("Documents"), i18n.msg("Downloads"), i18n.msg("Pictures"), i18n.msg("Music"), i18n.msg("Videos"), i18n.msg("Projects") };
 
     pub const places_start = 3;
+    /// The built-in Trash row's index among the places.
+    pub const trash_place = 1;
 
     /// Where the pins start: the built-in places come first.
     pub const pin_base = places.len;
@@ -696,6 +752,18 @@ pub const App = struct {
     pub const refreshPins = app_places.refreshPins;
     pub const deviceLabel = app_places.deviceLabel;
     pub const startDevices = app_places.startDevices;
+    pub const startAudio = app_audio.startAudio;
+    pub const audioWakeFd = app_audio.audioWakeFd;
+    pub const drainAudio = app_audio.drainAudio;
+    pub const stopAudio = app_audio.stopAudio;
+    pub const playsBuiltin = app_audio.playsBuiltin;
+    pub const playAudio = app_audio.playAudio;
+    pub const audioButtonWidth = app_audio.audioButtonWidth;
+    pub const renderAudioButton = app_audio.renderAudioButton;
+    pub const audioButtonHit = app_audio.audioButtonHit;
+    pub const audioButtonClick = app_audio.audioButtonClick;
+    pub const audioDeadline = app_audio.audioDeadline;
+    pub const stepAudio = app_audio.stepAudio;
     pub const devicesWakeFd = app_places.devicesWakeFd;
     pub const drainDevices = app_places.drainDevices;
     pub const startDeviceOp = app_places.startDeviceOp;
@@ -854,6 +922,7 @@ pub const App = struct {
     // app_keyboard.zig
     pub const keyRepeats = app_keyboard.keyRepeats;
     pub const handleKey = app_keyboard.handleKey;
+    pub const typeSelectAt = app_keyboard.typeSelectAt;
     pub const selectIndex = app_keyboard.selectIndex;
     pub const handleLocationKey = app_keyboard.handleLocationKey;
     pub const activeEditor = app_keyboard.activeEditor;
@@ -872,6 +941,8 @@ pub const App = struct {
     pub const menuHeight = app_menu.menuHeight;
     pub const menuRowRect = app_menu.menuRowRect;
     pub const menuIcon = app_menu.menuIcon;
+    pub const backgroundMenu = app_menu.backgroundMenu;
+    pub const menuDisabled = app_menu.menuDisabled;
     pub const menuHint = app_menu.menuHint;
     pub const hasSizeSelection = app_menu.hasSizeSelection;
     pub const selectedArchive = app_menu.selectedArchive;

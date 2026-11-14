@@ -9,7 +9,9 @@ const battery = @import("../taskbar/battery.zig");
 const battery_badge = @import("ui").widgets.battery;
 const start_button = @import("../taskbar/start_button.zig");
 const shape = @import("../taskbar/shape.zig");
+const window_shape = @import("ui").window_shape;
 const ui_theme = @import("ui").theme;
+const ui_relief = @import("ui").relief;
 const stats = @import("../ipc/stats.zig");
 const log = std.log.scoped(.taskbar);
 const bar_height = Taskbar.bar_height;
@@ -157,7 +159,16 @@ pub fn renderPart(bar: *Taskbar, now_ms: i64, part: Part, origin_x: i32, origin_
     };
     const battery_progress = if (part == .battery) bar.battery_shimmer.sweep.value(now_ms) else 1;
     const part_width: f32 = if (part == .capture) @floatFromInt(bar.captureWidth()) else @floatFromInt(trayHit());
-    if (chip_paint) |*paint| fillChipColumns(paint, buf.pixels, buf.width, buf.height, origin_x, origin_y, 0, stride, scale) else for (0..@intCast(buf.height)) |dy| {
+    // A polygon bar: the rows are filled in runs, and only the pixels near an edge
+    // pay for a distance (`shape.paintPolygon`).
+    const polygon: ?window_shape.Resolved = if (part == .background and Taskbar.hasPolygon())
+        shape.polygon(ui_theme.global.taskbar_shape, @floatFromInt(bar.box.width), @floatFromInt(bar.box.height))
+    else
+        null;
+    if (polygon) |poly| {
+        // The raster reaches no further than the bar's own box.
+        shape.paintPolygon(Color, .{ .pixels = buf.pixels, .stride = stride, .width = @intCast(buf.width), .height = @intCast(buf.height), .scale = scale }, poly, ui_theme.global.taskbar_outline_width, Color.bar_fill(), Color.outline());
+    } else if (chip_paint) |*paint| fillChipColumns(paint, buf.pixels, buf.width, buf.height, origin_x, origin_y, 0, stride, scale) else for (0..@intCast(buf.height)) |dy| {
         const py = @as(f32, @floatFromInt(origin_y)) + (@as(f32, @floatFromInt(dy)) + 0.5) / scale;
         for (0..stride) |dx| {
             const px = @as(f32, @floatFromInt(origin_x)) + (@as(f32, @floatFromInt(dx)) + 0.5) / scale;
@@ -169,24 +180,32 @@ pub fn renderPart(bar: *Taskbar, now_ms: i64, part: Part, origin_x: i32, origin_
     }
     if (part == .tray) {
         const i = part.tray;
-        const alert = switch (@as(TrayKind, @enumFromInt(i))) {
+        const kind: TrayKind = @enumFromInt(i);
+        const alert = switch (kind) {
             .volume => bar.audio_muted,
             .wifi, .wired => bar.network_offline,
-            .power => false,
+            .power, .input_source => false,
         };
         const color = if (alert) blk: {
             var danger = Color.fromRgba(ui_theme.taskbar(.danger));
-            if ((@as(TrayKind, @enumFromInt(i)) == .wifi or @as(TrayKind, @enumFromInt(i)) == .wired) and bar.blink_dim) danger.a *= 0.25;
+            if ((kind == .wifi or kind == .wired) and bar.blink_dim) danger.a *= 0.25;
             break :blk danger;
         } else Color.lerp(Color.tray_icon(), Color.tray_icon_hover(), hover);
-        const size = 20 * press;
-        var renderer = @import("ui").paint.Renderer.init(buf.pixels, buf.width, buf.height, scale);
-        renderer.drawIcon(bar.trayPositions()[i] + @as(f32, @floatFromInt(trayHit())) / 2 - size / 2 - @as(f32, @floatFromInt(origin_x)), @as(f32, @floatFromInt(bar.box.height)) / 2 - size / 2 - @as(f32, @floatFromInt(origin_y)), size, size, .{ .id = switch (@as(TrayKind, @enumFromInt(i))) {
-            .wifi => .wifi,
-            .wired => .ethernet,
-            .volume => if (bar.audio_muted) .volume_muted else .volume,
-            .power => .power,
-        }, .color = .{ color.r, color.g, color.b, color.a } });
+        const tx = bar.trayPositions()[i] - @as(f32, @floatFromInt(origin_x));
+        const hit: f32 = @floatFromInt(trayHit());
+        if (kind == .input_source) {
+            paintSourceLabel(bar, buf, tx, @as(f32, @floatFromInt(@divTrunc(bar.box.height - trayHit(), 2) - origin_y)), hit, press, color, scale);
+        } else {
+            const size = 20 * press;
+            var renderer = @import("ui").paint.Renderer.init(buf.pixels, buf.width, buf.height, scale);
+            renderer.drawIcon(tx + hit / 2 - size / 2, @as(f32, @floatFromInt(bar.box.height)) / 2 - size / 2 - @as(f32, @floatFromInt(origin_y)), size, size, .{ .id = switch (kind) {
+                .wifi => .wifi,
+                .wired => .ethernet,
+                .volume => if (bar.audio_muted) .volume_muted else .volume,
+                .power => .power,
+                .input_source => unreachable,
+            }, .color = .{ color.r, color.g, color.b, color.a } });
+        }
     }
     drawPartText(bar, now_ms, part, buf, origin_x, origin_y);
     node.node.setPosition(origin_x, origin_y);
@@ -205,6 +224,24 @@ pub fn renderPart(bar: *Taskbar, now_ms: i64, part: Part, origin_x: i32, origin_
         .capture => 0,
         .battery => paint_tray,
     });
+}
+
+/// The active input source's text ("EN", "あ") centred in its tray target,
+/// shrinking for longer labels so three characters and a subscript still fit.
+fn paintSourceLabel(bar: *Taskbar, buf: *BarBuffer, x: f32, y: f32, hit: f32, press: f32, color: Color, scale: f32) void {
+    const sources = bar.server.input_sources orelse return;
+    const label = sources.activeLabel();
+    if (label.len == 0) return;
+    const text = @import("ui").text;
+    var size: f32 = 13 * press;
+    var width = text.measureWidth(label, .manrope_bold, size, scale) catch return;
+    const room: i32 = @intFromFloat(hit - 6);
+    while (width > room and size > 8) {
+        size -= 1;
+        width = text.measureWidth(label, .manrope_bold, size, scale) catch return;
+    }
+    const left: i32 = @intFromFloat(@round(x + (hit - @as(f32, @floatFromInt(width))) / 2));
+    Taskbar.drawCenteredText(buf.pixels, buf.width, buf.height, .{ .x = left, .y = @intFromFloat(@round(y)), .w = width + 1, .h = @intFromFloat(hit) }, label, .{ .r = color.r, .g = color.g, .b = color.b, .a = color.a }, scale, .manrope_bold, size) catch {};
 }
 
 /// Bilinear sample of an icon raster. `x`/`y` are logical offsets from the
@@ -313,6 +350,22 @@ pub fn chipPixelArgb(paint: *const ChipPaint, px: f32, py: f32, scale: f32) u32 
     return paintChipPixel(paint, px, py, scale).argb();
 }
 
+/// Relief shading inside a chip's edge, over its body. A raster is only a few
+/// px wider than its chip, so there is no room for outside shadows: `inset`
+/// is the groove, `raised` the same shading with the two lights swapped.
+fn chipRelief(body: Color, kind: ui_theme.Relief, x: f32, y: f32, w: f32, h: f32, px: f32, py: f32, scale: f32) Color {
+    const spec = ui_relief.Spec.from(ui_theme.global, scale);
+    if (!spec.enabled()) return body;
+    const shape_box: ui_relief.Shape = .{ .x = x * scale, .y = y * scale, .w = w * scale, .h = h * scale, .radius = ui_theme.global.radius * scale };
+    const pair = ui_relief.inset(spec, shape_box, px * scale, py * scale);
+    const shade_dark = if (kind == .inset) spec.dark else spec.light;
+    const shade_light = if (kind == .inset) spec.light else spec.dark;
+    var color = body;
+    color = (Color{ .r = shade_dark[0], .g = shade_dark[1], .b = shade_dark[2], .a = shade_dark[3] * pair.dark }).over(color);
+    color = (Color{ .r = shade_light[0], .g = shade_light[1], .b = shade_light[2], .a = shade_light[3] * pair.light }).over(color);
+    return color;
+}
+
 pub fn paintChipPixel(paint: *const ChipPaint, px: f32, py: f32, scale: f32) Color {
     const chip = paint.chip;
     const cx = paint.x;
@@ -320,6 +373,7 @@ pub fn paintChipPixel(paint: *const ChipPaint, px: f32, py: f32, scale: f32) Col
     const lx = px;
     const ly = py;
     var color = @import("../taskbar/chip_style.zig").pixel(Color, lx, ly, cx, chip_y, chip.width, @floatFromInt(chipSize()), ui_theme.global.radius, scale, paint.fill, paint.border);
+    if (paint.relief != .flat) color = chipRelief(color, paint.relief, cx, chip_y, chip.width, @floatFromInt(chipSize()), lx, ly, scale);
     const tile_x = cx + @as(f32, @floatFromInt(chipPad()));
     const tile_y = chip_y + @as(f32, @floatFromInt(chipPad()));
     const tile_cov = edgeCoverage(chrome.sdRoundedBox(lx, ly, tile_x, tile_y, @floatFromInt(tileSize()), @floatFromInt(tileSize()), tile_radius), scale);

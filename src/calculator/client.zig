@@ -1,6 +1,7 @@
 //! Standalone Calculator Wayland host (following the native Calculator client). Uses the same decoration, input,
 //! cursor and released-buffer lifecycle as the other native RediWM clients.
 const std = @import("std");
+const platform = @import("platform");
 const ClientCursor = @import("ui").client_cursor;
 const wl = @import("wayland").client.wl;
 const xdg = @import("wayland").client.xdg;
@@ -755,7 +756,7 @@ const Buffer = struct {
 };
 
 pub fn run(init: std.process.Init) !void {
-    _ = c.signal(c.SIGPIPE, c.SIG_IGN);
+    platform.process.ignoreBrokenPipes();
     defer @import("../files/settings.zig").deinitTheme();
     var watch = try @import("../system_monitor/settings_watch.zig").Watch.init(init.io, init.minimal.environ);
     defer watch.deinit();
@@ -836,7 +837,7 @@ pub fn run(init: std.process.Init) !void {
     self.surface.commit();
     if (self.activation) |activation| {
         if (init.minimal.environ.getPosix("XDG_ACTIVATION_TOKEN")) |token| {
-            const terminated = try a.dupeZ(u8, token);
+            const terminated = try a.dupeSentinel(u8, token, 0);
             defer a.free(terminated);
             activation.activate(terminated, self.surface);
         }
@@ -870,7 +871,7 @@ pub fn run(init: std.process.Init) !void {
 
         var fds = [_]c.struct_pollfd{
             .{ .fd = display.getFd(), .events = @intCast(c.POLLIN | @as(c_int, if (flushed == .AGAIN) c.POLLOUT else 0)), .revents = 0 },
-            .{ .fd = watch.fd, .events = c.POLLIN, .revents = 0 },
+            .{ .fd = watch.fd(), .events = c.POLLIN, .revents = 0 },
         };
         const now = key_repeat.nowMs();
         var timeout: c_int = if (self.key_repeat.timeoutMs(now)) |wait| @intCast(@min(wait, 60_000)) else -1;

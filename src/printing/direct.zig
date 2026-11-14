@@ -60,7 +60,7 @@ pub const Worker = struct {
         if (user.len == 0 or user.len > 255 or password.len >= 4096) return error.InvalidCredentials;
         for (user) |ch| if (ch < 0x21 or ch == 0x7f) return error.InvalidCredentials;
         if (std.mem.indexOfScalar(u8, password, 0) != null) return error.InvalidCredentials;
-        const name = try a.dupeZ(u8, user);
+        const name = try a.dupeSentinel(u8, user, 0);
         defer a.free(name);
         rediwm_cups_credentials(self.native, name, password.ptr, password.len);
     }
@@ -74,19 +74,19 @@ pub const Worker = struct {
         if (!self.discovery) {
             var i: usize = 0;
             while (i < signature.len) : (i += 1) switch (signature[i]) {
-                's' => try args.append(mem, try mem.dupeZ(u8, try reader.string())),
+                's' => try args.append(mem, try mem.dupeSentinel(u8, try reader.string(), 0)),
                 'b' => try args.append(mem, if (try reader.boolean()) "true" else "false"),
                 'a' => {
                     i += 1;
                     if (i >= signature.len or signature[i] != 's') return error.InvalidSignature;
                     var values = try reader.array(4);
-                    while (values.offset < values.bytes.len) try args.append(mem, try mem.dupeZ(u8, try values.string()));
+                    while (values.offset < values.bytes.len) try args.append(mem, try mem.dupeSentinel(u8, try values.string(), 0));
                 },
                 else => return error.InvalidSignature,
             };
             try reader.done();
         }
-        if (rediwm_cups_submit(self.native, try mem.dupeZ(u8, method), @intCast(args.items.len), args.items.ptr, @intFromBool(reset)) != 0) return error.OutOfMemory;
+        if (rediwm_cups_submit(self.native, try mem.dupeSentinel(u8, method, 0), @intCast(args.items.len), args.items.ptr, @intFromBool(reset)) != 0) return error.OutOfMemory;
     }
     pub fn devices(self: *Worker, writer: *wire.Writer) !void {
         const dict = try writer.beginArray(8);

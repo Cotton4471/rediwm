@@ -23,6 +23,21 @@ pub fn saveItems(s: *Section, items: taskbar_items.Config) void {
 }
 
 pub const item_row_height: f32 = 40;
+pub const item_section_width: f32 = 170;
+
+/// The row's Left/Center/Right buttons: the item moves to the end of that
+/// section, the same result as dropping it there.
+pub fn onItemSectionChanged(owner: ?*anyopaque, id: usize, index: usize) void {
+    if (index > 2 or id >= taskbar_items.count) return;
+    const s = section(owner);
+    var items = s.cc.server.config.compositor.taskbar_items;
+    const zone: taskbar_items.Section = @enumFromInt(index);
+    const item = items.order[id];
+    if (items.section(item) == zone) return;
+    _ = items.place(id, zone, taskbar_items.count);
+    s.item_focus = item;
+    saveItems(s, items);
+}
 
 pub fn itemRowStyle(lifted: bool) layout.RectStyle {
     const pal = panel.palette();
@@ -57,8 +72,10 @@ pub fn syncItems(out: *Section, items: taskbar_items.Config, dragged: ?usize) bo
         const shown = items.resolved(item, presence);
         controls[1].kind.text.weight = if (shown) 600 else 400;
         controls[1].kind.text.color = if (shown) pal.fg else pal.dim;
-        controls[2].name = itemName(item, "_visible");
-        controls[2].kind.toggle.on = shown;
+        controls[2].name = itemName(item, "_section");
+        controls[2].kind.segmented.selected = @intFromEnum(items.section(item));
+        controls[3].name = itemName(item, "_visible");
+        controls[3].kind.toggle.on = shown;
         for (controls) |*control| control.markDirty();
         row.markDirty();
     }

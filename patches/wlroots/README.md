@@ -14,12 +14,13 @@ including on systems that already package wlroots:
 
 ```sh
 scripts/build-wlroots.sh "$PWD/zig-out/wlroots"
-zig build -Dwlroots-prefix="$PWD/zig-out/wlroots"
+scripts/with-wlroots.sh "$PWD/zig-out/wlroots" zig build -Dwlroots-prefix="$PWD/zig-out/wlroots"
 umask 077
 python3 tests/window_titles.py
 ```
 
-Keep `-Dwlroots-prefix` on subsequent builds. The resulting binaries bundle
+Keep `-Dwlroots-prefix`, run through `scripts/with-wlroots.sh`, on subsequent
+builds. The resulting binaries bundle
 the patched library in `lib/rediwm`; the system wlroots package is unchanged.
 Builds without a private prefix retain the system library's title policy.
 Release tarballs (`scripts/make-release.sh`) are always built this way, so the

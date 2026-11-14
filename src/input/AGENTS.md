@@ -1,11 +1,34 @@
 # Input
 
+* **Per-device pointer settings:** `Pointer` owns its stable identity and a
+  monotonic live token. Settings resolves the token on every callback; no UI
+  state may retain a device pointer. `persistentId` rejects missing/ambiguous
+  identities. Hotplug and reload both call `applyPointerDevice`, resolving
+  `[[input_device]]` overrides over `[input]` defaults. Do not reapply bare
+  global pointer values later. Identity collisions reset those peers to
+  defaults and stay ambiguous for their remaining connection lifetimes.
+  `tests/input_persistence.py` uses a noninstalled backend fixture; physical
+  touchpad/mouse scroll feel and libinput DWT pairing still need manual checks.
+
 * **Text input/IME** (`text_input.zig`): `syncFocus` is the only enter path.
   IM grabs replace client delivery only (bindings, hardware keys and
   shell/lock UI win); an IM's own virtual keyboard bypasses its grab.
-  Lock/auth reject virtual input. IPC `GetTextInput` never returns text.
+  While an overlay owns new input, modifier updates and the release of keys
+  the grab already received still reach it, and the IM's virtual keyboard
+  never counts as a physical modifier source (it only echoes forwarded
+  state). Lock/auth reject virtual input. IPC `GetTextInput` never returns
+  text.
 * **Layouts:** layout-zero fallback is for binding lookup only; text uses the
   active XKB state.
+* **Input sources** (`input_sources.zig`, `input_sources/`): the config's
+  layouts (XKB groups, at most four) plus Fcitx5's methods, read and switched
+  over D-Bus, never written. The active group is global: switching sets it on
+  every keyboard with the config keymap; a keyboard that switches itself (a
+  `grp:` toggle, `layouts.observe`) moves it and the others follow from an
+  idle callback, never inside their own modifiers signal. Fcitx has no
+  current-method signal: any signal from its unique name re-asks
+  `CurrentInputMethod`. The lock types with layouts only (`cycleLayouts`).
+  `tests/input_sources.py` uses a fake Fcitx on a private session bus.
 * **Shell key repeat:** one `shell_repeat` per keyboard; a new shell target
   needs a `ShellTarget` case, a freeable panel calls `forgetShellTarget`.
   Return, Escape, Tab and modifier chords never repeat.
@@ -14,8 +37,15 @@
   focus; new compositor input modes go in `motionReachesClient` or
   `candidate`. `sendDeactivated` destroys oneshots synchronously: clear
   `active` first.
+* **The switcher owns the pointer** while it is up: opening it clears pointer
+  focus and shows the arrow (a client's hidden or text cursor would otherwise
+  stay, since no motion reaches it), unless a press or grab is in progress.
+  User-driven ends go through `Switcher.close`, which re-runs
+  `processCursorMotion`; forced teardowns call `cancel` alone.
 * **Shortcuts inhibit** gates only the switcher, screenshot shortcuts and
-  final dispatch; hardware keys, VT switching and open panels still win.
+  final dispatch; hardware keys, VT switching, System Monitor and open panels
+  still win. System Monitor dismisses transient input owners and revokes the
+  focused client's inhibitor; lock/auth and shortcut capture keep priority.
 * **Drag dodge** (`drag_dodge.zig`) slides a file manager aside through
   `Toplevel.setDodge`, a presentation-only offset added in
   `applyVisualTransform`. Never fold it into `x`/`y`/`move_x` (it would grow
@@ -29,5 +59,6 @@
   `processAxis`, on detented `.wheel` events only. IPC `scroll` and
   automation sequences (`virtual.zig`) enter `processAxis` as `.continuous`
   and never reach it, so cover it with unit tests.
-* **Lid:** a closed lid hides built-in panels only while another display is
-  on; undocked, logind owns the lid.
+* **Lid:** native power policy takes logind’s lid inhibitor and owns lid actions.
+  Docked panels leave the layout; undocked panels blank without removing the
+  last output. Never also request undocked sleep without the inhibitor.

@@ -56,24 +56,42 @@ pub fn destroy(self: *Self) void {
     gpa.destroy(self);
 }
 
-extern fn wlr_input_device_get_virtual_keyboard(device: *wlr.InputDevice) ?*wlr.VirtualKeyboardV1;
 pub fn isVirtual(device: *wlr.InputDevice) bool {
-    return wlr_input_device_get_virtual_keyboard(device) != null;
+    return device.getVirtualKeyboard() != null;
 }
 
-pub fn keyboardGrab(self: *Self, keyboard: *wlr.Keyboard) ?*wlr.InputMethodV2.KeyboardGrab {
+/// Why the compositor is about to hand input to the input method. `.new_input`
+/// is the ordinary delivery path and yields to compositor UI (switcher, panels)
+/// that owns new key presses. `.state` covers modifier updates and the release
+/// of keys the grab already received: those must keep reaching it even while an
+/// overlay owns new input, or the method's mirrored keyboard keeps a released
+/// modifier held and the overlay it opened can never see it end.
+pub const GrabPurpose = enum { new_input, state };
+
+pub fn keyboardGrab(self: *Self, keyboard: *wlr.Keyboard, purpose: GrabPurpose) ?*wlr.InputMethodV2.KeyboardGrab {
     const input = &self.server.input;
-    if (self.server.locker != null or self.server.polkit_dialog != null or self.server.switcher.active() or
-        input.open_wifi != null or input.open_battery != null or input.open_calendar != null or input.open_start_menu != null or (if (input.open_control_center) |cc| cc.hasKeyboardFocus() else false) or input.open_power_menu != null) return null;
+    if (self.server.locker != null or self.server.polkit_dialog != null) return null;
+    if (purpose == .new_input and (self.server.switcher.active() or self.server.world.overview.active() or
+        input.open_wifi != null or input.open_battery != null or input.open_calendar != null or input.open_start_menu != null or (if (input.open_control_center) |cc| cc.hasKeyboardFocus() else false) or input.open_power_menu != null)) return null;
     const method = self.method orelse return null;
     const grab = self.grab orelse return null;
-    if (wlr_input_device_get_virtual_keyboard(&keyboard.base)) |virtual| {
+    if (keyboard.base.getVirtualKeyboard()) |virtual| {
         // IMEs reinject unhandled keys with their own virtual keyboard.
         // Sending those back into the grab would create an infinite loop.
         if (virtual.resource.getClient() == method.resource.getClient()) return null;
     }
     grab.setKeyboard(keyboard);
     return grab;
+}
+
+/// True for the connected input method's own virtual keyboard. What it reports
+/// is an echo of input the compositor forwarded to the method, not a device the
+/// user is pressing, so compositor gestures and the held-modifier switcher must
+/// not treat its (possibly stale) state as physical input.
+pub fn isMethodEcho(self: *Self, device: *wlr.InputDevice) bool {
+    const method = self.method orelse return false;
+    const virtual = device.getVirtualKeyboard() orelse return false;
+    return virtual.resource.getClient() == method.resource.getClient();
 }
 
 fn newKeyboard(listener: *wl.Listener(*wlr.VirtualKeyboardV1), virtual: *wlr.VirtualKeyboardV1) void {
@@ -362,7 +380,7 @@ pub fn updatePopups(self: *Self) void {
     while (it.next()) |popup| {
         const visible = visible: {
             const shell = &self.server.input;
-            if (self.server.locker != null or self.server.polkit_dialog != null or self.server.switcher.active() or
+            if (self.server.locker != null or self.server.polkit_dialog != null or self.server.switcher.active() or self.server.world.overview.active() or
                 shell.open_start_menu != null or shell.open_wifi != null or shell.open_battery != null or shell.open_calendar != null or shell.open_power_menu != null or
                 (if (shell.open_control_center) |cc| cc.hasKeyboardFocus() else false)) break :visible false;
             const input = (self.active orelse break :visible false).input;

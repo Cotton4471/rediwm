@@ -15,6 +15,48 @@ static void device_radii(float out[4], const float in[4], enum wl_output_transfo
         out[b.x < w / 2 ? (b.y < h / 2 ? 0 : 3) : (b.y < h / 2 ? 1 : 2)] = in[i];
     }
 }
+// A polygon's vertices (layout space) in the shape's device box: the snapped layout
+// box `f` is stretched over the device box so the corners of the two coincide, then
+// taken through the output's transform with the same probing as device_radii (the
+// box's own size matters for a flip, which is why this is not a pixel box).
+static void device_points(float out[][2], const double in[][2], int n, struct rediwm_snap f,
+                          const struct wlr_box *box, enum wl_output_transform transform) {
+    enum { W = 3, H = 5 };
+    struct wlr_box px[3], at[3] = {{0, 0, 1, 1}, {1, 0, 1, 1}, {0, 1, 1, 1}};
+    for (int i = 0; i < 3; i++) wlr_box_transform(&px[i], &at[i], wlr_output_transform_invert(transform), W, H);
+    const int ex[2] = {px[1].x - px[0].x, px[1].y - px[0].y}, ey[2] = {px[2].x - px[0].x, px[2].y - px[0].y};
+    const double pre_w = (transform & 1) ? box->height : box->width, pre_h = (transform & 1) ? box->width : box->height;
+    const double shift[2] = {(ex[0] < 0 ? pre_w : 0) + (ey[0] < 0 ? pre_h : 0),
+                             (ex[1] < 0 ? pre_w : 0) + (ey[1] < 0 ? pre_h : 0)};
+    for (int i = 0; i < n; i++) {
+        const double lx = (in[i][0] - f.x) * pre_w / f.width, ly = (in[i][1] - f.y) * pre_h / f.height;
+        out[i][0] = (float)(ex[0] * lx + ey[0] * ly + shift[0]);
+        out[i][1] = (float)(ex[1] * lx + ey[1] * ly + shift[1]);
+    }
+}
+// Circles retain one uniform scale even when the enclosing quad's snapped
+// width and height differ by a pixel. Convert their exact layout-space centre
+// and unit axis through the output transform, then anchor at the device box.
+static void device_sector(struct rediwm_pass_sector *out, const struct rediwm_sector *in,
+                          const struct wlr_box *box, const struct output_view *v) {
+    *out = (struct rediwm_pass_sector){0};
+    if (in->radii[1] <= 0) return;
+    enum { W = 3, H = 5 };
+    struct wlr_box px[3], at[3] = {{0, 0, 1, 1}, {1, 0, 1, 1}, {0, 1, 1, 1}};
+    for (int i = 0; i < 3; i++) wlr_box_transform(&px[i], &at[i], wlr_output_transform_invert(v->transform), W, H);
+    const int ex[2] = {px[1].x - px[0].x, px[1].y - px[0].y};
+    const int ey[2] = {px[2].x - px[0].x, px[2].y - px[0].y};
+    const double x = (in->center[0] - v->logical.x) * v->scale;
+    const double y = (in->center[1] - v->logical.y) * v->scale;
+    const int origin[2] = {box->x, box->y};
+    for (int i = 0; i < 2; i++) {
+        const double shift = (ex[i] < 0 ? v->trans_width : 0) + (ey[i] < 0 ? v->trans_height : 0);
+        out->center[i] = (float)(ex[i] * x + ey[i] * y + shift - origin[i]);
+        out->axis[i] = (float)(ex[i] * in->axis[0] + ey[i] * in->axis[1]);
+        out->radii[i] = (float)(in->radii[i] * v->scale);
+        out->half_angle[i] = (float)in->half_angle[i];
+    }
+}
 // The pass's shape for a clip: the clip's box snapped in layout space like any
 // item's, then taken to device pixels by the same function as the pieces that
 // tile it, so the shape and the quads agree on every pixel column. A ring is
@@ -25,6 +67,13 @@ static void shape_for(struct rediwm_pass_shape *s, const struct rediwm_clip *c, 
     float radii[4];
     for (int i = 0; i < 4; i++) radii[i] = (float)(c->radii[i] * v->scale);
     device_radii(s->radii, radii, v->transform);
+    s->poly_count = c->poly_count;
+    if (c->poly_count) device_points(s->poly, c->poly, c->poly_count, f, &s->box, v->transform);
+    device_sector(&s->sector, &c->sector, &s->box, v);
+    s->sector_texture_height = (float)(c->sector_texture_height * v->scale);
+    s->sector_texture_flip = v->transform >= WL_OUTPUT_TRANSFORM_FLIPPED ? -1.f : 1.f;
+    s->sector_texture_transform = v->transform;
+    memset(s->sector_texture_rect, 0, sizeof(s->sector_texture_rect));
     s->border = c->border > 0 ? fmaxf(1.f, roundf((float)(c->border * v->scale))) : 0.f;
     for (int i = 0; i < 4; i++) s->border_color[i] = c->border_color[i];
     s->glow_radius = s->glow_depth = 0;
@@ -177,6 +226,10 @@ bool scene_output_render_entry(struct rediwm_output_renderer *r, struct entry *e
         goto done;
     }
     if (!pixman_region32_not_empty(&clip)) goto done;
+    if (e->item.kind == REDIWM_ITEM_RIBBON) {
+        scene_output_render_ribbon(e, pass, v, dst, &clip);
+        goto done;
+    }
     // A clipped item is drawn in two parts: `core` (its interior, which the model
     // proves fully covered and opaque) as before, without the shape, and the rest
     // (corners, ring, anything translucent) through the shape.
@@ -191,6 +244,7 @@ bool scene_output_render_entry(struct rediwm_output_renderer *r, struct entry *e
         // window for what a rim of a few shaded pixels costs far less than: draws
         // dominated the output build in a drag.
         float depth = fmaxf(fmaxf(shape.radii[0], shape.radii[1]), fmaxf(shape.radii[2], shape.radii[3]));
+        if (shape.poly_count || shape.sector.radii[1] > 0) depth = (float)(e->item.clip->inset * v->scale);
         const int inset = (int)ceilf(fmaxf(depth, shape.border + shape.glow_depth)) + REDIWM_CLIP_OPAQUE_MARGIN;
         if (shape.box.width > 2 * inset && shape.box.height > 2 * inset)
             pixman_region32_intersect_rect(&core, &core, shape.box.x + inset, shape.box.y + inset,
@@ -201,6 +255,7 @@ bool scene_output_render_entry(struct rediwm_output_renderer *r, struct entry *e
         pixman_region32_subtract(&clip, &clip, &core);
     }
     const struct rediwm_content *c = &e->item.content;
+    if (shaped) memcpy(shape.sector_texture_rect, c->sector_rect, sizeof(shape.sector_texture_rect));
     // A window that is not the focus is drawn dimmed, whole: the pass grades each
     // draw (the interior, the rim and the ring alike) until it is reset below.
     graded = c->dim_brightness > 0 || c->dim_saturation > 0;

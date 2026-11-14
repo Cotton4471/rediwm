@@ -12,9 +12,7 @@
 //! presses a dead key never loads one, and one table is shared by every
 //! `Compose` in the process.
 const std = @import("std");
-const c = @cImport({
-    @cInclude("xkbcommon/xkbcommon-compose.h");
-});
+const c = @import("c_gfx");
 
 /// Longest normalized locale name kept (`ll_CC.UTF-8` plus slack).
 const max_locale = 48;
@@ -207,7 +205,7 @@ test "locale names get a UTF-8 encoding and lose their modifier" {
     try std.testing.expectEqualStrings(fallback_locale, normalizeLocale(&buf, "C"));
     try std.testing.expectEqualStrings(fallback_locale, normalizeLocale(&buf, "POSIX"));
     try std.testing.expectEqualStrings(fallback_locale, normalizeLocale(&buf, "C.UTF-8"));
-    try std.testing.expectEqualStrings(fallback_locale, normalizeLocale(&buf, "x" ** 60));
+    try std.testing.expectEqualStrings(fallback_locale, normalizeLocale(&buf, &@as([60]u8, @splat('x'))));
 }
 
 test "ordinary keys pass through without loading a table" {

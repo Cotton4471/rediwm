@@ -33,6 +33,8 @@ pub const Command = union(enum) {
     text_input,
     keyboard_layouts,
     switch_layout: protocol.LayoutTarget,
+    input_sources,
+    switch_input_source: protocol.LayoutTarget,
     hit_test: struct { x: i32, y: i32, output: ?[]const u8 = null },
     scene_tree: struct { max_depth: ?u32 = null },
     layers,
@@ -123,26 +125,27 @@ pub const FlagParser = struct {
     /// `?T` when some payload field has neither a default nor a preset; null
     /// then means a required flag was missing or unparsable.
     pub fn Result(comptime T: type, comptime Preset: type) type {
-        for (std.meta.fields(T)) |f| {
-            if (f.default_value_ptr == null and !@hasField(Preset, f.name)) return ?T;
+        const info = @typeInfo(T).@"struct";
+        for (info.field_names, info.field_attrs) |name, attrs| {
+            if (attrs.default_value_ptr == null and !@hasField(Preset, name)) return ?T;
         }
         return T;
     }
 
     pub fn parse(p: FlagParser, comptime T: type, comptime spec: anytype, preset: anytype) Result(T, @TypeOf(preset)) {
-        const fields = std.meta.fields(T);
-        comptime for (fields) |f| {
-            if (f.default_value_ptr == null and !@hasField(@TypeOf(preset), f.name) and !hasEntry(spec, f.name))
-                @compileError("required field '" ++ f.name ++ "' of " ++ @typeName(T) ++ " has no flag or preset");
+        const info = @typeInfo(T).@"struct";
+        comptime for (info.field_names, info.field_attrs) |name, attrs| {
+            if (attrs.default_value_ptr == null and !@hasField(@TypeOf(preset), name) and !hasEntry(spec, name))
+                @compileError("required field '" ++ name ++ "' of " ++ @typeName(T) ++ " has no flag or preset");
         };
 
         var out: T = undefined;
-        var given = std.StaticBitSet(fields.len).initEmpty();
-        inline for (fields, 0..) |f, i| {
-            if (@hasField(@TypeOf(preset), f.name)) {
-                @field(out, f.name) = @field(preset, f.name);
+        var given = std.StaticBitSet(info.field_names.len).empty;
+        inline for (info.field_names, info.field_types, info.field_attrs, 0..) |name, FieldType, attrs, i| {
+            if (@hasField(@TypeOf(preset), name)) {
+                @field(out, name) = @field(preset, name);
                 given.set(i);
-            } else if (f.defaultValue()) |d| @field(out, f.name) = d;
+            } else if (attrs.defaultValue(FieldType)) |d| @field(out, name) = d;
         }
 
         args: while (p.idx.* < p.args.len) : (p.idx.* += 1) {
@@ -166,11 +169,11 @@ pub const FlagParser = struct {
                             if (p.value(entry, @FieldType(CliOptions, name), text)) |v| @field(p.opts, name) = v;
                         } else {
                             const i = comptime fieldIndex(T, name);
-                            if (p.value(entry, fields[i].type, text)) |v| {
+                            if (p.value(entry, info.field_types[i], text)) |v| {
                                 @field(out, name) = v;
                                 given.set(i);
                             } else {
-                                if (fields[i].defaultValue()) |d| @field(out, name) = d;
+                                if (info.field_attrs[i].defaultValue(info.field_types[i])) |d| @field(out, name) = d;
                                 given.unset(i);
                             }
                         }
@@ -182,8 +185,8 @@ pub const FlagParser = struct {
                 if (comptime entryFlag(entry, "bare")) {
                     const i = comptime fieldIndex(T, entryField(entry));
                     if (!given.isSet(i)) {
-                        if (p.value(entry, fields[i].type, a)) |v| {
-                            @field(out, fields[i].name) = v;
+                        if (p.value(entry, info.field_types[i], a)) |v| {
+                            @field(out, info.field_names[i]) = v;
                             given.set(i);
                         }
                     }
@@ -192,8 +195,8 @@ pub const FlagParser = struct {
         }
 
         if (Result(T, @TypeOf(preset)) != T) {
-            inline for (fields, 0..) |f, i| {
-                if (f.default_value_ptr == null and !given.isSet(i)) return null;
+            inline for (info.field_attrs, 0..) |attrs, i| {
+                if (attrs.default_value_ptr == null and !given.isSet(i)) return null;
             }
         }
         return out;

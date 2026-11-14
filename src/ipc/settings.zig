@@ -78,12 +78,13 @@ pub fn setNightLight(server: *Server, enabled: ?bool, temperature: ?u16, persist
 }
 
 pub fn getTheme(server: *Server, a: std.mem.Allocator) !protocol.Response {
-    const fields = std.meta.fields(theme.Theme);
-    const entries = try a.alloc(protocol.ThemeToken, fields.len);
-    inline for (fields, 0..) |field, i| {
-        entries[i] = .{ .name = field.name };
-        const value = @field(theme.global, field.name);
-        if (field.type == [4]f32 or field.type == ?[4]f32) entries[i].color = value else if (field.type == []const u8) entries[i].text = value else if (field.type == bool) entries[i].boolean = value else if (@typeInfo(field.type) == .float) entries[i].number = value else @compileError("unhandled theme token " ++ field.name);
+    const names = @typeInfo(theme.Theme).@"struct".field_names;
+    const entries = try a.alloc(protocol.ThemeToken, names.len);
+    inline for (names, 0..) |name, i| {
+        entries[i] = .{ .name = name };
+        const value = @field(theme.global, name);
+        const T = @FieldType(theme.Theme, name);
+        if (T == [4]f32 or T == ?[4]f32) entries[i].color = value else if (T == []const u8) entries[i].text = value else if (T == bool) entries[i].boolean = value else if (@typeInfo(T) == .float) entries[i].number = value else if (T == theme.Relief) entries[i].text = @tagName(value) else @compileError("unhandled theme token " ++ name);
     }
     return .{ .ok = .{ .theme = .{ .tokens = .{ .entries = entries }, .path = server.theme_path, .dark_mode = server.config.compositor.dark_mode } } };
 }

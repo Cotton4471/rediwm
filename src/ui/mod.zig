@@ -5,9 +5,13 @@ pub const arrange = @import("arrange.zig");
 pub const paint = @import("paint.zig");
 pub const window_chrome = @import("window_chrome.zig");
 pub const theme = @import("theme.zig");
+pub const border_glow = @import("border_glow");
 pub const input = @import("input.zig");
+pub const interaction_surface = @import("interaction_surface.zig");
+pub const trackpad_navigation = @import("trackpad_navigation.zig");
 
 pub const widgets = struct {
+    pub const highlight = @import("widgets/highlight.zig");
     pub const scrollbar = @import("widgets/scrollbar.zig");
     pub const splitter = @import("widgets/splitter.zig");
     pub const select = @import("widgets/select.zig");
@@ -30,6 +34,7 @@ pub const widgets = struct {
 };
 pub const anim = @import("anim.zig");
 pub const cairo = @import("cairo.zig");
+pub const repaint = @import("repaint.zig");
 pub const client_cursor = @import("client_cursor.zig");
 pub const compose = @import("compose.zig");
 pub const context_menu = @import("context_menu.zig");
@@ -37,11 +42,13 @@ pub const font_fallback = @import("font_fallback.zig");
 pub const fold = @import("fold.zig");
 pub const hover_glide = @import("hover_glide.zig");
 pub const key_repeat = @import("key_repeat.zig");
+pub const relief = @import("relief.zig");
 pub const sdf = @import("sdf.zig");
 pub const shell_icons = @import("shell_icons.zig");
 pub const text = @import("text.zig");
 pub const theme_presets = @import("theme_presets.zig");
 pub const wheel = @import("wheel.zig");
+pub const window_shape = @import("window_shape.zig");
 
 test {
     @import("std").testing.refAllDecls(@This());

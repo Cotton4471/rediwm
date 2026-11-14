@@ -13,6 +13,7 @@ const button = @import("ui").widgets.button;
 const checkbox = @import("ui").widgets.checkbox;
 const icons = @import("../icon_cache.zig");
 const icon_theme = @import("../icon_theme.zig");
+const card = @import("properties_card.zig");
 const Rect = ui.Rect;
 const centeredTextX = @import("ui").paint.centeredTextX;
 
@@ -38,7 +39,7 @@ pub const Geometry = struct {
         return .{
             .box = .{ .x = (@as(f32, @floatFromInt(w)) - width) / 2, .y = (@as(f32, @floatFromInt(h)) - height) / 2, .w = width, .h = height },
             .close = frame.closeBox(width),
-            .open = .{ .x = width - 48, .y = 67 + contentShift() - scroll, .w = 28, .h = 28 },
+            .open = card.openBox(width, scroll - contentShift()),
             .scroll = scroll,
         };
     }
@@ -83,7 +84,7 @@ pub const State = struct {
     }
 
     pub fn init(a: std.mem.Allocator, path: []const u8, preview: ?icons.Entry) !State {
-        const owned = try a.dupeZ(u8, path);
+        const owned = try a.dupeSentinel(u8, path, 0);
         errdefer a.free(owned);
         // O_PATH pins the inode without reading a file, opening a device or
         // blocking on a FIFO. A symlink describes the link itself.
@@ -99,8 +100,12 @@ pub const State = struct {
         const group = if (c.getgrgid(st.st_gid)) |gr| try a.dupe(u8, std.mem.span(gr.*.gr_name)) else try std.fmt.allocPrint(a, "{d}", .{st.st_gid});
         errdefer a.free(group);
         var result: State = .{ .allocator = a, .path = owned, .fd = fd, .stat = st, .description = description, .owner = owner, .group = group };
-        var sx: c.struct_statx = undefined;
-        if (c.statx(fd, "", c.AT_EMPTY_PATH | c.AT_SYMLINK_NOFOLLOW, c.STATX_BTIME, &sx) == 0 and sx.stx_mask & c.STATX_BTIME != 0) result.created = sx.stx_btime.tv_sec;
+        if (comptime @hasDecl(c, "struct_statx")) {
+            var sx: c.struct_statx = undefined;
+            if (c.statx(fd, "", c.AT_EMPTY_PATH | c.AT_SYMLINK_NOFOLLOW, c.STATX_BTIME, &sx) == 0 and sx.stx_mask & c.STATX_BTIME != 0) result.created = sx.stx_btime.tv_sec;
+        } else if (comptime @hasField(c.struct_stat, "st_birthtim")) {
+            result.created = st.st_birthtim.tv_sec; // FreeBSD's stat carries the creation time
+        }
         if (preview) |im| result.preview = .{ .pixels = try a.dupe(u32, im.pixels), .size = im.size };
         return result;
     }
@@ -131,7 +136,7 @@ pub const State = struct {
             return;
         }
         var buf: [64]u8 = undefined;
-        const pinned = std.fmt.bufPrintZ(&buf, "/proc/self/fd/{d}", .{self.fd}) catch unreachable;
+        const pinned = std.fmt.bufPrintSentinel(&buf, "/proc/self/fd/{d}", .{self.fd}, 0) catch unreachable;
         if (c.chmod(pinned, (self.stat.st_mode & 0o7777) ^ permissionBit(index)) != 0) {
             self.message = tr("Could not change permissions");
             return;
@@ -209,17 +214,14 @@ pub const State = struct {
         button.paint(r, g.close, .{ .icon = .close, .variant = .chrome, .label = tr("Close") }, .{ .focused = self.keyboard_focus and self.focus == 0, .pointer = if (hover == 1) .hover else .idle });
         r.clip = .{ .x = 12, .y = 49 + contentShift(), .w = g.box.w - 24, .h = g.box.h - 59 - contentShift() };
         const s = g.scroll - contentShift();
-        r.fillRect(24, 66 - s, 64, 64, .{ .color = theme.global.app_toolbar, .radius = 9, .border_width = 1, .border_color = theme.global.app_item_border });
         const preview = self.preview orelse icons.get(cfg, io, if (self.isDirectory()) "folder" else "text-x-generic", @intFromFloat(44 * ui.scaleOf(cr)));
-        if (preview) |im| r.drawImageCover(34, 76 - s, 44, 44, 0, .{ .pixels = im.pixels, .width = @intCast(im.size), .height = @intCast(im.size) }) else r.drawIcon(34, 76 - s, 44, 44, .{ .id = .view_list, .color = palette.fg });
-        r.drawText(108, 68 - s, g.box.w - 162, 26, .{ .content = std.fs.path.basename(self.path), .font_size = ui.textSize(), .weight = 600, .color = palette.fg });
-        r.drawText(108, 99 - s, g.box.w - 132, 24, .{ .content = self.description, .font_size = ui.textSize(), .color = palette.fg });
-        var accent_palette = palette;
-        accent_palette.fg = palette.accent;
-        r.palette = accent_palette;
-        button.paint(r, g.open, .{ .icon = .open, .variant = .ghost, .label = tr("Open") }, .{ .focused = self.keyboard_focus and self.focus == 1, .pointer = if (hover == 2) .hover else .idle });
-        r.palette = palette;
-        r.fillRect(24, 146 - s, g.box.w - 48, 1, .{ .color = theme.global.app_divider });
+        card.paintIdentity(r, g.box.w, s, .{
+            .image = if (preview) |im| .{ .pixels = im.pixels, .width = @intCast(im.size), .height = @intCast(im.size) } else null,
+            .glyph = .view_list,
+            .name = std.fs.path.basename(self.path),
+            .kind = self.description,
+        });
+        card.paintOpen(r, g.box.w, s, tr("Open"), self.keyboard_focus and self.focus == 1, hover == 2);
         var size_buf: [128]u8 = undefined;
         var short_buf: [32]u8 = undefined;
         const byte_count: u64 = @intCast(@max(0, self.stat.st_size));
@@ -228,11 +230,7 @@ pub const State = struct {
         var modified_buf: [64]u8 = undefined;
         const values = [_][]const u8{ size, date(self.created, &created_buf), date(self.stat.st_mtim.tv_sec, &modified_buf), std.fs.path.dirname(self.path) orelse "/", self.owner, self.group };
         const labels = [_][]const u8{ tr("Size"), tr("Created"), tr("Modified"), tr("Location"), tr("Owner"), tr("Group") };
-        for (labels, values, 0..) |label, value, i| {
-            const y = 157 + @as(f32, @floatFromInt(i)) * 26 - s;
-            r.drawText(24, y, 120, 24, .{ .content = label, .font_size = ui.textSize(), .color = palette.fg });
-            r.drawText(162, y, g.box.w - 186, 24, .{ .content = value, .font_size = ui.textSize(), .color = palette.fg });
-        }
+        card.paintFields(r, g.box.w, s, &labels, &values);
         r.fillRect(24, 322 - s, g.box.w - 48, 1, .{ .color = theme.global.app_divider });
         r.drawText(24, 334 - s, 160, 28, .{ .content = tr("Permissions"), .font_size = ui.headingSize(), .weight = 600, .color = palette.fg });
         var mode_buf: [8]u8 = undefined;
@@ -258,7 +256,7 @@ pub const State = struct {
 };
 
 fn permissionBit(index: usize) c.mode_t {
-    return @as(c.mode_t, 1) << @as(u5, @intCast(8 - (index % 3) * 3 - index / 3));
+    return @as(c.mode_t, 1) << @as(std.math.Log2Int(c.mode_t), @intCast(8 - (index % 3) * 3 - index / 3));
 }
 
 fn date(timestamp: ?i64, buf: []u8) []const u8 {

@@ -13,7 +13,7 @@ const projection = @import("../projection.zig");
 const theme = @import("ui").theme;
 const stats = @import("../ipc/stats.zig");
 const xdg = @import("../xdg.zig");
-const border_glow = @import("../border_glow.zig");
+const border_glow = @import("ui").border_glow;
 const gpa = @import("../main.zig").gpa;
 const log = std.log.scoped(.toplevel);
 const titlebar_stretch = Toplevel.titlebar_stretch;
@@ -25,7 +25,10 @@ const nowMs = Toplevel.nowMs;
 /// border/titlebar colors already do.
 pub fn refreshTheme(toplevel: *Toplevel) void {
     defer @import("../auto_tiling.zig").observe(toplevel);
-    const height_changed = if (toplevel.last_titlebar) |memo| memo.chrome_height != theme.global.chrome_height else false;
+    const geometry_changed = if (toplevel.last_titlebar) |memo|
+        memo.chrome_height != theme.global.chrome_height or memo.border_width != chrome.frameBorder()
+    else
+        false;
     switch (toplevel.backend) {
         .placeholder => |*ph| col.setRect(ph.body_rect, col.Straight.fromRgba(theme.global.window_bg).premultiply()),
         .shell => |*sw| if (sw.control_center) |cc| cc.requestRepaint(),
@@ -34,8 +37,8 @@ pub fn refreshTheme(toplevel: *Toplevel) void {
     syncChrome(toplevel, true, nowMs()) catch |err| {
         log.warn("refreshTheme: could not rebuild chrome: {}", .{err});
     };
-    // A changed titlebar height must keep tiled frames inside their tile.
-    if (height_changed and toplevel.in_world) {
+    // Changed decoration extents must keep tiled frames inside their tile.
+    if (geometry_changed and toplevel.in_world) {
         if (toplevel.tile) |tile| {
             if (toplevel.currentOutput()) |out| toplevel.setTiledOn(out, tile);
         }
@@ -67,9 +70,14 @@ pub fn releaseIcon(toplevel: *Toplevel) void {
 /// Density of the sharpest output touched by the displayed frame. Keep the
 /// previous density while offscreen to avoid repainting invisible windows.
 pub fn syncOutputScale(toplevel: *Toplevel) void {
-    const origin = toplevel.server.world.toLayout(@floatFromInt(toplevel.x), @floatFromInt(toplevel.y));
-    const width = @as(f64, @floatFromInt(toplevel.chrome_width)) * toplevel.zoom();
-    const height = @as(f64, @floatFromInt(toplevel.chrome_height)) * toplevel.zoom();
+    var origin = toplevel.server.world.toLayout(@floatFromInt(toplevel.x), @floatFromInt(toplevel.y));
+    var width = @as(f64, @floatFromInt(toplevel.chrome_width)) * toplevel.zoom();
+    var height = @as(f64, @floatFromInt(toplevel.chrome_height)) * toplevel.zoom();
+    if (@import("../world/overview_cards.zig").find(&toplevel.server.world.overview, toplevel.id)) |card| {
+        origin = .{ .x = card.presented.x, .y = card.presented.y };
+        width = card.presented.width;
+        height = card.presented.height;
+    }
     var scale: f32 = 0;
     var it = toplevel.server.outputs.iterator(.forward);
     while (it.next()) |out| {
@@ -129,12 +137,14 @@ pub fn syncChrome(toplevel: *Toplevel, rebuild_shadow: bool, now_ms: i64) !void 
         toplevel.last_painted_hover = 0;
         toplevel.syncBorders(animated.w, animated.h);
         toplevel.applyShape();
+        try toplevel.syncInnerBorder();
+        try toplevel.syncCornerAccents();
         return;
     }
 
     const radius: f32 = toplevel.cornerRadius();
-    const natural_w = geometry_box.width + 2 * chrome.frame_border;
-    const natural_h = geometry_box.height + toplevel.titlebarHeight() + chrome.frame_border;
+    const natural_w = geometry_box.width + 2 * chrome.frameBorder();
+    const natural_h = geometry_box.height + toplevel.titlebarHeight() + chrome.frameBorder();
     const animated = visualChromeSize(toplevel, now_ms, natural_w, natural_h);
     const width = animated.w;
     const height = animated.h;
@@ -152,7 +162,7 @@ pub fn syncChrome(toplevel: *Toplevel, rebuild_shadow: bool, now_ms: i64) !void 
     // ReleaseSafe would fill on every client commit.
     const tab_storage = if (toplevel.tab_group != 0) try gpa.create([@import("../window_tabs.zig").max_tabs]@import("../chrome_tabs.zig").Tab) else null;
     defer if (tab_storage) |storage| gpa.destroy(storage);
-    const state: chrome.ChromeState = .{
+    var state: chrome.ChromeState = .{
         .tabs = toplevel.tabStrip(tab_storage),
         .active = toplevel.activated,
         .workspace_focus = toplevel.hasWorkspaceFocusBorder(),
@@ -169,8 +179,12 @@ pub fn syncChrome(toplevel: *Toplevel, rebuild_shadow: bool, now_ms: i64) !void 
     toplevel.last_painted_hover = hover;
     toplevel.chrome_width = width;
     toplevel.chrome_height = height;
+    const insets = toplevel.controlInsets();
+    state.inset_left = insets.left;
+    state.inset_right = insets.right;
+    state.outline = toplevel.shapePolygon(width, height);
 
-    const title_memo = chrome.TitlebarMemo.capture(width, height, toplevel.titlePtr(), state);
+    const title_memo = chrome.TitlebarMemo.capture(width, toplevel.titlePtr(), state);
     const skip_titlebar = if (toplevel.last_titlebar) |prev| prev.eql(title_memo) or toplevel.stretchesTitlebar(prev, title_memo, now_ms) else false;
     if (!skip_titlebar) {
         const titlebar = if (toplevel.cached_titlebar != null and toplevel.last_titlebar != null and toplevel.last_titlebar.?.reusableFor(title_memo))
@@ -189,11 +203,13 @@ pub fn syncChrome(toplevel: *Toplevel, rebuild_shadow: bool, now_ms: i64) !void 
 
     toplevel.syncBorders(width, height);
     toplevel.applyShape();
+    try toplevel.syncInnerBorder();
+    try toplevel.syncCornerAccents();
     toplevel.syncResizeGrab(width, height);
     if (rebuild_shadow) try toplevel.syncShadow(width, height, radius);
 
     // wlr_scene_xdg_surface_create origin is the geometry top-left.
-    toplevel.content_tree.node.setPosition(chrome.frame_border, toplevel.titlebarHeight());
+    toplevel.content_tree.node.setPosition(chrome.frameBorder(), toplevel.titlebarHeight());
     switch (toplevel.backend) {
         .placeholder => |*ph| ph.body_rect.setSize(geometry_box.width, geometry_box.height),
         else => {},
@@ -244,7 +260,6 @@ pub fn stretchesTitlebar(toplevel: *const Toplevel, raster: chrome.TitlebarMemo,
     if (toplevel.size_w.settled(now_ms) and toplevel.size_h.settled(now_ms)) return false;
     var resized = raster;
     resized.width = next.width;
-    resized.height = next.height;
     if (!resized.eql(next)) return false;
     const ratio = @as(f32, @floatFromInt(next.width)) / @as(f32, @floatFromInt(@max(raster.width, 1)));
     return @abs(ratio - 1) <= titlebar_stretch;
@@ -271,8 +286,9 @@ pub fn visualChromeSize(toplevel: *Toplevel, now_ms: i64, natural_w: i32, natura
 // where geometry or theme may have changed, never on a hover repaint.
 pub fn syncShadow(toplevel: *Toplevel, width: i32, height: i32, radius: f32) !void {
     const t = theme.global;
+    if (t.window_shape.len > 0) _ = chrome.polygonsReady();
     const disabled = !chrome.shapes or toplevel.isMaximized() or t.shadow[3] <= 0 or t.shadow_size <= 0;
-    const memo = chrome.ShadowMemo.capture(width, height, radius, toplevel.render_scale, disabled);
+    const memo = chrome.ShadowMemo.capture(width, height, radius, toplevel.render_scale, disabled, toplevel.shapeKey());
 
     if (disabled) {
         toplevel.shadow_tree.node.setEnabled(false);
@@ -291,7 +307,7 @@ pub fn syncShadow(toplevel: *Toplevel, width: i32, height: i32, radius: f32) !vo
     toplevel.shadow_node.node.setPosition(-margin, -margin + offset_y);
     toplevel.shadow_node.setDestSize(width + 2 * margin, height + 2 * margin);
     const r: f64 = radius;
-    if (!projection.setTreeShadow(&toplevel.shadow_tree.node, .{
+    var spec: projection.ShadowSpec = .{
         .width = width,
         .height = height,
         .radii = .{ r, r, r, r },
@@ -299,7 +315,13 @@ pub fn syncShadow(toplevel: *Toplevel, width: i32, height: i32, radius: f32) !vo
         .offset_y = @floatFromInt(offset_y),
         .softness = t.shadow_size,
         .color = col.Straight.fromRgba(t.shadow).premultiply().rgba,
-    })) log.warn("could not set the window shadow ({d}x{d})", .{ width, height });
+    };
+    if (toplevel.shapePolygon(width, height)) |polygon| {
+        spec.poly_count = @intCast(polygon.count);
+        spec.poly = polygon.points;
+        spec.radii = @splat(0);
+    }
+    if (!projection.setTreeShadow(&toplevel.shadow_tree.node, spec)) log.warn("could not set the window shadow ({d}x{d})", .{ width, height });
     toplevel.last_shadow = memo;
 }
 
@@ -323,15 +345,22 @@ pub fn applyShape(toplevel: *Toplevel) void {
         _ = projection.setTreeClip(node, null);
         return;
     }
+    // The polygon programs are built the first time a theme asks for an outline.
+    if (theme.global.window_shape.len > 0) _ = chrome.polygonsReady();
     const radius: f64 = toplevel.cornerRadius();
     const ring = toplevel.borderColor().scale(toplevel.shape_opacity);
     var spec: projection.ClipSpec = .{
         .width = toplevel.chrome_width,
         .height = toplevel.chrome_height,
         .radii = .{ radius, radius, radius, radius },
-        .border = @floatFromInt(chrome.frame_border),
+        .border = @floatFromInt(chrome.outerBorder()),
         .border_color = ring.rgba,
     };
+    if (toplevel.shapePolygon(toplevel.chrome_width, toplevel.chrome_height)) |polygon| {
+        spec.poly_count = @intCast(polygon.count);
+        spec.poly = polygon.points;
+        spec.radii = @splat(0);
+    }
     const t = theme.global;
     const glow = toplevel.glow_anim.value(nowMs()) * toplevel.shape_opacity;
     if (t.border_glow_enabled and glow * t.border_glow[3] >= 0.004) {
@@ -353,7 +382,7 @@ pub fn syncBorders(toplevel: *Toplevel, width: i32, height: i32) void {
         // coordinates stay unchanged, and the content remains above the stroke.
         const color = toplevel.borderColor();
         for (toplevel.border_rects) |rect| col.setRect(rect, color);
-        const edge = chrome.frame_border;
+        const edge = chrome.outerBorder();
         toplevel.border_rects[0].node.setPosition(-edge, -edge);
         toplevel.border_rects[0].setSize(width + 2 * edge, edge);
         toplevel.border_rects[1].node.setPosition(-edge, 0);
@@ -368,7 +397,7 @@ pub fn syncBorders(toplevel: *Toplevel, width: i32, height: i32) void {
     // translucent chrome twice at the joins. The ring over the fills, the
     // titlebar and the client's edge is the shape's.
     const body_top = toplevel.titlebarHeight();
-    const edge = chrome.frame_border;
+    const edge = chrome.frameBorder();
     const body_height = @max(0, height - body_top - edge);
     for (toplevel.frame_fills) |rect| col.setRect(rect, chrome.fillColor());
     toplevel.frame_fills[0].node.setPosition(0, body_top);

@@ -1,11 +1,7 @@
 //! Session and drawer state, owned by one Files window.
 const std = @import("std");
 const ui = @import("ui");
-pub const c = @cImport({
-    @cUndef("_FORTIFY_SOURCE");
-    if (@import("builtin").is_test) @cDefine("FT_TEST", "1");
-    @cInclude("engine.h");
-});
+pub const c = @import("c_terminal");
 pub const Point = struct { line: i64, col: i32 };
 pub const Selection = struct {
     anchor: Point,

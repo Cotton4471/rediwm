@@ -19,20 +19,10 @@ const output_layout = @import("output/layout.zig");
 const output_panels = @import("output/panels.zig");
 const output_wallpaper = @import("output/wallpaper.zig");
 const output_frame = @import("output/frame.zig");
+const output_late = @import("output/late.zig");
 
-pub extern fn wlr_color_transform_init_lut_3x1d(
-    dim: usize,
-    r: [*]const u16,
-    g: [*]const u16,
-    b: [*]const u16,
-) ?*wlr.ColorTransform;
-
-pub extern fn wlr_color_transform_unref(tr: *wlr.ColorTransform) void;
-
-pub extern fn wlr_output_state_set_color_transform(
-    state: *wlr.Output.State,
-    tr: ?*wlr.ColorTransform,
-) void;
+pub const wlr_color_transform_init_lut_3x1d = wlr.color.transformInitLut3x1d;
+pub const wlr_color_transform_unref = wlr.color.transformUnref;
 
 pub const ColorKey = struct {
     temperature: u16,
@@ -71,6 +61,9 @@ const Output = @This();
 const log = std.log.scoped(.output);
 
 lock_view: @import("session/lock.zig").View,
+greeter_commit_seq: ?u32 = null,
+greeter_presented: bool = false,
+greeter_unveiled: bool = true,
 server: *Server,
 wlr_output: *wlr.Output,
 wallpaper: ?*sn.Buffer = null,
@@ -90,6 +83,7 @@ startup_committing: bool = false,
 startup_presented: bool = false,
 animation_budget: anim.FrameBudget = .{},
 idle_blanked: bool = false,
+lid_blanked: bool = false,
 /// Turned off by a wlr-output-power-management client (`output_power.zig`):
 /// held `idle_blanked` until a client turns it back on.
 power_off: bool = false,
@@ -105,6 +99,15 @@ frame_wanted: bool = false,
 /// Last known vblank: a page-flip frame event or a fired `vblank_timer`.
 last_vblank_ns: u64 = 0,
 flip_pending: bool = false,
+/// Late rendering (`output/late.zig`): the decision model, the timer that
+/// starts a deferred frame, whether one is waiting (frame events are ignored
+/// meanwhile), the plan `runFrame` takes when it runs, and whether the last
+/// frame asked for another (an animation) so the next is worth deferring.
+late: @import("output/late_render.zig").State = .{},
+late_timer: ?*wl.EventSource = null,
+late_armed: bool = false,
+late_plan: ?@import("output/late_render.zig").Plan = null,
+late_animating: bool = false,
 /// Decides, once this dispatch's commits are handled, whether client frame
 /// callbacks need a frame (`frameCallbacksWanted`).
 callback_idle: ?*wl.EventSource = null,
@@ -153,7 +156,7 @@ pub fn otherDisplayOn(server: *Server) bool {
 /// A closed lid turns the built-in panel off, but never the last display.
 pub fn lidHides(output: *const Output) bool {
     const server = output.server;
-    if (!server.input.lid.closed or server.config.compositor.lid_close == .ignore) return false;
+    if (!server.input.lid.closed or (if (server.power_policy.enabled()) server.power_policy.lidAction() else server.config.compositor.lid_close) == .ignore) return false;
     return isBuiltinPanel(std.mem.span(output.wlr_output.name)) and otherDisplayOn(server);
 }
 
@@ -163,11 +166,21 @@ pub fn applyLid(server: *Server) void {
     var it = server.outputs.iterator(.forward);
     while (it.next()) |output| {
         if (!isBuiltinPanel(std.mem.span(output.wlr_output.name))) continue;
-        if (lidHides(output) == output.user_disabled) continue;
-        output.applyConfig();
-        changed = true;
+        const lid_blank = server.power_policy.enabled() and server.input.lid.closed and server.power_policy.lidAction() != .ignore and !otherDisplayOn(server);
+        const blank_changed = output.lid_blanked != lid_blank;
+        output.lid_blanked = lid_blank;
+        const layout_changed = lidHides(output) != output.user_disabled;
+        if (layout_changed) {
+            output.applyConfig();
+            changed = true;
+        }
+        if (blank_changed or layout_changed) {
+            const idle_blank = if (server.idle) |idle| idle.isBlanked() else false;
+            _ = output.setIdleBlanked(idle_blank or output.power_off);
+        }
     }
     if (changed) syncLayout(server);
+    server.power_policy.reconcileLid();
 }
 
 // output/modes.zig
@@ -211,6 +224,8 @@ fn virtualGpuDriver(wlr_output: *wlr.Output) ?[]const u8 {
         desc_len: usize = 0,
         desc: ?[*]u8 = null,
     };
+    // The request number below is Linux's ioctl encoding; the virtual-GPU drivers listed are Linux's too.
+    if (comptime @import("builtin").os.tag != .linux) return null;
     const DRM_IOCTL_VERSION = std.os.linux.IOCTL.IOWR('d', 0x00, Version);
     var name: [32]u8 = undefined;
     var version: Version = .{ .name_len = name.len, .name = &name };
@@ -239,8 +254,10 @@ pub fn create(server: *Server, wlr_output: *wlr.Output) !void {
         wlr_output.lockSoftwareCursors(true);
         log.info("{s}: software cursor ({s} virtual GPU)", .{ wlr_output.name, driver });
     }
-    output.vblank_timer =server.wl_server.getEventLoop().addTimer(*Output, handleVblank, output) catch null;
+    output.vblank_timer = server.wl_server.getEventLoop().addTimer(*Output, handleVblank, output) catch null;
     errdefer if (output.vblank_timer) |timer| timer.remove();
+    output.late_timer = server.wl_server.getEventLoop().addTimer(*Output, lateFire, output) catch null;
+    errdefer if (output.late_timer) |timer| timer.remove();
 
     // Layout entry and scene output are addons on `wlr_output`. On error the
     // caller destroys that output, which is safer than a second explicit
@@ -368,7 +385,8 @@ pub fn taskbarPopupY(output: *Output, height: i32, gap: i32) i32 {
         @max(box.y, box.y + box.height - height - gap);
 }
 
-pub fn setIdleBlanked(output: *Output, blanked: bool) bool {
+pub fn setIdleBlanked(output: *Output, requested: bool) bool {
+    const blanked = requested or output.lid_blanked;
     if (output.user_disabled) return false;
     if (output.idle_blanked == blanked) return true;
     output.idle_blanked = blanked;
@@ -429,6 +447,7 @@ pub const closeStartMenu = output_panels.closeStartMenu;
 pub const syncStartMenu = output_panels.syncStartMenu;
 pub const toggleControlCenter = output_panels.toggleControlCenter;
 pub const openNetworkSettings = output_panels.openNetworkSettings;
+pub const openInputSettings = output_panels.openInputSettings;
 pub const closeControlCenter = output_panels.closeControlCenter;
 pub const openPowerMenu = output_panels.openPowerMenu;
 pub const closePowerMenu = output_panels.closePowerMenu;
@@ -471,6 +490,9 @@ pub const handleRequestState = output_frame.handleRequestState;
 pub const handlePresent = output_frame.handlePresent;
 pub const startupVisible = output_frame.startupVisible;
 
+// output/late.zig
+pub const lateFire = output_late.fire;
+
 pub const CursorState = struct {
     cursor: ?*wlr.OutputCursor = null,
     buffer: ?*wlr.Buffer = null,
@@ -498,6 +520,7 @@ pub const CursorState = struct {
 
 pub fn handleDestroy(listener: *wl.Listener(*wlr.Output), _: *wlr.Output) void {
     const output: *Output = @fieldParentPtr("destroy", listener);
+    output.server.world.overview.cancel(&output.server.world);
     if (output.tearing_idle) |source| source.remove();
     output.tearing_idle = null;
     if (output.server.screenshot_selector.output == output) output.server.screenshot_selector.cancel();
@@ -571,6 +594,7 @@ pub fn handleDestroy(listener: *wl.Listener(*wlr.Output), _: *wlr.Output) void {
     if (output.power_menu) |pm| pm.destroy();
     output.color.deinit();
     if (output.vblank_timer) |timer| timer.remove();
+    if (output.late_timer) |timer| timer.remove();
     if (output.callback_idle) |idle| idle.remove();
     output.link.remove();
     output.frame.link.remove();

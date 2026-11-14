@@ -13,9 +13,7 @@ const protocol = @import("../ipc/protocol.zig");
 
 const log = std.log.scoped(.night_light);
 
-const c_time = @cImport({
-    @cInclude("time.h");
-});
+const c_time = @import("c");
 
 pub const NightLight = struct {
     server: ?*Server = null,

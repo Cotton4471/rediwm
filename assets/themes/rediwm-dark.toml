@@ -92,6 +92,7 @@ start_menu_selected_marker = "rgba(237,27,46,1.000)"
 
 [layout]
 taskbar_position = "bottom"
+taskbar_items = ["left:start", "left:windows", "right:capture", "right:tray", "right:battery", "~right:wifi", "~right:wired", "right:volume", "right:clock", "-right:power"]
 dock_enabled = false
 
 [assets]

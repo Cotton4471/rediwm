@@ -51,12 +51,14 @@ drop_offer: ?*Offer = null,
 drop_receiving: ?transfer.Receive = null,
 drop_slot: ?usize = null,
 drop_terminal: bool = false,
+drop_trash: bool = false,
 drop_move: bool = false,
 clipboard_source: ?*ClipboardSource = null,
 drag_source: ?*ClipboardSource = null,
 drag_serial: u32 = 0,
 drag_icon: ?DragIcon = null,
 axis_source: wl.Pointer.AxisSource = .wheel,
+finger_navigation: @import("ui").trackpad_navigation.Gesture = .{},
 axis_delta: f64 = 0,
 horizontal_delta: f64 = 0,
 horizontal_notches: ?f64 = null,
@@ -93,6 +95,13 @@ outstanding: usize = 0,
 buffers: std.ArrayList(*Buffer) = .empty,
 retained: std.ArrayList(u8) = .empty,
 retained_w: i32 = 0,
+/// Commits published so far, and the rows each of the last few changed, so
+/// a recycled buffer catches up on just those rows (`refreshBuffer`).
+commit_seq: u64 = 0,
+bands: [4]@import("client_render.zig").RowBand = @splat(.{}),
+/// Pending `wl_surface.frame` callback of the last commit; partial repaints
+/// wait for it.
+frame_callback: ?*wl.Callback = null,
 applied_scale: i32 = 0,
 receiving: ?transfer.Receive = null,
 sends: std.ArrayList(transfer.Send) = .empty,
@@ -171,6 +180,7 @@ pub fn pollTimeout(self: *Client) c_int {
     };
     if (self.app.status_notice != null) deadline = earlier(deadline, self.app.status_notice_until);
     if (self.app.scanNoticeDeadline()) |at| deadline = earlier(deadline, at);
+    if (self.app.audioDeadline()) |at| deadline = earlier(deadline, at);
     if (self.app.scroll_appearance.deadline) |at| deadline = earlier(deadline, at);
     if (self.app.horizontal_appearance.deadline) |at| deadline = earlier(deadline, at);
     if (self.app.sidebar_scroll_appearance.deadline) |at| deadline = earlier(deadline, at);

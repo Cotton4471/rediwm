@@ -11,6 +11,7 @@ const dialog = @import("ui").widgets.dialog;
 const menu = @import("ui").context_menu;
 const p = @import("pango.zig");
 const caret_mod = @import("caret.zig");
+const reflow_mod = @import("reflow.zig");
 const input = @import("ui").input;
 const Document = @import("document.zig").Document;
 const view = @import("view.zig");
@@ -20,10 +21,19 @@ const app_files = @import("app_files.zig");
 const app_view = @import("app_view.zig");
 const app_input = @import("app_input.zig");
 const app_paint = @import("app_paint.zig");
+const app_search = @import("app_search.zig");
+const app_edit = @import("app_edit.zig");
+const app_controls = @import("app_controls.zig");
+const app_drafts = @import("app_drafts.zig");
+const app_recent = @import("app_recent.zig");
+const drafts = @import("drafts.zig");
 const a = std.heap.c_allocator;
 pub const top: f64 = 40;
 pub const status_h: f64 = 26;
-pub const tab_w: f64 = 176;
+/// A tab is this wide while there is room; tabs share the strip down to
+/// `tab_min`, and beyond that the strip scrolls.
+pub const tab_max: f64 = 176;
+pub const tab_min: f64 = 112;
 const Status = struct {
     revision: usize = std.math.maxInt(usize),
     cursor: usize = 0,
@@ -32,8 +42,10 @@ const Status = struct {
 };
 /// Stand-in for the position of a cursor too far from the view to measure.
 pub const far: c_int = 1_000_000 * 1024;
-pub const Action = enum { new, open, save, save_as, find, wrap };
-pub const labels = [_]i18n.Message{ i18n.msg("New"), i18n.msg("Open"), i18n.msg("Save"), i18n.msg("Save As"), i18n.msg("Find"), i18n.msg("Word Wrap") };
+pub const Action = enum { new, open, open_recent, save, save_as, find, replace, wrap };
+pub const labels = [_]i18n.Message{ i18n.msg("New"), i18n.msg("Open"), i18n.msg("Open Recent"), i18n.msg("Save"), i18n.msg("Save As"), i18n.msg("Find"), i18n.msg("Replace"), i18n.msg("Word Wrap") };
+/// The menu row whose submenu lists the recent files.
+pub const recent_row = @intFromEnum(Action.open_recent);
 pub const Tab = struct {
     id: usize,
     doc: Document = .{},
@@ -45,6 +57,10 @@ pub const Tab = struct {
     measure: view.Measure = .{},
     /// The status bar's line and column, recomputed only when the cursor or text moves.
     status: Status = .{},
+    /// The draft file this tab's unsaved text lives in, and the revision of the
+    /// text it holds; null while the tab has none (see `drafts.zig`).
+    draft_name: ?u64 = null,
+    draft_rev: ?usize = null,
     pub fn deinit(t: *Tab) void {
         t.doc.deinit();
         if (t.path) |path| a.free(path);
@@ -58,7 +74,9 @@ pub const App = struct {
     tabs: std.ArrayList(*Tab) = .empty,
     selected: usize = 0,
     next_id: usize = 1,
-    first_tab: usize = 0,
+    /// How far the tab strip is scrolled, in pixels.
+    tab_scroll: f64 = 0,
+    strip_seen: app_controls.Strip = .{},
     w: i32 = 900,
     h: i32 = 620,
     scale: i32 = 1,
@@ -73,10 +91,25 @@ pub const App = struct {
     caret_painted: caret_mod.Rect = .{},
     caret_snap: bool = true,
     caret_dirty: bool = false,
+    /// Only proximity glow changed: a full repaint, but paced by the frame
+    /// callback instead of following every pointer motion.
+    glow_dirty: bool = false,
     caret_activity: usize = 0,
+    /// Lines an edit moved, gliding to their new places (see `reflow.zig`).
+    reflow: reflow_mod.Reflow = .{},
+    /// The animation has a frame to paint; follows the display like `glow_dirty`.
+    reflow_dirty: bool = false,
+    /// The loop time of the frame being prepared, shared by the caret and the rows.
+    frame_ms: i64 = 0,
     menu_open: bool = false,
     menu_selected: ?usize = null,
     menu_anchor: f64 = 0,
+    /// The Open Recent submenu is showing; `sub_selected` is its highlighted row.
+    sub_open: bool = false,
+    sub_selected: ?usize = null,
+    /// Paths for that submenu, newest first, reread each time the menu opens.
+    recent: std.ArrayList([:0]u8) = .empty,
+    environ: std.process.Environ = .empty,
     has_titlebar: bool = true,
     dragging: bool = false,
     drag_word: ?[2]usize = null,
@@ -87,8 +120,8 @@ pub const App = struct {
     /// the same tab shows feedback, not switching to a tab scrolled elsewhere.
     bar_observed: f64 = 0,
     bar_tab: ?*Tab = null,
-    px: f64 = 0,
-    py: f64 = 0,
+    px: f64 = -1,
+    py: f64 = -1,
     wrap: bool = true,
     io: std.Io,
     operation: ?*op.Operation = null,
@@ -100,13 +133,18 @@ pub const App = struct {
     notice_len: usize = 0,
     title: [1024:0]u8 = @splat(0),
     find_open: bool = false,
+    replace_open: bool = false,
+    search_focus: app_search.Control = .query,
     query: @import("../files/editor.zig").Editor = .{},
+    replacement: @import("../files/editor.zig").Editor = .{},
     clipboard: std.ArrayList(u8) = .empty,
     clipboard_revision: usize = 0,
     paste_requested: bool = false,
     preedit: std.ArrayList(u8) = .empty,
     layouts: view.Layouts = .{},
     rows: std.ArrayList(view.Row) = .empty,
+    /// Where unsaved text is kept between sessions; null when it cannot be.
+    keeper: ?*drafts.Keeper = null,
 
     pub fn init(io: std.Io) !App {
         var self: App = .{ .io = io };
@@ -114,15 +152,19 @@ pub const App = struct {
         return self;
     }
     pub fn deinit(self: *App) void {
+        self.deinitDrafts();
+        self.deinitRecent();
         if (self.operation) |job| job.deinit();
         for (self.tabs.items) |t| t.deinit();
         self.tabs.deinit(a);
         for (self.queue.items) |path| a.free(path);
         self.queue.deinit(a);
         self.query.deinit(a);
+        self.replacement.deinit(a);
         self.clipboard.deinit(a);
         self.preedit.deinit(a);
         self.rows.deinit(a);
+        self.reflow.deinit();
         self.layouts.deinit();
     }
     pub fn current(self: *App) *Tab {
@@ -165,14 +207,13 @@ pub const App = struct {
             self.title[value.len] = 0;
             self.title_changed = true;
         }
-        const visible: usize = @intFromFloat(@max(1, @floor((self.tabRight() - 2) / tab_w)));
-        if (self.selected < self.first_tab) self.first_tab = self.selected;
-        if (self.selected >= self.first_tab + visible) self.first_tab = self.selected - visible + 1;
+        self.revealTab();
     }
 
     pub const CaretState = app_paint.CaretState;
     pub const caretState = app_paint.caretState;
     pub const stepCaret = app_paint.stepCaret;
+    pub const stepReflow = app_paint.stepReflow;
     pub const caretDamage = app_paint.caretDamage;
     pub const paintCaret = app_paint.paintCaret;
     pub const tabRight = app_paint.tabRight;
@@ -183,6 +224,19 @@ pub const App = struct {
     pub const menuHit = app_paint.menuHit;
     pub const paintMenu = app_paint.paintMenu;
     pub const paintButton = app_paint.paintButton;
+    pub const paintIcon = app_controls.paintIcon;
+    pub const tabWidth = app_controls.tabWidth;
+    pub const tabX = app_controls.tabX;
+    pub const tabAt = app_controls.tabAt;
+    pub const tabScrollMax = app_controls.tabScrollMax;
+    pub const scrollTabs = app_controls.scrollTabs;
+    pub const revealTab = app_controls.revealTab;
+    pub const tabCloseBox = app_controls.tabCloseBox;
+    pub const newButtonBox = app_controls.newButtonBox;
+    pub const menuButtonBox = app_controls.menuButtonBox;
+    pub const hoverTarget = app_controls.hoverTarget;
+    pub const buttonProximity = app_controls.buttonProximity;
+    pub const proximityChanged = app_controls.proximityChanged;
     pub const render = app_paint.render;
     pub const paintLine = app_paint.paintLine;
     pub const paintClose = app_paint.paintClose;
@@ -201,6 +255,20 @@ pub const App = struct {
     pub const closeSelected = app_files.closeSelected;
     pub const finishClose = app_files.finishClose;
     pub const act = app_files.act;
+
+    pub const refreshRecent = app_recent.refreshRecent;
+    pub const recordRecent = app_recent.recordRecent;
+    pub const clearRecent = app_recent.clearRecent;
+    pub const recentEnabled = app_recent.enabled;
+    pub const deinitRecent = app_recent.deinitRecent;
+
+    pub const openDrafts = app_drafts.openDrafts;
+    pub const stepDrafts = app_drafts.stepDrafts;
+    pub const draftTimeout = app_drafts.draftTimeout;
+    pub const draftWake = app_drafts.draftWake;
+    pub const drainDrafts = app_drafts.drainDrafts;
+    pub const signaled = app_drafts.signaled;
+    pub const deinitDrafts = app_drafts.deinitDrafts;
 
     pub const resize = app_view.resize;
     pub const viewTop = app_view.viewTop;
@@ -223,9 +291,18 @@ pub const App = struct {
     pub const handleMotion = app_input.handleMotion;
     pub const handleButton = app_input.handleButton;
     pub const pasteText = app_input.pasteText;
-    pub const findNext = app_input.findNext;
+    pub const findNext = app_search.findNext;
+    pub const openSearch = app_search.openSearch;
+    pub const searchEditor = app_search.searchEditor;
+    pub const searchBox = app_search.searchBox;
+    pub const searchHit = app_search.searchHit;
+    pub const searchKey = app_search.searchKey;
+    pub const searchActivate = app_search.searchActivate;
+    pub const paintSearch = app_search.paintSearch;
+    pub const searchCaret = app_search.searchCaret;
     pub const keyRepeats = app_input.keyRepeats;
     pub const handleKey = app_input.handleKey;
+    pub const editKey = app_edit.editKey;
 };
 pub fn fill(cr: *c.cairo_t, x: f64, y: f64, w: f64, h: f64, color: [4]f32) void {
     ui.setSource(cr, color);

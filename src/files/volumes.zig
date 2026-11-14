@@ -6,9 +6,7 @@
 const std = @import("std");
 const i18n = @import("i18n");
 const tr = i18n.tr;
-const c = @cImport({
-    @cInclude("volumes.h");
-});
+const c = @import("c_volumes");
 
 pub const Kind = enum {
     /// Flash media: USB sticks and memory cards.

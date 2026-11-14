@@ -31,7 +31,6 @@ const start_button = @import("../../taskbar/start_button.zig");
 const menu_size = @import("../../start_menu/size.zig");
 const wlr = @import("wlroots");
 const app_theme = @import("config").app_theme;
-const AppColorsJob = @import("../../config_runtime/app_theme.zig").Job;
 const appearance_wallpaper = @import("appearance_wallpaper.zig");
 const appearance_colors = @import("appearance_colors.zig");
 const appearance_themes = @import("appearance_themes.zig");
@@ -51,9 +50,6 @@ pub const stopStrip = appearance_wallpaper.stopStrip;
 pub const deinit = appearance_wallpaper.deinit;
 pub const appColorsNote = appearance_colors.appColorsNote;
 pub const onApplyAppColors = appearance_colors.onApplyAppColors;
-pub const appColorsFailure = appearance_colors.appColorsFailure;
-pub const finishAppColors = appearance_colors.finishAppColors;
-pub const appColorsReady = appearance_colors.appColorsReady;
 pub const stripWake = appearance_wallpaper.stripWake;
 pub const restartStrip = appearance_wallpaper.restartStrip;
 pub const buildWallpaper = appearance_wallpaper.buildWallpaper;
@@ -90,6 +86,7 @@ pub const onFontSizeChanged = appearance_chrome.onFontSizeChanged;
 pub const onRadiusChanged = appearance_chrome.onRadiusChanged;
 pub const onShadowChanged = appearance_chrome.onShadowChanged;
 pub const onBorderGlowChanged = appearance_chrome.onBorderGlowChanged;
+pub const onButtonHoverGlowChanged = appearance_chrome.onButtonHoverGlowChanged;
 pub const onChromeOpacityChanged = appearance_chrome.onChromeOpacityChanged;
 pub const onChromeDarknessChanged = appearance_chrome.onChromeDarknessChanged;
 pub const onInactiveDimChanged = appearance_chrome.onInactiveDimChanged;
@@ -98,7 +95,9 @@ pub const onTerminalOpacityChanged = appearance_chrome.onTerminalOpacityChanged;
 pub const max_window_gap = appearance_chrome.max_window_gap;
 pub const onWindowGapChanged = appearance_chrome.onWindowGapChanged;
 pub const onTaskbarPositionChanged = appearance_chrome.onTaskbarPositionChanged;
+pub const onTaskbarAlignmentChanged = appearance_chrome.onTaskbarAlignmentChanged;
 pub const onFocusZoomChanged = appearance_chrome.onFocusZoomChanged;
+pub const onSwitcherStyleChanged = appearance_chrome.onSwitcherStyleChanged;
 pub const onDragFeedbackChanged = appearance_chrome.onDragFeedbackChanged;
 pub const onDragScaleChanged = appearance_chrome.onDragScaleChanged;
 pub const onAnimationsEnabledChanged = appearance_chrome.onAnimationsEnabledChanged;
@@ -224,6 +223,7 @@ pub const Section = struct {
     dock_trash_children: [2]Widget = undefined,
     dock_group_children: [10]Widget = undefined,
     focus_zoom_children: [3]Widget = undefined,
+    switcher_style_children: [2]Widget = undefined,
     drag_feedback_children: [2]Widget = undefined,
     drag_scale_header_children: [2]Widget = undefined,
     drag_scale_children: [2]Widget = undefined,
@@ -250,10 +250,10 @@ pub const Section = struct {
     icon_theme_names: []const []const u8 = &.{},
 
     taskbar_theme_row_children: [2]Widget = undefined,
-    app_colors_children: [3]Widget = undefined,
+    app_colors_children: [4]Widget = undefined,
+    app_colors_len: usize = 4,
+    follow_colors_children: [2]Widget = undefined,
     app_colors_buttons: [2]Widget = undefined,
-    app_colors_job: ?*AppColorsJob = null,
-    app_colors_source: ?*wl.EventSource = null,
     app_colors_message: []const u8 = "",
     app_colors_message_buf: [384]u8 = undefined,
     dark_row_children: [2]Widget = undefined,
@@ -268,11 +268,15 @@ pub const Section = struct {
     anim_enabled_label_children: [2]Widget = undefined,
     anim_speed_row_children: [2]Widget = undefined,
     reduced_motion_row_children: [2]Widget = undefined,
+    effect_row_children: [3][2]Widget = undefined,
+    effect_label_children: [3][2]Widget = undefined,
     font_row_children: [2]Widget = undefined,
     radius_row_children: [2]Widget = undefined,
     shadow_row_children: [2]Widget = undefined,
     glow_row_children: [2]Widget = undefined,
     glow_label_children: [2]Widget = undefined,
+    button_hover_glow_row_children: [2]Widget = undefined,
+    button_hover_glow_label_children: [2]Widget = undefined,
     opacity_header_children: [2]Widget = undefined,
     opacity_group_children: [2]Widget = undefined,
     opacity_value_buf: [16]u8 = undefined,
@@ -291,8 +295,9 @@ pub const Section = struct {
     terminal_opacity_group_children: [2]Widget = undefined,
     terminal_opacity_value_buf: [16]u8 = undefined,
     px: [22]PxControl = undefined,
-    taskbar_section_children: [13]Widget = undefined,
+    taskbar_section_children: [14]Widget = undefined,
     taskbar_position_children: [2]Widget = undefined,
+    taskbar_alignment_children: [2]Widget = undefined,
     clock_bold_children: [2]Widget = undefined,
     clock_italic_children: [2]Widget = undefined,
     items_children: [6]Widget = undefined,
@@ -304,8 +309,8 @@ pub const Section = struct {
     items_placeholder_body: [3][3]Widget = undefined,
     /// Rows follow `order`; `syncItems` hands each well its run of them.
     item_rows: [taskbar_items.count]Widget = undefined,
-    /// Grip, label, visibility toggle.
-    item_controls: [taskbar_items.count][3]Widget = undefined,
+    /// Grip, label, section selector, visibility toggle.
+    item_controls: [taskbar_items.count][4]Widget = undefined,
     item_drag: ?struct { index: usize, press_y: f32, moved: bool = false, items: taskbar_items.Config } = null,
     item_focus: ?taskbar_items.Item = null,
     start_menu_section_children: [9]Widget = undefined,
@@ -475,6 +480,7 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
     buildColorRows(out, arena, pal);
 
     buildBehaviorRows(out, pal);
+    buildEffectRows(out, pal);
 
     buildFontRows(out, arena, t, pal);
 
@@ -498,7 +504,7 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.icon_theme_row },
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.theme_row_children },
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.taskbar_theme_row_children },
-        .{ .kind = .container, .direction = .column, .gap = 8, .children = &out.app_colors_children },
+        .{ .kind = .container, .direction = .column, .gap = 8, .children = out.app_colors_children[0..out.app_colors_len] },
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.dark_row_children },
         .{ .kind = .container, .direction = .column, .gap = 12, .children = &out.wallpaper_children },
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.splash_row_children },
@@ -507,14 +513,19 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.anim_speed_row_children },
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.reduced_motion_row_children },
         .{ .kind = .container, .direction = .column, .gap = 8, .children = &out.focus_zoom_children },
+        .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.switcher_style_children },
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.drag_feedback_children },
         .{ .kind = .container, .direction = .column, .gap = 8, .children = &out.drag_scale_children },
+        .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.effect_row_children[0] },
+        .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.effect_row_children[1] },
+        .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.effect_row_children[2] },
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.cursor_row_children },
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.family_row_children },
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.font_row_children },
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.radius_row_children },
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.shadow_row_children },
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.glow_row_children },
+        .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.button_hover_glow_row_children },
         chrome_row,
         buildWindowTabs(out),
         .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.dim_row_children },
@@ -534,7 +545,7 @@ pub fn build(out: *Section, cc: *panel.ControlCenter) void {
             at += 1;
         }
         for (group.rows) |row| {
-            out.group_storage[at] = out.row_storage[@intFromEnum(row)];
+            out.group_storage[at] = out.row_storage[@backingInt(row)];
             at += 1;
         }
         // An untitled group is one row that brings its own title.
@@ -551,6 +562,7 @@ const appearance_rows = @import("appearance_rows.zig");
 const buildThemeRows = appearance_rows.buildThemeRows;
 const buildColorRows = appearance_rows.buildColorRows;
 const buildBehaviorRows = appearance_rows.buildBehaviorRows;
+const buildEffectRows = appearance_rows.buildEffectRows;
 const buildFontRows = appearance_rows.buildFontRows;
 const buildChromeRow = appearance_rows.buildChromeRow;
 const inactiveOpacityRow = appearance_rows.inactiveOpacityRow;
@@ -579,14 +591,19 @@ pub const Row = enum {
     animation_speed,
     reduced_motion,
     focus_zoom,
+    switcher_style,
     drag_feedback,
     drag_scale,
+    effect_window_move,
+    effect_window_resize,
+    effect_window_minimize,
     cursor,
     font_family,
     font_size,
     radius,
     shadow,
     edge_glow,
+    button_hover_glow,
     chrome_opacity,
     window_tabs,
     inactive_dim,
@@ -598,14 +615,15 @@ pub const Row = enum {
     taskbar,
     start_menu,
 };
-pub const row_count = std.meta.fields(Row).len;
+pub const row_count = @typeInfo(Row).@"enum".field_names.len;
 
 pub const groups = [_]struct { title: ?i18n.Message, rows: []const Row }{
     .{ .title = i18n.msg("Themes & colours"), .rows = &.{ .theme, .taskbar_theme, .theme_pack, .icon_theme, .dark_mode, .app_colors } },
     .{ .title = i18n.msg("Wallpaper"), .rows = &.{.wallpaper} },
     .{ .title = i18n.msg("Fonts & cursor"), .rows = &.{ .font_family, .font_size, .cursor } },
-    .{ .title = i18n.msg("Windows"), .rows = &.{ .radius, .shadow, .edge_glow, .chrome_opacity, .window_tabs, .inactive_dim, .inactive_opacity, .terminal_opacity, .window_gap, .scrollbar_width } },
-    .{ .title = i18n.msg("Motion & feedback"), .rows = &.{ .animations, .animation_speed, .reduced_motion, .focus_zoom, .drag_feedback, .drag_scale, .dodge_file_drags, .launch_splash } },
+    .{ .title = i18n.msg("Windows"), .rows = &.{ .radius, .shadow, .edge_glow, .button_hover_glow, .chrome_opacity, .window_tabs, .inactive_dim, .inactive_opacity, .terminal_opacity, .window_gap, .scrollbar_width } },
+    .{ .title = i18n.msg("Motion & feedback"), .rows = &.{ .animations, .animation_speed, .reduced_motion, .focus_zoom, .switcher_style, .drag_feedback, .drag_scale, .dodge_file_drags, .launch_splash } },
+    .{ .title = i18n.msg("Effects"), .rows = &.{ .effect_window_move, .effect_window_resize, .effect_window_minimize } },
     .{ .title = null, .rows = &.{.dock} },
     .{ .title = null, .rows = &.{.taskbar} },
     .{ .title = null, .rows = &.{.start_menu} },
@@ -613,10 +631,10 @@ pub const groups = [_]struct { title: ?i18n.Message, rows: []const Row }{
 
 comptime {
     // Every row is shown exactly once.
-    var seen = [_]bool{false} ** row_count;
+    var seen = @as([row_count]bool, @splat(false));
     for (groups) |group| for (group.rows) |row| {
-        if (seen[@intFromEnum(row)]) @compileError("row in two groups: " ++ @tagName(row));
-        seen[@intFromEnum(row)] = true;
+        if (seen[@backingInt(row)]) @compileError("row in two groups: " ++ @tagName(row));
+        seen[@backingInt(row)] = true;
     };
-    for (seen, 0..) |shown, i| if (!shown) @compileError("row in no group: " ++ @tagName(@as(Row, @enumFromInt(i))));
+    for (seen, 0..) |shown, i| if (!shown) @compileError("row in no group: " ++ @tagName(@as(Row, @fromBackingInt(@intCast(i)))));
 }

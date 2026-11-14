@@ -12,7 +12,7 @@ const Io = std.Io;
 const posix = std.posix;
 const c = std.posix.system;
 const wl = @import("wayland").server.wl;
-const linux = std.os.linux;
+const platform = @import("platform");
 
 const catalog_cache = @import("catalog_cache.zig");
 const startup = @import("../startup.zig");
@@ -108,9 +108,8 @@ pub const Catalog = struct {
     thread: ?std.Thread = null,
     delay_ns: u64 = 0,
 
-    watch_fd: i32 = -1,
+    watcher: ?platform.watch.Watcher = null,
     watch_source: ?*wl.EventSource = null,
-    watch_wds: std.ArrayList(i32) = .empty,
     watched_paths: std.StringHashMapUnmanaged(void) = .empty,
 
     /// `scan` false leaves the catalog empty and never touches the cache
@@ -123,8 +122,7 @@ pub const Catalog = struct {
         errdefer loading.release();
         loading.loading = scan;
 
-        const efd = c.eventfd(0, @intCast(std.os.linux.EFD.CLOEXEC | std.os.linux.EFD.NONBLOCK));
-        if (efd < 0) return error.EventFdFailed;
+        const efd = platform.wake.create() orelse return error.EventFdFailed;
         errdefer _ = c.close(efd);
 
         const owned_locale = try allocator.dupe(u8, locale_tag);
@@ -163,14 +161,12 @@ pub const Catalog = struct {
     }
 
     pub fn attachWatch(self: *Catalog, loop: *wl.EventLoop) void {
-        const fd = std.c.inotify_init1(linux.IN.NONBLOCK | linux.IN.CLOEXEC);
-        if (fd < 0) return;
-        self.watch_fd = fd;
-        self.watch_source = loop.addFd(*Catalog, fd, .{ .readable = true }, handleInotify, self) catch {
-            _ = std.c.close(fd);
-            self.watch_fd = -1;
+        var watcher = platform.watch.Watcher.init() catch return;
+        self.watch_source = loop.addFd(*Catalog, watcher.fd, .{ .readable = true }, handleWatch, self) catch {
+            watcher.deinit();
             return;
         };
+        self.watcher = watcher;
         self.syncWatches();
     }
 
@@ -182,11 +178,10 @@ pub const Catalog = struct {
         if (self.thread) |t| t.join();
 
         if (self.watch_source) |src| src.remove();
-        if (self.watch_fd >= 0) _ = std.c.close(self.watch_fd);
+        if (self.watcher) |*w| w.deinit();
         var it = self.watched_paths.keyIterator();
         while (it.next()) |k| self.allocator.free(k.*);
         self.watched_paths.deinit(self.allocator);
-        self.watch_wds.deinit(self.allocator);
 
         if (self.eventfd >= 0) _ = c.close(self.eventfd);
         if (self.pending) |snap| snap.release();
@@ -397,64 +392,47 @@ pub const Catalog = struct {
     }
 
     fn syncWatches(self: *Catalog) void {
-        if (self.watch_fd < 0) return;
+        const watcher = self.watcher orelse return;
         var tmp = std.heap.ArenaAllocator.init(self.allocator);
         defer tmp.deinit();
         const a = tmp.allocator();
-        const mask: u32 = linux.IN.CREATE | linux.IN.DELETE | linux.IN.MODIFY | linux.IN.MOVED_FROM |
-            linux.IN.MOVED_TO | linux.IN.ATTRIB | linux.IN.CLOSE_WRITE | linux.IN.DELETE_SELF;
 
         if (resolveApplicationDirs(a, self.environ)) |dirs| {
-            for (dirs) |dir| self.addWatch(dir, mask);
+            for (dirs) |dir| self.addWatch(watcher, dir);
         } else |_| {}
 
         // Directories already visited by the scan, without walking the tree again
         // on the compositor thread.
         for (self.current.sources) |src| {
-            if (std.fs.path.dirname(src.path)) |dir| self.addWatch(dir, mask);
+            if (std.fs.path.dirname(src.path)) |dir| self.addWatch(watcher, dir);
         }
     }
 
-    fn addWatch(self: *Catalog, dir: []const u8, mask: u32) void {
+    fn addWatch(self: *Catalog, watcher: platform.watch.Watcher, dir: []const u8) void {
         if (self.watched_paths.contains(dir)) return;
-        var zbuf: [std.posix.PATH_MAX]u8 = undefined;
-        const zdir = std.fmt.bufPrintZ(&zbuf, "{s}", .{dir}) catch return;
-        const wd = std.c.inotify_add_watch(self.watch_fd, zdir.ptr, mask);
-        if (wd < 0) return;
+        _ = watcher.add(dir, .{ .created = true, .deleted = true, .modified = true, .moved_from = true, .moved_to = true, .attrib = true, .written = true }) orelse return;
         const owned = self.allocator.dupe(u8, dir) catch return;
-        self.watched_paths.put(self.allocator, owned, {}) catch {
-            self.allocator.free(owned);
-            return;
-        };
-        self.watch_wds.append(self.allocator, wd) catch {};
+        self.watched_paths.put(self.allocator, owned, {}) catch self.allocator.free(owned);
     }
 };
 
-fn handleInotify(fd: c_int, mask: wl.EventMask, catalog: *Catalog) c_int {
-    _ = mask;
-    var buf: [4096]u8 align(@alignOf(linux.inotify_event)) = undefined;
-    var saw = false;
-    while (true) {
-        const n = posix.read(fd, &buf) catch |err| switch (err) {
-            error.WouldBlock => break,
-            else => break,
-        };
-        if (n == 0) break;
-        var off: usize = 0;
-        while (off + @sizeOf(linux.inotify_event) <= n) {
-            const ev: *const linux.inotify_event = @ptrCast(@alignCast(&buf[off]));
-            if (ev.mask & (linux.IN.CREATE | linux.IN.DELETE | linux.IN.MODIFY | linux.IN.MOVED_FROM |
-                linux.IN.MOVED_TO | linux.IN.ATTRIB | linux.IN.CLOSE_WRITE | linux.IN.DELETE_SELF) != 0)
-            {
-                saw = true;
-                if (ev.mask & linux.IN.CREATE != 0 and ev.mask & linux.IN.ISDIR != 0) {
-                    catalog.syncWatches();
-                }
-            }
-            off += @sizeOf(linux.inotify_event) + ev.len;
-        }
+const Changes = struct {
+    catalog: *Catalog,
+    saw: bool = false,
+
+    fn event(self: *Changes, ev: platform.watch.Event) void {
+        if (!ev.flags.isChange()) return;
+        self.saw = true;
+        // A new directory may hold applications of its own.
+        if (ev.flags.created and ev.flags.is_dir) self.catalog.syncWatches();
     }
-    if (saw) catalog.requestRefresh();
+};
+
+fn handleWatch(_: c_int, _: wl.EventMask, catalog: *Catalog) c_int {
+    const watcher = catalog.watcher orelse return 0;
+    var changes: Changes = .{ .catalog = catalog };
+    watcher.drain(&changes, Changes.event) catch {};
+    if (changes.saw) catalog.requestRefresh();
     return 0;
 }
 

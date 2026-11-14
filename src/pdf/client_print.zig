@@ -50,7 +50,7 @@ pub fn publishClipboard(self: *Client) void {
     clip.* = .{
         .client = self,
         .proxy = source,
-        .text = a.dupeZ(u8, text) catch return,
+        .text = a.dupeSentinel(u8, text, 0) catch return,
     };
     source.setListener(*ClipboardSource, ClipboardSource.event, clip);
     source.offer("text/plain;charset=utf-8");

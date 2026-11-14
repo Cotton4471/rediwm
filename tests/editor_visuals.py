@@ -126,6 +126,50 @@ def run():
                         thread.join(timeout=5)
                         ipc.action('pointer_button',{'button':272,'pressed':False})
                     time.sleep(.3)
+                # Cross the close button boundary within the old coarse hover
+                # bucket, then leave the client entirely: both must repaint.
+                box=ipc.get_window_debug(win['id'])['client_box']
+                header=46 if csd else 0
+                def hover_image(x, y):
+                    ipc.move_cursor(round(box['x']+x), round(box['y']+y))
+                    time.sleep(.15)
+                    shot=capture()
+                    factor=shot.width/ipc.get_outputs()[0]['logical_width']
+                    return shot.crop(tuple(round(v*factor) for v in (
+                        box['x']+140, box['y']+header+2,
+                        box['x']+174, box['y']+header+36)))
+                # The pointer glow lights controls within border_glow_reach (56 px)
+                # of the pointer, so the resting image is taken well outside it.
+                idle_close=hover_image(300, header+200)
+                near_close=hover_image(130, header+19)
+                hover_close=hover_image(145, header+19)
+                assert ImageChops.difference(near_close, hover_close).getbbox(), 'close-tab hover did not repaint'
+                left_close=hover_image(-30, -30)
+                assert not ImageChops.difference(idle_close, left_close).getbbox(), 'close-tab hover stuck after pointer leave'
+                print('close-tab hover appears and clears on pointer leave',flush=True)
+
+                # Opening the unsaved-close prompt must update a stationary
+                # I-beam, and dismissing it must restore the text cursor.
+                import re
+                def cursor_shape(expected):
+                    def latest():
+                        shapes=re.findall(r'wp_cursor_shape_device_v1#\d+\.set_shape\(\d+, (\d+)\)', (tmp/'rediwm-editor.log').read_text())
+                        return shapes and int(shapes[-1]) == expected
+                    wait_for(latest, f'editor cursor shape {expected}')
+                ipc.move_cursor(round(box['x']+200), round(box['y']+header+150))
+                cursor_shape(9)
+                ipc.type_text('x')
+                ipc.key(29,True)
+                ipc.key_down_up(17)
+                ipc.key(29,False)
+                cursor_shape(1)
+                ipc.key_down_up(1)
+                cursor_shape(9)
+                ipc.key(29,True)
+                ipc.key_down_up(44)
+                ipc.key(29,False)
+                print('save prompt resets the stationary cursor and restores it on dismissal',flush=True)
+
                 # The application menu lives in the tab bar with shared chrome.
                 box=ipc.get_window_debug(win['id'])['client_box']
                 ipc.move_cursor(round(box['x']+box['width']-(132 if csd else 18)),round(box['y']+23))
@@ -183,6 +227,64 @@ def run():
                 time.sleep(.7)
                 assert switches()==before, 'caret timer keeps waking the idle editor'
                 print('caret becomes solid and makes no idle wakeups',flush=True)
+                # Enter pushes the lines below it down and joining lines pulls
+                # them up. Both glide, over the caret's motion time plus half
+                # (600 ms here), instead of snapping.
+                text_top=box['y']+40+(46 if csd else 0)
+                def last_row_y():
+                    shot=capture()
+                    factor=shot.width/ipc.get_outputs()[0]['logical_width']
+                    region=(round((box['x']+20)*factor), round(text_top*factor), round((box['x']+120)*factor), round((text_top+200)*factor))
+                    # Text is the only bright, uncoloured thing in this strip.
+                    ink=shot.crop(region).convert('L').point(lambda value: 255 if value > 155 else 0).getbbox()
+                    assert ink, 'no text painted'
+                    return (region[1]+ink[3])/factor, shot
+                def glide(press, name):
+                    """Rest, a frame 100-150 ms into the glide, then rest again.
+                    A screenshot shows the frame at the time it was asked for,
+                    so the sample lands well inside the 600 ms."""
+                    rest,_=last_row_y()
+                    press()
+                    time.sleep(.1)
+                    middle,shot=last_row_y()
+                    if os.environ.get('REDIWM_EDITOR_VISUALS'):
+                        shot.save(Path(os.environ['REDIWM_EDITOR_VISUALS'])/f'{name}-middle.png')
+                    time.sleep(1)
+                    final,_=last_row_y()
+                    return rest,middle,final
+                for row in range(3):
+                    if row:
+                        ipc.key_down_up(28)  # Return
+                    ipc.type_text('mmmmmmmm')
+                time.sleep(.9)
+                for _ in range(2):
+                    ipc.key_down_up(103)  # Up to the first line.
+                for _ in range(4):
+                    ipc.key_down_up(105)  # Left into the middle of it.
+                time.sleep(.2)
+                # Which frame a screenshot shows depends on compositor timing, so
+                # a pair that was sampled too late is tried again; a snapping
+                # editor never shows an intermediate frame at all.
+                down=up=False
+                for attempt in range(3):
+                    rest,middle,final=glide(lambda: ipc.key_down_up(28), 'enter')
+                    line=final-rest
+                    assert line > 8, f'Enter did not push the last line down: {rest} -> {final}'
+                    down=down or rest+1 < middle < final-1
+                    rest,middle,final=glide(lambda: ipc.key_down_up(14), 'join')  # Backspace joins them again.
+                    assert final < rest-8, f'joining lines did not pull the last line up: {rest} -> {final}'
+                    assert abs((rest-final)-line) < 2, f'joining moved a different distance than Enter: {rest} -> {final}'
+                    up=up or final+1 < middle < rest-1
+                    if down and up: break
+                assert down, 'Enter snapped the lines instead of gliding'
+                print('Enter glides the lines below it down',flush=True)
+                assert up, 'joining snapped the lines instead of gliding'
+                print('Backspace joining lines glides the lines below it up',flush=True)
+                ipc.key(29,True)
+                ipc.key_down_up(30)  # Ctrl+A
+                ipc.key(29,False)
+                ipc.key_down_up(111)  # Delete everything again.
+                time.sleep(.9)
                 # A longer configured glide makes intermediate rendered
                 # positions observable without relying on screenshot latency.
                 ipc.type_text('m')
@@ -213,7 +315,7 @@ def run():
                     if row:
                         ipc.key_down_up(28)  # Return; TypeText only inserts printable text.
                     ipc.type_text('mmmmmmmmmmmm')
-                time.sleep(.2)
+                time.sleep(.9)  # The last Return's lines are still gliding for 600 ms.
                 plain=capture()
                 if output := os.environ.get('REDIWM_EDITOR_PREVIEW'):
                     plain.save(output)

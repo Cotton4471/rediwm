@@ -14,7 +14,7 @@ extern fn g_error_free(*GError) void;
 pub const Mode = enum { fill, fit, stretch, center, tile };
 pub const Image = struct { pixels: []u32, w: i32, h: i32, mode: Mode };
 pub fn load(a: std.mem.Allocator, path: []const u8, mode: Mode) !Image {
-    const z = try a.dupeZ(u8, path);
+    const z = try a.dupeSentinel(u8, path, 0);
     defer a.free(z);
     var err: ?*GError = null;
     const pixbuf = gdk_pixbuf_new_from_file(z, &err) orelse {

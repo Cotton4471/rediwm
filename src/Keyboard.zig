@@ -12,6 +12,7 @@ const gpa = @import("main.zig").gpa;
 const Keyboard = @This();
 
 const log = std.log.scoped(.keyboard);
+
 const keybinds = @import("config").keybinds;
 const ControlCenter = @import("control_center/panel.zig").ControlCenter;
 const StartMenu = @import("start_menu/panel.zig").StartMenu;
@@ -117,14 +118,19 @@ fn handleModifiers(listener: *wl.Listener(*wlr.Keyboard), wlr_keyboard: *wlr.Key
         const synthetic_locked = keyboard.server.locker != null and keyboard.server.virtual_input != null and keyboard.device == &keyboard.server.virtual_input.?.keyboard.wlr_kbd.base;
         if (!synthetic_locked) @import("osd.zig").show(keyboard.server, .{ .kind = .caps_lock, .active = caps });
     }
-    keyboard.server.input.seat.setKeyboard(wlr_keyboard);
+    const seat = keyboard.server.input.seat;
+    seat.setKeyboard(wlr_keyboard);
+    @import("input/drag.zig").updateDragAction(seat, mods.ctrl);
+    // wlroots' DnD keyboard grab does not forward modifier events.
+    // Keep the focused source client synchronized while the drag is active.
+    if (seat.drag != null) seat.keyboardSendModifiers(&wlr_keyboard.modifiers);
     @import("input/layouts.zig").activate(keyboard);
     if (keyboard.server.locker) |lock| {
         lock.modifiers(wlr_keyboard.getModifiers());
         if (lock.client) |client| if (client.focused != null) keyboard.server.input.seat.keyboardNotifyModifiers(&wlr_keyboard.modifiers);
         return;
     }
-    const grab = if (keyboard.server.text_input) |relay| relay.keyboardGrab(wlr_keyboard) else null;
+    const grab = if (keyboard.server.text_input) |relay| relay.keyboardGrab(wlr_keyboard, .state) else null;
     if (grab) |im_grab| im_grab.sendModifiers(&wlr_keyboard.modifiers) else keyboard.server.input.seat.keyboardNotifyModifiers(&wlr_keyboard.modifiers);
 
     // Accept only when the modifier that opened the carousel is released.
@@ -160,8 +166,9 @@ pub fn switchVt(keyboard: *Keyboard, syms: []const xkb.Keysym) bool {
     const session = keyboard.server.session orelse return false;
     for (syms) |sym| {
         const value = @intFromEnum(sym);
-        if (value < xkb.Keysym.XF86Switch_VT_1 or value > xkb.Keysym.XF86Switch_VT_12) continue;
-        session.changeVt(value - xkb.Keysym.XF86Switch_VT_1 + 1) catch log.warn("could not switch to VT {d}", .{value - xkb.Keysym.XF86Switch_VT_1 + 1});
+        const first = @intFromEnum(xkb.Keysym.XF86Switch_VT_1);
+        if (value < first or value > @intFromEnum(xkb.Keysym.XF86Switch_VT_12)) continue;
+        session.changeVt(value - first + 1) catch log.warn("could not switch to VT {d}", .{value - first + 1});
         return true;
     }
     return false;

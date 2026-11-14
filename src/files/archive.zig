@@ -3,10 +3,7 @@
 const std = @import("std");
 const tr = @import("i18n").tr;
 const c = @import("c.zig").api;
-const a = @cImport({
-    @cInclude("archive.h");
-    @cInclude("archive_entry.h");
-});
+const a = @import("c_archive");
 const Allocator = std.mem.Allocator;
 pub const Cancel = std.atomic.Value(bool);
 
@@ -95,7 +92,7 @@ const Reader = struct {
         _ = a.archive_read_support_format_zip(handle);
         _ = a.archive_read_support_format_tar(handle);
         _ = a.archive_read_support_format_7zip(handle);
-        const zpath = try mem.dupeZ(u8, path);
+        const zpath = try mem.dupeSentinel(u8, path, 0);
         defer mem.free(zpath);
         const fd = c.open(zpath, c.O_RDONLY | c.O_NONBLOCK | c.O_CLOEXEC);
         if (fd < 0) return error.OpenArchiveFailed;
@@ -208,7 +205,7 @@ fn openDirectory(root: c_int, path: []const u8) !c_int {
     while (parts.next()) |part| {
         if (part.len == 0) continue;
         var buf: [4096]u8 = undefined;
-        const name = try std.fmt.bufPrintZ(&buf, "{s}", .{part});
+        const name = try std.fmt.bufPrintSentinel(&buf, "{s}", .{part}, 0);
         if (c.mkdirat(fd, name, @as(c_uint, 0o700)) != 0 and std.c._errno().* != c.EEXIST) return error.WriteFailed;
         const next = c.openat(fd, name, c.O_RDONLY | c.O_DIRECTORY | c.O_NOFOLLOW | c.O_CLOEXEC);
         if (next < 0) return error.UnsafeArchivePath;
@@ -250,7 +247,7 @@ fn resolveLink(mem: Allocator, links: *const Links, path: []const u8, resolved: 
 pub fn extract(mem: Allocator, path: []const u8, destination: []const u8, member: ?[]const u8, cancel: *const Cancel) !void {
     const reader = try Reader.open(mem, path, cancel);
     defer reader.close();
-    const zdest = try mem.dupeZ(u8, destination);
+    const zdest = try mem.dupeSentinel(u8, destination, 0);
     defer mem.free(zdest);
     const root = c.open(zdest, c.O_RDONLY | c.O_DIRECTORY | c.O_NOFOLLOW | c.O_CLOEXEC);
     if (root < 0) return error.WriteFailed;
@@ -284,7 +281,7 @@ pub fn extract(mem: Allocator, path: []const u8, destination: []const u8, member
         const parent = try openDirectory(root, if (kind == c.S_IFDIR) name else std.fs.path.dirname(name) orelse "");
         defer _ = c.close(parent);
         if (kind == c.S_IFDIR) continue;
-        const zname = try mem.dupeZ(u8, std.fs.path.basename(name));
+        const zname = try mem.dupeSentinel(u8, std.fs.path.basename(name), 0);
         defer mem.free(zname);
         const fd = c.openat(parent, zname, c.O_WRONLY | c.O_CREAT | c.O_EXCL | c.O_NOFOLLOW | c.O_CLOEXEC, @as(c_uint, 0o600));
         if (fd < 0) return error.WriteFailed;
@@ -306,7 +303,7 @@ pub fn extract(mem: Allocator, path: []const u8, destination: []const u8, member
             }
         }
         // Keep ordinary executable bits, never set-id or archive ownership.
-        if (member == null) _ = c.fchmod(fd, @as(c_uint, @intCast(a.archive_entry_perm(entry) & 0o777)) | 0o600);
+        if (member == null) _ = c.fchmod(fd, @intCast(@as(c_uint, @intCast(a.archive_entry_perm(entry) & 0o777)) | 0o600));
         found = true;
         if (member != null) break;
     }
@@ -327,9 +324,9 @@ pub fn extract(mem: Allocator, path: []const u8, destination: []const u8, member
         try check(cancel);
         const parent = try openDirectory(root, std.fs.path.dirname(link.key_ptr.*) orelse "");
         defer _ = c.close(parent);
-        const name = try mem.dupeZ(u8, std.fs.path.basename(link.key_ptr.*));
+        const name = try mem.dupeSentinel(u8, std.fs.path.basename(link.key_ptr.*), 0);
         defer mem.free(name);
-        const target = try mem.dupeZ(u8, link.value_ptr.*);
+        const target = try mem.dupeSentinel(u8, link.value_ptr.*, 0);
         defer mem.free(target);
         if (c.symlinkat(target, parent, name) != 0) return error.WriteFailed;
     }

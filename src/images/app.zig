@@ -48,6 +48,13 @@ pub const App = struct {
     /// Fractional device pixels per logical pixel; `scale` is its ceiling.
     density: f64 = 1,
     dirty: bool = true,
+    /// Only the toolbar strip changed (its buttons' proximity glow): the
+    /// client may repaint and damage just that strip instead of the window.
+    toolbar_dirty: bool = false,
+    /// What pointer motion changed outside the toolbar strip (proximity glow
+    /// of content items, the hover hint), in app coordinates: like
+    /// `toolbar_dirty`, a frame with only this repaints just these rects.
+    pointer_damage: @import("ui").repaint.Region = .{},
     title_changed: bool = true,
     title: [1024:0]u8 = @splat(0),
     closed: bool = false,
@@ -145,6 +152,7 @@ pub const App = struct {
 
     pub const canvas = app_input.canvas;
     pub const buttonRect = app_input.buttonRect;
+    pub const buttonProximity = app_input.buttonProximity;
     pub const hit = app_input.hit;
     pub const clamp = app_input.clamp;
     pub const zoom = app_input.zoom;
@@ -223,11 +231,24 @@ pub fn checker(cr: *c.cairo_t, r: Rect) void {
     c.cairo_paint(cr);
     setSource(cr, ui_theme.global.image_checker_light);
     const cell: f64 = ui_theme.global.image_checker_size;
-    var y: f64 = r.y;
-    var row: usize = 0;
-    while (y < r.y + r.h) : (y += cell) {
-        var x = r.x + @as(f64, @floatFromInt(row % 2)) * cell;
-        while (x < r.x + r.w) : (x += cell * 2) c.cairo_rectangle(cr, x, y, cell, cell);
+    if (cell <= 0) return;
+    // Only the cells inside the clip: the grid stays anchored at `r`, and a
+    // partial repaint builds a few rectangles instead of thousands.
+    var x0: f64 = 0;
+    var y0: f64 = 0;
+    var x1: f64 = 0;
+    var y1: f64 = 0;
+    c.cairo_clip_extents(cr, &x0, &y0, &x1, &y1);
+    const right = @min(r.x + r.w, x1);
+    const bottom = @min(r.y + r.h, y1);
+    const first_col: usize = @intFromFloat(@max(0, @floor((x0 - r.x) / cell)));
+    var row: usize = @intFromFloat(@max(0, @floor((y0 - r.y) / cell)));
+    var y: f64 = r.y + @as(f64, @floatFromInt(row)) * cell;
+    while (y < bottom) : (y += cell) {
+        // Light cells sit where column and row parity match.
+        const col = first_col + (first_col + row) % 2;
+        var x = r.x + @as(f64, @floatFromInt(col)) * cell;
+        while (x < right) : (x += cell * 2) c.cairo_rectangle(cr, x, y, cell, cell);
         row += 1;
     }
     c.cairo_fill(cr);

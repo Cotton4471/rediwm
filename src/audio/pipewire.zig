@@ -24,10 +24,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const pa = @cImport({
-    @cInclude("pulse/pulseaudio.h");
-    @cInclude("pulse/rtclock.h");
-});
+const pa = @import("c_pulse");
 
 const log = std.log.scoped(.audio);
 const Bass = opaque {};
@@ -562,7 +559,7 @@ pub const AudioManager = struct {
 
     pub fn setDefaultSink(self: *AudioManager, name: []const u8) void {
         var buf: [256]u8 = undefined;
-        const name_z = std.fmt.bufPrintZ(&buf, "{s}", .{name}) catch return;
+        const name_z = std.fmt.bufPrintSentinel(&buf, "{s}", .{name}, 0) catch return;
         self.lock();
         defer self.unlock();
         if (pa.pa_context_set_default_sink(self.context, name_z, null, null)) |op| pa.pa_operation_unref(op);
@@ -570,7 +567,7 @@ pub const AudioManager = struct {
 
     pub fn setDefaultSource(self: *AudioManager, name: []const u8) void {
         var buf: [256]u8 = undefined;
-        const name_z = std.fmt.bufPrintZ(&buf, "{s}", .{name}) catch return;
+        const name_z = std.fmt.bufPrintSentinel(&buf, "{s}", .{name}, 0) catch return;
         self.lock();
         defer self.unlock();
         if (pa.pa_context_set_default_source(self.context, name_z, null, null)) |op| pa.pa_operation_unref(op);

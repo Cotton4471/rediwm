@@ -36,7 +36,7 @@ pub fn scheduleClockTick(bar: *Taskbar) void {
 }
 
 pub fn updateClockLocale(bar: *Taskbar) void {
-    const name = gpa.dupeZ(u8, bar.server.config.region.formats) catch return;
+    const name = gpa.dupeSentinel(u8, bar.server.config.region.formats, 0) catch return;
     defer gpa.free(name);
     // Keep a private locale: changing the process locale would affect workers.
     const locale = c_time.newlocale(c_time.LC_TIME_MASK, name, null);

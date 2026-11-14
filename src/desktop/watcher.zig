@@ -2,6 +2,7 @@
 const i18n = @import("i18n");
 const std = @import("std");
 const c = @import("c.zig").api;
+const platform = @import("platform");
 const icons = @import("../icon_cache.zig");
 const theme = @import("../icon_theme.zig");
 const desktop = @import("dotdesktop.zig");
@@ -138,8 +139,7 @@ pub const Worker = struct {
     pub fn deinit(self: *Worker) void {
         self.stopAndJoin();
         for (self.started[0..self.started_len]) |launch| {
-            var status: u32 = 0;
-            _ = std.os.linux.wait4(launch.pid, &status, std.os.linux.W.NOHANG, null);
+            _ = platform.child.reap(launch.pid);
         }
         if (self.wake_worker >= 0) _ = c.close(self.wake_worker);
         if (self.wake_main >= 0) _ = c.close(self.wake_main);
@@ -292,7 +292,8 @@ pub const Worker = struct {
             .{ .kind = .home, .name = i18n.tr("Home"), .path = home, .glyph = .home },
             .{ .kind = .trash, .name = i18n.tr("Trash"), .path = trash_files, .glyph = .trash_can },
         };
-        for (entries) |e| try list.append(mem, .{ .path = try mem.dupe(u8, e.path), .name = e.name, .icon = icons.get(self.theme_cfg, self.io, if (e.kind == .home) "user-home" else "user-trash", size) orelse builtinIcon(e.glyph, size, self.theme_cfg.generation), .folder = true, .cell = config.lookup(mem, saved, e.path), .builtin = e.kind });
+        // Only a pack's own artwork replaces the glyph, as in the Files sidebar; an installed theme's user-home is a folder.
+        for (entries) |e| try list.append(mem, .{ .path = try mem.dupe(u8, e.path), .name = e.name, .icon = icons.getPack(self.theme_cfg, self.io, if (e.kind == .home) "user-home" else "user-trash", size) orelse builtinIcon(e.glyph, size, self.theme_cfg.generation), .folder = true, .cell = config.lookup(mem, saved, e.path), .builtin = e.kind });
     }
     fn scan(self: *Worker) !*Snapshot {
         _ = c.pthread_mutex_lock(&self.mutex);
@@ -385,7 +386,7 @@ pub const Worker = struct {
             defer c.free(real);
             const target = std.mem.span(real);
             for (app_dirs) |dir| {
-                const zdir = mem.dupeZ(u8, dir) catch continue;
+                const zdir = mem.dupeSentinel(u8, dir, 0) catch continue;
                 const canonical = c.realpath(zdir, null) orelse continue;
                 defer c.free(canonical);
                 const prefix = std.mem.span(canonical);
@@ -409,17 +410,16 @@ pub const Worker = struct {
             std.log.err("desktop directory: {}", .{err});
             return;
         };
-        const zdir = a.dupeZ(u8, self.dir) catch return;
+        const zdir = a.dupeSentinel(u8, self.dir, 0) catch return;
         defer a.free(zdir);
-        const fd = c.inotify_init1(c.IN_NONBLOCK | c.IN_CLOEXEC);
-        defer if (fd >= 0) {
-            _ = c.close(fd);
-        };
-        var wd: c_int = -1;
+        // Without file watching `watcher.fd` stays -1 and only commands wake the loop.
+        var watcher = platform.watch.Watcher.init() catch platform.watch.Watcher{};
+        defer watcher.deinit();
+        var watch = platform.watch.none;
         while (!self.stop.load(.acquire)) {
-            if (fd >= 0 and wd < 0) {
+            if (watcher.fd >= 0 and watch < 0) {
                 _ = c.mkdir(zdir, 0o755);
-                wd = c.inotify_add_watch(fd, zdir, c.IN_CREATE | c.IN_DELETE | c.IN_MOVED_FROM | c.IN_MOVED_TO | c.IN_CLOSE_WRITE | c.IN_ATTRIB | c.IN_DELETE_SELF | c.IN_MOVE_SELF);
+                watch = watcher.add(self.dir, .listing) orelse platform.watch.none;
             }
             _ = c.pthread_mutex_lock(&self.mutex);
             if (self.pending_child_env) |env| {
@@ -445,7 +445,7 @@ pub const Worker = struct {
                 if (self.scan()) |snap| {
                     _ = c.pthread_mutex_lock(&self.mutex);
                     const old = self.pending;
-                    // Preserve an unconsumed result when inotify replaces a snapshot.
+                    // Preserve an unconsumed result when a file change replaces a snapshot.
                     snap.created_folder = self.created_folder;
                     self.created_folder = null;
                     if (old) |previous| {
@@ -462,25 +462,22 @@ pub const Worker = struct {
             }
             var fds = [2]c.struct_pollfd{
                 .{ .fd = self.wake_worker, .events = c.POLLIN, .revents = 0 },
-                .{ .fd = fd, .events = c.POLLIN, .revents = 0 },
+                .{ .fd = watcher.fd, .events = c.POLLIN, .revents = 0 },
             };
             // Only a failed watch retry needs a clock; commands and
             // filesystem changes wake the poll directly.
-            const timeout: c_int = if (fd >= 0 and wd < 0) 1000 else -1;
+            const timeout: c_int = if (watcher.fd >= 0 and watch < 0) 1000 else -1;
             _ = c.poll(&fds, fds.len, timeout);
             if (fds[0].revents & c.POLLIN != 0) drain(self.wake_worker);
             if (fds[1].revents & c.POLLIN != 0) {
-                var buf: [16384]u8 align(@alignOf(c.struct_inotify_event)) = undefined;
-                while (true) {
-                    const n = c.read(fd, &buf, buf.len);
-                    if (n <= 0) break;
-                    var off: usize = 0;
-                    while (off + @sizeOf(c.struct_inotify_event) <= @as(usize, @intCast(n))) {
-                        const ev: *const c.struct_inotify_event = @ptrCast(@alignCast(&buf[off]));
-                        if (ev.mask & (c.IN_IGNORED | c.IN_DELETE_SELF | c.IN_MOVE_SELF) != 0) wd = -1;
-                        off += @sizeOf(c.struct_inotify_event) + ev.len;
+                var events: struct {
+                    watch: platform.watch.Watch,
+                    fn event(s: *@This(), ev: platform.watch.Event) void {
+                        if (ev.flags.lost()) s.watch = platform.watch.none;
                     }
-                }
+                } = .{ .watch = watch };
+                watcher.drain(&events, @TypeOf(events).event) catch {};
+                watch = events.watch;
                 self.refresh.store(true, .release);
             }
         }
@@ -547,8 +544,12 @@ pub const Worker = struct {
                     const uri = std.mem.trim(u8, raw, " \t\r");
                     if (uri.len == 0 or uri[0] == '#' or std.mem.eql(u8, uri, "copy") or std.mem.eql(u8, uri, "cut")) continue;
                     const path = try @import("dnd.zig").localPath(mem, uri);
-                    const dest = try std.fmt.allocPrint(mem, "{s}/{s}", .{ cmd.path, std.fs.path.basename(path) });
-                    try self.execute(.{ .kind = if (cmd.folder or std.mem.startsWith(u8, data.items, "cut\n")) .move else if (std.mem.eql(u8, cmd.value, "paste")) .copy else .link, .path = path, .value = dest });
+                    if (std.mem.eql(u8, cmd.value, "trash")) {
+                        try self.execute(.{ .kind = .trash, .path = path });
+                    } else {
+                        const dest = try std.fmt.allocPrint(mem, "{s}/{s}", .{ cmd.path, std.fs.path.basename(path) });
+                        try self.execute(.{ .kind = if (cmd.folder or std.mem.startsWith(u8, data.items, "cut\n")) .move else if (std.mem.eql(u8, cmd.value, "paste")) .copy else .link, .path = path, .value = dest });
+                    }
                 }
                 self.drop_success.store(true, .release);
             },
@@ -627,7 +628,7 @@ pub const Worker = struct {
             .folder => {
                 var suffix: usize = 1;
                 while (true) : (suffix += 1) {
-                    const path = if (suffix == 1) try a.dupeZ(u8, cmd.path) else try std.fmt.allocPrintSentinel(a, "{s} ({d})", .{ cmd.path, suffix }, 0);
+                    const path = if (suffix == 1) try a.dupeSentinel(u8, cmd.path, 0) else try std.fmt.allocPrintSentinel(a, "{s} ({d})", .{ cmd.path, suffix }, 0);
                     const result = c.mkdir(path, 0o755);
                     if (result == 0) {
                         if (self.created_folder) |previous| a.free(previous.path);
@@ -640,30 +641,30 @@ pub const Worker = struct {
                 }
             },
             .trust => { // Allow Launching: the user's own `chmod u+x`.
-                const p = try a.dupeZ(u8, cmd.path);
+                const p = try a.dupeSentinel(u8, cmd.path, 0);
                 defer a.free(p);
                 var stat: c.struct_stat = undefined;
                 if (c.stat(p, &stat) != 0 or stat.st_mode & c.S_IFMT != c.S_IFREG or stat.st_uid != c.getuid()) return error.NotYourFile;
-                if (c.chmod(p, (stat.st_mode & 0o7777) | c.S_IXUSR) != 0) return error.PermissionChangeFailed;
+                if (c.chmod(p, @intCast((stat.st_mode & 0o7777) | c.S_IXUSR)) != 0) return error.PermissionChangeFailed;
             },
             .file => {
-                const p = try a.dupeZ(u8, cmd.path);
+                const p = try a.dupeSentinel(u8, cmd.path, 0);
                 defer a.free(p);
                 const fd = c.open(p, c.O_WRONLY | c.O_CREAT | c.O_EXCL | c.O_CLOEXEC, @as(c_uint, 0o644));
                 if (fd < 0) return error.CreateFailed;
                 _ = c.close(fd);
             },
             .rename, .move => { // No overwriting another desktop item.
-                const from = try a.dupeZ(u8, cmd.path);
+                const from = try a.dupeSentinel(u8, cmd.path, 0);
                 defer a.free(from);
-                const to = try a.dupeZ(u8, cmd.value);
+                const to = try a.dupeSentinel(u8, cmd.value, 0);
                 defer a.free(to);
-                if (c.renameat2(c.AT_FDCWD, from, c.AT_FDCWD, to, 1) != 0) return error.RenameFailed;
+                platform.fs.renameNoReplace(from.ptr, to.ptr) catch return error.RenameFailed;
             },
             .link => {
-                const from = try a.dupeZ(u8, cmd.path);
+                const from = try a.dupeSentinel(u8, cmd.path, 0);
                 defer a.free(from);
-                const to = try a.dupeZ(u8, cmd.value);
+                const to = try a.dupeSentinel(u8, cmd.value, 0);
                 defer a.free(to);
                 if (c.symlink(from, to) != 0) return error.LinkFailed;
             },
@@ -689,7 +690,7 @@ fn executable(env: std.process.Environ, name: []const u8) bool {
     var paths = std.mem.splitScalar(u8, env.getPosix("PATH") orelse "", ':');
     while (paths.next()) |p| {
         var buf: [4096]u8 = undefined;
-        const z = std.fmt.bufPrintZ(&buf, "{s}/{s}", .{ p, name }) catch continue;
+        const z = std.fmt.bufPrintSentinel(&buf, "{s}/{s}", .{ p, name }, 0) catch continue;
         if (c.access(z, c.X_OK) == 0) return true;
     }
     return false;

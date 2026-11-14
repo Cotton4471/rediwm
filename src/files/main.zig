@@ -1,4 +1,5 @@
 const std = @import("std");
+const platform = @import("platform");
 const ClientCursor = @import("ui").client_cursor;
 const wl = @import("wayland").client.wl;
 const xdg = @import("wayland").client.xdg;
@@ -51,10 +52,12 @@ pub const ClipboardSource = struct {
 
 pub const Client = @import("Client.zig");
 
-/// A separate, immutable buffer: window repaints must never recycle the drag image.
+/// A drag icon whose buffers remain alive until the drag ends.
 pub const DragIcon = struct {
     surface: *wl.Surface,
     buffer: *Buffer,
+    retired: std.ArrayList(*Buffer) = .empty,
+    copy: bool = false,
 
     pub fn create(client: *Client) !DragIcon {
         const surface = try client.compositor.?.createSurface();
@@ -62,25 +65,72 @@ pub const DragIcon = struct {
         const buffer = try Buffer.create(client, 48 * client.scale, 56 * client.scale);
         errdefer buffer.destroy();
         buffer.counts_frame = false;
+
         const cr = c.cairo_create(buffer.image) orelse return error.CairoFailed;
         defer c.cairo_destroy(cr);
         c.cairo_scale(cr, @floatFromInt(client.scale), @floatFromInt(client.scale));
-        // Transparent padding places the file below and to the right of the pointer.
-        for (client.app.items.items) |item| {
-            if (!item.selected or item.missing) continue;
-            client.app.drawItemIcon(cr, item, 8, 16, 32);
-            break;
-        }
+        drawFile(client, cr);
         c.cairo_surface_flush(buffer.image);
+
         surface.setBufferScale(client.scale);
         surface.attach(buffer.wl_buffer, 0, 0);
         surface.damageBuffer(0, 0, buffer.w, buffer.h);
         return .{ .surface = surface, .buffer = buffer };
     }
 
+    pub fn update(self: *DragIcon, client: *Client, copy: bool) !void {
+        if (self.copy == copy) return;
+
+        const buffer = try Buffer.create(client, 48 * client.scale, 56 * client.scale);
+        errdefer buffer.destroy();
+        buffer.counts_frame = false;
+
+        const cr = c.cairo_create(buffer.image) orelse return error.CairoFailed;
+        defer c.cairo_destroy(cr);
+        c.cairo_scale(cr, @floatFromInt(client.scale), @floatFromInt(client.scale));
+        drawFile(client, cr);
+        if (copy) drawCopyBadge(cr);
+        c.cairo_surface_flush(buffer.image);
+
+        try self.retired.append(a, self.buffer);
+        self.buffer = buffer;
+        self.copy = copy;
+
+        self.surface.attach(buffer.wl_buffer, 0, 0);
+        self.surface.damageBuffer(0, 0, buffer.w, buffer.h);
+        self.surface.commit();
+    }
+
+    fn drawFile(client: *Client, cr: *c.cairo_t) void {
+        // Transparent padding places the file below and to the right of the pointer.
+        for (client.app.items.items) |item| {
+            if (!item.selected or item.missing) continue;
+            client.app.drawItemIcon(cr, item, 8, 16, 32);
+            break;
+        }
+    }
+
+    fn drawCopyBadge(cr: *c.cairo_t) void {
+        c.cairo_arc(cr, 36, 44, 8, 0, 2 * std.math.pi);
+        c.cairo_set_source_rgba(cr, 0.08, 0.48, 0.24, 1);
+        c.cairo_fill_preserve(cr);
+        c.cairo_set_source_rgba(cr, 1, 1, 1, 1);
+        c.cairo_set_line_width(cr, 1.5);
+        c.cairo_stroke(cr);
+
+        c.cairo_move_to(cr, 32.5, 44);
+        c.cairo_line_to(cr, 39.5, 44);
+        c.cairo_move_to(cr, 36, 40.5);
+        c.cairo_line_to(cr, 36, 47.5);
+        c.cairo_set_line_width(cr, 2);
+        c.cairo_stroke(cr);
+    }
+
     pub fn destroy(self: *DragIcon) void {
         self.surface.destroy();
         self.buffer.destroy();
+        for (self.retired.items) |buffer| buffer.destroy();
+        self.retired.deinit(a);
     }
 };
 
@@ -94,6 +144,8 @@ pub const Buffer = struct {
     h: i32,
     busy: bool = false,
     counts_frame: bool = true,
+    /// `Client.commit_seq` of the image this buffer holds; 0 = unknown.
+    seq: u64 = 0,
 
     pub fn create(client: *Client, w: i32, h: i32) !*Buffer {
         if (w <= 0 or h <= 0 or w > 16384 or h > 16384) return error.InvalidSize;
@@ -149,7 +201,7 @@ pub const Buffer = struct {
 };
 
 pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]const u8, chooser: ?@import("chooser.zig").Options, torrent_source: ?[]const u8, transfers: bool) !void {
-    _ = c.signal(c.SIGPIPE, c.SIG_IGN);
+    platform.process.ignoreBrokenPipes();
 
     const home_dir = init.minimal.environ.getPosix("HOME") orelse "/";
     // Test-only escape hatch: skip decoration negotiation to exercise the
@@ -187,6 +239,7 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
     if (chooser) |options| try self.app.configureChooser(options);
     if (selected_file) |path| self.app.selectOnLoad(path);
     self.app.startDevices();
+    self.app.startAudio();
     if (chooser == null) self.app.startTorrents();
     if (transfers) self.app.openTransfers();
     if (torrent_source) |source| self.app.torrentSource(source);
@@ -196,6 +249,7 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
         if (self.drop_receiving) |*receive| receive.deinit();
         for (self.sends.items) |*send| send.deinit();
         self.sends.deinit(a);
+        if (self.frame_callback) |callback| callback.destroy();
         for (self.buffers.items) |buffer| buffer.destroy();
         self.buffers.deinit(a);
         self.retained.deinit(a);
@@ -276,6 +330,7 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
         self.app.stepHover(app_mod.nowMs());
         self.app.stepScrollbar(app_mod.nowMs());
         self.app.stepScanNotice(app_mod.nowMs());
+        self.app.stepAudio(app_mod.nowMs());
         self.refreshCursor();
 
         if (self.app.title_changed) {
@@ -299,7 +354,7 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
             return error.DisplayFailed;
         }
 
-        var fds: [23]c.struct_pollfd = @splat(.{ .fd = -1, .events = c.POLLIN, .revents = 0 });
+        var fds: [24]c.struct_pollfd = @splat(.{ .fd = -1, .events = c.POLLIN, .revents = 0 });
         fds[0] = .{ .fd = display.getFd(), .events = @intCast(c.POLLIN | @as(c_int, if (flushed == .AGAIN) c.POLLOUT else 0)), .revents = 0 };
         fds[1].fd = self.app.preview_return_fd orelse -1;
         fds[2].fd = if (self.receiving) |receive| receive.fd else -1;
@@ -315,9 +370,10 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
         if (self.app.terminal.session) |session| {
             fds[19] = .{ .fd = terminal_c.ft_pty(session), .events = @intCast(c.POLLIN | @as(c_int, if (terminal_c.ft_wants_write(session)) c.POLLOUT else 0)), .revents = 0 };
             fds[20] = .{ .fd = terminal_c.ft_channel(session), .events = @intCast(c.POLLIN | @as(c_int, if (terminal_c.ft_wants_request(session)) c.POLLOUT else 0)), .revents = 0 };
-            fds[21].fd = terminal_c.ft_pidfd(session);
+            fds[21].fd = terminal_c.ft_exit_fd(session);
         }
         fds[22].fd = self.app.torrents.fd;
+        fds[23].fd = self.app.audioWakeFd();
         const send_count = self.sends.items.len;
         for (self.sends.items, 0..) |send, i| fds[i + 6] = .{ .fd = send.fd, .events = c.POLLOUT, .revents = 0 };
 
@@ -340,6 +396,7 @@ pub fn run(init: std.process.Init, target_dir: []const u8, selected_file: ?[]con
         }
         if (fds[5].revents & c.POLLIN != 0) self.app.drainThumbs();
         if (fds[14].revents & c.POLLIN != 0) self.app.drainDevices();
+        if (fds[23].revents & c.POLLIN != 0) self.app.drainAudio();
         if (fds[16].revents != 0) while (self.app.children.next() != null) {};
         if (fds[18].revents != 0) if (self.app.job_runner) |runner| runner.drain();
         if (fds[17].revents != 0) self.app.extractionFolderReady();

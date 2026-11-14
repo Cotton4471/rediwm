@@ -13,6 +13,7 @@ pub const Phase = enum { idle, authenticating, prompting, authenticated, startin
 
 pub const Action = enum {
     none,
+    greeter_ready,
     /// Validate the login's user and start a worker for it.
     spawn_login,
     /// End the current login worker; nothing it says later is relayed.
@@ -59,6 +60,7 @@ pub const Relay = struct {
     worker_fd: c_int = -1,
     /// Set by a successful `start`, until `reset`.
     session: ?ws.Session = null,
+    ready_reported: bool = false,
 
     pub fn init(gpa: std.mem.Allocator) Relay {
         return .{ .arena = .init(gpa) };
@@ -72,11 +74,18 @@ pub const Relay = struct {
     pub fn reset(self: *Relay) void {
         self.phase = .idle;
         self.session = null;
+        self.ready_reported = false;
         _ = self.arena.reset(.retain_capacity);
     }
 
     pub fn handleGreeterRequest(self: *Relay, req: dm_ipc.Request, io: std.Io, search_dirs: []const []const u8) !Action {
         switch (req) {
+            .ready => {
+                if (self.phase == .starting or self.ready_reported) return .drop_greeter;
+                try self.reply(.ready);
+                self.ready_reported = true;
+                return .greeter_ready;
+            },
             .login => {
                 if (self.phase != .idle) return .drop_greeter;
                 self.phase = .authenticating;
@@ -125,10 +134,10 @@ pub const Relay = struct {
         if (payload.len == 0) return error.InvalidReport;
         const text = payload[1..];
         var clean: [max_text]u8 = undefined;
-        switch (@as(proto.Report, @enumFromInt(payload[0]))) {
+        switch (@as(proto.Report, @fromBackingInt(@intCast(payload[0])))) {
             .question => {
                 if (self.phase != .authenticating or text.len == 0) return error.UnexpectedReport;
-                const kind: dm_ipc.MessageKind = switch (@as(proto.QuestionKind, @enumFromInt(text[0]))) {
+                const kind: dm_ipc.MessageKind = switch (@as(proto.QuestionKind, @fromBackingInt(@intCast(text[0])))) {
                     .secret => .secret,
                     .visible => .visible,
                     .info => .info,

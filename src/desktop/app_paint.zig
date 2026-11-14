@@ -18,6 +18,7 @@ const nowMs = @import("app_draw.zig").nowMs;
 const rounded = @import("app_draw.zig").rounded;
 const IconRaster = @import("app_draw.zig").IconRaster;
 const label = @import("app_draw.zig").label;
+const button = @import("ui").widgets.button;
 
 /// The selection band rasterized with its own bounds as the only clip. A
 /// repair can split the band's corners across several rectangular clips,
@@ -44,9 +45,9 @@ pub fn drawBand(self: *App, cr: *c.cairo_t) void {
     const r = self.selectionRect();
     const rad: f64 = @min(@as(f64, damage_mod.rubberband_radius), @as(f64, @floatFromInt(@min(r.w, r.h))) / 2.0);
     rounded(cr, r.x, r.y, r.w, r.h, rad);
-    shell_cairo.setSource(cr, appearance_theme.global.desktop_selection);
+    shell_cairo.setSource(cr, appearance_theme.global.desktopSelectionColor());
     c.cairo_fill_preserve(cr);
-    shell_cairo.setSource(cr, appearance_theme.global.desktop_selection_border);
+    shell_cairo.setSource(cr, appearance_theme.global.desktopSelectionBorder());
     c.cairo_set_line_width(cr, 1);
     c.cairo_stroke(cr);
 }
@@ -118,6 +119,27 @@ pub fn render(self: *App, cr: *c.cairo_t, damage: *const Damage, now: i64, conte
     c.cairo_paint(cr);
     c.cairo_set_operator(cr, c.CAIRO_OPERATOR_OVER);
     if (self.wallpaper) |im| @import("wallpaper.zig").render(im, cr, self.geometry.w, self.geometry.h);
+    // Keep pointer-dependent lighting out of IconRaster: the cached icon,
+    // label and hover/selection decoration remain independent of pointer motion.
+    if (self.pointer_present and button.proximityGlowVisible(appearance_theme.global)) {
+        for (self.icons.items, 0..) |_, i| {
+            const r = self.iconRect(i);
+            if (r.contains(self.x, self.y) or !damage.intersects(r)) continue;
+            shell_cairo.drawProximityGlow(
+                @ptrCast(cr),
+                .{
+                    .x = @floatFromInt(r.x),
+                    .y = @floatFromInt(r.y),
+                    .w = @floatFromInt(r.w),
+                    .h = @floatFromInt(r.h),
+                },
+                8,
+                .{ .x = self.x, .y = self.y },
+                null,
+            );
+        }
+    }
+
     for (self.icons.items, 0..) |*ic, i| {
         const r = self.iconRect(i);
         if (!damage.intersects(r)) continue;
@@ -159,6 +181,11 @@ pub fn promptRect(self: *App) ?grid.Rect {
     if (self.edit == .trash) {
         const g = self.deletion.geometry(self.geometry.w, self.geometry.h - self.geometry.bottom);
         return .{ .x = @intFromFloat(@floor(g.x)), .y = @intFromFloat(@floor(g.y)), .w = @intFromFloat(@ceil(g.width)), .h = @intFromFloat(@ceil(g.height)) };
+    }
+    if (self.edit == .trash_properties) {
+        const card = self.trash_card orelse return null;
+        const g = card.geometry(self.geometry.w, self.geometry.h - self.geometry.bottom);
+        return .{ .x = @intFromFloat(@floor(g.box.x)), .y = @intFromFloat(@floor(g.box.y)), .w = @intFromFloat(@ceil(g.box.w)), .h = @intFromFloat(@ceil(g.box.h)) };
     }
     if (self.edit == .add_app) {
         if (self.applications) |*picker| {
@@ -238,7 +265,7 @@ pub fn paintOverlay(self: *App, cr: *c.cairo_t, now: i64) void {
             const y = py + 64 + @as(i32, @intCast(row)) * 32;
             if (index == self.choice) {
                 rounded(cr, px + 8, y, 464, 32, 4);
-                shell_cairo.setSource(cr, appearance_theme.global.desktop_selection);
+                shell_cairo.setSource(cr, appearance_theme.global.desktopSelectionColor());
                 c.cairo_fill(cr);
             }
             label(cr, entry.name, px + 12, y, 456, 32, false);
@@ -248,6 +275,15 @@ pub fn paintOverlay(self: *App, cr: *c.cairo_t, now: i64) void {
             self.deletion.drawWindow(cr, self.geometry.w, self.geometry.h - self.geometry.bottom, self.x, self.y, null)
         else
             self.deletion.draw(cr, self.geometry.w, self.geometry.h - self.geometry.bottom, self.x, self.y, null);
+    } else if (self.edit == .trash_properties) {
+        if (self.trash_card) |*card| {
+            const w = self.geometry.w;
+            const h = self.geometry.h - self.geometry.bottom;
+            if (self.separate_overlays)
+                card.drawWindow(cr, w, h, self.x, self.y, null, self.picker_theme, self.worker.io)
+            else
+                card.draw(cr, w, h, self.x, self.y, null, self.picker_theme, self.worker.io);
+        }
     } else if (self.edit != .none and self.edit != .rename and self.edit != .folder) {
         const x = @divTrunc(self.geometry.w - 420, 2);
         const y = @divTrunc(self.geometry.h - 120, 2);

@@ -3,6 +3,11 @@ const std = @import("std");
 const packs = @import("config").theme_pack;
 const theme = @import("ui").theme;
 const archive = @import("files/archive.zig");
+
+// `native.c` calls the exported syscall policy.
+comptime {
+    _ = @import("theme_helper/syscall_policy.zig");
+}
 extern fn rediwm_theme_stage_isolated([*:0]const u8, [*:0]const u8) c_int;
 extern fn rediwm_theme_validate_isolated([*:0]const u8) c_int;
 extern fn rediwm_theme_rollback([*:0]const u8, [*:0]const u8) c_int;
@@ -28,7 +33,7 @@ fn native(rc: c_int) !void {
     return error.PackValidationFailed;
 }
 fn z(path: []const u8) ![:0]u8 {
-    return a.dupeZ(u8, path);
+    return a.dupeSentinel(u8, path, 0);
 }
 fn validate(io: std.Io, root: []const u8, id: []const u8) !packs.Pack {
     const path = try std.fs.path.join(a, &.{ root, "theme.toml" });
@@ -132,7 +137,7 @@ fn run(init: std.process.Init) !void {
             command = try terminal.argv(a, raw, palette, opacity, modern);
         }
         const argv = try a.allocSentinel(?[*:0]const u8, command.len, null);
-        for (argv, command) |*dest, arg| dest.* = (try a.dupeZ(u8, arg)).ptr;
+        for (argv, command) |*dest, arg| dest.* = (try a.dupeSentinel(u8, arg, 0)).ptr;
         _ = execvp(argv[0].?, argv.ptr);
         return error.TerminalExecFailed;
     }

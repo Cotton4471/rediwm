@@ -8,13 +8,8 @@ const std = @import("std");
 const linux = std.os.linux;
 const proto = @import("proto.zig");
 
-const c = @cImport({
-    @cInclude("pwd.h");
-    @cInclude("grp.h");
-    @cInclude("unistd.h");
-    @cInclude("sys/ioctl.h");
-    @cInclude("sys/prctl.h");
-});
+const c = @import("c");
+const platform = @import("platform");
 
 pub const pam_handle_t = opaque {};
 
@@ -35,14 +30,14 @@ const PAM_DELETE_CRED: c_int = 0x0004;
 
 /// How long a session gets to exit after SIGTERM before SIGKILL.
 const stop_grace_ms = 5000;
-const default_path = "/usr/local/sbin:/usr/local/bin:/usr/bin:/bin";
+const default_path = @import("install_paths").search_path;
 
 fn report(fd: c_int, tag: proto.Report, text: []const u8) void {
     proto.writeFrameParts(fd, &.{ &.{@intFromEnum(tag)}, text }) catch {};
 }
 
 pub fn runWorker(ctrl_fd: c_int, greeter_fd: c_int, confdir: ?[]const u8, is_test: bool) !u8 {
-    _ = c.prctl(c.PR_SET_PDEATHSIG, @as(c_ulong, @intFromEnum(linux.SIG.TERM)), @as(c_ulong, 0), @as(c_ulong, 0), @as(c_ulong, 0));
+    platform.process.dieWithParent(.TERM);
 
     var arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
     defer arena.deinit();
@@ -51,10 +46,10 @@ pub fn runWorker(ctrl_fd: c_int, greeter_fd: c_int, confdir: ?[]const u8, is_tes
     var frame_buf: [proto.max_frame]u8 = undefined;
     const init = try std.json.parseFromSliceLeaky(proto.Init, a, try proto.readFrame(ctrl_fd, &frame_buf), .{ .allocate = .alloc_always });
     const is_greeter = std.mem.eql(u8, init.class, "greeter");
-    const user_z = try a.dupeZ(u8, init.user);
-    const confdir_z: ?[*:0]const u8 = if (confdir) |cd| (try a.dupeZ(u8, cd)).ptr else null;
+    const user_z = try a.dupeSentinel(u8, init.user, 0);
+    const confdir_z: ?[*:0]const u8 = if (confdir) |cd| (try a.dupeSentinel(u8, cd, 0)).ptr else null;
 
-    const pamh = rediwm_pam_start((try a.dupeZ(u8, init.service)).ptr, user_z.ptr, confdir_z, ctrl_fd) orelse {
+    const pamh = rediwm_pam_start((try a.dupeSentinel(u8, init.service, 0)).ptr, user_z.ptr, confdir_z, ctrl_fd) orelse {
         report(ctrl_fd, .failed, "pam_start failed");
         return 1;
     };
@@ -127,15 +122,13 @@ pub fn runWorker(ctrl_fd: c_int, greeter_fd: c_int, confdir: ?[]const u8, is_tes
 /// Waits for the session child. A termination signal ends its process group
 /// (SIGTERM, then SIGKILL after `stop_grace_ms`); returns the wait status.
 fn supervise(pid: linux.pid_t, signal_fd: i32) u32 {
-    const pidfd_rc = linux.pidfd_open(pid, 0);
-    if (linux.errno(pidfd_rc) == .SUCCESS) {
-        const pidfd: i32 = @intCast(pidfd_rc);
-        defer _ = linux.close(pidfd);
+    if (platform.child.Handle.open(pid)) |process| {
+        defer process.close();
         var deadline: ?i64 = null;
         var killed = false;
         while (true) {
             var fds = [_]linux.pollfd{
-                .{ .fd = pidfd, .events = linux.POLL.IN, .revents = 0 },
+                .{ .fd = process.fd, .events = linux.POLL.IN, .revents = 0 },
                 .{ .fd = signal_fd, .events = linux.POLL.IN, .revents = 0 },
             };
             const timeout: i32 = if (deadline) |d| @intCast(@max(0, d - monotonicMs())) else -1;
@@ -156,9 +149,9 @@ fn supervise(pid: linux.pid_t, signal_fd: i32) u32 {
                 deadline = null;
             }
         }
-    }
+    } else |_| {}
     var status: u32 = 0;
-    while (linux.errno(linux.waitpid(pid, &status, 0)) == .INTR) {}
+    while (linux.errno(linux.waitpid(pid, @ptrCast(&status), 0)) == .INTR) {}
     return status;
 }
 
@@ -185,8 +178,8 @@ fn account(a: std.mem.Allocator, user_z: [:0]const u8) Account {
     const home = if (pw.pw_dir) |d| std.mem.span(d) else "/";
     const shell = if (pw.pw_shell) |s| std.mem.span(s) else "";
     return .{
-        .home = a.dupeZ(u8, home) catch "/",
-        .shell = a.dupeZ(u8, if (shell.len > 0) shell else "/bin/sh") catch "/bin/sh",
+        .home = a.dupeSentinel(u8, home, 0) catch "/",
+        .shell = a.dupeSentinel(u8, if (shell.len > 0) shell else "/bin/sh", 0) catch "/bin/sh",
         .uid = pw.pw_uid,
         .gid = pw.pw_gid,
         .found = true,
@@ -196,7 +189,7 @@ fn account(a: std.mem.Allocator, user_z: [:0]const u8) Account {
 /// The child's environment: PAM's (XDG_RUNTIME_DIR, XDG_SESSION_ID...) plus
 /// the account's identity. Keys we set ourselves are never taken from PAM.
 fn sessionEnv(a: std.mem.Allocator, pamh: *pam_handle_t, user: []const u8, desktops: []const u8, greeter: bool, login_started_ns: u64) ![:null]?[*:0]const u8 {
-    const user_z = try a.dupeZ(u8, user);
+    const user_z = try a.dupeSentinel(u8, user, 0);
     const acct = account(a, user_z);
     const owned = [_][]const u8{ "HOME", "USER", "LOGNAME", "SHELL", "XDG_CURRENT_DESKTOP", "REDIWM_GREETER_FD", "REDIWM_LOGIN_STARTED_NS" };
     var list: std.ArrayList(?[*:0]const u8) = .empty;
@@ -281,8 +274,8 @@ fn execSession(
         // Nothing the greeter runs needs to gain privileges (power actions
         // ask logind over D-Bus), so no setuid/file-capability exec may.
         // User sessions keep them for sudo and pkexec.
-        if (c.prctl(c.PR_SET_NO_NEW_PRIVS, @as(c_ulong, 1), @as(c_ulong, 0), @as(c_ulong, 0), @as(c_ulong, 0)) != 0) linux.exit_group(1);
-        const cmd = a.dupeZ(u8, exec) catch linux.exit_group(1);
+        platform.process.noNewPrivileges() catch linux.exit_group(1);
+        const cmd = a.dupeSentinel(u8, exec, 0) catch linux.exit_group(1);
         const argv = [_:null]?[*:0]const u8{ "/bin/sh", "-c", cmd.ptr };
         _ = linux.execve("/bin/sh", &argv, env.ptr);
     } else {

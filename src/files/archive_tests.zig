@@ -59,10 +59,7 @@ pub fn writeArchiveFixture(path: []const u8, names: []const [:0]const u8) !void 
 pub const ArchiveLinkFixture = struct { name: [:0]const u8, target: [:0]const u8 };
 
 pub fn writeArchiveFixtureLinks(path: []const u8, names: []const [:0]const u8, links: []const ArchiveLinkFixture) !void {
-    const api = @cImport({
-        @cInclude("archive.h");
-        @cInclude("archive_entry.h");
-    });
+    const api = @import("c_archive");
     const writer = api.archive_write_new() orelse return error.OutOfMemory;
     defer _ = api.archive_write_free(writer);
     if (std.mem.endsWith(u8, path, ".zip")) {
@@ -71,7 +68,7 @@ pub fn writeArchiveFixtureLinks(path: []const u8, names: []const [:0]const u8, l
         try std.testing.expectEqual(@as(c_int, 0), api.archive_write_set_format_pax_restricted(writer));
         try std.testing.expectEqual(@as(c_int, 0), api.archive_write_add_filter_gzip(writer));
     }
-    const zpath = try std.testing.allocator.dupeZ(u8, path);
+    const zpath = try std.testing.allocator.dupeSentinel(u8, path, 0);
     defer std.testing.allocator.free(zpath);
     try std.testing.expectEqual(@as(c_int, 0), api.archive_write_open_filename(writer, zpath));
     for (names) |name| {

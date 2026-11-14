@@ -98,7 +98,7 @@ test "Transfers uses list geometry and isolates file actions while preserving th
     // while the transfer pane is active.
     var files: [32]ViewItem = undefined;
     var transfers: [32]@import("torrents.zig").Transfer = undefined;
-    app.items = .{ .items = &files, .capacity = files.len };
+    app.items = .fromOwnedSlice(&files);
     app.torrents.snapshot = .{ .arena = undefined, .value = .{ .transfers = &transfers } };
     app.list_view = false;
     app.transfer_view = .{ .active = true, .folder_scroll = 77, .folder_search_visible = true };

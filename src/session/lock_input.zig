@@ -24,6 +24,7 @@ const rediwm_auth_destroy = lock_mod.rediwm_auth_destroy;
 const focus_account = lock_mod.focus_account;
 const focus_session = lock_mod.focus_session;
 const Geometry = lock_mod.Geometry;
+const lock_view = @import("lock_view.zig");
 const field_options = lock_mod.field_options;
 const powerExited = Lock.powerExited;
 
@@ -105,6 +106,10 @@ pub fn choose(self: *Lock, target: u8, delta: isize) void {
 /// Tab order; greeter mode adds the account and session choosers.
 pub fn focusOrder(self: *const Lock, buf: *[7]u8) []const u8 {
     const greeter = self.greeter orelse {
+        if (lock_view.layoutButtonShown(self)) {
+            buf[0..6].* = .{ 0, 1, 2, lock_mod.focus_layout, 3, 4 };
+            return buf[0..6];
+        }
         buf[0..5].* = .{ 0, 1, 2, 3, 4 };
         return buf[0..5];
     };
@@ -145,8 +150,7 @@ pub fn keyRepeats(self: *const Lock, sym: xkb.Keysym, utf8: []const u8) bool {
     if (self.busy()) return false;
     if (self.focus == 0) return @import("../input/repeat_keys.zig").editing(sym, utf8);
     if (self.focus == focus_account or self.focus == focus_session) {
-        const value = @intFromEnum(sym);
-        return value == xkb.Keysym.Left or value == xkb.Keysym.Right;
+        return sym == xkb.Keysym.Left or sym == xkb.Keysym.Right;
     }
     return false;
 }
@@ -155,8 +159,7 @@ pub fn key(self: *Lock, sym: xkb.Keysym, utf8: []const u8, mods: wlr.Keyboard.Mo
     self.caps = mods.caps;
     self.caret_edit_ms = anim.nowMs();
     defer self.changed();
-    const value = @intFromEnum(sym);
-    if (value == xkb.Keysym.Escape) {
+    if (sym == xkb.Keysym.Escape) {
         self.clear();
         self.confirm = null;
         self.focus = 0;
@@ -167,13 +170,13 @@ pub fn key(self: *Lock, sym: xkb.Keysym, utf8: []const u8, mods: wlr.Keyboard.Mo
         return;
     }
     if (self.busy()) return;
-    switch (value) {
-        xkb.Keysym.Tab, xkb.Keysym.ISO_Left_Tab => self.moveFocus(mods.shift or value == xkb.Keysym.ISO_Left_Tab),
-        xkb.Keysym.Up, xkb.Keysym.Down => if (!self.prompting()) self.choose(focus_account, if (value == xkb.Keysym.Up) -1 else 1),
+    switch (sym) {
+        xkb.Keysym.Tab, xkb.Keysym.ISO_Left_Tab => self.moveFocus(mods.shift or sym == xkb.Keysym.ISO_Left_Tab),
+        xkb.Keysym.Up, xkb.Keysym.Down => if (!self.prompting()) self.choose(focus_account, if (sym == xkb.Keysym.Up) -1 else 1),
         xkb.Keysym.Left, xkb.Keysym.Right => if (self.focus == focus_account or self.focus == focus_session)
-            self.choose(self.focus, if (value == xkb.Keysym.Left) -1 else 1)
+            self.choose(self.focus, if (sym == xkb.Keysym.Left) -1 else 1)
         else if (self.focus == 0) {
-            if (value == xkb.Keysym.Left) self.field().left() else self.field().right();
+            if (sym == xkb.Keysym.Left) self.field().left() else self.field().right();
         },
         xkb.Keysym.Home => if (self.focus == 0) {
             self.input.cursor = 0;
@@ -202,6 +205,7 @@ pub fn activate(self: *Lock, focus: u8) void {
     switch (focus) {
         0, 2 => self.submit(),
         1 => self.reveal = !self.reveal,
+        lock_mod.focus_layout => if (self.server.input_sources) |sources| sources.cycleLayouts(),
         3, 4 => {
             if (self.power_child != null) return;
             const reboot = focus == 4;
@@ -216,7 +220,11 @@ pub fn activate(self: *Lock, focus: u8) void {
             // syscall or shell interpolation. Never request an interactive
             // auth agent behind the locked screen.
             var argv: [4][]const u8 = undefined;
-            var child = std.process.spawn(self.server.io, .{ .argv = power_cmd.commandArgv(&argv, if (reboot) .reboot else .poweroff, false, true) }) catch {
+            const command = power_cmd.commandArgv(&argv, if (reboot) .reboot else .poweroff, false, true) orelse {
+                self.status = i18n.tr("Power service unavailable");
+                return;
+            };
+            var child = std.process.spawn(self.server.io, .{ .argv = command }) catch {
                 self.status = i18n.tr("Power service unavailable");
                 return;
             };
@@ -279,6 +287,13 @@ pub fn click(self: *Lock, x: f64, y: f64) void {
             self.choose(focus_session, 1);
         }
     };
+    if (lock_view.layoutButtonShown(self)) {
+        const button = geo.layoutButton();
+        if (dx >= button.x and dx <= button.x + button.w and dy >= button.y and dy <= button.y + button.h) {
+            self.focus = lock_mod.focus_layout;
+            self.activate(lock_mod.focus_layout);
+        }
+    }
     if (py >= geo.h - 100 * geo.s and py <= geo.h - 20 * geo.s) {
         if (px >= geo.w - 220 * geo.s and px < geo.w - 120 * geo.s) {
             self.focus = 3;

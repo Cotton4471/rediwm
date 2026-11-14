@@ -1,5 +1,6 @@
 // Standalone image client; decoration negotiation follows files/main.zig.
 const std = @import("std");
+const platform = @import("platform");
 const ClientCursor = @import("ui").client_cursor;
 const wl = @import("wayland").client.wl;
 const xdg = @import("wayland").client.xdg;
@@ -8,6 +9,7 @@ const c = @import("../files/c.zig").api;
 const app_mod = @import("app.zig");
 const key_repeat = @import("ui").key_repeat;
 const shell_ui = @import("ui").cairo;
+const repaint = @import("ui").repaint;
 const ui_theme = @import("ui").theme;
 const a = std.heap.c_allocator;
 
@@ -55,6 +57,8 @@ pub const Client = struct {
     density: f64 = 1,
     seat: ?*wl.Seat = null,
     pointer: ?*wl.Pointer = null,
+    axis_source: wl.Pointer.AxisSource = .wheel,
+    finger_navigation: @import("ui").trackpad_navigation.Gesture = .{},
     keyboard: ?*wl.Keyboard = null,
     input_serial: u32 = 0,
     wm_base: ?*xdg.WmBase = null,
@@ -80,6 +84,9 @@ pub const Client = struct {
     outstanding: usize = 0,
     buffers: [2]?*Buffer = @splat(null),
     applied_scale: i32 = 0,
+    /// Pending `wl_surface.frame` callback of the last commit. Glow-only
+    /// frames wait for it, so they follow the display, not the pointer rate.
+    frame_callback: ?*wl.Callback = null,
     xkb_context: ?*c.xkb_context = null,
     xkb_state: ?*c.xkb_state = null,
     key_repeat: key_repeat.KeyRepeat = .{},
@@ -370,7 +377,9 @@ pub const Client = struct {
             },
             .leave => {
                 self.inside = false;
+                self.finger_navigation.reset();
                 self.app.cancelDrag();
+                self.app.handleMotion(-1, -1);
             },
             .motion => |ev| {
                 self.handlePointerMotion(ev.surface_x.toDouble(), ev.surface_y.toDouble());
@@ -379,9 +388,30 @@ pub const Client = struct {
                 self.input_serial = ev.serial;
                 self.handlePointerButton(ev.button, ev.state == .pressed);
             },
+            .axis_source => |ev| {
+                if (self.axis_source != ev.axis_source) self.finger_navigation.reset();
+                self.axis_source = ev.axis_source;
+            },
             .axis => |ev| {
-                if (ev.axis == .vertical_scroll or self.app.overFilmstrip()) {
+                if (self.axis_source == .finger and !self.app.overFilmstrip()) {
+                    self.finger_navigation.add(
+                        ev.axis == .horizontal_scroll,
+                        ev.value.toDouble(),
+                    );
+                    if (ev.axis == .vertical_scroll) {
+                        self.app.handleScroll(ev.value.toDouble());
+                    }
+                } else if (ev.axis == .vertical_scroll or self.app.overFilmstrip()) {
                     self.app.handleScroll(ev.value.toDouble());
+                }
+            },
+            .axis_stop => |ev| {
+                if (self.axis_source == .finger) {
+                    if (self.finger_navigation.stop(ev.axis == .horizontal_scroll)) |gesture| {
+                        if (gesture.direction) |direction| {
+                            self.app.perform(if (direction == .back) .previous else .next);
+                        }
+                    }
                 }
             },
             else => {},
@@ -603,19 +633,37 @@ pub const Client = struct {
     }
     fn render(self: *Client) !void {
         self.updateCursor();
-        if (!self.configured or !self.app.dirty or self.outstanding >= 2) return;
+        const glow_only = !self.app.dirty and (self.app.toolbar_dirty or !self.app.pointer_damage.isEmpty());
+        if (!self.configured or !(self.app.dirty or glow_only) or self.outstanding >= 2) return;
+        if (glow_only and self.frame_callback != null) return;
 
         const tbh = self.titlebarHeight();
         const w = self.app.w;
         const h = self.app.h + tbh;
         const buffer = (try self.acquireBuffer(w * self.scale, h * self.scale)) orelse return;
+        // A proximity-glow frame repaints only the toolbar strip and the
+        // glowing items, plus whatever changed since this buffer was painted.
+        var frame: repaint.Region = .{};
+        if (!glow_only or self.applied_scale != self.scale) frame = .whole else {
+            if (self.app.toolbar_dirty) frame.add(.{ .x = 0, .y = tbh, .w = w, .h = @intFromFloat(@ceil(self.app.toolbarBottom())) });
+            for (self.app.pointer_damage.slice()) |r| frame.add(.{ .x = r.x, .y = r.y + tbh, .w = r.w, .h = r.h });
+        }
+        var paint = buffer.stale;
+        paint.merge(&frame);
+        if (paint.covers(w, h, 0.5)) paint = .whole;
 
         const cr = c.cairo_create(buffer.image) orelse return error.CairoFailed;
         defer c.cairo_destroy(cr);
 
         c.cairo_scale(cr, @floatFromInt(self.scale), @floatFromInt(self.scale));
 
-        if (tbh > 0) self.renderTitlebar(cr, w, tbh);
+        if (!paint.full) {
+            for (paint.slice()) |r| c.cairo_rectangle(cr, @floatFromInt(r.x), @floatFromInt(r.y), @floatFromInt(r.w), @floatFromInt(r.h));
+            // Content only: the titlebar repaints on full frames.
+            c.cairo_clip(cr);
+            c.cairo_rectangle(cr, 0, @floatFromInt(tbh), @floatFromInt(w), @floatFromInt(h - tbh));
+            c.cairo_clip(cr);
+        } else if (tbh > 0) self.renderTitlebar(cr, w, tbh);
 
         c.cairo_save(cr);
         c.cairo_translate(cr, 0, @floatFromInt(tbh));
@@ -631,10 +679,25 @@ pub const Client = struct {
         self.xdg_surface.setWindowGeometry(0, 0, w, h);
         buffer.busy = true;
         self.outstanding += 1;
+        buffer.stale = .{};
+        for (self.buffers) |slot| if (slot) |other| if (other != buffer) other.stale.merge(&frame);
+        if (self.frame_callback == null) {
+            if (self.surface.frame()) |callback| {
+                callback.setListener(*Client, frameDone, self);
+                self.frame_callback = callback;
+            } else |_| {}
+        }
         self.surface.attach(buffer.wl_buffer, 0, 0);
-        self.surface.damage(0, 0, w, h);
+        if (frame.full) self.surface.damage(0, 0, w, h) else for (frame.slice()) |r| self.surface.damage(r.x, r.y, r.w, r.h);
         self.surface.commit();
         self.app.dirty = false;
+        self.app.toolbar_dirty = false;
+        self.app.pointer_damage.clear();
+    }
+
+    fn frameDone(callback: *wl.Callback, _: wl.Callback.Event, self: *Client) void {
+        callback.destroy();
+        self.frame_callback = null;
     }
 
     fn renderTitlebar(self: *Client, cr: *c.cairo_t, w: i32, h: i32) void {
@@ -690,6 +753,9 @@ const Buffer = struct {
     w: i32,
     h: i32,
     busy: bool = false,
+    /// What changed on screen since this buffer was last painted, in window
+    /// coordinates (see `ui.repaint`).
+    stale: repaint.Region = .whole,
 
     fn create(client: *Client, w: i32, h: i32) !*Buffer {
         if (w <= 0 or h <= 0 or w > 16384 or h > 16384) return error.InvalidSize;
@@ -746,7 +812,7 @@ const Buffer = struct {
 };
 
 pub fn run(init: std.process.Init, paths: []const [:0]const u8, selected: usize, return_focus: bool) !void {
-    _ = c.signal(c.SIGPIPE, c.SIG_IGN);
+    platform.process.ignoreBrokenPipes();
     const force_csd = init.minimal.environ.getPosix("REDIWM_IMAGES_FORCE_CSD") != null;
     defer @import("../files/settings.zig").deinitTheme();
     {
@@ -767,6 +833,7 @@ pub fn run(init: std.process.Init, paths: []const [:0]const u8, selected: usize,
     defer for (self.buffers) |slot| {
         if (slot) |buffer| buffer.destroy();
     };
+    defer if (self.frame_callback) |callback| callback.destroy();
 
     const registry = try display.getRegistry();
     defer registry.destroy();

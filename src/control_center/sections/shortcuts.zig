@@ -50,7 +50,7 @@ pub const Section = struct {
     }
 
     pub fn capture(s: *Section, cc: *panel.ControlCenter, keycode: u32, sym: xkb.Keysym, mods: wlr.Keyboard.ModifierMask) void {
-        switch (@intFromEnum(sym)) {
+        switch (sym) {
             xkb.Keysym.Escape => {
                 s.cancel();
                 cc.refresh();
@@ -99,8 +99,8 @@ pub const Section = struct {
 fn group(action: keys.Action) usize {
     return switch (action) {
         .toggle_floating, .toggle_split, .toggle_workspace_tiling, .swap_left, .swap_right, .swap_up, .swap_down, .resize_split_left, .resize_split_right, .resize_split_up, .resize_split_down, .close_window, .toggle_fullscreen, .toggle_maximize, .tile_left, .tile_right, .tile_up, .tile_down => 0,
-        .set_depth, .zoom_in, .zoom_out, .zoom_reset, .camera_zoom_in, .camera_zoom_out, .camera_zoom_reset, .pan_left, .pan_right, .pan_up, .pan_down, .focus_next, .focus_prev, .focus_left, .focus_right, .focus_up, .focus_down, .save_layout, .restore_layout, .undo => 1,
-        .spawn, .toggle_start_menu => 2,
+        .toggle_overview, .set_depth, .zoom_in, .zoom_out, .zoom_reset, .camera_zoom_in, .camera_zoom_out, .camera_zoom_reset, .pan_left, .pan_right, .pan_up, .pan_down, .focus_next, .focus_prev, .focus_left, .focus_right, .focus_up, .focus_down, .save_layout, .restore_layout, .undo => 1,
+        .spawn, .toggle_start_menu, .input_source_next, .input_source_prev => 2,
         .screenshot_region, .screenshot_output => 3,
         .volume_up, .volume_down, .volume_mute, .mic_mute, .brightness_up, .brightness_down, .power_profile_cycle => 4,
         else => 5,
@@ -195,7 +195,7 @@ fn buildGroups(s: *Section, cc: *panel.ControlCenter, a: std.mem.Allocator) !voi
             try rows.append(a, .{ .kind = .{ .rect = .{ .color = t.window_divider } }, .height = .{ .fixed = 1 }, .width = .{ .percent = 1 } });
             try rows.append(a, .{ .kind = .container, .direction = .row, .height = .{ .fixed = 60 }, .width = .{ .percent = 1 }, .padding = ui.layout.Edges.xy(12, 0), .gap = 8, .@"align" = .center, .children = controls.items });
         };
-        card.* = .{ .name = "shortcuts", .kind = .{ .rect = .{ .color = t.settings_card_bg, .radius = t.settings_card_radius, .border_width = 1, .border_color = t.window_divider } }, .direction = .column, .width = .{ .percent = 1 }, .children = rows.items };
+        card.* = .{ .name = "shortcuts", .kind = .{ .rect = .{ .color = t.settings_card_bg, .radius = t.settings_card_radius, .border_width = 1, .border_color = t.window_divider, .relief = t.settings_card_relief } }, .direction = .column, .width = .{ .percent = 1 }, .children = rows.items };
     }
 }
 fn owner(p: ?*anyopaque) *panel.ControlCenter {
@@ -253,6 +253,7 @@ fn descriptionFor(action: keys.Action, buf: []u8) []const u8 {
         .zoom_in => i18n.tr("Increase the focused window's size."),
         .zoom_out => i18n.tr("Decrease the focused window's size."),
         .zoom_reset => i18n.tr("Restore the focused window's size."),
+        .toggle_overview => i18n.tr("Spread all canvas windows into a grid, including minimized windows."),
         .camera_zoom_in => i18n.tr("Zoom into the desktop canvas."),
         .camera_zoom_out => i18n.tr("Zoom out of the desktop canvas."),
         .camera_zoom_reset => i18n.tr("Restore the desktop zoom."),
@@ -277,6 +278,8 @@ fn descriptionFor(action: keys.Action, buf: []u8) []const u8 {
         .brightness_up => i18n.tr("Increase display brightness."),
         .brightness_down => i18n.tr("Decrease display brightness."),
         .power_profile_cycle => i18n.tr("Switch to the next power profile."),
+        .input_source_next => i18n.tr("Switch to the next keyboard layout or input method."),
+        .input_source_prev => i18n.tr("Switch to the previous keyboard layout or input method."),
         .quit => i18n.tr("Log out of the desktop session."),
         .poweroff, .poweroff_auto => i18n.tr("Shut down the computer."),
         .reboot, .reboot_auto => i18n.tr("Restart the computer."),
@@ -321,6 +324,8 @@ fn actionTitle(action: keys.Action) []const u8 {
         .brightness_up => i18n.tr("Brightness Up"),
         .brightness_down => i18n.tr("Brightness Down"),
         .power_profile_cycle => i18n.tr("Power Profile Cycle"),
+        .input_source_next => i18n.tr("Next Input Source"),
+        .input_source_prev => i18n.tr("Previous Input Source"),
         .spawn => i18n.tr("Spawn"),
         .close_window => i18n.tr("Close Window"),
         .toggle_fullscreen => i18n.tr("Toggle Fullscreen"),
@@ -335,6 +340,7 @@ fn actionTitle(action: keys.Action) []const u8 {
         .zoom_in => i18n.tr("Zoom In"),
         .zoom_out => i18n.tr("Zoom Out"),
         .zoom_reset => i18n.tr("Zoom Reset"),
+        .toggle_overview => i18n.tr("Window Overview"),
         .camera_zoom_in => i18n.tr("Camera Zoom In"),
         .camera_zoom_out => i18n.tr("Camera Zoom Out"),
         .camera_zoom_reset => i18n.tr("Camera Zoom Reset"),

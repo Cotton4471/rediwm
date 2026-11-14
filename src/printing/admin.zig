@@ -799,7 +799,7 @@ test "discovery owns complete identities and rejects unsafe backend addresses" {
         try writer.string(field[0]);
         try writer.string(field[1]);
     }
-    const long_id = "MFG:Acme;" ++ "X" ** 600 ++ ";MDL:Label;";
+    const long_id = "MFG:Acme;" ++ @as([600]u8, @splat('X')) ++ ";MDL:Label;";
     try writer.alignTo(8);
     try writer.string("device-id:0");
     try writer.string(long_id);

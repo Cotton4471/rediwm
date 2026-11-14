@@ -75,7 +75,7 @@ pub fn executeSearch(self: *App) void {
         return;
     }
 
-    const qz = a.dupeZ(u8, query) catch return;
+    const qz = a.dupeSentinel(u8, query, 0) catch return;
     defer a.free(qz);
 
     for (0..self.n_pages) |p| {

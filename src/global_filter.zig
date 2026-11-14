@@ -50,9 +50,9 @@ pub fn sandboxed(server: *const Server, client: *const wl.Client) bool {
 }
 
 pub fn clientAllowedGroups(server: *const Server, client: *const wl.Client) GroupSet {
-    const mgr = server.security_context orelse return GroupSet.initEmpty();
-    const state = mgr.lookupClient(client) orelse return GroupSet.initEmpty();
-    const app_id = if (state.app_id) |s| std.mem.span(s) else return GroupSet.initEmpty();
+    const mgr = server.security_context orelse return GroupSet.empty;
+    const state = mgr.lookupClient(client) orelse return GroupSet.empty;
+    const app_id = if (state.app_id) |s| std.mem.span(s) else return GroupSet.empty;
     const engine = if (state.sandbox_engine) |s| std.mem.span(s) else null;
     return server.config.sandboxAllowGroups(app_id, engine);
 }
@@ -138,7 +138,7 @@ test "privileged table names match generated protocol interface names where avai
 }
 
 test "pure filter decision logic" {
-    const empty_groups = GroupSet.initEmpty();
+    const empty_groups = GroupSet.empty;
 
     // 1. Un-sandboxed, normal client: sees everything except when Xwayland denies
     try std.testing.expect(pureFilterDecision(null, false, empty_groups, "wl_compositor"));
@@ -165,7 +165,7 @@ test "pure filter decision logic" {
     try std.testing.expect(!pureFilterDecision(null, true, empty_groups, "xwayland_shell_v1"));
 
     // 4. Sandboxed client with clipboard allowance:
-    var clipboard_only = GroupSet.initEmpty();
+    var clipboard_only = GroupSet.empty;
     clipboard_only.insert(.clipboard);
 
     try std.testing.expect(pureFilterDecision(null, true, clipboard_only, "zwlr_data_control_manager_v1"));
@@ -174,7 +174,7 @@ test "pure filter decision logic" {
     try std.testing.expect(!pureFilterDecision(null, true, clipboard_only, "ext_session_lock_manager_v1"));
 
     // 5. wp_security_context_manager_v1 and xwayland_shell_v1 can never be granted
-    const all_groups = GroupSet.initFull();
+    const all_groups = GroupSet.full;
     try std.testing.expect(!pureFilterDecision(null, true, all_groups, "wp_security_context_manager_v1"));
     try std.testing.expect(!pureFilterDecision(null, true, all_groups, "xwayland_shell_v1"));
 }

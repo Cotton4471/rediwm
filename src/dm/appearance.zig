@@ -1,13 +1,7 @@
 //! Login appearance lives outside private/encrypted homes. Root creates only
 //! directories; it never opens or parses the account's appearance files.
 const std = @import("std");
-const c = @cImport({
-    @cUndef("_FORTIFY_SOURCE");
-    @cInclude("fcntl.h");
-    @cInclude("sys/stat.h");
-    @cInclude("unistd.h");
-    @cInclude("errno.h");
-});
+const c = @import("c");
 
 pub const root = "/var/lib/rediwm-appearance";
 
@@ -25,7 +19,7 @@ pub fn provision(uid: u32, gid: u32) !void {
 
 fn provisionAt(parent: c_int, uid: u32, gid: u32) !void {
     var buf: [16]u8 = undefined;
-    const name = try std.fmt.bufPrintZ(&buf, "{d}", .{uid});
+    const name = try std.fmt.bufPrintSentinel(&buf, "{d}", .{uid}, 0);
     const created = c.mkdirat(parent, name, 0o755) == 0;
     if (!created and std.posix.errno(-1) != .EXIST) return error.CreateDirectoryFailed;
     const fd = c.openat(parent, name, c.O_RDONLY | c.O_DIRECTORY | c.O_NOFOLLOW | c.O_CLOEXEC);
@@ -47,7 +41,7 @@ test "login appearance provisioning is per uid and refuses symlinks" {
     try provisionAt(tmp.dir.handle, uid, c.getgid());
     try provisionAt(tmp.dir.handle, uid, c.getgid());
     var name_buf: [16]u8 = undefined;
-    const name = try std.fmt.bufPrintZ(&name_buf, "{d}", .{uid});
+    const name = try std.fmt.bufPrintSentinel(&name_buf, "{d}", .{uid}, 0);
     var stat: c.struct_stat = undefined;
     try std.testing.expectEqual(@as(c_int, 0), c.fstatat(tmp.dir.handle, name, &stat, c.AT_SYMLINK_NOFOLLOW));
     try std.testing.expectEqual(uid, stat.st_uid);

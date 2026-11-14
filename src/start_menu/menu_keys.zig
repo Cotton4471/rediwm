@@ -70,15 +70,15 @@ pub fn handleKey(
 
     // Left/right navigate the quick-launch strip; typing returns to search.
     if (menu.card_selection) |selected| {
-        if (@intFromEnum(keysym) == xkb.Keysym.Left or @intFromEnum(keysym) == xkb.Keysym.Right) {
-            menu.card_selection = if (@intFromEnum(keysym) == xkb.Keysym.Left) selected -| 1 else @min(selected + 1, menu.card_count - 1);
+        if (keysym == xkb.Keysym.Left or keysym == xkb.Keysym.Right) {
+            menu.card_selection = if (keysym == xkb.Keysym.Left) selected -| 1 else @min(selected + 1, menu.card_count - 1);
             menu.buildTree();
             menu.requestRepaint();
             return true;
         }
     }
     // Pressed:
-    switch (@intFromEnum(keysym)) {
+    switch (keysym) {
         xkb.Keysym.Escape => {
             if (Output.fromWlr(menu.wlr_output)) |output| output.closeStartMenu();
             return true;
@@ -131,7 +131,7 @@ pub fn handleKey(
                 // Match on the *unshifted* keysym so Ctrl+Shift+A is still
                 // select-all, and accept both cases for layouts that
                 // report them differently.
-                switch (@intFromEnum(keysym)) {
+                switch (keysym) {
                     xkb.Keysym.a, xkb.Keysym.A => return menu.editKey(.select_all, edit_mods),
                     xkb.Keysym.c, xkb.Keysym.C => return menu.editKey(.copy, edit_mods),
                     xkb.Keysym.x, xkb.Keysym.X => return menu.editKey(.cut, edit_mods),

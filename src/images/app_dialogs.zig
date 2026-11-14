@@ -41,7 +41,7 @@ pub fn openSave(self: *App) void {
     var suggested = false;
     for (0..10000) |n| {
         const name = if (n == 0) std.fmt.bufPrint(&name_buf, "{s}-edited.png", .{base}) catch "edited.png" else std.fmt.bufPrint(&name_buf, "{s}-edited-{d}.png", .{ base, n }) catch "edited.png";
-        const dest = std.fmt.bufPrintZ(&buf, "{s}/{s}", .{ dir, name }) catch {
+        const dest = std.fmt.bufPrintSentinel(&buf, "{s}/{s}", .{ dir, name }, 0) catch {
             self.message(tr("The filename is too long."));
             return;
         };
@@ -100,7 +100,7 @@ pub fn confirmDialog(self: *App) void {
                 self.message(tr("Enter a filename or an absolute path."));
                 return;
             };
-            const path = if (std.fs.path.isAbsolute(name)) a.dupeZ(u8, name) catch return else std.fmt.allocPrintSentinel(a, "{s}/{s}", .{ std.fs.path.dirname(self.paths[self.selected]) orelse ".", name }, 0) catch return;
+            const path = if (std.fs.path.isAbsolute(name)) a.dupeSentinel(u8, name, 0) catch return else std.fmt.allocPrintSentinel(a, "{s}/{s}", .{ std.fs.path.dirname(self.paths[self.selected]) orelse ".", name }, 0) catch return;
             defer a.free(path);
             self.operation = edit.Operation.start(.save, self.io, path, self.image, null) catch {
                 self.message(tr("Could not start saving."));
@@ -238,12 +238,33 @@ pub fn drawDialog(self: *App, cr: *c.cairo_t) void {
         for (0..n) |i| {
             const b = self.dialogButton(i);
             const label = if (i == 0) tr("Cancel") else if (self.dialog == .save or i == 2) tr("Save as…") else if (self.dialog == .trash) tr("Move to Trash") else tr("Discard");
+            const proximity = ui_button.sampleProximity(
+                .{ .x = @floatCast(b.x), .y = @floatCast(b.y), .w = @floatCast(b.w), .h = @floatCast(b.h) },
+                @floatCast(self.px),
+                @floatCast(self.py),
+                .{ .x = @floatCast(r.x), .y = @floatCast(r.y), .w = @floatCast(r.w), .h = @floatCast(r.h) },
+            );
             ui_button.paint(lr, .{ .x = @floatCast(b.x - r.x), .y = @floatCast(b.y - r.y), .w = @floatCast(b.w), .h = @floatCast(b.h) }, .{
                 .variant = if (i == 0) .secondary else .primary,
                 .label = label,
-            }, .{ .pointer = if (b.contains(self.px, self.py)) .hover else .idle });
+            }, .{
+                .pointer = if (b.contains(self.px, self.py)) .hover else .idle,
+                .proximity_distance = proximity.distance,
+                .proximity_x = proximity.x,
+                .proximity_y = proximity.y,
+            });
         }
         layer.finish();
+    }
+    if (self.dialog == .save) {
+        const f = self.filenameRect();
+        shell_ui.drawProximityGlow(
+            cr,
+            shellRect(f),
+            7,
+            .{ .x = self.px, .y = self.py },
+            shellRect(r),
+        );
     }
     setSource(cr, t.fg);
     const title = switch (self.dialog) {

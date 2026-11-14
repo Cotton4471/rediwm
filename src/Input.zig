@@ -70,6 +70,17 @@ pub const PanSession = struct {
     inhibited: bool = false,
 };
 
+/// The other half of a manually tiled pair being resized together.
+pub const ResizePeerSession = struct {
+    toplevel: *Toplevel,
+    snapshot: resize.ResizeSnapshot,
+    latest_desired_size: resize.ClientSize,
+    dirty: bool = false,
+    outstanding_configure: Toplevel.ConfigureWait = .none,
+    last_sent_width: i32 = 0,
+    last_sent_height: i32 = 0,
+};
+
 pub const ResizeSession = struct {
     toplevel: *Toplevel,
     generation: u64,
@@ -78,12 +89,38 @@ pub const ResizeSession = struct {
     edges: resize.Edges,
     snapshot: resize.ResizeSnapshot,
     latest_desired_size: resize.ClientSize,
+    peer: ?ResizePeerSession = null,
     dirty: bool = false,
     pacing_output: ?*Output = null,
     outstanding_configure: Toplevel.ConfigureWait = .none,
     last_sent_width: i32 = 0,
     last_sent_height: i32 = 0,
     settling: bool = false,
+
+    /// Whether a toplevel participates in this resize gesture.
+    pub fn includes(self: *const ResizeSession, toplevel: *const Toplevel) bool {
+        if (self.toplevel == toplevel) return true;
+        const peer = self.peer orelse return false;
+        return peer.toplevel == toplevel;
+    }
+
+    /// Whether either participant is still waiting for its client configure.
+    pub fn hasOutstandingConfigure(self: *const ResizeSession) bool {
+        if (self.outstanding_configure != .none) return true;
+        const peer = self.peer orelse return false;
+        return peer.outstanding_configure != .none;
+    }
+};
+
+/// A left-button press on a taskbar chip, retained while deciding whether
+/// the gesture is a click or a drag.
+pub const TaskbarDragSession = struct {
+    bar: *Taskbar,
+    window_id: u64,
+    origin_index: usize,
+    press_x: f64,
+    press_y: f64,
+    dragging: bool = false,
 };
 
 server: *Server,
@@ -122,6 +159,8 @@ cursor_held: bool = false,
 cursor_serial: CursorSerial = .{},
 keyboards: wl.list.Head(Keyboard, .link) = undefined,
 pointers: wl.list.Head(Pointer, .link) = undefined,
+/// Monotonic live tokens keep Settings selection safe across allocator reuse.
+next_pointer_id: u64 = 1,
 // The one open control center, if any (opening/open/closing all count) —
 // routes pointer gestures and captures keys only while focused.
 // Output creates it; ControlCenter.destroy clears this reference.
@@ -175,6 +214,7 @@ hovered_toplevel: ?*Toplevel = null,
 /// The window whose edge highlight follows the pointer (`updateBorderGlow`).
 glow_toplevel: ?*Toplevel = null,
 hovered_taskbar: ?*Taskbar = null,
+taskbar_drag: ?TaskbarDragSession = null,
 tray_buttons: u32 = 0,
 hovered_toast: ?*@import("notifications/toast.zig").Toast = null,
 grabbed_toplevel: ?*Toplevel = null,
@@ -185,6 +225,8 @@ move_snap: MoveSnap = .{},
 tiling_grab: ?@import("tiling_grab.zig") = null,
 /// An application being dragged from the start menu to the dock.
 dock_drag: @import("dock_drag.zig") = .{},
+/// Files from a client's drag, dropped on the dock's Trash.
+trash_drop: @import("trash_drop.zig") = .{},
 /// The last titlebar press, for double-click-to-maximize.
 title_press: ?TitlePress = null,
 /// Pointer presses so far: a double-click is two presses in a row.
@@ -198,6 +240,7 @@ gesture: enum { none, client_pinch, client_swipe, compositor_pinch, compositor_s
 /// Two-finger touchpad scroll over empty desktop, distinct from middle-drag.
 finger_pan: bool = false,
 zoom_scroll: @import("camera.zig").ZoomScroll = .{},
+taskbar_focus_scroll: @import("camera.zig").ZoomScroll = .{},
 zoom_device: ?*wlr.InputDevice = null,
 zoom_target_id: u64 = 0,
 active_buttons: u32 = 0,
@@ -206,6 +249,10 @@ active_buttons: u32 = 0,
 desktop_grab: bool = false,
 /// Releases belong to the map even if a modal transition cancels its grab.
 mini_map_buttons: u32 = 0,
+/// A click can accept/cancel the switcher mid-press; its matching release
+/// must still be swallowed rather than reaching whatever is now focused.
+switcher_buttons: u32 = 0,
+overview_buttons: u32 = 0,
 /// Last known (surface-local, world) correspondence for whichever ordinary
 /// client surface currently holds pointer focus, refreshed on every real
 /// hit. Lets passthroughMotion's implicit grab (see below) keep reporting
@@ -323,7 +370,9 @@ pub fn init(input: *Input, server: *Server) Server.CompositorError!void {
     errdefer input.request_set_primary_selection.link.remove();
 
     input.cursor.attachOutputLayout(server.output_layout);
-    input.cursor_mgr.load(1) catch return error.XcursorCreateFailed;
+    // Parses the whole theme. The greeter loads it per output scale instead
+    // (refreshOutputScales), and its only cursor is the default one.
+    if (!server.greeter_mode) input.cursor_mgr.load(1) catch return error.XcursorCreateFailed;
     input.cursor.events.motion.add(&input.cursor_motion);
     input.cursor.events.motion_absolute.add(&input.cursor_motion_absolute);
     input.cursor.events.button.add(&input.cursor_button);
@@ -385,6 +434,7 @@ pub fn deinit(input: *Input) void {
     input.pointer_constraints.deinit();
     input.shortcuts_inhibit.deinit();
     input.drag_dodge.deinit();
+    input.trash_drop.deinit();
     input.lid.deinit();
     input.tablet.deinit();
     input.touch.deinit();
@@ -476,17 +526,29 @@ pub fn detachOutput(input: *Input, output: *Output) void {
 
 pub fn detachToplevel(input: *Input, toplevel: *Toplevel) void {
     if (input.window_menu.references(toplevel)) input.window_menu.close();
+    if (input.taskbar_drag) |session| {
+        if (session.window_id == toplevel.id) {
+            input.taskbar_drag = null;
+            input.setDefaultCursor();
+        }
+    }
     if (input.hovered_toplevel == toplevel) input.hovered_toplevel = null;
     if (input.glow_toplevel == toplevel) input.glow_toplevel = null;
     input.drag_dodge.detach(toplevel);
     if (input.grabbed_toplevel == toplevel) input.clearGrab();
     if (input.resize_session) |session| {
-        if (session.toplevel == toplevel) input.cancelResize();
+        if (session.includes(toplevel)) input.cancelResize();
     }
 }
 
 pub fn detachTaskbar(input: *Input, bar: *Taskbar) void {
     if (input.window_menu.bar == bar) input.window_menu.close();
+    if (input.taskbar_drag) |session| {
+        if (session.bar == bar) {
+            input.taskbar_drag = null;
+            input.setDefaultCursor();
+        }
+    }
     if (input.hovered_taskbar == bar) {
         input.hovered_taskbar = null;
         input.server.scheduleFrames();

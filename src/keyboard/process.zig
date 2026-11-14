@@ -84,7 +84,7 @@ pub fn processKey(keyboard: *Keyboard, time_msec: u32, event_keycode: u32, state
             if (generation != 0) {
                 if (keyboard.server.text_input) |relay| {
                     if (relay.grab_generation == generation) {
-                        if (relay.keyboardGrab(wlr_keyboard)) |grab| grab.sendKey(time_msec, event_keycode, state);
+                        if (relay.keyboardGrab(wlr_keyboard, .state)) |grab| grab.sendKey(time_msec, event_keycode, state);
                     }
                 }
                 return;
@@ -121,7 +121,7 @@ pub fn processKey(keyboard: *Keyboard, time_msec: u32, event_keycode: u32, state
             }
             for (keyboard.bindingSyms(keycode)) |sym| {
                 const action = keyboard.server.config.lookupKeybind(wlr_keyboard.getModifiers(), sym) orelse continue;
-                if (!keybinds.isHardwareAction(action)) continue;
+                if (!keybinds.isHardwareAction(action) and !(keyboard.server.locker != null and keybinds.worksWhileLocked(action))) continue;
                 keyboard.stopRepeat();
                 keyboard.hardware_consumed[event_keycode] = true;
                 keyboard.server.executeAction(action);
@@ -156,6 +156,26 @@ pub fn processKey(keyboard: *Keyboard, time_msec: u32, event_keycode: u32, state
         return;
     }
 
+    // System Monitor is the session's escape hatch: dispatch its configured
+    // binding before overlays and client shortcut inhibitors. Lock/auth and
+    // shortcut capture above still own their input. Swallow the release even
+    // if a new overlay opens before it arrives.
+    if (state == .released and event_keycode < keyboard.shortcut_consumed.len and keyboard.shortcut_consumed[event_keycode]) {
+        keyboard.shortcut_consumed[event_keycode] = false;
+        return;
+    }
+    if (state == .pressed) {
+        for (keyboard.bindingSyms(keycode)) |sym| {
+            const action = keyboard.server.config.lookupKeybind(wlr_keyboard.getModifiers(), sym) orelse continue;
+            if (action != .open_system_monitor) continue;
+            if (event_keycode < keyboard.shortcut_consumed.len) keyboard.shortcut_consumed[event_keycode] = true;
+            keyboard.server.executeAction(action);
+            return;
+        }
+    }
+
+    if (@import("overview.zig").process(keyboard, event_keycode, state)) return;
+
     if (event_keycode < keyboard.battery_consumed.len and state == .released and keyboard.battery_consumed[event_keycode]) {
         keyboard.battery_consumed[event_keycode] = false;
         return;
@@ -171,7 +191,7 @@ pub fn processKey(keyboard: *Keyboard, time_msec: u32, event_keycode: u32, state
     if (keyboard.server.screenshot_selector.output != null and state == .pressed) {
         if (event_keycode < keyboard.screenshot_consumed.len) keyboard.screenshot_consumed[event_keycode] = true;
         for (xkb_state.keyGetSyms(keycode)) |sym| {
-            if (@intFromEnum(sym) == xkb.Keysym.Escape) keyboard.server.screenshot_selector.cancel();
+            if (sym == xkb.Keysym.Escape) keyboard.server.screenshot_selector.cancel();
         }
         return;
     }
@@ -181,11 +201,6 @@ pub fn processKey(keyboard: *Keyboard, time_msec: u32, event_keycode: u32, state
         if (keyboard.switcher_code == event_keycode) keyboard.stopSwitcherRepeat();
         return;
     }
-    if (state == .released and event_keycode < keyboard.shortcut_consumed.len and keyboard.shortcut_consumed[event_keycode]) {
-        keyboard.shortcut_consumed[event_keycode] = false;
-        return;
-    }
-
     // A VM or remote desktop inhibiting shortcuts gets every binding below
     // (shell panels it didn't open still take their keys) except the one
     // that takes them back. Hardware keys and VT switching were handled above.
@@ -230,8 +245,11 @@ pub fn processKey(keyboard: *Keyboard, time_msec: u32, event_keycode: u32, state
             }
             if (keyboard.server.switcher.active()) {
                 keyboard.stopSwitcherRepeat();
-                if (@intFromEnum(sym) == xkb.Keysym.Escape) keyboard.server.switcher.cancel();
-                if (@intFromEnum(sym) == xkb.Keysym.Return) keyboard.server.switcher.accept(keyboard.server);
+                if (sym == xkb.Keysym.Escape) keyboard.server.switcher.dismiss();
+                if (sym == xkb.Keysym.Return) keyboard.server.switcher.accept(keyboard.server);
+                // KEY_GRAVE is the key above Tab on every layout.
+                if (event_keycode == 41) keyboard.server.switcher.stepWindow(mods.shift);
+                if (sym == xkb.Keysym.Up or sym == xkb.Keysym.Down) keyboard.server.switcher.stepWindow(sym == xkb.Keysym.Up);
                 if (event_keycode < keyboard.switcher_consumed.len) keyboard.switcher_consumed[event_keycode] = true;
                 return;
             }
@@ -254,14 +272,14 @@ pub fn processKey(keyboard: *Keyboard, time_msec: u32, event_keycode: u32, state
     // keyboard; its release is ours too.
     if (state == .pressed and keyboard.server.input.dock_drag.reordering()) {
         for (xkb_state.keyGetSyms(keycode)) |sym| {
-            if (@intFromEnum(sym) != xkb.Keysym.Escape) continue;
+            if (sym != xkb.Keysym.Escape) continue;
             _ = keyboard.server.input.cancelDrag();
             keyboard.consuming_escape = true;
             return;
         }
     } else if (state == .released and keyboard.consuming_escape) {
         for (xkb_state.keyGetSyms(keycode)) |sym| {
-            if (@intFromEnum(sym) != xkb.Keysym.Escape) continue;
+            if (sym != xkb.Keysym.Escape) continue;
             keyboard.consuming_escape = false;
             return;
         }
@@ -270,14 +288,14 @@ pub fn processKey(keyboard: *Keyboard, time_msec: u32, event_keycode: u32, state
     if (keyboard.server.input.window_menu.node != null and keyboard.server.screenshot_selector.output == null) {
         if (state == .pressed) {
             if (event_keycode < keyboard.tray_consumed.len) keyboard.tray_consumed[event_keycode] = true;
-            for (xkb_state.keyGetSyms(keycode)) |sym| keyboard.server.input.window_menu.key(@intFromEnum(sym));
+            for (xkb_state.keyGetSyms(keycode)) |sym| keyboard.server.input.window_menu.key(@backingInt(sym));
         }
         return;
     }
     if (keyboard.server.tray) |tray| {
         if (tray.menu_item != 0 and state == .pressed and keyboard.server.screenshot_selector.output == null) {
             if (event_keycode < keyboard.tray_consumed.len) keyboard.tray_consumed[event_keycode] = true;
-            for (xkb_state.keyGetSyms(keycode)) |sym| tray.key(@intFromEnum(sym));
+            for (xkb_state.keyGetSyms(keycode)) |sym| tray.key(@backingInt(sym));
             return;
         }
     }
@@ -295,14 +313,17 @@ pub fn processKey(keyboard: *Keyboard, time_msec: u32, event_keycode: u32, state
         if (state == .pressed) {
             if (event_keycode < keyboard.battery_consumed.len) keyboard.battery_consumed[event_keycode] = true;
             for (xkb_state.keyGetSyms(keycode)) |sym| {
-                switch (@intFromEnum(sym)) {
+                switch (sym) {
                     xkb.Keysym.Escape => {
                         popup.output.closeBattery();
                         return;
                     },
                     xkb.Keysym.Up, xkb.Keysym.Left, xkb.Keysym.ISO_Left_Tab => popup.navigate(true),
                     xkb.Keysym.Down, xkb.Keysym.Right, xkb.Keysym.Tab => popup.navigate(false),
-                    xkb.Keysym.Return, xkb.Keysym.KP_Enter, xkb.Keysym.space => popup.activate(),
+                    xkb.Keysym.Return, xkb.Keysym.KP_Enter, xkb.Keysym.space => {
+                        popup.activate();
+                        return;
+                    },
                     else => {},
                 }
             }
@@ -312,7 +333,7 @@ pub fn processKey(keyboard: *Keyboard, time_msec: u32, event_keycode: u32, state
     if (keyboard.server.input.open_calendar) |calendar| {
         if (state == .pressed) {
             for (xkb_state.keyGetSyms(keycode)) |sym| {
-                switch (@intFromEnum(sym)) {
+                switch (sym) {
                     xkb.Keysym.Escape => {
                         calendar.output.closeCalendar();
                         return;
@@ -329,7 +350,7 @@ pub fn processKey(keyboard: *Keyboard, time_msec: u32, event_keycode: u32, state
     if (keyboard.server.input.open_power_menu) |pm| {
         if (state == .pressed) {
             for (xkb_state.keyGetSyms(keycode)) |sym| {
-                switch (@intFromEnum(sym)) {
+                switch (sym) {
                     xkb.Keysym.Escape => if (Output.fromWlr(pm.wlr_output)) |output| output.closePowerMenu(),
                     xkb.Keysym.Left => pm.navigate(false),
                     xkb.Keysym.Right => pm.navigate(true),
@@ -365,7 +386,7 @@ pub fn processKey(keyboard: *Keyboard, time_msec: u32, event_keycode: u32, state
     if (keyboard.server.input.open_start_menu) |sm| {
         // Escape abandons an application dragged out of the menu, not the menu.
         if (state == .pressed and keyboard.server.input.dock_drag.active()) for (xkb_state.keyGetSyms(keycode)) |sym| {
-            if (@intFromEnum(sym) == xkb.Keysym.Escape) {
+            if (sym == xkb.Keysym.Escape) {
                 _ = keyboard.server.input.cancelDrag();
                 keyboard.consuming_escape = true;
                 return;
@@ -411,7 +432,7 @@ pub fn processKey(keyboard: *Keyboard, time_msec: u32, event_keycode: u32, state
     // inhibits it until the trigger is released. Either way the release is ours.
     if (state == .pressed) {
         for (xkb_state.keyGetSyms(keycode)) |sym| {
-            if (@intFromEnum(sym) == xkb.Keysym.Escape) {
+            if (sym == xkb.Keysym.Escape) {
                 const input = &keyboard.server.input;
                 if (input.cancelDrag()) {
                     keyboard.consuming_escape = true;
@@ -438,7 +459,7 @@ pub fn processKey(keyboard: *Keyboard, time_msec: u32, event_keycode: u32, state
     } else if (state == .released) {
         if (keyboard.consuming_escape) {
             for (xkb_state.keyGetSyms(keycode)) |sym| {
-                if (@intFromEnum(sym) == xkb.Keysym.Escape) {
+                if (sym == xkb.Keysym.Escape) {
                     keyboard.consuming_escape = false;
                     return;
                 }
@@ -476,7 +497,7 @@ pub fn processKey(keyboard: *Keyboard, time_msec: u32, event_keycode: u32, state
         };
         keyboard.server.input.seat.setKeyboard(wlr_keyboard);
         @import("../input/layouts.zig").activate(keyboard);
-        const grab = if (keyboard.server.text_input) |relay| relay.keyboardGrab(wlr_keyboard) else null;
+        const grab = if (keyboard.server.text_input) |relay| relay.keyboardGrab(wlr_keyboard, .new_input) else null;
         if (grab) |im_grab| {
             im_grab.sendKey(time_msec, event_keycode, state);
             if (state == .pressed and event_keycode < keyboard.grab_pressed.len)

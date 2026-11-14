@@ -24,6 +24,7 @@ pub fn terminate(server: *Server) void {
 }
 
 pub fn deactivateSession(server: *Server) void {
+    if (server.power) |power| power.syncInhibitors();
     if (server.polkit) |agent| {
         if (server.locker != null) agent.pauseForLock() else agent.cancelAll();
     }
@@ -65,6 +66,8 @@ pub fn deactivateSession(server: *Server) void {
 }
 
 pub fn reactivateSession(server: *Server) void {
+    server.power_policy.refresh();
+    if (server.idle) |idle| idle.notifyActivity(.lid);
     log.info("reactivating session: restoring output layout, damage and presentation", .{});
     Output.syncLayout(server);
     server.input.refreshOutputScales();
@@ -84,6 +87,7 @@ pub fn handleSessionActive(listener: *wl.Listener(void)) void {
     if (session.active) {
         log.info("session became active (VT switch back)", .{});
         server.reactivateSession();
+        @import("../session/greeter_ready.zig").check(server);
         server.startup_tasks.onSessionActive();
     } else {
         log.info("session became inactive (VT switch away)", .{});
@@ -124,6 +128,12 @@ pub fn startDesktopService(server: *Server, step: usize) bool {
                 log.warn("init: could not create notifications manager: {}", .{err});
                 break :blk null;
             };
+            // Outputs already took their initial battery snapshots before the
+            // notification service started. Warn immediately when logging in low.
+            var outputs = server.outputs.iterator(.forward);
+            while (outputs.next()) |output| {
+                if (output.taskbar) |bar| server.updateBatteryWarning(bar.battery_state);
+            }
         },
         1 => {
             server.configurePolkit(server.config.polkit);
@@ -154,6 +164,7 @@ pub fn startDesktopService(server: *Server, step: usize) bool {
                 }
             }
         },
+        5 => if (server.input_sources) |sources| sources.startServices(),
         else => return false,
     }
     return true;

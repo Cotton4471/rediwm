@@ -175,7 +175,7 @@ pub fn sendNoWait(server: []const u8, resource: []const u8, body: []const u8) !v
     var addr: c.struct_sockaddr_un = std.mem.zeroes(c.struct_sockaddr_un);
     addr.sun_family = c.AF_UNIX;
     @memcpy(addr.sun_path[0..socket.len], socket);
-    if (c.connect(fd, @ptrCast(&addr), @intCast(@offsetOf(c.struct_sockaddr_un, "sun_path") + socket.len + 1)) != 0) return error.ConnectionFailed;
+    if (std.c.connect(fd, @ptrCast(&addr), @intCast(@offsetOf(c.struct_sockaddr_un, "sun_path") + socket.len + 1)) != 0) return error.ConnectionFailed;
     var packet: [2048]u8 = undefined;
     const headers = std.fmt.bufPrint(&packet, "POST {s} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/ipp\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n", .{ resource, body.len }) catch return error.RequestTooLarge;
     if (headers.len + body.len > packet.len) return error.RequestTooLarge;
@@ -204,7 +204,7 @@ fn connectUnix(socket: []const u8, cancel: c_int, deadline: i64) !c_int {
     var addr: c.struct_sockaddr_un = std.mem.zeroes(c.struct_sockaddr_un);
     addr.sun_family = c.AF_UNIX;
     @memcpy(addr.sun_path[0..socket.len], socket);
-    const result = c.connect(fd, @ptrCast(&addr), @intCast(@offsetOf(c.struct_sockaddr_un, "sun_path") + socket.len + 1));
+    const result = std.c.connect(fd, @ptrCast(&addr), @intCast(@offsetOf(c.struct_sockaddr_un, "sun_path") + socket.len + 1));
     if (result < 0) {
         const e = std.posix.errno(result);
         if (e == .NOENT or e == .CONNREFUSED) return error.CupsUnavailable;
@@ -273,12 +273,12 @@ fn connectTcp(io: ?std.Io, target: endpoint.Endpoint, cancel: c_int, deadline: i
         if (fd < 0) continue;
         const result = switch (address) {
             .ip4 => |ip| blk: {
-                var addr: std.os.linux.sockaddr.in = .{ .port = std.mem.nativeToBig(u16, ip.port), .addr = @bitCast(ip.bytes) };
-                break :blk c.connect(fd, @ptrCast(&addr), @sizeOf(@TypeOf(addr)));
+                var addr: std.posix.sockaddr.in = .{ .port = std.mem.nativeToBig(u16, ip.port), .addr = @bitCast(ip.bytes) };
+                break :blk std.c.connect(fd, @ptrCast(&addr), @sizeOf(@TypeOf(addr)));
             },
             .ip6 => |ip| blk: {
-                var addr: std.os.linux.sockaddr.in6 = .{ .port = std.mem.nativeToBig(u16, ip.port), .flowinfo = ip.flow, .addr = ip.bytes, .scope_id = ip.interface.index };
-                break :blk c.connect(fd, @ptrCast(&addr), @sizeOf(@TypeOf(addr)));
+                var addr: std.posix.sockaddr.in6 = .{ .port = std.mem.nativeToBig(u16, ip.port), .flowinfo = ip.flow, .addr = ip.bytes, .scope_id = ip.interface.index };
+                break :blk std.c.connect(fd, @ptrCast(&addr), @sizeOf(@TypeOf(addr)));
             },
         };
         if (result == 0) return fd;
@@ -355,18 +355,18 @@ test "remote loopback HTTP preserves authority, resource and body" {
     const listener = c.socket(c.AF_INET, c.SOCK_STREAM | c.SOCK_CLOEXEC, 0);
     try t.expect(listener >= 0);
     defer _ = c.close(listener);
-    var address: std.os.linux.sockaddr.in = .{ .port = 0, .addr = @bitCast([4]u8{ 127, 0, 0, 1 }) };
-    try t.expectEqual(@as(c_int, 0), c.bind(listener, @ptrCast(&address), @sizeOf(@TypeOf(address))));
+    var address: std.posix.sockaddr.in = .{ .port = 0, .addr = @bitCast([4]u8{ 127, 0, 0, 1 }) };
+    try t.expectEqual(@as(c_int, 0), std.c.bind(listener, @ptrCast(&address), @sizeOf(@TypeOf(address))));
     try t.expectEqual(@as(c_int, 0), c.listen(listener, 1));
-    var length: c.socklen_t = @sizeOf(@TypeOf(address));
-    try t.expectEqual(@as(c_int, 0), c.getsockname(listener, @ptrCast(&address), &length));
+    var length: std.c.socklen_t = @sizeOf(@TypeOf(address));
+    try t.expectEqual(@as(c_int, 0), std.c.getsockname(listener, @ptrCast(&address), &length));
     const Fixture = struct {
         listener: c_int,
         bytes: [4096]u8 = undefined,
         count: usize = 0,
         fn run(self: *@This()) void {
             ready(self.listener, c.POLLIN, -1, nowMs() + 3000) catch return;
-            const fd = c.accept(self.listener, null, null);
+            const fd = std.c.accept(self.listener, null, null);
             if (fd < 0) return;
             defer _ = c.close(fd);
             while (self.count < self.bytes.len) {

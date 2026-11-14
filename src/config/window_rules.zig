@@ -125,7 +125,7 @@ pub const Resolved = struct {
     decorations: ?DecorationMode = null,
     skip_taskbar: ?bool = null,
     floating: ?bool = null,
-    matched_rules: std.StaticBitSet(max_rules) = std.StaticBitSet(max_rules).initEmpty(),
+    matched_rules: std.StaticBitSet(max_rules) = std.StaticBitSet(max_rules).empty,
 };
 
 pub const OpenRules = struct {

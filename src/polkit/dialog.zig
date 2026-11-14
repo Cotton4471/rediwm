@@ -64,6 +64,7 @@ pub const Dialog = struct {
         @import("../extra_protocols.zig").rediwm_protocols_revoke(server.extra_protocols);
         // End active capture before any authentication pixels are presented.
         if (server.capture_mgr) |manager| manager.stopAll();
+        server.world.overview.cancel(&server.world);
         server.switcher.cancel();
         server.screenshot_selector.cancel();
         server.input.clearGrab();
@@ -202,9 +203,8 @@ pub const Dialog = struct {
         return self.focus == .input and !self.waiting and @import("../input/repeat_keys.zig").editing(keysym, utf8);
     }
 
-    pub fn key(self: *Dialog, keysym: xkb.Keysym, utf8: []const u8, mods: wlr.Keyboard.ModifierMask) void {
+    pub fn key(self: *Dialog, sym: xkb.Keysym, utf8: []const u8, mods: wlr.Keyboard.ModifierMask) void {
         self.caret_edit_ms = anim.nowMs();
-        const sym = @intFromEnum(keysym);
         if (sym == xkb.Keysym.Escape) return self.cancel();
         if (sym == xkb.Keysym.Tab or sym == xkb.Keysym.ISO_Left_Tab) {
             self.focus = @enumFromInt((@as(usize, @intFromEnum(self.focus)) + (if (mods.shift or sym == xkb.Keysym.ISO_Left_Tab) @as(usize, 3) else 1)) % 4);

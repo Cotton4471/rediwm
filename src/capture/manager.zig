@@ -292,10 +292,9 @@ fn monotonicMs() i64 {
     return @as(i64, ts.sec) * 1000 + @divTrunc(ts.nsec, 1_000_000);
 }
 
-/// wlroots sets `buffer` on the copy request; zig-wlroots declares it non-null.
+/// wlroots sets `buffer` when the client requests a copy.
 fn copyRequested(frame: *wlr.ScreencopyFrameV1) bool {
-    const buffer: *const ?*wlr.Buffer = @ptrCast(&frame.buffer);
-    return buffer.* != null;
+    return frame.buffer != null;
 }
 
 /// Resolves a session's source back to the window it captures, if any

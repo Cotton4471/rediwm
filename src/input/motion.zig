@@ -21,7 +21,7 @@ pub fn cursorMotion(
     event: *wlr.Pointer.event.Motion,
 ) void {
     const input: *Input = @fieldParentPtr("cursor_motion", listener);
-    if (input.blockedVirtual(event.device)) return;
+    if (input.blockedVirtual(&event.pointer.base)) return;
     @import("../startup.zig").markFirstInput();
     if (input.server.idle) |im| im.notifyActivity(.pointer);
 
@@ -32,7 +32,7 @@ pub fn cursorMotion(
     dy *= mult;
 
     if (input.server.locker != null or input.server.polkit_dialog != null) {
-        input.cursor.move(event.device, dx, dy);
+        input.cursor.move(&event.pointer.base, dx, dy);
         input.lockClientMotion(event.time_msec);
         return;
     }
@@ -41,7 +41,7 @@ pub fn cursorMotion(
         if (input.server.screenshot_selector.output == null and input.isPanModifierHeld() and input.active_buttons == 0 and !input.server.world.mini_map.dragging and !input.cursorOverTaskbar()) {
             const inhibited = if (input.pan_session) |sess| sess.inhibited and sess.trigger == .super_key else false;
             if (!inhibited) {
-                input.startPan(.super_key, event.device);
+                input.startPan(.super_key, &event.pointer.base);
             }
         }
     }
@@ -50,7 +50,7 @@ pub fn cursorMotion(
         if (input.pan_session) |*sess| if (!sess.inhibited) {
             const prev_x = input.cursor.x;
             const prev_y = input.cursor.y;
-            input.cursor.move(event.device, dx, dy);
+            input.cursor.move(&event.pointer.base, dx, dy);
             const actual_dx = input.cursor.x - prev_x;
             const actual_dy = input.cursor.y - prev_y;
 
@@ -65,7 +65,7 @@ pub fn cursorMotion(
     }
 
     const allowed = input.pointer_constraints.clientMotion(event.time_msec, dx, dy, event.unaccel_dx, event.unaccel_dy) orelse return;
-    input.cursor.move(event.device, allowed.dx, allowed.dy);
+    input.cursor.move(&event.pointer.base, allowed.dx, allowed.dy);
     input.processCursorMotion(event.time_msec);
     input.pointer_constraints.sync();
 }
@@ -75,12 +75,12 @@ pub fn cursorMotionAbsolute(
     event: *wlr.Pointer.event.MotionAbsolute,
 ) void {
     const input: *Input = @fieldParentPtr("cursor_motion_absolute", listener);
-    if (input.blockedVirtual(event.device)) return;
+    if (input.blockedVirtual(&event.pointer.base)) return;
     if (input.server.idle) |im| im.notifyActivity(.pointer);
     var x: f64 = undefined;
     var y: f64 = undefined;
-    input.cursor.absoluteToLayoutCoords(event.device, event.x, event.y, &x, &y);
-    input.layoutMotion(event.device, x, y, event.time_msec);
+    input.cursor.absoluteToLayoutCoords(&event.pointer.base, event.x, event.y, &x, &y);
+    input.layoutMotion(&event.pointer.base, x, y, event.time_msec);
 }
 
 /// Absolute pointer motion to a layout point: pointer devices, and touch and
@@ -171,17 +171,76 @@ pub fn warpCursor(input: *Input, x: f64, y: f64, time_msec: u32) void {
     }
 }
 
+/// A client's pointer drag carrying a list of files is under way.
+fn draggingFiles(input: *const Input) bool {
+    const drag = input.seat.drag orelse return false;
+    const source = drag.source orelse return false;
+    return drag.grab_type == .keyboard_pointer and @import("../desktop_drop.zig").offersUriList(source);
+}
+
 /// An auto-hiding dock shows when the pointer reaches its edge. Moving or
 /// resizing a window, or holding a button for a client (a selection dragged to
-/// the edge), must not raise it; dragging an app from the start menu does.
+/// the edge), must not raise it; dragging an app from the start menu does, and
+/// so does dragging files from a client, which can be dropped on the Trash.
 pub fn updateDockReveal(input: *Input) void {
-    const engaged = input.cursor_mode == .passthrough and (input.active_buttons == 0 or input.dock_drag.active());
+    const engaged = input.cursor_mode == .passthrough and (input.active_buttons == 0 or input.dock_drag.active() or draggingFiles(input));
     var it = input.server.outputs.iterator(.forward);
     while (it.next()) |output| output.dock.pointerAt(input.cursor.x, input.cursor.y, engaged);
 }
 
+fn updateWidgetProximity(input: *Input) void {
+    if (input.open_start_menu) |menu| {
+        const local = scene_data.toNodeLocal(&menu.buffer_node.node, input.cursor.x, input.cursor.y);
+        if (ui_input.updateButtonProximity(&menu.root, @floatCast(local.x), @floatCast(local.y), .{
+            .x = 0,
+            .y = 0,
+            .w = @floatFromInt(menu.panel_box.width),
+            .h = @floatFromInt(menu.panel_box.height),
+        })) {
+            menu.requestWidgetRepaint();
+        }
+    }
+
+    // Mapping the window can move the camera (and so the cursor) before its
+    // first layout has built `root`.
+    if (input.open_control_center) |cc| {
+        if (cc.built_page != null) {
+            const local = cc.localPoint(input.cursor.x, input.cursor.y);
+            if (ui_input.updateButtonProximity(&cc.root, @floatCast(local.x), @floatCast(local.y), .{
+                .x = 0,
+                .y = 0,
+                .w = @floatFromInt(cc.panel_box.width),
+                .h = @floatFromInt(cc.panel_box.height),
+            })) {
+                cc.requestWidgetRepaint();
+            }
+        }
+    }
+
+    if (input.open_power_menu) |menu| {
+        const local = scene_data.toNodeLocal(&menu.buffer_node.node, input.cursor.x, input.cursor.y);
+        if (ui_input.updateButtonProximity(&menu.root, @floatCast(local.x), @floatCast(local.y), .{
+            .x = 0,
+            .y = 0,
+            .w = @floatFromInt(menu.panel_box.width),
+            .h = @floatFromInt(menu.panel_box.height),
+        })) {
+            menu.requestWidgetRepaint();
+        }
+    }
+}
+
 pub fn processCursorMotion(input: *Input, time_msec: u32) void {
-    if (input.server.locker != null or input.server.polkit_dialog != null or input.server.switcher.active()) return;
+    if (input.server.locker != null or input.server.polkit_dialog != null) return;
+    if (input.server.world.overview.active()) {
+        input.server.world.overview.motion(&input.server.world, input.cursor.x, input.cursor.y);
+        return;
+    }
+    if (input.server.switcher.active()) {
+        input.server.switcher.motion(input.cursor.x, input.cursor.y);
+        return;
+    }
+    updateWidgetProximity(input);
     defer input.updateGrabBorderGlow();
     input.positionDragIcon();
     input.drag_dodge.motion();
@@ -215,6 +274,23 @@ pub fn processCursorMotion(input: *Input, time_msec: u32) void {
 }
 
 pub fn passthroughMotion(input: *Input, time_msec: u32) void {
+    if (input.taskbar_drag) |*session| {
+        if (!session.dragging and @import("../taskbar/pointer.zig").dragThresholdCrossed(
+            session.press_x,
+            session.press_y,
+            input.cursor.x,
+            input.cursor.y,
+        )) {
+            session.dragging = true;
+        }
+        if (session.dragging) {
+            input.setNamedCursor("grabbing");
+            // Taskbar coordinates are in layout space. The drag remains
+            // associated with its original bar even after leaving its bounds.
+            _ = session.bar.dragMove(session.window_id, input.cursor.x - @as(f64, @floatFromInt(session.bar.box.x)));
+        }
+        return;
+    }
     if (input.dock_drag.motion(input)) return;
     // Shell controls keep receiving motion until release, just like a client's
     // implicit grab. A scrollbar drag may leave the whole window or panel.
@@ -345,7 +421,12 @@ pub fn passthroughMotion(input: *Input, time_msec: u32) void {
             input.setHover(null, null);
             res.dock.motion(res.sx, res.sy);
             input.setDefaultCursor();
-            input.seat.pointerClearFocus();
+            if (input.seat.drag != null) {
+                // The grab-aware clear: a drag must leave the client it was over,
+                // or a release here would still drop on it.
+                input.seat.pointerNotifyClearFocus();
+                input.trash_drop.hover(res.dock.trashAt(res.sx, res.sy));
+            } else input.seat.pointerClearFocus();
         },
         .taskbar => |res| {
             input.hovered_resize_edges = null;
@@ -355,7 +436,15 @@ pub fn passthroughMotion(input: *Input, time_msec: u32) void {
             input.hovered_taskbar = res.bar;
             res.bar.pointerMotion(res.sx, res.sy);
             input.setHover(null, null);
-            input.setDefaultCursor();
+            if (input.taskbar_drag) |session| {
+                if (session.dragging) {
+                    input.setNamedCursor("grabbing");
+                } else {
+                    input.setDefaultCursor();
+                }
+            } else {
+                input.setDefaultCursor();
+            }
             input.seat.pointerClearFocus();
         },
         .chrome => |hit_chrome| {
@@ -367,7 +456,7 @@ pub fn passthroughMotion(input: *Input, time_msec: u32) void {
             const local = toplevel.frameLocal(input.cursor.x, input.cursor.y);
             const has_control = toplevel.controlAt(hit_chrome.sx, hit_chrome.sy) != null or toplevel.tabAt(hit_chrome.sx, hit_chrome.sy) != .none;
             toplevel.hoverTab(hit_chrome.sx, hit_chrome.sy);
-            if (resize.detectResizeEdges(local.x, local.y, toplevel.chrome_width, toplevel.chrome_height, toplevel.titlebarHeight(), chrome.frame_border, chrome.frame_border, has_control)) |edges| {
+            if (resize.detectResizeEdges(local.x, local.y, toplevel.chrome_width, toplevel.chrome_height, toplevel.titlebarHeight(), chrome.frameBorder(), chrome.frameBorder(), has_control)) |edges| {
                 input.hovered_resize_edges = edges;
                 input.setHover(toplevel, null);
                 input.setNamedCursor(edges.cursorName());
@@ -455,9 +544,9 @@ pub fn passthroughMotion(input: *Input, time_msec: u32) void {
             input.hovered_resize_edges = null;
             input.clearTaskbarHover();
             input.setHover(null, null);
-            // Clearing client focus also leaves a DnD drag unfocused, which
-            // is what lets the desktop receive its drop.
-            input.seat.pointerClearFocus();
+            // Defer focus clearing to the active pointer grab so wlroots
+            // updates its DnD drag focus as well as ordinary pointer focus.
+            input.seat.pointerNotifyClearFocus();
             res.desktop.pointerMotion(res.x, res.y);
             if (input.seat.drag != null) res.desktop.dragHover();
         },
@@ -523,22 +612,60 @@ pub fn processResize(input: *Input) void {
     if (session.settling) return;
 
     const toplevel = session.toplevel;
-    const constraints = toplevel.sizeConstraints();
+    const cursor_world = input.server.world.toWorld(input.cursor.x, input.cursor.y);
+    const cursor_x = cursor_world.x / toplevel.worldScale();
+    const cursor_y = cursor_world.y / toplevel.worldScale();
+    const active_constraints = toplevel.sizeConstraints();
 
-    // Use the same unscaled cursor space as the resize snapshot.
-    const cursor_wx = input.server.world.toWorld(input.cursor.x, input.cursor.y).x / toplevel.worldScale();
-    const cursor_wy = input.server.world.toWorld(input.cursor.x, input.cursor.y).y / toplevel.worldScale();
-
-    const desired = resize.computeDesiredClientSize(
+    // Each participant measures the same pointer in its own unscaled
+    // client space. Their snapshots select opposite edges, so the shared
+    // boundary moves in opposite directions while both outer edges stay put.
+    var desired = resize.computeDesiredClientSize(
         session.snapshot,
-        cursor_wx,
-        cursor_wy,
-        constraints,
+        cursor_x,
+        cursor_y,
+        active_constraints,
     );
-
+    var peer_desired: ?resize.ClientSize = null;
+    if (session.peer) |peer| {
+        if (resize.computeCoupledHorizontalClientSizes(
+            session.snapshot,
+            peer.snapshot,
+            cursor_x,
+            active_constraints,
+            peer.toplevel.sizeConstraints(),
+        )) |coupled| {
+            desired = coupled.active;
+            peer_desired = coupled.peer;
+        } else {
+            peer_desired = resize.computeDesiredClientSize(
+                peer.snapshot,
+                cursor_world.x / peer.toplevel.worldScale(),
+                cursor_world.y / peer.toplevel.worldScale(),
+                peer.toplevel.sizeConstraints(),
+            );
+        }
+    }
+    var changed = false;
     if (desired.width != session.latest_desired_size.width or desired.height != session.latest_desired_size.height) {
         session.latest_desired_size = desired;
         session.dirty = true;
+        changed = true;
+        @import("../effects/window_move.zig").resizeMotion(toplevel);
+    }
+
+    if (session.peer) |*peer| {
+        const next_size = peer_desired.?;
+        if (next_size.width != peer.latest_desired_size.width or
+            next_size.height != peer.latest_desired_size.height)
+        {
+            peer.latest_desired_size = next_size;
+            peer.dirty = true;
+            changed = true;
+        }
+    }
+
+    if (changed) {
         if (session.pacing_output) |out| {
             out.wlr_output.scheduleFrame();
         } else {

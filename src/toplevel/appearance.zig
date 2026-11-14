@@ -10,11 +10,14 @@ const projection = @import("../projection.zig");
 const theme = @import("ui").theme;
 const actions = @import("../config_runtime/actions.zig");
 const anim = @import("ui").anim;
-const border_glow = @import("../border_glow.zig");
+const border_glow = @import("ui").border_glow;
+const window_shape = @import("ui").window_shape;
 const log = std.log.scoped(.toplevel);
 const chip_slot_px = Toplevel.chip_slot_px;
 
 pub fn detachInput(toplevel: *Toplevel) void {
+    @import("../effects/window_minimize.zig").cancelFor(toplevel.server, toplevel.id);
+    @import("../effects/window_move.zig").cancelFor(toplevel.server, toplevel.id);
     toplevel.server.input.detachToplevel(toplevel);
     toplevel.clearDragLift();
     toplevel.clearDodge();
@@ -34,7 +37,11 @@ pub fn effectiveOpacity(toplevel: *Toplevel, now_ms: i64) f32 {
     const inactive = std.math.clamp(toplevel.server.config.compositor.inactive_opacity, 0, 1);
     const normal = (toplevel.live_rules.opacity orelse 1) * (if (toplevel == focused) @as(f32, 1) else inactive);
     const mix = toplevel.peek_mix.value(now_ms);
-    return (normal * (1 - mix) + toplevel.peek_level.value(now_ms) * mix) * toplevel.cameraFocusOpacity();
+    const overview = &toplevel.server.world.overview;
+    const spread = if (overview.contains(toplevel.id)) @as(f32, @floatCast(overview.amount(now_ms))) else 0;
+    const hidden = overview.contains(toplevel.id) and toplevel.minimized and overview.activate != toplevel.id;
+    const opacity = if (hidden) 0 else (normal * (1 - mix) + toplevel.peek_level.value(now_ms) * mix) * toplevel.cameraFocusOpacity();
+    return opacity + (1 - opacity) * spread;
 }
 
 /// 1 for a window that should show dimmed: not the focus, unless the dim is off,
@@ -52,7 +59,9 @@ pub fn dimTarget(toplevel: *Toplevel) f32 {
 pub fn applyDim(toplevel: *Toplevel, now_ms: i64) void {
     const target = toplevel.dimTarget();
     if (toplevel.dim_anim.to != target) toplevel.dim_anim.retargetTo(now_ms, target, anim.curveFor(.window_dim));
-    const level = toplevel.dim_anim.value(now_ms) * (1 - toplevel.peek_mix.value(now_ms));
+    const overview = &toplevel.server.world.overview;
+    const spread = if (overview.contains(toplevel.id)) @as(f32, @floatCast(overview.amount(now_ms))) else 0;
+    const level = toplevel.dim_anim.value(now_ms) * (1 - toplevel.peek_mix.value(now_ms)) * (1 - spread);
     // Whole levels of an 8-bit channel: a finer step shows nothing and would only repaint.
     const amount = std.math.clamp(@round(level * toplevel.server.config.compositor.inactive_dim_amount * 255) / 255, 0, 1);
     if (amount == toplevel.dim_shown) return;
@@ -144,14 +153,22 @@ pub fn glowProbe(toplevel: *const Toplevel, lx: f64, ly: f64) ?border_glow.Probe
     if (!toplevel.hasServerDecorations() or toplevel.isMaximized() or toplevel.isFullscreen()) return null;
     const density = toplevel.chromeDensity();
     const local = toplevel.frameLocal(lx, ly);
-    return border_glow.probe(
+    const found = border_glow.probe(
         @floatFromInt(toplevel.chrome_width),
         @floatFromInt(toplevel.chrome_height),
         toplevel.cornerRadius(),
         @floatCast(local.x),
         @floatCast(local.y),
         theme.global.border_glow_reach * density,
-    );
+    ) orelse return null;
+    // A polygon outline: the highlight sits on the frame's bounding box, so it shows
+    // only where the outline runs along it (within a few px: a shallow step still
+    // lights). Where the nearest point of the box is cut away (a deep notch, a
+    // slanted corner) there is no edge there to light.
+    if (toplevel.shapePolygon(toplevel.chrome_width, toplevel.chrome_height)) |polygon| {
+        if (@abs(window_shape.sdPolygon(polygon, found.x, found.y)) > 4 * density) return null;
+    }
+    return found;
 }
 
 /// Shows the highlight of the frame's edge at `probe` (null: fades it out). Only
@@ -186,6 +203,7 @@ pub fn tickGlow(toplevel: *Toplevel, now_ms: i64) bool {
 }
 
 pub fn tickHover(toplevel: *Toplevel, now_ms: i64) bool {
+    const corners = toplevel.tickCornerAccents(now_ms);
     // Every sampler must run each frame (they track their own last value).
     const border = toplevel.hover_anim.sampleChanged(now_ms, anim.rasterAlphaQuantum());
     const glide = toplevel.chip_pos.sampleChanged(now_ms, anim.rasterPixelQuantum(toplevel.render_scale) / chip_slot_px);
@@ -195,7 +213,7 @@ pub fn tickHover(toplevel: *Toplevel, now_ms: i64) bool {
             log.err("tickHover: could not update window decoration: {}", .{err});
         };
     }
-    return !toplevel.hover_anim.settled(now_ms) or !toplevel.chip_pos.settled(now_ms) or !toplevel.chip_alpha.settled(now_ms);
+    return corners or !toplevel.hover_anim.settled(now_ms) or !toplevel.chip_pos.settled(now_ms) or !toplevel.chip_alpha.settled(now_ms);
 }
 
 pub fn nowMs() i64 {

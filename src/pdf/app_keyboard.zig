@@ -157,7 +157,7 @@ pub fn handleKey(self: *App, sym: u32, utf8: []const u8) void {
             'c', 'C' => {
                 if (if (self.selection_active) self.selected_text else null) |txt| {
                     if (self.clipboard_text) |c_prev| a.free(c_prev);
-                    self.clipboard_text = a.dupeZ(u8, txt) catch null;
+                    self.clipboard_text = a.dupeSentinel(u8, txt, 0) catch null;
                     self.clipboard_request = true;
                 }
             },

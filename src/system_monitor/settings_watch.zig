@@ -1,28 +1,31 @@
-//! Theme changes wake the UI through inotify, including while sampling is
+//! Theme changes wake the UI through file watching, including while sampling is
 //! paused or suspended. Watch parent directories so atomic saves work too.
 const std = @import("std");
-const c = @import("../files/c.zig").api;
+const platform = @import("platform");
 const settings = @import("../files/settings.zig");
 const a = std.heap.c_allocator;
 pub const Watch = struct {
-    fd: c_int,
+    watcher: platform.watch.Watcher,
     settings: settings.Settings,
     io: std.Io,
     pub fn init(io: std.Io, env: std.process.Environ) !Watch {
-        const fd = c.inotify_init1(c.IN_NONBLOCK | c.IN_CLOEXEC);
-        if (fd < 0) return error.ThemeWatchFailed;
-        errdefer _ = c.close(fd);
-        var self: Watch = .{ .fd = fd, .settings = try settings.Settings.init(a, env), .io = io };
+        var watcher = platform.watch.Watcher.init() catch return error.ThemeWatchFailed;
+        errdefer watcher.deinit();
+        var self: Watch = .{ .watcher = watcher, .settings = try settings.Settings.init(a, env), .io = io };
         self.arm();
         _ = self.apply();
         return self;
     }
     pub fn deinit(self: *Watch) void {
         self.settings.deinit(a);
-        _ = c.close(self.fd);
+        self.watcher.deinit();
+    }
+    /// The descriptor to poll for a change.
+    pub fn fd(self: *const Watch) c_int {
+        return self.watcher.fd;
     }
     fn arm(self: *Watch) void {
-        self.settings.watch(self.fd);
+        self.settings.watch(self.watcher);
     }
     fn apply(self: *Watch) bool {
         if (self.settings.reload(a, self.io)) |update| {
@@ -33,10 +36,7 @@ pub const Watch = struct {
         return false;
     }
     pub fn poll(self: *Watch) bool {
-        var buf: [8192]u8 = undefined;
-        var changed = false;
-        while (c.read(self.fd, &buf, buf.len) > 0) changed = true;
-        if (!changed) return false;
+        if (!self.watcher.flush()) return false;
         self.arm();
         return self.apply();
     }

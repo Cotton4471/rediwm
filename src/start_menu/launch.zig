@@ -449,10 +449,10 @@ fn launchDbusActivatable(server: *Server, entry: *const AppEntry, uris: []const 
     errdefer arena.deinit();
     const a = arena.allocator();
     var owned = entry.*;
-    inline for (@typeInfo(AppEntry).@"struct".fields) |field| {
-        if (field.type == []const u8) @field(owned, field.name) = try a.dupe(u8, @field(entry, field.name));
-        if (field.type == ?[]const u8) {
-            if (@field(entry, field.name)) |value| @field(owned, field.name) = try a.dupe(u8, value);
+    inline for (@typeInfo(AppEntry).@"struct".field_names) |field_name| {
+        if (@FieldType(AppEntry, field_name) == []const u8) @field(owned, field_name) = try a.dupe(u8, @field(entry, field_name));
+        if (@FieldType(AppEntry, field_name) == ?[]const u8) {
+            if (@field(entry, field_name)) |value| @field(owned, field_name) = try a.dupe(u8, value);
         }
     }
     const owned_uris = try a.alloc([]const u8, uris.len);

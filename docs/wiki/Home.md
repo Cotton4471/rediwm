@@ -27,10 +27,12 @@ no waybar/greeter/launcher/notification daemon to wire up.
 | `rediwm-files` | file manager |
 | `rediwm-images` | image viewer |
 | `rediwm-pdf` | sandboxed PDF viewer |
+| `rediwm-player` | background audio player (MP3, FLAC, WAV), started from Files; taskbar tray icon with a menu |
 | `rediwm-editor` | text editor |
 | `rediwm-desktop` | desktop icons and wallpaper |
 | `rediwm-share-picker` | screen sharing picker |
 | `rediwm-accounts-helper` | root helper for account management, runs under `pkexec` |
+| `rediwm-keys` | unprivileged helper that reads `~/.ssh` for Settings → Keys & Certificates |
 
 ## Other docs in the repo
 

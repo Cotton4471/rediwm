@@ -7,7 +7,7 @@ const xkb = @import("xkbcommon");
 
 /// Text and caret keys: printable characters, Backspace, Delete, Left, Right.
 pub fn editing(sym: xkb.Keysym, utf8: []const u8) bool {
-    return switch (@intFromEnum(sym)) {
+    return switch (sym) {
         xkb.Keysym.BackSpace, xkb.Keysym.Delete, xkb.Keysym.Left, xkb.Keysym.Right => true,
         else => printable(utf8),
     };
@@ -15,7 +15,7 @@ pub fn editing(sym: xkb.Keysym, utf8: []const u8) bool {
 
 /// List navigation: Up, Down, Page Up, Page Down.
 pub fn navigation(sym: xkb.Keysym) bool {
-    return switch (@intFromEnum(sym)) {
+    return switch (sym) {
         xkb.Keysym.Up, xkb.Keysym.Down, xkb.Keysym.Page_Up, xkb.Keysym.Page_Down => true,
         else => false,
     };
@@ -28,20 +28,15 @@ fn printable(utf8: []const u8) bool {
 
 test "text and caret keys repeat; action keys do not" {
     const std = @import("std");
-    const sym = struct {
-        fn of(value: u32) xkb.Keysym {
-            return @enumFromInt(value);
-        }
-    }.of;
-    try std.testing.expect(editing(sym(xkb.Keysym.a), "a"));
-    try std.testing.expect(editing(sym(xkb.Keysym.space), " "));
-    try std.testing.expect(editing(sym(xkb.Keysym.eacute), "é"));
-    try std.testing.expect(editing(sym(xkb.Keysym.BackSpace), "\x08"));
-    try std.testing.expect(editing(sym(xkb.Keysym.Left), ""));
-    try std.testing.expect(!editing(sym(xkb.Keysym.Return), "\r"));
-    try std.testing.expect(!editing(sym(xkb.Keysym.Tab), "\t"));
-    try std.testing.expect(!editing(sym(xkb.Keysym.Escape), "\x1b"));
-    try std.testing.expect(!editing(sym(xkb.Keysym.Home), ""));
-    try std.testing.expect(navigation(sym(xkb.Keysym.Page_Down)));
-    try std.testing.expect(!navigation(sym(xkb.Keysym.Left)));
+    try std.testing.expect(editing(xkb.Keysym.a, "a"));
+    try std.testing.expect(editing(xkb.Keysym.space, " "));
+    try std.testing.expect(editing(xkb.Keysym.eacute, "é"));
+    try std.testing.expect(editing(xkb.Keysym.BackSpace, "\x08"));
+    try std.testing.expect(editing(xkb.Keysym.Left, ""));
+    try std.testing.expect(!editing(xkb.Keysym.Return, "\r"));
+    try std.testing.expect(!editing(xkb.Keysym.Tab, "\t"));
+    try std.testing.expect(!editing(xkb.Keysym.Escape, "\x1b"));
+    try std.testing.expect(!editing(xkb.Keysym.Home, ""));
+    try std.testing.expect(navigation(xkb.Keysym.Page_Down));
+    try std.testing.expect(!navigation(xkb.Keysym.Left));
 }

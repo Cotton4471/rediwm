@@ -3,6 +3,7 @@
 const std = @import("std");
 
 pub const standard_data_dirs: []const []const u8 = &.{
+    @import("install_paths").data,
     "/usr/local/share",
     "/usr/share",
 };
@@ -99,9 +100,7 @@ pub fn desktopList(a: std.mem.Allocator, names: []const u8) ![]const u8 {
     return out;
 }
 
-const c = @cImport({
-    @cInclude("unistd.h");
-});
+const c = @import("c");
 
 fn isExecutable(path_z: [:0]const u8) bool {
     return c.access(path_z.ptr, c.X_OK) == 0;
@@ -110,12 +109,12 @@ fn isExecutable(path_z: [:0]const u8) bool {
 pub fn executable(program: []const u8, search: []const u8) bool {
     var buf: [std.fs.max_path_bytes + 1]u8 = undefined;
     if (std.mem.indexOfScalar(u8, program, '/') != null) {
-        const z = std.fmt.bufPrintZ(&buf, "{s}", .{program}) catch return false;
+        const z = std.fmt.bufPrintSentinel(&buf, "{s}", .{program}, 0) catch return false;
         return isExecutable(z);
     }
     var dirs = std.mem.tokenizeScalar(u8, search, ':');
     while (dirs.next()) |dir| {
-        const z = std.fmt.bufPrintZ(&buf, "{s}/{s}", .{ dir, program }) catch continue;
+        const z = std.fmt.bufPrintSentinel(&buf, "{s}/{s}", .{ dir, program }, 0) catch continue;
         if (isExecutable(z)) return true;
     }
     return false;

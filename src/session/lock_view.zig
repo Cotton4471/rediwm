@@ -62,6 +62,12 @@ pub const Geometry = struct {
         };
     }
 
+    /// The keyboard layout button, bottom left, in the same units (the
+    /// greeter's session chooser sits there instead).
+    pub fn layoutButton(geo: Geometry) text_field.Rect {
+        return .{ .x = 30, .y = geo.h / geo.s - 96, .w = 90, .h = 76 };
+    }
+
     /// The Unlock / Log In button, in the same units.
     pub fn submit(geo: Geometry) text_field.Rect {
         return .{ .x = geo.left / geo.s, .y = geo.top / geo.s + 508, .w = 390, .h = 52 };
@@ -83,6 +89,7 @@ pub const View = struct {
     controls_node: *sn.Buffer,
     controls_key: ?ControlsKey = null,
     revision: u64 = 0,
+    content_ready: bool = false,
     width: i32 = 0,
     height: i32 = 0,
     scale: f32 = 0,
@@ -122,6 +129,7 @@ pub const View = struct {
         self.caret.hide();
         self.hideControls();
         self.revision = 0;
+        self.content_ready = false;
         Buffer.drainPool();
     }
 
@@ -177,6 +185,8 @@ pub const View = struct {
         if (self.revision == lock.revision and self.width == b.width and self.height == b.height and self.scale == scale) return self.caret.frame(now);
         if (b.width <= 0 or b.height <= 0) return false;
         // Drop stale pixels before a failed resize allocation.
+        self.content_ready = false;
+        out.greeter_presented = false;
         self.ui_node.setBuffer(null);
         if (lock.greeter_wallpaper orelse out.server.wallpaper) |image| {
             self.wallpaper.setBuffer(&image.base);
@@ -197,6 +207,7 @@ pub const View = struct {
         } else null, lock.caret_edit_ms);
         self.ui_node.setBuffer(&buf.base);
         self.ui_node.setDestSize(b.width, b.height);
+        self.content_ready = true;
         self.revision = lock.revision;
         self.width = b.width;
         self.height = b.height;
@@ -236,7 +247,7 @@ pub fn paint(r: *ui.paint.Renderer, lock: *Lock, w: f32, h: f32, clock_24h: bool
     var date_buf: [96]u8 = @splat(0);
     var period: [16]u8 = @splat(0);
     var pattern: [256]u8 = undefined;
-    const date_pattern = std.fmt.bufPrintZ(&pattern, "{s}", .{i18n.trc("date", "%A, %B %-d")}) catch "%A, %B %-d";
+    const date_pattern = std.fmt.bufPrintSentinel(&pattern, "{s}", .{i18n.trc("date", "%A, %B %-d")}, 0) catch "%A, %B %-d";
     if (c.localtime_r(&raw, &tm) != null) {
         _ = c.strftime(&time_buf, time_buf.len, if (clock_24h) "%H:%M" else "%l:%M", &tm);
         if (!clock_24h) _ = c.strftime(&period, period.len, "%p", &tm);
@@ -286,7 +297,19 @@ pub fn paint(r: *ui.paint.Renderer, lock: *Lock, w: f32, h: f32, clock_24h: bool
         .label = if (i == 0) i18n.tr("Power") else i18n.tr("Restart"),
     }, .{ .focused = lock.focus == 3 + i });
     r.fillRect(w - 120 * s, h - 90 * s, s, 34 * s, .{ .color = ui.theme.global.lock_divider });
+    if (layoutButtonShown(lock)) ui.widgets.button.paint(&zoomed, geo.layoutButton(), .{
+        .variant = .ghost,
+        .size = .sm,
+        .stacked = true,
+        .leading_icon = .keyboard,
+        .label = lock.layout_label[0..lock.layout_label_len],
+    }, .{ .focused = lock.focus == lock_mod.focus_layout });
     return .{ .caret = field.caret, .factor = s };
+}
+
+/// See `Lock.refreshLayoutLabel`.
+pub fn layoutButtonShown(lock: *const Lock) bool {
+    return lock.layout_label_len > 0;
 }
 
 /// Greeter: account arrows beside the picture, session chooser bottom-left.

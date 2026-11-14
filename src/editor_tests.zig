@@ -2,7 +2,10 @@ test {
     _ = @import("editor/caret.zig");
     _ = @import("editor/formats.zig");
     _ = @import("editor/document.zig");
+    _ = @import("editor/document_search.zig");
+    _ = @import("editor/drafts_tests.zig");
     _ = @import("editor/lines.zig");
+    _ = @import("editor/reflow.zig");
     _ = @import("editor/view.zig");
     _ = @import("editor/operation.zig");
 }

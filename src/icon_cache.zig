@@ -20,10 +20,8 @@ const Io = std.Io;
 // file scope, which zig's translate-c cannot parse, and it cascades into
 // thousands of unrelated errors. Since only a handful of stable, ABI-frozen
 // rsvg/glib/gobject symbols are needed, they're hand-declared below instead
-// of pulled in through @cInclude.
-const c = @cImport({
-    @cInclude("cairo.h");
-});
+// of translated from their headers.
+const c = @import("c_gfx");
 
 const GError = opaque {};
 const RsvgHandle = opaque {};
@@ -117,13 +115,13 @@ fn lookupScoped(cfg: icon_theme.Config, io: Io, icon_name: []const u8, size_px: 
         const is_svg = std.mem.endsWith(u8, icon_name, ".svg");
         const is_png = std.mem.endsWith(u8, icon_name, ".png");
         if (is_svg) {
-            const zpath = gpa.dupeZ(u8, icon_name) catch return null;
+            const zpath = gpa.dupeSentinel(u8, icon_name, 0) catch return null;
             defer gpa.free(zpath);
             const in_pack = cfg.override_root.len > 0 and std.mem.startsWith(u8, icon_name, cfg.override_root) and icon_name.len > cfg.override_root.len and icon_name[cfg.override_root.len] == '/';
             const pixels = (if (in_pack) rasterizePackSvg(zpath, io, size_px) else rasterizeSvg(zpath, size_px)) orelse return null;
             return Entry{ .pixels = pixels, .size = size_px };
         } else if (is_png) {
-            const zpath = gpa.dupeZ(u8, icon_name) catch return null;
+            const zpath = gpa.dupeSentinel(u8, icon_name, 0) catch return null;
             defer gpa.free(zpath);
             if (try loadPng(zpath, io, size_px)) |pixels| {
                 return Entry{ .pixels = pixels, .size = size_px };
@@ -132,13 +130,13 @@ fn lookupScoped(cfg: icon_theme.Config, io: Io, icon_name: []const u8, size_px: 
         } else {
             var buf: [512]u8 = undefined;
             if (std.fmt.bufPrint(&buf, "{s}.svg", .{icon_name})) |svg_path| {
-                const zpath = gpa.dupeZ(u8, svg_path) catch return null;
+                const zpath = gpa.dupeSentinel(u8, svg_path, 0) catch return null;
                 defer gpa.free(zpath);
                 if (rasterizeSvg(zpath, size_px)) |pixels| {
                     return Entry{ .pixels = pixels, .size = size_px };
                 }
             } else |_| {}
-            if (std.fmt.bufPrintZ(&buf, "{s}.png", .{icon_name})) |png_path| {
+            if (std.fmt.bufPrintSentinel(&buf, "{s}.png", .{icon_name}, 0)) |png_path| {
                 if (try loadPng(png_path, io, size_px)) |pixels| {
                     return Entry{ .pixels = pixels, .size = size_px };
                 }
@@ -418,7 +416,7 @@ test "rectangular PNG icons keep their proportions" {
 }
 
 test "shrinking an icon preserves fine detail across each pixel footprint" {
-    var src = [_]u32{0} ** 64;
+    var src = @as([64]u32, @splat(0));
     src[0] = 0x80800000;
     const pixels = try resample(&src, 8, 8, 2);
     defer gpa.free(pixels);

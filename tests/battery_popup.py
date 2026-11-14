@@ -18,19 +18,24 @@ def run(scale, gold=False, top=False):
         root = Path(directory)
         hook = root / "battery.so"
         subprocess.run(["cc", "-shared", "-fPIC", "-Wall", "-Wextra", "-Werror", str(Path(__file__).with_name("battery_hook.c")), "-ldl", "-o", str(hook)], check=True)
-        for state, percent, details in (("Full", 100, True), ("Discharging", 18, False), ("Charging", 72, True)):
+        for state, percent, details in (("Full", 100, True), ("Discharging", 10, False), ("Charging", 72, True)):
             tmp = root / state
             tmp.mkdir(mode=0o700)
             supply = tmp / "power_supply" / "BAT0"
             supply.mkdir(parents=True)
             (supply / "scope").write_text("System\n")
-            (supply / "uevent").write_text(f"POWER_SUPPLY_TYPE=Battery\nPOWER_SUPPLY_CAPACITY={percent}\nPOWER_SUPPLY_STATUS={state}\n" + (
-                "POWER_SUPPLY_ENERGY_FULL=57000000\nPOWER_SUPPLY_ENERGY_FULL_DESIGN=90000000\nPOWER_SUPPLY_CYCLE_COUNT=482\n" if details else ""))
+            readings = f"POWER_SUPPLY_TYPE=Battery\nPOWER_SUPPLY_CAPACITY={percent}\nPOWER_SUPPLY_STATUS={state}\n" + (
+                "POWER_SUPPLY_ENERGY_FULL=57000000\nPOWER_SUPPLY_ENERGY_FULL_DESIGN=90000000\nPOWER_SUPPLY_CYCLE_COUNT=482\n" if details else "")
+            if state == "Charging":
+                readings += "POWER_SUPPLY_ENERGY_NOW=40000000\nPOWER_SUPPLY_POWER_NOW=12000000\n"
+            elif state == "Discharging":
+                readings += "POWER_SUPPLY_CHARGE_NOW=3000000\nPOWER_SUPPLY_CURRENT_NOW=2000000\n"
+            (supply / "uevent").write_text(readings)
             config = '[compositor]\nxwayland = false\ntaskbar_position = "' + ('top' if top else 'bottom') + '"\n'
             if gold:
                 config += '[theme]\nbase = "gold"\n'
             fake = start_fake()
-            process, log = spawn_compositor(tmp, scale=scale, renderer=os.environ.get("REDIWM_TEST_RENDERER", "gles2"), config_content=config, env_extra={
+            process, log = spawn_compositor(tmp, outputs=int(os.environ.get("REDIWM_TEST_OUTPUTS", "1")), scale=scale, renderer=os.environ.get("REDIWM_TEST_RENDERER", "gles2"), config_content=config, env_extra={
                 "LD_PRELOAD": str(hook), "REDIWM_TEST_BATTERY_DIR": str(supply.parent),
                 "DBUS_SYSTEM_BUS_ADDRESS": os.environ["DBUS_SESSION_BUS_ADDRESS"],
                 "DBUS_SESSION_BUS_ADDRESS": "", "XDG_CACHE_HOME": str(tmp),
@@ -39,6 +44,12 @@ def run(scale, gold=False, top=False):
                 with IPCClient(tmp, timeout=15) as ipc:
                     ipc.wait_for("wallpaper_presented", timeout_ms=10000)
                     wait_for(lambda: "active profile balanced" in log_text(tmp), "power profile baseline")
+                    warnings = [n for n in ipc.get_notifications()["history"] if n["summary"] == "Low battery"]
+                    assert len(warnings) == (1 if state == "Discharging" else 0), warnings
+                    if warnings:
+                        assert warnings[0]["body"] == "Battery is at 10%. Plug in your charger."
+                        assert warnings[0]["urgency"] == 2
+                        ipc.dismiss_notification(warnings[0]["id"])
                     bar = ipc.get_shell_state()["taskbars"][0]
                     boxes = {item["name"]: item["box"] for item in bar["right_items"]}
 
@@ -55,7 +66,7 @@ def run(scale, gold=False, top=False):
                     assert hit["target_type"] == "battery_popup", hit
                     origin = point[0] - hit["local_x"], point[1] - hit["local_y"]
                     output_height = ipc.get_outputs()[0]["logical_height"] if top else bar["box"]["y"] + bar["box"]["height"]
-                    factor = min(1, (bar["box"]["width"] - 24) / 368, (output_height - bar["box"]["height"] - 24) / 496)
+                    factor = min(1, (bar["box"]["width"] - 24) / 368, (output_height - bar["box"]["height"] - 24) / 536)
 
                     def row(index):
                         return round(origin[0] + 180 * factor), round(origin[1] + (382 + index * 32) * factor)
@@ -74,6 +85,18 @@ def run(scale, gold=False, top=False):
                         x, y = round((origin[0] + 24 * factor) * raster), round((origin[1] + 295 * factor) * raster)
                         red, green, blue = initial.getpixel((x, y))
                         assert red > 190 and green > 180 and blue > 155, ("Gold detail card", (red, green, blue))
+
+                    if state == "Charging":
+                        # Rate changes with the same percentage must repaint an open
+                        # popup on the existing minute tick, without input/events.
+                        (supply / "uevent").write_text(readings.replace("POWER_SUPPLY_POWER_NOW=12000000", "POWER_SUPPLY_POWER_NOW=24000000"))
+                        time.sleep(60 - time.time() % 60 + 0.2)
+                        refreshed = capture("estimate-refreshed")
+                        pixelscale = initial.width / bar["box"]["width"]
+                        estimate_box = tuple(round(v * pixelscale) for v in (
+                            origin[0] + 125 * factor, origin[1] + 38 * factor,
+                            origin[0] + 345 * factor, origin[1] + 58 * factor))
+                        assert ImageChops.difference(initial.crop(estimate_box), refreshed.crop(estimate_box)).getbbox(), "time estimate did not refresh on the minute tick"
 
                     # Click selection and external changes both update the check.
                     ipc.click_at(*row(2))

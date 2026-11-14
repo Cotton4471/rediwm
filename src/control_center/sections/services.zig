@@ -166,7 +166,7 @@ fn tree(s: *Section, cc: *panel.ControlCenter, client: *systemd.Client, a: std.m
     }, false);
     actions.width = .auto;
     var banner = try group(a, &.{ summary, actions }, narrow);
-    banner.kind = .{ .rect = .{ .color = ui.theme.global.app_item, .radius = 8, .border_width = 1, .border_color = ui.theme.global.app_item_border } };
+    banner.kind = .{ .rect = .{ .color = ui.theme.global.app_item, .radius = 8, .border_width = 1, .border_color = ui.theme.global.app_item_border, .relief = ui.theme.global.settings_card_relief } };
     banner.padding = ui.layout.Edges.all(12);
     try tryAppend(&content, a, banner);
     const field = try a.create(W);
@@ -330,7 +330,7 @@ fn tryAppend(list: *std.ArrayList(W), a: std.mem.Allocator, widget: W) !void {
     try list.append(a, widget);
 }
 fn matches(unit: systemd.Unit, query: []const u8, filter: Filter) bool {
-    if (std.ascii.indexOfIgnoreCase(unit.name, query) == null and std.ascii.indexOfIgnoreCase(unit.description, query) == null) return false;
+    if (std.ascii.findIgnoreCase(unit.name, query) == null and std.ascii.findIgnoreCase(unit.description, query) == null) return false;
     return switch (filter) {
         .all => true,
         .enabled => unit.enabled(),

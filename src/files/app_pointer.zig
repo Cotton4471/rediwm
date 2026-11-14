@@ -24,21 +24,10 @@ pub fn hoverKey(self: *App) usize {
     const y = self.mouse_y;
     if (self.dialog) |dlg| {
         if (dlg.kind == .properties) return dlg.properties.?.hit(self.w, self.h, x, y);
+        if (dlg.kind == .trash_properties) return @intFromEnum(dlg.trash_properties.?.hit(self.w, self.h, x, y));
         if (dlg.kind == .open_with) return dlg.applications.?.hit(self.w, self.h, x, y);
         if (dlg.kind == .trash_confirm) return @intFromEnum(dlg.deletion.geometry(self.w, self.h).target(x, y));
-        const dw: f64 = @min(440, @as(f64, @floatFromInt(self.w)) - 24);
-        const dx = (@as(f64, @floatFromInt(self.w)) - dw) / 2;
-        const dy = (@as(f64, @floatFromInt(self.h)) - 130) / 2;
-        if (y < dy + 84 or y > dy + 112) return 0;
-        if (dlg.kind == .conflict) {
-            for (0..3) |i| {
-                const left = dx + 16 + @as(f64, @floatFromInt(i)) * ((dw - 48) / 3 + 8);
-                if (x >= left and x <= left + (dw - 48) / 3) return i + 1;
-            }
-        } else {
-            if (x >= dx + dw - 184 and x <= dx + dw - 104) return 1;
-            if (x >= dx + dw - 96 and x <= dx + dw - 16) return 2;
-        }
+        if (self.dialog_surface.hovered) |target| return @intCast(target.id);
         return 0;
     }
     if (self.menu != null) return 100 + (self.menuHit(x, y) orelse 99);
@@ -54,44 +43,38 @@ pub fn hoverKey(self: *App) usize {
             return 500;
         }
     }
-    if (header.hit(self.w, self.inRepository(), x, y)) |action| return 200 + @as(usize, @intFromEnum(action));
+    if (@import("app_audio_bar.zig").hit(self, x, y)) |id| return 920 + id;
+    if (self.toolbar_surface.hovered) |target| return 200 + @as(usize, @intCast(target.id));
     if (self.list_view and x >= @as(f64, @floatFromInt(self.sidebarWidth())) and x < @as(f64, @floatFromInt(self.w - self.scrollbarGutter()))) {
-        for (self.columnLabels(), 0..) |_, i| {
-            if (i < 4 and self.listColumn(i).contains(x, y)) return 400 + i;
-        }
+        if (self.column_surface.hovered) |target| return @intCast(target.id);
     }
-    if (x >= 0 and x < @as(f64, @floatFromInt(self.sidebarWidth())) and y >= @as(f64, @floatFromInt(self.contentTop())) and y < @as(f64, @floatFromInt(self.h - self.sidebarFooter()))) {
-        if (self.ejectAt(x, y)) |k| return 700 + k;
-        for (0..self.rowCount()) |i| {
-            if (!self.placeVisible(i)) continue;
-            const row = self.placeRect(i);
-            if (y >= row.y and y < row.y + row.h) return switch (self.rowKind(i)) {
-                .builtin => |b| 300 + b,
-                .pin => |j| 800 + j,
-                .device => |k| 600 + k,
-            };
-        }
-    }
+    if (self.sidebar_surface.hovered) |target| return @intCast(target.id);
     if (self.inlineTorrentHit(x, y)) |hit| return std.math.maxInt(usize) - 3000 - hit.index * 2 - @intFromBool(hit.toggle);
-    if (self.itemAt(x, y)) |i| {
-        if (self.sizeButtonRect(i)) |rect| {
-            if (rect.contains(x, y)) {
-                if (self.folder_sizes.get(self.items.items[i].path)) |sz| {
-                    switch (sz) {
-                        .running => return 2_000_000 + i,
-                        .done => {},
+    if (self.audioButtonHit(x, y)) |index| return @import("app_audio.zig").audioHoverKey(index);
+    if (self.item_surface.hovered) |target| {
+        const i: usize = @intCast(target.id);
+        if (i < self.items.items.len) {
+            if (self.sizeButtonRect(i)) |rect| {
+                if (rect.contains(x, y)) {
+                    if (self.folder_sizes.get(self.items.items[i].path)) |sz| {
+                        switch (sz) {
+                            .running => return 2_000_000 + i,
+                            .done => {},
+                        }
+                    } else {
+                        return 2_000_000 + i;
                     }
-                } else {
-                    return 2_000_000 + i;
                 }
             }
+            return 1000 + i;
         }
-        return 1000 + i;
     }
     return 0;
 }
 
 pub fn handleMotion(self: *App, x: f64, y: f64) void {
+    if (@import("app_audio_playlist.zig").motion(self, x, y)) return;
+    if (@import("app_audio_bar.zig").motion(self, x, y)) return;
     if (self.terminalMotion(x, y)) {
         self.mouse_x = x;
         self.mouse_y = y;
@@ -115,6 +98,7 @@ pub fn handleMotion(self: *App, x: f64, y: f64) void {
     if (self.dialog) |*dlg| {
         const moved = switch (dlg.kind) {
             .properties => dlg.properties.?.motion(self.w, self.h, x, y),
+            .trash_properties => dlg.trash_properties.?.motion(self.w, self.h, x, y),
             .open_with => dlg.applications.?.motion(self.w, self.h, x, y),
             .trash_confirm => dlg.deletion.motion(self.w, self.h, x, y),
             else => false,
@@ -139,9 +123,17 @@ pub fn handleMotion(self: *App, x: f64, y: f64) void {
             self.last_click_index = null;
         }
     }
+    const old_x = self.mouse_x;
+    const old_y = self.mouse_y;
     const old_hover = self.hoverKey();
     self.mouse_x = x;
     self.mouse_y = y;
+    self.updateToolbarSurface();
+    self.updateSidebarSurface();
+    self.updateColumnSurface();
+    self.updateDialogSurface();
+    self.updateItemSurface();
+    self.damageToolbarProximity(old_x, old_y, x, y);
     if (self.selection_band != null) self.updateSelectionBand();
     if (self.text_dragging) {
         self.placeCaret(x, true);
@@ -175,6 +167,7 @@ pub fn handleMotion(self: *App, x: f64, y: f64) void {
 }
 
 pub fn cancelDrag(self: *App) void {
+    self.audio_bar.drag.end();
     self.terminalCancelPointer();
     self.terminal.resize = null;
     self.terminal.selecting = false;
@@ -182,6 +175,7 @@ pub fn cancelDrag(self: *App) void {
     if (self.dialog) |*dlg| {
         dlg.deletion.placement.grab = null;
         if (dlg.properties) |*props| props.placement.grab = null;
+        if (dlg.trash_properties) |*props| props.placement.grab = null;
         if (dlg.applications) |*apps| apps.placement.grab = null;
     }
     self.column_resize = null;
@@ -212,7 +206,7 @@ pub fn updateSelectionBand(self: *App) void {
     const cols = self.columns();
     for (self.items.items, 0..) |*item, i| {
         const index: i32 = @intCast(i);
-        const x: f64 = @floatFromInt(self.sidebarWidth() + 20 + @mod(index, cols) * self.cellWidth());
+        const x: f64 = @floatFromInt(self.sidebarWidth() + self.itemLeftInset() + @mod(index, cols) * self.cellWidth());
         const y: f64 = @floatFromInt(self.viewTop() + self.itemInset() + @divTrunc(index, cols) * self.rowHeight());
         const hit = rect.x < x + @as(f64, @floatFromInt(self.cellWidth() - 20)) and rect.x + rect.w > x and
             rect.y < y + @as(f64, @floatFromInt(self.cardHeight())) and rect.y + rect.h > y;
@@ -257,6 +251,8 @@ pub fn renderSelectionBand(self: *App, cr: *c.cairo_t) void {
 }
 
 pub fn handleButton(self: *App, button: u32, pressed: bool) void {
+    if (@import("app_audio_playlist.zig").button(self, button, pressed)) return;
+    if (button == 0x110 and !pressed and @import("app_audio_bar.zig").release(self)) return;
     if (self.terminalButton(button, pressed)) return;
     if (pressed and self.dialog == null and self.menu == null and self.focus == .terminal) {
         self.focus = .file_view;
@@ -284,6 +280,7 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
         if (self.dialog) |*dlg| {
             const consumed = switch (dlg.kind) {
                 .properties => dlg.properties.?.pointerButton(self.w, self.h, self.mouse_x, self.mouse_y, pressed),
+                .trash_properties => dlg.trash_properties.?.pointerButton(self.w, self.h, self.mouse_x, self.mouse_y, pressed),
                 .open_with => dlg.applications.?.pointerButton(self.w, self.h, self.mouse_x, self.mouse_y, pressed),
                 .trash_confirm => dlg.deletion.pointerButton(self.w, self.h, self.mouse_x, self.mouse_y, pressed),
                 else => false,
@@ -307,6 +304,8 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
                 if (!self.ctrl and !self.shift and !self.alt and self.singleClickIconAt(self.mouse_x, self.mouse_y) == idx) {
                     self.last_click_index = null;
                     self.last_click_time = 0;
+                    self.last_open_index = idx;
+                    self.last_open_time = nowMs();
                     self.activateItem(idx);
                 }
             }
@@ -352,6 +351,11 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
         if (dlg.kind == .properties) {
             const action = self.dialog.?.properties.?.click(self.w, self.h, x, y);
             self.propertiesAction(action);
+            return;
+        }
+        if (dlg.kind == .trash_properties) {
+            const action = self.dialog.?.trash_properties.?.click(self.w, self.h, x, y);
+            self.trashPropertiesAction(action);
             return;
         }
         if (dlg.kind == .open_with) {
@@ -442,6 +446,8 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
     }
     if (self.transfer_view.active and self.transferPaneClick(x, y, button)) return;
     if (button == 0x110 and self.inlineTorrentClick(x, y)) return;
+    if (button == 0x110 and @import("app_audio_bar.zig").click(self, x, y)) return;
+    if (button == 0x110 and self.audioButtonClick(x, y)) return;
     if (button == 0x111) {
         if (self.placeAt(x, y)) |index| {
             self.menu_place = index;
@@ -593,6 +599,9 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
             }
 
             const single_click = button == 0x110 and !self.ctrl and !self.shift and !self.alt and self.singleClickIconAt(x, y) == idx;
+            // A single click opens on release, so a double-click on an icon
+            // would open it twice: the second click only selects.
+            const just_opened = single_click and self.last_open_index == idx and now - self.last_open_time < 400;
             // Icon clicks activate on release so they can still start a drag.
             if (!single_click and button == 0x110 and !self.ctrl and !self.shift and !self.alt and self.last_click_index == idx and (now - self.last_click_time < 400)) {
                 self.activateItem(idx);
@@ -628,7 +637,7 @@ pub fn handleButton(self: *App, button: u32, pressed: bool) void {
             }
             if (self.chooser != null and !self.items.items[idx].is_dir) self.setChooserName(self.items.items[idx].name);
             if (self.chooser == null and button == 0x110 and self.items.items[idx].selected and !self.items.items[idx].missing) self.drag_origin = .{ .x = x, .y = y };
-            if (single_click) self.open_on_release = idx;
+            if (single_click and !just_opened) self.open_on_release = idx;
         } else {
             // A background press starts a rubber-band selection; pressing
             // an item still starts an outgoing file drag.

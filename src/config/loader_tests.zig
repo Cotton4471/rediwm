@@ -248,15 +248,16 @@ test "idle config parsing and validation" {
 
 test "input and theme reload detect every field and compare strings by content" {
     const original_theme = Theme{};
-    inline for (std.meta.fields(Theme)) |field| {
+    inline for (@typeInfo(Theme).@"struct".field_names) |field_name| {
         var changed = original_theme;
-        @field(changed, field.name) = switch (field.type) {
-            bool => !@field(original_theme, field.name),
-            f32 => @field(original_theme, field.name) + 1,
+        @field(changed, field_name) = switch (@FieldType(Theme, field_name)) {
+            bool => !@field(original_theme, field_name),
+            f32 => @field(original_theme, field_name) + 1,
             []const u8 => "another theme",
             [4]f32 => .{ 0.1, 0.2, 0.3, 0.4 },
             ?[4]f32 => .{ 0.1, 0.2, 0.3, 0.4 },
-            else => @compileError("add a theme change fixture for " ++ field.name),
+            theme_mod.Relief => if (@field(original_theme, field_name) == .flat) .raised else .flat,
+            else => @compileError("add a theme change fixture for " ++ field_name),
         };
         try std.testing.expect(!themeEql(original_theme, changed));
         try std.testing.expect(!themeEql(changed, original_theme));
@@ -266,23 +267,23 @@ test "input and theme reload detect every field and compare strings by content" 
     defer std.testing.allocator.free(theme_copy.font);
     try std.testing.expect(themeEql(original_theme, theme_copy));
     const original = InputConfig{};
-    inline for (std.meta.fields(InputConfig)) |field| {
+    inline for (@typeInfo(InputConfig).@"struct".field_names) |field_name| {
         var changed = original;
-        @field(changed, field.name) = switch (field.type) {
-            bool => !@field(original, field.name),
-            f32, u32 => @field(original, field.name) + 1,
+        @field(changed, field_name) = switch (@FieldType(InputConfig, field_name)) {
+            bool => !@field(original, field_name),
+            f32, u32 => @field(original, field_name) + 1,
             []const u8 => "another theme",
-            []const []const u8 => if (@field(original, field.name).len == 0) &.{"another"} else &.{},
-            AccelProfile => switch (@field(original, field.name)) {
+            []const []const u8 => if (@field(original, field_name).len == 0) &.{"another"} else &.{},
+            AccelProfile => switch (@field(original, field_name)) {
                 .bezier => .flat,
                 .flat => .bezier,
             },
-            PanModifier => switch (@field(original, field.name)) {
+            PanModifier => switch (@field(original, field_name)) {
                 .super => .super_alt,
                 .super_alt => .super,
             },
-            [2]f32 => .{ @field(original, field.name)[0] + 0.1, @field(original, field.name)[1] + 0.1 },
-            else => @compileError("add an input change fixture for " ++ field.name),
+            [2]f32 => .{ @field(original, field_name)[0] + 0.1, @field(original, field_name)[1] + 0.1 },
+            else => @compileError("add an input change fixture for " ++ field_name),
         };
         try std.testing.expect(!inputEql(original, changed));
         try std.testing.expect(!inputEql(changed, original));

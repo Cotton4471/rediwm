@@ -90,7 +90,7 @@ pub const Layouts = struct {
         l.width = width;
         l.scale = scale;
         var buf: [256:0]u8 = undefined;
-        const name = std.fmt.bufPrintZ(&buf, "{s}", .{family}) catch "monospace";
+        const name = std.fmt.bufPrintSentinel(&buf, "{s}", .{family}, 0) catch "monospace";
         if (l.font) |f| p.pango_font_description_free(f);
         l.font = p.pango_font_description_from_string(name);
         if (l.font) |f| p.pango_font_description_set_absolute_size(f, size * 1024);

@@ -13,6 +13,8 @@ import json
 import os
 from pathlib import Path
 import signal
+import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -105,8 +107,9 @@ PAM_STACKS = {
 class Fixture:
     """A temp dir with PAM stacks, installed sessions and a running daemon."""
 
-    def __init__(self, name, greeter_body=None, greeter_command=None, conf_extra=""):
+    def __init__(self, name, greeter_body=None, greeter_command=None, conf_extra="", env=None):
         self.name = name
+        self.env = {**os.environ, **(env or {})}
         self.dir = tempfile.TemporaryDirectory(prefix=f"rediwm-dm-{name}-")
         self.tmp = tmp = Path(self.dir.name)
         pam = tmp / "pam.d"
@@ -151,6 +154,7 @@ date +%s%N > {tmp}/session-ended.txt
                 [str(DM_BIN), "--test", "--conf", str(self.tmp / "dm.conf"), "--confdir", str(self.tmp / "pam.d"),
                  "--data-dir", str(self.tmp / "share"), "--marker", str(self.tmp / "autologin-marker")],
                 stdout=log, stderr=log,
+                env=self.env,
                 preexec_fn=lambda: signal.signal(signal.SIGPIPE, signal.SIG_IGN),
             )
         return self
@@ -223,6 +227,8 @@ finish()
         f.path("session-hold").write_text("hold")
         f.greeter_result()
         f.wait_file("session-started.txt")
+        # Shell redirection creates the file before date writes its timestamp.
+        f.wait(lambda: bool(f.path("session-started.txt").read_text().strip()), "session-started timestamp")
         assert int(f.path("greeter-exit-time.txt").read_text()) <= int(f.path("session-started.txt").read_text())
         env = dict(line.split("=", 1) for line in f.path("session-env.txt").read_text().splitlines() if "=" in line)
         for key, want in {"XDG_SESSION_TYPE": "wayland", "XDG_SESSION_CLASS": "user", "XDG_SESSION_DESKTOP": "rediwm",
@@ -255,6 +261,109 @@ finish()
         f.greeter_result()
         # The greeter left without starting a session: it is replaced.
         f.wait(lambda: f.greeter_starts() == 2, "a replacement greeter")
+
+
+def test_readiness_notify_uses_daemon_credentials():
+    # The manager must hear nothing merely because a greeter was spawned.
+    # Exercise both sd_notify Unix address forms and then a real PAM exchange.
+    body = """
+if "NOTIFY_SOCKET" in os.environ:
+    finish("notify socket leaked to the greeter")
+open(TMP + "/awaiting-ready", "w").close()
+while not os.path.exists(TMP + "/release-ready"):
+    __import__("time").sleep(0.01)
+send({"type": "ready"})
+expect("ready")
+login("alice", PASSWORD)
+expect("ok")
+send({"type": "cancel"})
+expect("ok")
+finish()
+"""
+    for abstract in (False, True):
+        f = Fixture("notify-abstract" if abstract else "notify-path", body)
+        address = ("\0" + f.tmp.name) if abstract else str(f.path("notify.sock"))
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as notify:
+            notify.setsockopt(socket.SOL_SOCKET, socket.SO_PASSCRED, 1)
+            notify.bind(address)
+            f.env["NOTIFY_SOCKET"] = "@" + address[1:] if abstract else address
+            with f:
+                f.wait_file("awaiting-ready")
+                notify.settimeout(0.2)
+                try:
+                    premature = notify.recv(4096)
+                except socket.timeout:
+                    pass
+                else:
+                    raise AssertionError(f"readiness before greeter's request: {premature!r}")
+                f.path("release-ready").touch()
+                notify.settimeout(10)
+                message, ancillary, flags, _ = notify.recvmsg(4096, socket.CMSG_SPACE(12))
+                assert not flags & (socket.MSG_TRUNC | socket.MSG_CTRUNC), flags
+                fields = dict(line.split("=", 1) for line in message.decode().splitlines())
+                assert fields.get("READY") == "1", fields
+                assert fields.get("STATUS"), fields
+                creds = [struct.unpack("3i", value) for level, kind, value in ancillary
+                         if level == socket.SOL_SOCKET and kind == socket.SCM_CREDENTIALS]
+                assert creds == [(f.proc.pid, os.getuid(), os.getgid())], creds
+                f.greeter_result()
+                assert "greeter-operational boottime=" in f.log_path.read_text()
+                notify.settimeout(0.2)
+                try:
+                    duplicate = notify.recv(4096)
+                except socket.timeout:
+                    pass
+                else:
+                    raise AssertionError(f"unexpected repeated notification: {duplicate!r}")
+
+
+def test_readiness_during_authentication_preserves_conversation():
+    body = """
+send({"type": "login", "user": "alice"})
+expect("question", kind="secret")
+send({"type": "ready"})
+expect("ready")
+send({"type": "answer", "response": PASSWORD})
+expect("ok")
+send({"type": "cancel"})
+expect("ok")
+finish()
+"""
+    f = Fixture("ready-during-auth", body)
+    with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as notify:
+        notify.bind(str(f.path("notify.sock")))
+        f.env["NOTIFY_SOCKET"] = str(f.path("notify.sock"))
+        with f:
+            f.greeter_result()
+            notify.settimeout(2)
+            assert b"READY=1\n" in notify.recv(4096)
+            assert "request out of order" not in f.log_path.read_text()
+
+
+def test_duplicate_readiness_replaces_greeter():
+    body = """
+send({"type": "ready"})
+expect("ready")
+open(TMP + "/greeter-done", "w").close()
+send({"type": "ready"})
+quiet()
+"""
+    f = Fixture("ready-duplicate", body)
+    with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as notify:
+        notify.bind(str(f.path("notify.sock")))
+        f.env["NOTIFY_SOCKET"] = str(f.path("notify.sock"))
+        with f:
+            f.wait(lambda: f.greeter_starts() == 2, "replacement after duplicate readiness")
+            assert "request out of order" in f.log_path.read_text()
+            notify.settimeout(2)
+            assert b"READY=1\n" in notify.recv(4096)
+            notify.settimeout(0.2)
+            try:
+                message = notify.recv(4096)
+            except socket.timeout:
+                pass
+            else:
+                raise AssertionError(f"duplicate readiness was published: {message!r}")
 
 
 def test_out_of_order_request_replaces_greeter():
@@ -377,6 +486,9 @@ def test_real_greeter_connects():
 
 
 TESTS = [
+    test_readiness_notify_uses_daemon_credentials,
+    test_readiness_during_authentication_preserves_conversation,
+    test_duplicate_readiness_replaces_greeter,
     test_login_session_and_logout,
     test_cancel_mid_prompt,
     test_out_of_order_request_replaces_greeter,

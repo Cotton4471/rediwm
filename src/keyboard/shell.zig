@@ -165,11 +165,11 @@ pub fn deliverShell(keyboard: *Keyboard, target: ShellTarget, event_keycode: u32
         .polkit => if (server.polkit_dialog) |dialog| if (syms.len > 0) dialog.key(syms[0], utf8, mods),
         .lock => if (server.locker) |lock| if (syms.len > 0) lock.key(syms[0], utf8, mods),
         .control_center => |cc| for (syms) |sym| {
-            if (mods.ctrl and !mods.alt and !mods.logo and (@intFromEnum(sym) == xkb.Keysym.f or @intFromEnum(sym) == xkb.Keysym.F)) {
+            if (mods.ctrl and !mods.alt and !mods.logo and (sym == xkb.Keysym.f or sym == xkb.Keysym.F)) {
                 cc.focusSearch();
                 break;
             }
-            const key: ?@import("ui").input.Key = switch (@intFromEnum(sym)) {
+            const key: ?@import("ui").input.Key = switch (sym) {
                 xkb.Keysym.Escape => .escape,
                 xkb.Keysym.Return, xkb.Keysym.KP_Enter => .enter,
                 xkb.Keysym.BackSpace => .backspace,
@@ -183,7 +183,7 @@ pub fn deliverShell(keyboard: *Keyboard, target: ShellTarget, event_keycode: u32
                 xkb.Keysym.Page_Up => .page_up,
                 xkb.Keysym.Page_Down => .page_down,
                 xkb.Keysym.Tab, xkb.Keysym.ISO_Left_Tab => .tab,
-                else => if (mods.ctrl and (@intFromEnum(sym) == xkb.Keysym.a or @intFromEnum(sym) == xkb.Keysym.A)) .select_all else if (mods.ctrl and (@intFromEnum(sym) == xkb.Keysym.c or @intFromEnum(sym) == xkb.Keysym.C or @intFromEnum(sym) == xkb.Keysym.x or @intFromEnum(sym) == xkb.Keysym.X or @intFromEnum(sym) == xkb.Keysym.v or @intFromEnum(sym) == xkb.Keysym.V)) null else if (utf8.len > 0) .{ .char = utf8 } else null,
+                else => if (mods.ctrl and (sym == xkb.Keysym.a or sym == xkb.Keysym.A)) .select_all else if (mods.ctrl and (sym == xkb.Keysym.c or sym == xkb.Keysym.C or sym == xkb.Keysym.x or sym == xkb.Keysym.X or sym == xkb.Keysym.v or sym == xkb.Keysym.V)) null else if (utf8.len > 0) .{ .char = utf8 } else null,
             };
             if (key) |k| _ = cc.selectKey(k, mods.shift);
         },

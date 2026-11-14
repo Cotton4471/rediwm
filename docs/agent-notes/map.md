@@ -23,6 +23,7 @@ or a lowercase directory named after a TitleCase host (`Dock.zig` → `dock/`).
 | `rediwm-images` | `src/images_main.zig` | `images/` (`app.zig` + `app_*.zig`) |
 | `rediwm-editor` | `src/editor_main.zig` | `editor/` (`app.zig` + `app_*.zig`, window in `main.zig` + `client_*.zig`) |
 | `rediwm-pdf` | `src/pdf_main.zig` | `pdf/` (sandboxed; window in `main.zig` + `client_*.zig`) |
+| `rediwm-player` | `src/player/main.c` | `player/`: background audio player in C (`engine.c` miniaudio, `mpris.c`, `tray.c`); Files' side is `files/player_link.*` and `files/app_audio.zig` |
 | `rediwm-monitor` | `src/system_monitor_main.zig` | `system_monitor/` |
 | `rediwm-calculator` | `src/calculator_main.zig` | `calculator/` |
 | `rediwm-share-picker` | `src/share_picker_main.zig` | `share_picker/` |
@@ -30,6 +31,7 @@ or a lowercase directory named after a TitleCase host (`Dock.zig` → `dock/`).
 | `rediwm-dm` | `src/dm/main.zig` | display manager, runs as root (`dm/AGENTS.md`) |
 | `rediwm-accounts-helper` | `src/accounts_helper/main.zig` | root account helper (`accounts_helper/AGENTS.md`) |
 | `rediwm-theme` | `src/theme_main.zig` | theme archive helper (`theme_helper/`) |
+| `rediwm-keys` | `src/keys_main.zig` | unprivileged SSH metadata and operations (`keys/`, `keys_helper.zig`); Settings uses `keys/client.zig` |
 
 `build.zig` holds the options, the shared modules, the compositor and
 `rediwm-msg`; `build/` the rest: `apps.zig` (the programs above), `data.zig`
@@ -42,14 +44,20 @@ or a lowercase directory named after a TitleCase host (`Dock.zig` → `dock/`).
 No compositor imports (`build.zig` enforces the direction): `ui` (`src/ui/`:
 widgets, layout, text, theme, animation), `config` (`src/config/`: parsing and
 saving `config.toml`), `dbus`, `i18n`, `memory` and `protocol`
-(`src/ipc/protocol.zig`, the IPC wire format shared with `rediwm-msg`).
+(`src/ipc/protocol.zig`, the IPC wire format shared with `rediwm-msg`). Also
+`keys` (`src/keys/mod.zig`: public identity model, bounded key metadata parsers,
+inventory and operation protocol; parsers run in `rediwm-keys`) and
+`platform` (`src/platform/`, std only): child-process handles, directory
+watching, the program's own path, system helper lookup (`tool.zig`) and
+syscall filters (`seccomp.zig`), the
+seam for other operating systems.
 
 ## Compositor
 
 | Host | Methods | What |
 |---|---|---|
 | `Server.zig` | `server/` | startup and teardown, outputs, frames, wakeups, wallpaper |
-| `World.zig` | `world/` | window list, focus, the camera, zoom, pan and pinch |
+| `World.zig` | `world/` | window list, focus, the camera, zoom, pan and pinch; `overview.zig` owns the temporary spread, `overview_cards.zig` its live presentation, `overview_layout.zig` its grid |
 | `Toplevel.zig` | `toplevel/` | a window; `xdg.zig`, `xwayland_surface.zig` adapt the protocols |
 | `Output.zig` | `output/` | one monitor: frames, layout, modes, panels, wallpaper |
 | `Input.zig` | `input/` | seat, pointer, gestures, drags (`input/AGENTS.md`) |
@@ -70,7 +78,15 @@ Also in `src/`: `Shell.zig` (xdg-shell and decorations), `Popup.zig`,
 output pass); `glass.zig`/`.c`; `chrome.zig`
 (+ `chrome_paint.zig`, `chrome_tabs.zig`) for window frames; `panel_buffer`,
 `panel_paint` and `panel_present.zig` for compositor-drawn panels;
-`camera.zig`, `geometry.zig`, `color.zig`.
+`camera.zig`, `geometry.zig`, `color.zig`. Optional movement ribbons use
+`effects/ribbon.zig` (bounded path/mesh), `effects/border.zig` (frame halo),
+`effects/window_move.zig` (movement/resize lifecycle), `effects/window_resize.zig`
+and `effects/resize_mesh.zig` (filled resize membranes), `effects/resize_outline.zig`
+(elastic perimeter), `effects/resize_follow.zig`
+(bounded size lag), `effects/window_minimize.zig`
+and `effects/minimize_mesh.zig` (minimize snapshots and deformation),
+`scene_output_snapshot.c` (shaped window capture), `ribbon.c` (scene nodes), `scene_pass_ribbon.c` and
+`scene_output_ribbon.c` (drawing), and `config/effects.zig` (presets).
 
 ## Compositor-drawn UI
 
@@ -83,7 +99,8 @@ output pass); `glass.zig`/`.c`; `chrome.zig`
   `appearance_*.zig` and `printers_*.zig`.
 * **Session** (`session/`, `AGENTS.md` there): `lock.zig` (+ `lock_account`,
   `lock_events`, `lock_input`, `lock_view.zig`), `greeter.zig`, `idle.zig`,
-  `power.zig` (+ `power_*.zig`, logind), portals (`settings_portal.zig`,
+  `power.zig` (+ `power_*.zig`), `login_manager.zig` (`login_manager/`: service
+  logind/ConsoleKit2 protocol shared with the supervisor and polkit), portals (`settings_portal.zig`,
   `file_chooser.zig`), services.
 * The desktop icons (`desktop/`), `power_menu.zig`, `osd.zig`,
   `calendar.zig`, `battery_popup.zig`, `network/popup.zig`, `mini_map.zig`,
@@ -114,3 +131,10 @@ compositor's code), `ipc_tests.zig`, `files_tests.zig`, `editor_tests.zig`,
 `test { _ = @import(...); }` blocks; C fixtures are `src/*_test.c` (cases in
 `*_test_*.c`); integration suites are `tests/*.py`. Splitting tools are in
 `tools/split/`.
+
+Power preferences: `config/power.zig` parses source profiles;
+`session/power_policy.zig` owns shared battery state and source actions;
+`control_center/sections/power.zig` owns Settings controls.
+`platform/power_supply.zig` receives uevents, `platform/charge_limit.zig` handles
+optional firmware thresholds. Server construction/destruction are in
+`server/setup.zig` and `server/teardown.zig`.

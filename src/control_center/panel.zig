@@ -51,7 +51,7 @@ pub const default_height = 640;
 const theme = @import("ui").theme;
 
 pub const Page = @import("search_index.zig").Page;
-pub const page_labels = [_]i18n.Message{ i18n.msg("General"), i18n.msg("Input"), i18n.msg("Displays"), i18n.msg("Audio"), i18n.msg("Network"), i18n.msg("Appearance"), i18n.msg("Keyboard Shortcuts"), i18n.msg("Desktop"), i18n.msg("Bluetooth"), i18n.msg("Region & Language"), i18n.msg("Users"), i18n.msg("Printers"), i18n.msg("Services") };
+pub const page_labels = [_]i18n.Message{ i18n.msg("General"), i18n.msg("Input"), i18n.msg("Displays"), i18n.msg("Audio"), i18n.msg("Network"), i18n.msg("Appearance"), i18n.msg("Keyboard Shortcuts"), i18n.msg("Desktop"), i18n.msg("Bluetooth"), i18n.msg("Region & Language"), i18n.msg("Users"), i18n.msg("Printers"), i18n.msg("Services"), i18n.msg("Power & Battery"), i18n.msg("Keys & Certificates") };
 /// Refreshed when a page rebuilds; storage outlives retained widget trees.
 /// Each comptime descriptor list owns its own stable slice.
 pub fn translatedLabels(comptime messages: []const i18n.Message) []const []const u8 {
@@ -74,7 +74,7 @@ pub fn pageLabel(id: usize) []const u8 {
     return page_labels[id].get();
 }
 
-pub const page_names = [_][]const u8{ "general", "input", "displays", "audio", "network", "appearance", "shortcuts", "desktop", "bluetooth", "region", "users", "printers", "services" };
+pub const page_names = [_][]const u8{ "general", "input", "displays", "audio", "network", "appearance", "shortcuts", "desktop", "bluetooth", "region", "users", "printers", "services", "power", "keys" };
 pub const page_descriptions = [_]i18n.Message{
     i18n.msg("Everyday controls, all in one place."),                i18n.msg("Make your mouse and keyboard feel right."),
     i18n.msg("Arrangement, resolution, refresh rate and scaling."),  i18n.msg("Volume, microphones and output devices."),
@@ -82,9 +82,10 @@ pub const page_descriptions = [_]i18n.Message{
     i18n.msg("Choose the keys for your everyday actions."),          i18n.msg("Configure your desktop canvas and panning area."),
     i18n.msg("Connect and manage your Bluetooth devices."),          i18n.msg("Your language, regional formats and calendar preferences."),
     i18n.msg("Review login accounts and automatic-login settings."), i18n.msg("Printer status, jobs and connection diagnostics."),
-    i18n.msg("Manage and analyze systemd services."),
+    i18n.msg("Manage and analyze systemd services."),                i18n.msg("Screen, sleep and power-source preferences."),
+    i18n.msg("Your SSH keys, public identities and passphrases."),
 };
-pub const page_icons = [_]layout.IconId{ .settings, .mouse, .display, .music, .wifi, .settings, .keyboard, .squares, .bluetooth, .globe, .users, .print, .settings };
+pub const page_icons = [_]layout.IconId{ .settings, .mouse, .display, .music, .wifi, .settings, .keyboard, .squares, .bluetooth, .globe, .users, .print, .settings, .battery, .lock };
 pub const max_devices = 16;
 
 pub fn palette() theme.Theme {
@@ -146,7 +147,7 @@ pub fn outOfMemory() Widget {
 
 pub fn card(children: []Widget) Widget {
     return .{
-        .kind = .{ .rect = .{ .color = theme.global.app_item, .radius = theme.global.settings_card_radius, .border_width = 1, .border_color = theme.global.app_item_border } },
+        .kind = .{ .rect = .{ .color = theme.global.app_item, .radius = theme.global.settings_card_radius, .border_width = 1, .border_color = theme.global.app_item_border, .relief = theme.global.settings_card_relief } },
         .direction = .column,
         .padding = layout.Edges.all(14),
         .gap = 10,
@@ -254,14 +255,14 @@ pub fn bodyColor() [4]f32 {
 pub fn pageClicked(owner: ?*anyopaque, id: usize) void {
     const cc: *ControlCenter = @ptrCast(@alignCast(owner orelse return));
     if (cc.search.active) {
-        cc.search.pending_result = cc.search.firstInPage(@enumFromInt(id));
+        cc.search.pending_result = cc.search.firstInPage(@fromBackingInt(@intCast(id)));
         return;
     }
     cc.search.unavailable = false;
     cc.search.destination = null;
     cc.search.focused = false;
     cc.search.request_focus = false;
-    cc.pending_page = @enumFromInt(id);
+    cc.pending_page = @fromBackingInt(@intCast(id));
 }
 
 pub fn deviceClicked(owner: ?*anyopaque, id: usize) void {
@@ -287,4 +288,15 @@ pub fn filesSingleClickChanged(owner: ?*anyopaque, _: usize, on: bool) void {
         return;
     };
     cc.server.config.compositor.files_single_click_open = on;
+}
+
+pub fn filesAudioPlayerChanged(owner: ?*anyopaque, _: usize, on: bool) void {
+    const cc: *ControlCenter = @ptrCast(@alignCast(owner orelse return));
+    @import("config").setting_save.saveCompositor(gpa, cc.server.io, cc.server.config.path, "files_audio_player", on) catch |err| {
+        std.log.warn("could not save Files audio player setting: {}", .{err});
+        cc.default_apps.message = i18n.tr("Could not save the Files setting.");
+        cc.refresh();
+        return;
+    };
+    cc.server.config.compositor.files_audio_player = on;
 }

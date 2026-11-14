@@ -34,11 +34,40 @@ pub fn handleSurfaceCommit(toplevel: *Toplevel) void {
 
             toplevel.positionDuringResize();
 
+            // An acknowledgement can carry no pixel damage. Any newer
+            // pointer size waiting behind this configure still needs a frame.
+            if (session.dirty and session.outstanding_configure == .none) {
+                if (session.pacing_output) |output| output.wlr_output.scheduleFrame() else toplevel.server.scheduleFrames();
+            }
+
             // A queued pre-release commit must not discard the fixed-edge
-            // snapshot before the client acknowledges the final resize size.
-            if (session.settling and session.outstanding_configure == .none) {
+            // snapshot before both clients acknowledge their final sizes.
+            const peer_dirty = if (session.peer) |peer| peer.dirty else false;
+            if (session.settling and !session.dirty and !peer_dirty and !session.hasOutstandingConfigure()) {
                 const gen = session.generation;
                 toplevel.server.input.finishSettlement(gen);
+            }
+        } else if (session.peer) |*peer| {
+            if (peer.toplevel == toplevel) {
+                toplevel.positionDuringResize();
+                if (peer.outstanding_configure == .x11_commit) {
+                    peer.outstanding_configure = .none;
+                } else if (peer.outstanding_configure != .none) {
+                    if (toplevel.configureCompleted(peer.outstanding_configure)) {
+                        peer.outstanding_configure = .none;
+                    }
+                }
+
+                if (peer.dirty and peer.outstanding_configure == .none) {
+                    if (session.pacing_output) |output| output.wlr_output.scheduleFrame() else toplevel.server.scheduleFrames();
+                }
+
+                // The peer has its own protocol configure lifecycle. Its
+                // commit must not clear or settle the active window's wait.
+                if (session.settling and !session.dirty and !peer.dirty and !session.hasOutstandingConfigure()) {
+                    const gen = session.generation;
+                    toplevel.server.input.finishSettlement(gen);
+                }
             }
         }
     }
@@ -242,6 +271,7 @@ pub fn handleUnmapped(toplevel: *Toplevel) void {
     toplevel.server.undo.applying = true;
     defer toplevel.server.undo.applying = undo_applying;
     const was_focused = toplevel.server.world.toplevels.first() == toplevel;
+    const was_activated = toplevel.activated;
     const was_tab = toplevel.tab_group != 0;
     @import("../auto_tiling.zig").unmapped(toplevel);
     @import("../window_tabs.zig").rememberUnmap(toplevel);
@@ -304,7 +334,13 @@ pub fn handleUnmapped(toplevel: *Toplevel) void {
             if (owner_toplevel.in_world) toplevel.server.world.focus(owner_toplevel);
         }
     }
-    if (was_focused and toplevel.server.world.workspaces.active) @import("../workspaces.zig").focusFallback(toplevel.server, toplevel.workspace_id);
+    // Closing the active window hands the keyboard to the most recently
+    // focused survivor, on the canvas as on a workspace. `activated` is false
+    // while the desktop holds keyboard focus, which must not be taken away.
+    if (was_focused and was_activated) {
+        const workspaces = &toplevel.server.world.workspaces;
+        @import("../workspaces.zig").focusFallback(toplevel.server, if (workspaces.active) toplevel.workspace_id else null);
+    }
     if (toplevel.server.ipc) |ipc| {
         events.onWindowClosed(ipc, toplevel.id);
         ipc.wait_mgr.checkAll();

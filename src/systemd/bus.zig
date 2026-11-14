@@ -176,7 +176,7 @@ pub fn propertiesChanged(self: *Client, object: []const u8, body: *wire.Reader) 
     const snap = self.fresh();
     const unit = snap.at(object) orelse return;
     var touched = false;
-    var delivered: std.EnumSet(Prop) = .initEmpty();
+    var delivered: std.EnumSet(Prop) = .empty;
     var values = try body.array(8);
     while (values.offset < values.bytes.len) {
         try values.alignTo(8);

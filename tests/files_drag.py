@@ -222,9 +222,8 @@ def run_pin():
                     return any(r > 180 and g < 90 and b < 110 for r, g, b in pixels)
                 def drag(card, x, y, line_at=None):
                     sx = 250 + 252 * card
-                    click(sx, 158)
-                    # The press that starts the drag must not read as a double click.
-                    time.sleep(.7)
+                    # A click on an icon opens it (single-click open): the
+                    # press alone selects the card the drag carries.
                     move(sx, 158)
                     button(True)
                     time.sleep(.1)
@@ -291,7 +290,112 @@ def run_pin():
             log.close()
 
 
-def run_transfer(same_window=False, copy=False, list_view=False, folder=True):
+def run_trash():
+    """Drag files onto the sidebar's Trash row: an outline marks it, a release trashes at once."""
+    with tempfile.TemporaryDirectory(prefix="rediwm-files-trash-drop-") as directory:
+        tmp = Path(directory)
+        home = tmp / "home"
+        home.mkdir()
+        for name in ("keep folder", "trash folder"):
+            (home / name).mkdir()
+        (home / "note.txt").write_text("trash me")
+        trash = tmp / "data/Trash/files"
+        calls = tmp / "gio-calls"
+        helpers = tmp / "bin"
+        helpers.mkdir()
+        # A stand-in for gio: real trashing refuses the tmpfs this test lives on.
+        gio = helpers / "gio"
+        gio.write_text("#!/usr/bin/python3\n"
+                       "import pathlib, shutil, sys\n"
+                       f"pathlib.Path({str(calls)!r}).open('a').write(repr(sys.argv[1:]) + '\\n')\n"
+                       "assert sys.argv[1:3] == ['trash', '--'], sys.argv\n"
+                       f"dest = pathlib.Path({str(trash)!r})\n"
+                       "dest.mkdir(parents=True, exist_ok=True)\n"
+                       "for path in sys.argv[3:]: shutil.move(path, dest / pathlib.Path(path).name)\n")
+        gio.chmod(0o755)
+        comp, log = spawn_compositor(tmp, config_content="[compositor]\nxwayland = false\n",
+                                     renderer=os.environ.get("REDIWM_TEST_RENDERER", "gles2"),
+                                     env_extra={"HOME": str(home)})
+        files = None
+        try:
+            with IPCClient(tmp).connect() as ipc:
+                display = next(p.name for p in tmp.glob("wayland-*") if not p.name.endswith(".lock"))
+                env = dict(os.environ, HOME=str(home), XDG_RUNTIME_DIR=str(tmp),
+                           XDG_STATE_HOME=str(tmp / "state"), XDG_DATA_HOME=str(tmp / "data"), XDG_CONFIG_HOME=str(tmp / "config"),
+                           REDIWM_CONFIG=str(tmp / "rediwm-config.toml"), WAYLAND_DISPLAY=display,
+                           DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent", REDIWM_FILES_DEVICES="0",
+                           PATH=f"{helpers}:{os.environ['PATH']}")
+                for key in ("DISPLAY", "REDIWM_SOCKET", "WAYLAND_DEBUG"):
+                    env.pop(key, None)
+                with (tmp / "files.log").open("w") as out:
+                    files = subprocess.Popen([str(ROOT / "zig-out/bin/rediwm-files"), str(home)], env=env, stdout=out, stderr=out)
+                win = wait_for(lambda: next((w for w in ipc.get_windows() if w["app_id"] == "rediwm-files"), None), "Files did not map")
+                ipc.action('set_window_size', {"id": win["id"], "width": 1000, "height": 588})
+                ipc.action('move_window_to', {"id": win["id"], "x": 10, "y": 30})
+                ipc.action('focus_window', {"id": win["id"]})
+                time.sleep(.6)
+                box = ipc.get_window_debug(win["id"])["client_box"]
+
+                # Window coordinates as in run_pin: Home is centred at 142,
+                # Trash at 174 (its outline's top edge at 158).
+                def move(x, y):
+                    ipc.action('move_cursor', {"x": round(box["x"] + x), "y": round(box["y"] + y)})
+                def button(pressed):
+                    ipc.action('pointer_button', {"button": 272, "pressed": pressed})
+                def accent_at(y):
+                    path = tmp / "hover.png"
+                    path.unlink(missing_ok=True)
+                    ipc.screenshot(path=str(path))
+                    with Image.open(path) as image:
+                        pixels = [image.convert("RGB").getpixel((round(box["x"] + 100), round(box["y"] + y + d))) for d in range(-3, 4)]
+                    return any(r > 180 and g < 90 and b < 110 for r, g, b in pixels)
+                def drag(card, x, y, outline=False):
+                    sx = 250 + 252 * card
+                    # A click on an icon opens it (single-click open): the
+                    # press alone selects the card the drag carries.
+                    move(sx, 158)
+                    button(True)
+                    time.sleep(.1)
+                    for step in range(1, 11):
+                        move(sx + (x - sx) * step / 10, 158 + (y - 158) * step / 10)
+                        time.sleep(.04)
+                    time.sleep(.25)
+                    if outline:
+                        wait_for(lambda: accent_at(158), "no outline on the Trash row while hovering it")
+                    button(False)
+                    time.sleep(.5)
+                def gio_calls():
+                    return calls.read_text().splitlines() if calls.exists() else []
+
+                # Cards: keep folder, trash folder, note.txt.
+                drag(2, 80, 174, outline=True)
+                wait_for(lambda: (trash / "note.txt").exists(), "the dropped file was not trashed")
+                assert not (home / "note.txt").exists()
+                assert gio_calls() == [repr(["trash", "--", str(home / "note.txt")])], gio_calls()
+                assert not accent_at(158), "the Trash outline outlived the drop"
+                drag(1, 80, 174)
+                wait_for(lambda: (trash / "trash folder").is_dir(), "the dropped folder was not trashed")
+                # Home is not a target: nothing more is trashed.
+                drag(0, 80, 142)
+                time.sleep(.3)
+                assert len(gio_calls()) == 2, gio_calls()
+                assert (home / "keep folder").is_dir()
+                assert files.poll() is None
+                print("PASS Files drag onto the Trash row trashes without a dialog; other rows do not")
+        except Exception:
+            for name in ("files.log", "compositor.log"):
+                if (tmp / name).exists():
+                    print(name, (tmp / name).read_text()[-5000:])
+            raise
+        finally:
+            if files:
+                stop_process(files)
+            stop_process(comp)
+            log.close()
+
+
+def run_transfer(same_window=False, copy=False, list_view=False, folder=True, ctrl_changes=()):
+    expected_copy = ctrl_changes[-1] if ctrl_changes else copy
     with tempfile.TemporaryDirectory(prefix="rediwm-files-transfer-") as directory:
         tmp = Path(directory)
         home = tmp / "home"
@@ -308,7 +412,8 @@ def run_transfer(same_window=False, copy=False, list_view=False, folder=True):
         if not same_window:
             (source / "bundle").mkdir()
             (source / "bundle" / "child.txt").write_text("nested payload")
-        comp, log = spawn_compositor(tmp, config_content="[compositor]\nxwayland = false\ndodge_file_drags = false\n",
+        comp, log = spawn_compositor(tmp, scale=os.environ.get("REDIWM_TEST_SCALE", "1"),
+                                     config_content="[compositor]\nxwayland = false\ndodge_file_drags = false\n",
                                      env_extra={"HOME": str(home)})
         peers = []
         try:
@@ -316,6 +421,7 @@ def run_transfer(same_window=False, copy=False, list_view=False, folder=True):
                 display = next(p.name for p in tmp.glob("wayland-*") if not p.name.endswith(".lock"))
                 env = dict(os.environ, HOME=str(home), XDG_RUNTIME_DIR=str(tmp),
                            XDG_STATE_HOME=str(tmp / "state"), XDG_DATA_HOME=str(tmp / "data"), XDG_CONFIG_HOME=str(tmp / "config"),
+                           XDG_CACHE_HOME=str(tmp / "cache"),
                            REDIWM_CONFIG=str(tmp / "rediwm-config.toml"), WAYLAND_DISPLAY=display,
                            DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent", REDIWM_FILES_DEVICES="0")
                 env.pop("DISPLAY", None)
@@ -333,6 +439,8 @@ def run_transfer(same_window=False, copy=False, list_view=False, folder=True):
                 src = launch(source, 10)
                 dst = src if same_window else launch(target.parent if folder else target, 680)
                 ipc.action('focus_window', {"id": src["id"]})
+                for window in ([src] if same_window else [src, dst]):
+                    ipc.wait_for("window_geometry_settled", window_id=window["id"])
                 time.sleep(.5)
                 box = ipc.get_window_debug(src["id"])["client_box"]
                 dest = ipc.get_window_debug(dst["id"])["client_box"]
@@ -366,24 +474,30 @@ def run_transfer(same_window=False, copy=False, list_view=False, folder=True):
                     move(sx + (tx-sx)*step/16, sy + (ty-sy)*step/16)
                     time.sleep(.04)
                 time.sleep(.2)
+                # Change Ctrl while stationary over the target: action updates
+                # must not depend on another pointer motion or drag enter.
+                for pressed in ctrl_changes:
+                    ipc.action('key', {"keycode": 29, "pressed": pressed})
+                    time.sleep(.2)
                 button(False)
-                if copy:
+                if expected_copy:
                     ipc.action('key', {"keycode": 29, "pressed": False})
                 wait_for(lambda: (target / name).exists(), "file did not arrive at drop destination")
                 assert (target / name).read_text() == "transfer payload"
-                if copy:
+                if expected_copy:
                     assert (source / name).read_text() == "transfer payload"
                 else:
                     wait_for(lambda: not (source / name).exists(), "move left the source behind")
                 if not same_window:
                     wait_for(lambda: (target / "bundle" / "child.txt").exists(), "nested folder did not arrive")
                     assert (target / "bundle" / "child.txt").read_text() == "nested payload"
-                    if copy:
+                    if expected_copy:
                         assert (source / "bundle" / "child.txt").read_text() == "nested payload"
                     else:
                         wait_for(lambda: not (source / "bundle").exists(), "folder move left the source behind")
                 assert all(peer.poll() is None for peer in peers), "Files exited during transfer"
-                print(f"PASS Files {'copy' if copy else 'move'} {'within window' if same_window else 'between windows'} {'folder' if folder else 'background'} {'list' if list_view else 'grid'}")
+                changes = f" Ctrl changes={ctrl_changes}" if ctrl_changes else ""
+                print(f"PASS Files {'copy' if expected_copy else 'move'} {'within window' if same_window else 'between windows'} {'folder' if folder else 'background'} {'list' if list_view else 'grid'}{changes}")
         finally:
             for peer in peers:
                 stop_process(peer)
@@ -398,8 +512,15 @@ if __name__ == "__main__":
         run_transfer(folder=False)
         run_transfer(copy=True)
         run_transfer(list_view=True)
+        run_transfer(same_window=True, ctrl_changes=(True,))
+        run_transfer(same_window=True, copy=True, ctrl_changes=(False,))
+        run_transfer(ctrl_changes=(True,))
+        run_transfer(copy=True, ctrl_changes=(False,))
         sys.exit(0)
     if "--pin" in sys.argv:
         run_pin()
+        sys.exit(0)
+    if "--trash" in sys.argv:
+        run_trash()
         sys.exit(0)
     run("--browser" in sys.argv, "--select" in sys.argv, "--list" in sys.argv)

@@ -132,7 +132,7 @@ pub fn sanitizeText(out: []u8, text: []const u8) []const u8 {
 }
 
 test "dm frames round-trip and refuse oversized payloads" {
-    const c = @cImport(@cInclude("sys/socket.h"));
+    const c = @import("c");
     var fds: [2]c_int = undefined;
     try std.testing.expectEqual(@as(c_int, 0), c.socketpair(c.AF_UNIX, c.SOCK_STREAM | c.SOCK_CLOEXEC, 0, &fds));
     defer _ = linux.close(fds[0]);

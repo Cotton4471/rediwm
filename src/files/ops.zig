@@ -1,4 +1,5 @@
 const std = @import("std");
+const platform = @import("platform");
 const i18n = @import("i18n");
 const tr = i18n.tr;
 const archive = @import("archive.zig");
@@ -99,16 +100,14 @@ pub fn renameItem(allocator: Allocator, old_path: []const u8, new_name: []const 
     const new_path = try std.fmt.allocPrintSentinel(allocator, "{s}/{s}", .{ parent, new_name }, 0);
     defer allocator.free(new_path);
 
-    const old_z = try allocator.dupeZ(u8, old_path);
+    const old_z = try allocator.dupeSentinel(u8, old_path, 0);
     defer allocator.free(old_z);
 
-    if (c.renameat2(c.AT_FDCWD, old_z, c.AT_FDCWD, new_path, 1) != 0) {
-        return switch (std.c._errno().*) {
-            c.EEXIST => error.PathAlreadyExists,
-            c.EACCES => error.AccessDenied,
-            else => error.RenameFailed,
-        };
-    }
+    platform.fs.renameNoReplace(old_z, new_path) catch |err| return switch (err) {
+        error.PathAlreadyExists => error.PathAlreadyExists,
+        error.AccessDenied => error.AccessDenied,
+        else => error.RenameFailed,
+    };
 }
 
 /// rm removes directory trees without following symlinks; -- protects option-like names.
@@ -116,7 +115,9 @@ pub fn deleteItems(io: std.Io, paths: []const []const u8) !void {
     if (paths.len == 0) return;
     var args: std.ArrayList([]const u8) = .empty;
     defer args.deinit(std.heap.c_allocator);
-    try args.appendSlice(std.heap.c_allocator, &.{ "rm", "-r", "--interactive=never", "--" });
+    // GNU rm takes `--interactive=never`; FreeBSD's rm only has `-f`.
+    const never_prompt = if (@import("builtin").os.tag == .linux) "--interactive=never" else "-f";
+    try args.appendSlice(std.heap.c_allocator, &.{ "rm", "-r", never_prompt, "--" });
     try args.appendSlice(std.heap.c_allocator, paths);
     var child = try std.process.spawn(io, .{ .argv = args.items });
     const result = try child.wait(io);
@@ -159,8 +160,8 @@ pub fn isDescendantOrSame(src: []const u8, dst: []const u8) bool {
 
     var src_buf: [4096]u8 = undefined;
     var dst_buf: [4096]u8 = undefined;
-    const src_z = std.fmt.bufPrintZ(&src_buf, "{s}", .{src}) catch return false;
-    const dst_z = std.fmt.bufPrintZ(&dst_buf, "{s}", .{dst}) catch return false;
+    const src_z = std.fmt.bufPrintSentinel(&src_buf, "{s}", .{src}, 0) catch return false;
+    const dst_z = std.fmt.bufPrintSentinel(&dst_buf, "{s}", .{dst}, 0) catch return false;
 
     var src_st: c.struct_stat = undefined;
     var dst_st: c.struct_stat = undefined;
@@ -173,7 +174,7 @@ pub fn isDescendantOrSame(src: []const u8, dst: []const u8) bool {
     while (std.fs.path.dirname(cur)) |p| {
         if (std.mem.eql(u8, p, cur)) break;
         var p_buf: [4096]u8 = undefined;
-        const p_z = std.fmt.bufPrintZ(&p_buf, "{s}", .{p}) catch break;
+        const p_z = std.fmt.bufPrintSentinel(&p_buf, "{s}", .{p}, 0) catch break;
         var p_st: c.struct_stat = undefined;
         if (c.stat(p_z, &p_st) == 0) {
             if (p_st.st_dev == src_st.st_dev and p_st.st_ino == src_st.st_ino) return true;
@@ -185,7 +186,7 @@ pub fn isDescendantOrSame(src: []const u8, dst: []const u8) bool {
 
 pub fn generateUniqueName(allocator: Allocator, dest_dir: []const u8, original_name: []const u8) ![]u8 {
     var path_buf: [4096]u8 = undefined;
-    const initial_z = try std.fmt.bufPrintZ(&path_buf, "{s}/{s}", .{ dest_dir, original_name });
+    const initial_z = try std.fmt.bufPrintSentinel(&path_buf, "{s}/{s}", .{ dest_dir, original_name }, 0);
     var st: c.struct_stat = undefined;
     if (c.lstat(initial_z, &st) != 0) {
         return try allocator.dupe(u8, original_name);
@@ -205,7 +206,7 @@ pub fn generateUniqueName(allocator: Allocator, dest_dir: []const u8, original_n
     var count: usize = 1;
     while (count < 10000) : (count += 1) {
         const candidate = try std.fmt.allocPrint(allocator, "{s} ({d}){s}", .{ stem, count, ext });
-        const cand_z = std.fmt.bufPrintZ(&path_buf, "{s}/{s}", .{ dest_dir, candidate }) catch {
+        const cand_z = std.fmt.bufPrintSentinel(&path_buf, "{s}/{s}", .{ dest_dir, candidate }, 0) catch {
             allocator.free(candidate);
             return error.PathTooLong;
         };
@@ -218,9 +219,9 @@ pub fn generateUniqueName(allocator: Allocator, dest_dir: []const u8, original_n
 }
 
 pub fn copyFileContents(allocator: Allocator, src_path: []const u8, dst_path: []const u8, cancel: ?*std.atomic.Value(bool)) !void {
-    const src_z = try allocator.dupeZ(u8, src_path);
+    const src_z = try allocator.dupeSentinel(u8, src_path, 0);
     defer allocator.free(src_z);
-    const dst_z = try allocator.dupeZ(u8, dst_path);
+    const dst_z = try allocator.dupeSentinel(u8, dst_path, 0);
     defer allocator.free(dst_z);
 
     const src_fd = c.open(src_z, c.O_RDONLY | c.O_CLOEXEC);
@@ -263,9 +264,9 @@ pub fn copyFileContents(allocator: Allocator, src_path: []const u8, dst_path: []
 }
 
 pub fn copySymlink(allocator: Allocator, src_path: []const u8, dst_path: []const u8) !void {
-    const src_z = try allocator.dupeZ(u8, src_path);
+    const src_z = try allocator.dupeSentinel(u8, src_path, 0);
     defer allocator.free(src_z);
-    const dst_z = try allocator.dupeZ(u8, dst_path);
+    const dst_z = try allocator.dupeSentinel(u8, dst_path, 0);
     defer allocator.free(dst_z);
 
     var target_buf: [4096]u8 = undefined;
@@ -279,7 +280,7 @@ pub fn copySymlink(allocator: Allocator, src_path: []const u8, dst_path: []const
 pub fn copyRecursive(allocator: Allocator, src: []const u8, dst: []const u8, cancel: ?*std.atomic.Value(bool)) !void {
     if (cancel != null and cancel.?.load(.acquire)) return error.Cancelled;
 
-    const src_z = try allocator.dupeZ(u8, src);
+    const src_z = try allocator.dupeSentinel(u8, src, 0);
     defer allocator.free(src_z);
 
     var st: c.struct_stat = undefined;
@@ -289,10 +290,10 @@ pub fn copyRecursive(allocator: Allocator, src: []const u8, dst: []const u8, can
     if (fmt == c.S_IFLNK) {
         return copySymlink(allocator, src, dst);
     } else if (fmt == c.S_IFDIR) {
-        const dst_z = try allocator.dupeZ(u8, dst);
+        const dst_z = try allocator.dupeSentinel(u8, dst, 0);
         defer allocator.free(dst_z);
 
-        if (c.mkdir(dst_z, @as(c_uint, @intCast(st.st_mode & 0o7777))) != 0) return error.CreateDirectoryFailed;
+        if (c.mkdir(dst_z, @intCast(st.st_mode & 0o7777)) != 0) return error.CreateDirectoryFailed;
         // Only remove a destination created by this operation on failure.
         errdefer deleteRecursive(allocator, dst) catch {};
 
@@ -322,7 +323,7 @@ pub fn copyRecursive(allocator: Allocator, src: []const u8, dst: []const u8, can
 }
 
 pub fn deleteRecursive(allocator: Allocator, path: []const u8) !void {
-    const path_z = try allocator.dupeZ(u8, path);
+    const path_z = try allocator.dupeSentinel(u8, path, 0);
     defer allocator.free(path_z);
 
     var st: c.struct_stat = undefined;
@@ -372,23 +373,16 @@ pub fn moveItem(allocator: Allocator, src: []const u8, dst: []const u8, cancel: 
     if (isDescendantOrSame(src, dst)) return error.CannotMoveIntoDescendant;
     if (std.mem.eql(u8, src, dst)) return;
 
-    const src_z = try allocator.dupeZ(u8, src);
+    const src_z = try allocator.dupeSentinel(u8, src, 0);
     defer allocator.free(src_z);
-    const dst_z = try allocator.dupeZ(u8, dst);
+    const dst_z = try allocator.dupeSentinel(u8, dst, 0);
     defer allocator.free(dst_z);
 
-    if (c.renameat2(c.AT_FDCWD, src_z, c.AT_FDCWD, dst_z, 1) == 0) {
-        return;
-    }
-
-    const err = std.c._errno().*;
-    if (err == c.EEXIST) {
-        return error.PathAlreadyExists;
-    } else if (err == c.EXDEV) {
-        return crossDeviceMove(allocator, src, dst, cancel);
-    } else {
-        return error.RenameFailed;
-    }
+    platform.fs.renameNoReplace(src_z, dst_z) catch |err| switch (err) {
+        error.PathAlreadyExists => return error.PathAlreadyExists,
+        error.CrossDevice => return crossDeviceMove(allocator, src, dst, cancel),
+        else => return error.RenameFailed,
+    };
 }
 
 pub const JobRunner = struct {
@@ -602,7 +596,7 @@ pub const JobRunner = struct {
         var target = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ self.dest_dir, name });
         defer self.allocator.free(target);
         var buf: [4096]u8 = undefined;
-        const target_z = try std.fmt.bufPrintZ(&buf, "{s}", .{target});
+        const target_z = try std.fmt.bufPrintSentinel(&buf, "{s}", .{target}, 0);
         var st: c.struct_stat = undefined;
         if (c.lstat(target_z, &st) == 0) {
             var action = self.default_conflict;
@@ -661,7 +655,7 @@ pub const JobRunner = struct {
             self.result_path = path;
             return .success;
         }
-        const zstage = try self.allocator.dupeZ(u8, stage);
+        const zstage = try self.allocator.dupeSentinel(u8, stage, 0);
         defer self.allocator.free(zstage);
         const dir = c.opendir(zstage) orelse return error.OpenDirectoryFailed;
         defer _ = c.closedir(dir);

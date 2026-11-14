@@ -2,7 +2,7 @@
 Type=Application
 Name=PDF Viewer
 Comment=View PDF documents with RediWM
-Exec=rediwm-pdf %f
+Exec=@BINDIR@/rediwm-pdf %f
 Icon=application-pdf
 Terminal=false
 StartupWMClass=rediwm-pdf

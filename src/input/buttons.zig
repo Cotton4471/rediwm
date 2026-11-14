@@ -8,6 +8,7 @@ const control_center = @import("../control_center/panel.zig");
 const Keyboard = @import("../Keyboard.zig");
 const Output = @import("../Output.zig");
 const Pointer = @import("../Pointer.zig");
+const Taskbar = @import("../Taskbar.zig");
 const chrome = @import("../chrome.zig");
 const resize = @import("../resize.zig");
 const scene_data = @import("../scene_data.zig");
@@ -20,8 +21,8 @@ pub fn cursorButton(
     event: *wlr.Pointer.event.Button,
 ) void {
     const input: *Input = @fieldParentPtr("cursor_button", listener);
-    if (input.blockedVirtual(event.device)) return;
-    input.processButton(event.device, event.button, event.state, event.time_msec);
+    if (input.blockedVirtual(&event.pointer.base)) return;
+    input.processButton(&event.pointer.base, event.button, event.state, event.time_msec);
 }
 
 pub fn processButton(
@@ -43,6 +44,10 @@ pub fn processButton(
         input.processCursorMotion(time_msec);
         return;
     }
+    if (state == .released and input.overview_buttons & map_bit != 0) {
+        input.overview_buttons &= ~map_bit;
+        return;
+    }
     if (input.server.locker) |lock| {
         // Before the client: a drag begun on the built-in screen must end.
         if (state == .released and button == btn_left) lock.pointerReleased();
@@ -61,6 +66,13 @@ pub fn processButton(
         if (button == btn_left) dialog.button(state == .pressed, input.cursor.x, input.cursor.y);
         return;
     }
+    if (input.server.world.overview.active()) {
+        if (state == .pressed) {
+            input.overview_buttons |= map_bit;
+            input.server.world.overview.press(&input.server.world, button);
+        }
+        return;
+    }
     const screenshot_bit: u32 = if (button >= 272 and button < 304) @as(u32, 1) << @as(u5, @intCast(button - 272)) else 0;
     if (state == .released and input.screenshot_buttons & screenshot_bit != 0) {
         input.screenshot_buttons &= ~screenshot_bit;
@@ -74,6 +86,10 @@ pub fn processButton(
     }
     if (state == .released and input.tray_buttons & screenshot_bit != 0) {
         input.tray_buttons &= ~screenshot_bit;
+        return;
+    }
+    if (state == .released and input.switcher_buttons & screenshot_bit != 0) {
+        input.switcher_buttons &= ~screenshot_bit;
         return;
     }
     if (input.window_menu.node != null) {
@@ -132,7 +148,10 @@ pub fn processButton(
         }
     }
     if (input.server.switcher.active()) {
-        if (state == .released) input.server.switcher.cancel();
+        if (state == .pressed) {
+            input.switcher_buttons |= screenshot_bit;
+            input.server.switcher.press(input.server, input.cursor.x, input.cursor.y, button);
+        }
         return;
     }
     if (input.server.world.mini_map.dragging or
@@ -153,6 +172,17 @@ pub fn processButton(
         input.server.undo.nextPress();
     } else if (state == .released) {
         if (input.active_buttons > 0) input.active_buttons -= 1;
+    }
+
+    // A taskbar chip press becomes a click only when released before the
+    // pointer crosses the drag threshold. A drag must never also activate it.
+    if (state == .released and button == btn_left) {
+        if (input.taskbar_drag) |session| {
+            input.taskbar_drag = null;
+            if (!session.dragging) session.bar.pointerPressChip(session.window_id);
+            input.processCursorMotion(time_msec);
+            return;
+        }
     }
 
     if (input.tiling_grab) |session| {
@@ -259,8 +289,12 @@ pub fn processClientButton(
             if (input.server.desktop) |desktop| desktop.pointerButton(button, false);
             if (input.active_buttons == 0) input.desktop_grab = false;
         }
-        if (input.seat.drag != null) if (input.server.desktop) |desktop| {
-            if (scene_data.hitTest(input.server, input.cursor.x, input.cursor.y) == .desktop) _ = desktop.drop(button);
+        if (input.seat.drag != null) switch (scene_data.hitTest(input.server, input.cursor.x, input.cursor.y)) {
+            .desktop => if (input.server.desktop) |desktop| {
+                _ = desktop.drop(button);
+            },
+            .dock => |res| _ = input.trash_drop.drop(res.dock, res.sx, res.sy, button),
+            else => {},
         };
         _ = input.seat.pointerNotifyButton(time_msec, button, state);
         // A move grab ends here, and `grabbed_toplevel` must be dropped with the
@@ -360,6 +394,23 @@ pub fn processClientButton(
             return;
         },
         .taskbar => |res| {
+            if (button == btn_left) {
+                switch (res.bar.hitTest(res.sx, res.sy)) {
+                    .chip => |toplevel| {
+                        if (Taskbar.chipOrderIndex(res.bar.chip_order.items, toplevel.id)) |origin_index| {
+                            input.taskbar_drag = .{
+                                .bar = res.bar,
+                                .window_id = toplevel.id,
+                                .origin_index = origin_index,
+                                .press_x = input.cursor.x,
+                                .press_y = input.cursor.y,
+                            };
+                            return;
+                        }
+                    },
+                    else => {},
+                }
+            }
             res.bar.pointerPress(res.sx, res.sy);
             return;
         },
@@ -368,7 +419,7 @@ pub fn processClientButton(
             if (button == btn_left) {
                 const local = res.toplevel.frameLocal(input.cursor.x, input.cursor.y);
                 const has_control = res.toplevel.controlAt(res.sx, res.sy) != null or res.toplevel.tabAt(res.sx, res.sy) != .none;
-                if (resize.detectResizeEdges(local.x, local.y, res.toplevel.chrome_width, res.toplevel.chrome_height, res.toplevel.titlebarHeight(), chrome.frame_border, chrome.frame_border, has_control)) |edges| {
+                if (resize.detectResizeEdges(local.x, local.y, res.toplevel.chrome_width, res.toplevel.chrome_height, res.toplevel.titlebarHeight(), chrome.frameBorder(), chrome.frameBorder(), has_control)) |edges| {
                     input.startResize(res.toplevel, edges.toWlr(), device, button);
                     return;
                 }

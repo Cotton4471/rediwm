@@ -42,20 +42,25 @@ const DRM_FORMAT_ARGB8888: u32 = 0x34325241;
 /// and scene_pass.h). The capture is of the client alone, so the shape only
 /// matters where it cuts the client: its two bottom corners, which stay
 /// transparent here as they are on screen.
+/// Mirrors `struct rediwm_pass_shape` field for field: the C side reads all of it.
 const PassShape = extern struct {
     box: wlr.Box,
     radii: [4]f32,
+    poly_count: c_int = 0,
+    poly: [16][2]f32 = @splat(.{ 0, 0 }),
+    sector: @import("../scene_sector.zig").Device = .{},
+    sector_texture_height: f32 = 0,
+    sector_texture_flip: f32 = 0,
+    sector_texture_transform: c_int = 0,
+    sector_texture_rect: [4]f32 = @splat(0),
     border: f32 = 0,
     border_color: [4]f32 = @splat(0),
+    glow_center: [2]f32 = .{ 0, 0 },
+    glow_radius: f32 = 0,
+    glow_depth: f32 = 0,
+    glow_color: [4]f32 = @splat(0),
 };
 extern fn rediwm_scene_pass_add_texture_shaped(pass: *wlr.RenderPass, options: *const wlr.RenderPass.TextureOptions, shape: *const PassShape) void;
-
-// Not bound in the pinned zig-wlroots package; declared directly the same
-// way every other binding file in that package declares its extern fns.
-// Fills in the well-known CIE1931 xy chromaticities for a named primary set
-// so `wlr.RenderPass.TextureOptions.primaries` isn't left pointing at
-// uninitialized memory.
-extern fn wlr_color_primaries_from_named(out: *wlr.color.Primaries, named: wlr.color.NamedPrimaries) void;
 
 pub const WindowCaptureSource = struct {
     base: wlr.ExtImageCaptureSourceV1,
@@ -175,8 +180,9 @@ pub const WindowCaptureSource = struct {
         if (!chrome.shapes) return null;
         const toplevel = self.manager.server.findToplevelById(self.window_id) orelse return null;
         const radius = toplevel.cornerRadius();
-        if (!toplevel.hasServerDecorations() or radius <= 0 or toplevel.chrome_width <= 0 or toplevel.chrome_height <= 0) return null;
-        return .{
+        const polygon = toplevel.shapePolygon(toplevel.chrome_width, toplevel.chrome_height);
+        if (!toplevel.hasServerDecorations() or (radius <= 0 and polygon == null) or toplevel.chrome_width <= 0 or toplevel.chrome_height <= 0) return null;
+        var shape: PassShape = .{
             .box = .{
                 .x = -self.content_node.x - off_x,
                 .y = -self.content_node.y - off_y,
@@ -185,6 +191,12 @@ pub const WindowCaptureSource = struct {
             },
             .radii = @splat(radius),
         };
+        if (polygon) |p| {
+            shape.radii = @splat(0);
+            shape.poly_count = @intCast(p.count);
+            for (p.points[0..p.count], 0..) |point, i| shape.poly[i] = .{ @floatCast(point[0]), @floatCast(point[1]) };
+        }
+        return shape;
     }
 
     const RenderCtx = struct {
@@ -204,7 +216,7 @@ pub const WindowCaptureSource = struct {
         if (self.swapchain == null or self.swap_width != geom.width or self.swap_height != geom.height) {
             if (self.swapchain) |sc| sc.destroy();
             self.swapchain = null;
-            const format = pickFormat(server.renderer);
+            const format = try pickFormat(server.renderer);
             self.swapchain = try wlr.Swapchain.create(server.allocator, geom.width, geom.height, @constCast(format));
             self.swap_width = geom.width;
             self.swap_height = geom.height;
@@ -242,7 +254,7 @@ pub const WindowCaptureSource = struct {
         });
 
         var primaries: wlr.color.Primaries = undefined;
-        wlr_color_primaries_from_named(&primaries, .srgb);
+        wlr.color.primariesFromNamed(&primaries, .srgb);
         var ctx: RenderCtx = .{
             .pass = pass,
             .renderer = server.renderer,
@@ -336,13 +348,14 @@ pub const WindowCaptureSource = struct {
             log.warn("window capture source (window {d}): copy_frame called with no rendered buffer", .{self.window_id});
             return;
         };
-        dst_frame.copyBuffer(buf, self.manager.server.renderer);
+        // A failed copy reports failure and destroys the frame inside wlroots.
+        if (!dst_frame.copyBuffer(buf, self.manager.server.renderer)) return;
         var now = Output.timestamp();
         dst_frame.ready(.normal, &now);
     }
 };
 
-fn pickFormat(renderer: *wlr.Renderer) *const wlr.DrmFormat {
-    const set = renderer.getTextureFormats(renderer.render_buffer_caps).?;
-    return set.get(DRM_FORMAT_ARGB8888);
+fn pickFormat(renderer: *wlr.Renderer) !*const wlr.DrmFormat {
+    const set = renderer.getTextureFormats(renderer.render_buffer_caps) orelse return error.NoTextureFormats;
+    return set.get(DRM_FORMAT_ARGB8888) orelse error.UnsupportedCaptureFormat;
 }

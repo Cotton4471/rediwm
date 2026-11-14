@@ -12,8 +12,8 @@ const app_mod = @import("app.zig");
 const App = app_mod.App;
 const top = app_mod.top;
 const status_h = app_mod.status_h;
-const tab_w = app_mod.tab_w;
 const labels = app_mod.labels;
+const recent = @import("app_recent.zig");
 
 /// The byte offset nearest a point given relative to the text origin.
 pub fn indexAt(self: *App, x: f64, y: f64) usize {
@@ -21,14 +21,34 @@ pub fn indexAt(self: *App, x: f64, y: f64) usize {
 }
 
 pub fn handleMotion(self: *App, x: f64, y: f64) void {
-    const changed_hover = ((self.py < top or y < top) and @divFloor(self.px, 76) != @divFloor(x, 76)) or (self.py < top) != (y < top);
+    const previous_hover = self.hoverTarget();
+    const old_x = self.px;
+    const old_y = self.py;
     self.px = x;
     self.py = y;
+    if (self.proximityChanged(old_x, old_y, x, y)) self.glow_dirty = true;
     if (self.menu_open) {
+        if (recent.hit(self, x, y)) |row| {
+            if (self.sub_selected != row or self.menu_selected != app_mod.recent_row) self.dirty = true;
+            self.sub_selected = row;
+            self.menu_selected = app_mod.recent_row;
+            return;
+        }
+        // Inside the submenu but between rows: keep what is open.
+        if (recent.contains(self, x, y)) return;
         const hovered = self.menuHit(x, y);
-        if (hovered != self.menu_selected) {
+        if (hovered != self.menu_selected or self.sub_selected != null) {
             self.menu_selected = hovered;
+            self.sub_selected = null;
             self.dirty = true;
+        }
+        // Moving along the menu opens the submenu on its row and closes it on any other.
+        if (hovered) |row| {
+            const want = row == app_mod.recent_row and self.recentEnabled();
+            if (want != self.sub_open) {
+                self.sub_open = want;
+                self.dirty = true;
+            }
         }
         return;
     }
@@ -48,7 +68,7 @@ pub fn handleMotion(self: *App, x: f64, y: f64) void {
         if (self.scrollbarGeometry()) |bar| self.seekScroll(self.scroll_drag.offsetAt(bar, @floatCast(x), @floatCast(y)));
         self.dirty = true;
     }
-    if (changed_hover) self.dirty = true;
+    if (!std.meta.eql(previous_hover, self.hoverTarget())) self.dirty = true;
 }
 
 pub fn handleButton(self: *App, code: u32, pressed: bool) void {
@@ -74,29 +94,39 @@ pub fn handleButton(self: *App, code: u32, pressed: bool) void {
         return;
     }
     if (self.menu_open) {
+        if (recent.hit(self, self.px, self.py)) |row| {
+            recent.activate(self, row);
+            return;
+        }
+        if (recent.contains(self, self.px, self.py)) return;
         const row = self.menuHit(self.px, self.py);
+        if (row == app_mod.recent_row) {
+            // Opening a submenu is not choosing a command: the menu stays.
+            if (self.recentEnabled()) self.sub_open = true;
+            self.dirty = true;
+            return;
+        }
         self.dismissMenu();
         if (row) |i| self.act(@enumFromInt(i));
         return;
     }
     if (self.py < 0) return;
     if (self.py < top) {
-        if (!self.has_titlebar and self.px >= @as(f64, @floatFromInt(self.w)) - 34) {
+        if (!self.has_titlebar and self.menuButtonBox().contains(self.px, self.py)) {
             self.toggleMenu(@as(f64, @floatFromInt(self.w)) - 8);
             return;
         }
-        if (self.px >= self.tabRight()) {
+        if (self.newButtonBox().contains(self.px, self.py)) {
             self.act(.new);
             return;
         }
-        const i = self.first_tab + @as(usize, @intFromFloat(@max(0, self.px) / tab_w));
-        if (i < self.tabs.items.len) {
+        if (self.tabAt(self.px)) |i| {
             self.selected = i;
             self.changed();
-            if (@mod(self.px, tab_w) > tab_w - 28) self.closeSelected();
+            if (self.tabCloseBox(i).contains(self.px, self.py)) self.closeSelected();
         }
     } else if (self.find_open and self.py < self.viewTop()) {
-        if (self.px > @as(f64, @floatFromInt(self.w)) - 90) self.findNext(self.shift);
+        if (self.searchHit(self.px, self.py)) |control| self.searchActivate(control);
     } else if (self.py < @as(f64, @floatFromInt(self.h)) - status_h) {
         if (self.px > @as(f64, @floatFromInt(self.w)) - scrollbar.gutter(theme.global.scrollbar_width)) {
             if (self.scrollbarGeometry()) |bar| {
@@ -111,14 +141,15 @@ pub fn handleButton(self: *App, code: u32, pressed: bool) void {
             }
             return;
         }
+        const text_y = self.py - self.viewTop();
         self.find_open = false;
         const t = self.current();
-        const pos = self.indexAt(self.px - 16 + t.scroll_x, self.py - self.viewTop());
+        const pos = self.indexAt(self.px - 16 + t.scroll_x, text_y);
         const now = @import("ui").key_repeat.nowMs();
         const double = if (last_click) |last| last.tab == t.id and now - last.time <= input.multi_click_ms and
             @abs(self.px - last.x) <= input.multi_click_slop and @abs(self.py - last.y) <= input.multi_click_slop else false;
         if (double and !self.shift) {
-            const range = t.doc.wordRange(self.port().characterAt(self.px - 16 + t.scroll_x, self.py - self.viewTop()));
+            const range = t.doc.wordRange(self.port().characterAt(self.px - 16 + t.scroll_x, text_y));
             t.doc.anchor = range[0];
             t.doc.cursor = range[1];
             self.drag_word = range;
@@ -135,7 +166,7 @@ pub fn pasteText(self: *App, bytes: []const u8) void {
     self.caret_activity +%= 1;
     if (self.close_tab != null or self.menu_open) return;
     if (self.find_open) {
-        self.query.insert(a, bytes) catch |err| self.failure(err);
+        if (self.searchEditor()) |editor| editor.insert(a, bytes) catch |err| self.failure(err);
         self.dirty = true;
         return;
     }
@@ -145,19 +176,6 @@ pub fn pasteText(self: *App, bytes: []const u8) void {
     };
     self.notice_len = 0;
     self.reveal();
-}
-
-pub fn findNext(self: *App, backwards: bool) void {
-    const q = self.query.text.items;
-    if (q.len == 0) return;
-    const d = self.document();
-    const sel = d.selection();
-    const found = if (backwards) std.mem.lastIndexOf(u8, d.text.items[0..sel[0]], q) orelse std.mem.lastIndexOf(u8, d.text.items, q) else std.mem.indexOfPos(u8, d.text.items, sel[1], q) orelse std.mem.indexOf(u8, d.text.items, q);
-    if (found) |pos| {
-        d.anchor = pos;
-        d.cursor = pos + q.len;
-        self.reveal();
-    } else self.message(tr("Text not found"));
 }
 
 pub fn keyRepeats(self: *App, sym: u32, utf8: []const u8) bool {
@@ -206,19 +224,47 @@ pub fn handleKey(self: *App, sym: u32, utf8: []const u8) void {
         self.toggleMenu(self.menu_anchor);
         return;
     }
+    if (self.menu_open and self.sub_selected != null) {
+        // Keyboard focus is in the Open Recent submenu.
+        const count = recent.rowCount(self);
+        const at = self.sub_selected.?;
+        switch (sym) {
+            c.XKB_KEY_Escape, c.XKB_KEY_Left, c.XKB_KEY_Right => {
+                self.sub_selected = null;
+                self.sub_open = false;
+            },
+            c.XKB_KEY_Down => self.sub_selected = (at + 1) % count,
+            c.XKB_KEY_Up => self.sub_selected = (at + count - 1) % count,
+            c.XKB_KEY_Home => self.sub_selected = 0,
+            c.XKB_KEY_End => self.sub_selected = count - 1,
+            c.XKB_KEY_Return, c.XKB_KEY_KP_Enter, c.XKB_KEY_space => recent.activate(self, at),
+            else => {},
+        }
+        self.dirty = true;
+        return;
+    }
     if (self.menu_open) {
+        // Moving by keyboard never opens the submenu; Right/Left/Enter on its row does.
         switch (sym) {
             c.XKB_KEY_Escape => self.dismissMenu(),
             c.XKB_KEY_Down => self.menu_selected = if (self.menu_selected) |i| (i + 1) % labels.len else 0,
             c.XKB_KEY_Up => self.menu_selected = if (self.menu_selected) |i| (i + labels.len - 1) % labels.len else labels.len - 1,
             c.XKB_KEY_Home => self.menu_selected = 0,
             c.XKB_KEY_End => self.menu_selected = labels.len - 1,
-            c.XKB_KEY_Return, c.XKB_KEY_KP_Enter, c.XKB_KEY_space => if (self.menu_selected) |i| {
-                self.dismissMenu();
-                self.act(@enumFromInt(i));
+            c.XKB_KEY_Return, c.XKB_KEY_KP_Enter, c.XKB_KEY_space, c.XKB_KEY_Right, c.XKB_KEY_Left => if (self.menu_selected) |i| {
+                if (i == app_mod.recent_row) {
+                    if (self.recentEnabled()) {
+                        self.sub_open = true;
+                        self.sub_selected = 0;
+                    }
+                } else if (sym != c.XKB_KEY_Right and sym != c.XKB_KEY_Left) {
+                    self.dismissMenu();
+                    self.act(@enumFromInt(i));
+                }
             },
             else => {},
         }
+        if (self.menu_selected != app_mod.recent_row and self.sub_selected == null) self.sub_open = false;
         self.dirty = true;
         if (!self.ctrl) return;
         self.dismissMenu();
@@ -245,9 +291,11 @@ pub fn handleKey(self: *App, sym: u32, utf8: []const u8) void {
             return;
         },
         c.XKB_KEY_f, c.XKB_KEY_F => {
-            self.find_open = true;
-            self.query.select_all = true;
-            self.dirty = true;
+            self.openSearch(false);
+            return;
+        },
+        c.XKB_KEY_h, c.XKB_KEY_H => {
+            self.openSearch(true);
             return;
         },
         c.XKB_KEY_Tab, c.XKB_KEY_ISO_Left_Tab, c.XKB_KEY_Page_Up, c.XKB_KEY_Page_Down => {
@@ -264,72 +312,8 @@ pub fn handleKey(self: *App, sym: u32, utf8: []const u8) void {
         return;
     }
     if (self.find_open) {
-        if (sym == c.XKB_KEY_Return) self.findNext(self.shift) else if (self.ctrl and (sym == c.XKB_KEY_v or sym == c.XKB_KEY_V)) self.paste_requested = true else self.query.key(a, sym, utf8, self.ctrl, self.shift, self.alt);
-        self.dirty = true;
+        self.searchKey(sym, utf8);
         return;
     }
-    const d = self.document();
-    const sel = d.selection();
-    if (self.ctrl) switch (sym) {
-        c.XKB_KEY_a, c.XKB_KEY_A => {
-            d.anchor = 0;
-            d.cursor = d.text.items.len;
-            self.reveal();
-            return;
-        },
-        c.XKB_KEY_c, c.XKB_KEY_C, c.XKB_KEY_x, c.XKB_KEY_X => {
-            if (sel[0] == sel[1]) return;
-            if (sel[1] - sel[0] > @import("../files/transfer.zig").limit) {
-                self.message(tr("Clipboard selections are limited to 1 MiB."));
-                return;
-            }
-            self.clipboard.clearRetainingCapacity();
-            self.clipboard.appendSlice(a, d.text.items[sel[0]..sel[1]]) catch return;
-            self.clipboard_revision += 1;
-            if (sym == c.XKB_KEY_x or sym == c.XKB_KEY_X) {
-                d.insert("") catch |err| self.failure(err);
-                self.reveal();
-            }
-            return;
-        },
-        c.XKB_KEY_v, c.XKB_KEY_V => {
-            self.paste_requested = true;
-            return;
-        },
-        c.XKB_KEY_z, c.XKB_KEY_Z, c.XKB_KEY_y, c.XKB_KEY_Y => {
-            d.undo(self.shift or sym == c.XKB_KEY_y or sym == c.XKB_KEY_Y) catch |err| self.failure(err);
-            self.reveal();
-            return;
-        },
-        else => {},
-    };
-    switch (sym) {
-        c.XKB_KEY_Left, c.XKB_KEY_Right => {
-            const right = sym == c.XKB_KEY_Right;
-            d.move(if (!self.shift and !self.ctrl and sel[0] != sel[1]) (if (right) sel[1] else sel[0]) else d.boundary(right, self.ctrl), self.shift);
-        },
-        c.XKB_KEY_Home => d.move(if (self.ctrl) 0 else d.lineStart(d.cursor), self.shift),
-        c.XKB_KEY_End => d.move(if (self.ctrl) d.text.items.len else d.lineEnd(d.cursor), self.shift),
-        c.XKB_KEY_Up, c.XKB_KEY_Down, c.XKB_KEY_Page_Up, c.XKB_KEY_Page_Down => {
-            const r = self.caretRectNear();
-            const down = sym == c.XKB_KEY_Down or sym == c.XKB_KEY_Page_Down;
-            const distance = if (sym == c.XKB_KEY_Page_Up or sym == c.XKB_KEY_Page_Down) self.viewHeight() else @as(f64, @floatFromInt(r.height)) / 1024;
-            d.move(self.indexAt(@as(f64, @floatFromInt(r.x)) / 1024, @as(f64, @floatFromInt(r.y)) / 1024 + @as(f64, @floatFromInt(r.height)) / 2048 + (if (down) distance else -distance)), self.shift);
-        },
-        c.XKB_KEY_BackSpace, c.XKB_KEY_Delete => {
-            if (sel[0] == sel[1]) d.anchor = d.boundary(sym == c.XKB_KEY_Delete, self.ctrl);
-            d.insert("") catch |err| self.failure(err);
-        },
-        c.XKB_KEY_Return, c.XKB_KEY_KP_Enter => {
-            if (!self.ctrl and !self.alt) d.insert(if (d.crlf) "\r\n" else "\n") catch |err| self.failure(err);
-        },
-        c.XKB_KEY_Tab => {
-            if (!self.ctrl and !self.alt) d.insert("\t") catch |err| self.failure(err);
-        },
-        c.XKB_KEY_F3 => self.findNext(self.shift),
-        else => {
-            if (!self.ctrl and !self.alt and utf8.len > 0 and utf8[0] >= 32) d.insert(utf8) catch |err| self.failure(err);
-        },
-    }
-    self.reveal();
+    self.editKey(sym, utf8);
 }

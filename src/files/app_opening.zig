@@ -6,6 +6,7 @@ const tr = i18n.tr;
 const App = @import("app.zig").App;
 const archive = @import("archive.zig");
 const c = @import("c.zig").api;
+const platform = @import("platform");
 const image_formats = @import("../images/formats.zig");
 const theme = @import("../icon_theme.zig");
 const chooser_mod = @import("chooser.zig");
@@ -42,7 +43,7 @@ pub fn previewSelected(self: *App) void {
     }
     if (!formats.candidate(item.path)) {
         if (!@import("../editor/formats.zig").candidate(item.path)) return;
-        if (self.editor_path == null) self.editor_path = self.allocator.dupeZ(u8, item.path) catch null;
+        if (self.editor_path == null) self.editor_path = self.allocator.dupeSentinel(u8, item.path, 0) catch null;
         return;
     }
     if (self.preview_return_fd != null) return;
@@ -56,9 +57,9 @@ pub fn launchEditor(self: *App, token: []const u8) void {
     const path = self.editor_path orelse return;
     self.editor_path = null;
     defer self.allocator.free(path);
-    var exe: [4096]u8 = undefined;
+    var exe: [platform.exe.max_path]u8 = undefined;
     var child = std.process.spawn(self.io, .{
-        .argv = &.{ @import("../editor/operation.zig").executable(&exe, "rediwm-editor"), "--activation-token", token, "--", path },
+        .argv = &.{ platform.exe.siblingOrName(&exe, "rediwm-editor"), "--activation-token", token, "--", path },
     }) catch {
         self.setStatusNotice(tr("Could not open Text Editor"), true);
         return;
@@ -93,16 +94,8 @@ pub fn launchPreview(self: *App, selected: usize) !void {
 pub fn launchImageList(self: *App, fd: c_int, index: usize) !void {
     var index_buf: [32]u8 = undefined;
     const index_arg = try std.fmt.bufPrint(&index_buf, "{d}", .{index});
-    var exe_buf: [4096]u8 = undefined;
-    var sibling_buf: [4096]u8 = undefined;
-    var executable: []const u8 = "rediwm-images";
-    const n = c.readlink("/proc/self/exe", &exe_buf, exe_buf.len);
-    if (n > 0 and n < exe_buf.len) {
-        if (std.fs.path.dirname(exe_buf[0..@intCast(n)])) |dir| {
-            const sibling = try std.fmt.bufPrintZ(&sibling_buf, "{s}/rediwm-images", .{dir});
-            if (c.access(sibling, c.X_OK) == 0) executable = sibling;
-        }
-    }
+    var sibling_buf: [platform.exe.max_path]u8 = undefined;
+    const executable = platform.exe.siblingOrName(&sibling_buf, "rediwm-images");
     var child = try std.process.spawn(self.io, .{
         .argv = &.{ executable, "--list-stdin", index_arg },
         .stdin = .{ .file = .{ .handle = fd, .flags = .{ .nonblocking = false } } },
@@ -143,6 +136,14 @@ pub fn openFile(self: *App, path: []const u8) void {
         self.setStatusNotice(tr("Installing theme…"), false);
         return;
     }
+    if (self.playsBuiltin(path)) {
+        if (self.playAudio(path)) {
+            self.worker.recordOpened(path);
+            return;
+        }
+        self.setStatusNotice(tr("Could not play the file"), true);
+        return;
+    }
     const pdf = isPdf(path) and !@import("associations.zig").hasAlternativeDefault(path, "rediwm-pdf.desktop");
     if (!pdf) {
         @import("associations.zig").launchDefault(path) catch |err| {
@@ -153,17 +154,8 @@ pub fn openFile(self: *App, path: []const u8) void {
         self.worker.recordOpened(path);
         return;
     }
-    var executable: []const u8 = "rediwm-pdf";
-    var exe_buf: [4096]u8 = undefined;
-    var sibling_buf: [4096]u8 = undefined;
-    const n = c.readlink("/proc/self/exe", &exe_buf, exe_buf.len);
-    if (n > 0 and n < exe_buf.len) {
-        if (std.fs.path.dirname(exe_buf[0..@intCast(n)])) |dir| {
-            if (std.fmt.bufPrintZ(&sibling_buf, "{s}/rediwm-pdf", .{dir})) |sibling| {
-                if (c.access(sibling, c.X_OK) == 0) executable = sibling;
-            } else |_| {}
-        }
-    }
+    var sibling_buf: [platform.exe.max_path]u8 = undefined;
+    const executable = platform.exe.siblingOrName(&sibling_buf, "rediwm-pdf");
     var child = std.process.spawn(self.io, .{
         .argv = &.{ executable, "--", path },
     }) catch |err| {
@@ -213,7 +205,7 @@ pub fn openExtracted(self: *App, path: []const u8, preview: bool) void {
     if (preview and image_formats.candidate(path)) {
         self.previewExtracted(path) catch self.setStatusNotice(tr("Could not open image viewer"), true);
     } else if (preview and @import("../editor/formats.zig").candidate(path)) {
-        if (self.editor_path == null) self.editor_path = self.allocator.dupeZ(u8, path) catch null;
+        if (self.editor_path == null) self.editor_path = self.allocator.dupeSentinel(u8, path, 0) catch null;
     } else if (!preview or isPdf(path)) self.openFile(path);
 }
 
@@ -240,9 +232,8 @@ pub fn chooseExtractionFolder(self: *App) void {
     if (self.extract_picker_fd != null) return;
     const path = self.selectedArchive() orelse return;
     const source = self.allocator.dupe(u8, path) catch return;
-    var exe: [4096]u8 = undefined;
-    const n = c.readlink("/proc/self/exe", &exe, exe.len);
-    const executable: []const u8 = if (n > 0 and n < exe.len) exe[0..@intCast(n)] else "rediwm-files";
+    var exe: [platform.exe.max_path]u8 = undefined;
+    const executable: []const u8 = platform.exe.path(&exe) orelse "rediwm-files";
     var child = std.process.spawn(self.io, .{
         .argv = &.{ executable, "--folder", std.fs.path.dirname(path) orelse "/" },
         .stdout = .pipe,

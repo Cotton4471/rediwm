@@ -3,12 +3,37 @@
 Cross-cutting lock rules (greeter, crash handling, IPC refusal, client
 ext-session-lock) are in the root `AGENTS.md`.
 
+* Login-service calls go through `login_manager.zig`; its backend owns method
+  signatures, service names, signal descriptors and login identity checks.
+  `power_*` retains policy and owner generations: pin session/inhibitor calls
+  to that owner, ignore stale replies, and follow only this session's `Lock`.
+  The recording transport tests live in `login_manager/tests.zig`; private-bus
+  coverage is `tests/power.py`, `polkit.py` and `session_bus.py`.
+  FreeBSD selects ConsoleKit2. Its session cookie and connection belong to
+  the supervisor, survive compositor restarts and close on rejection/exit.
+  Failed verification exports no login identity or inherited cookie. Its
+  noninstalled private-bus fixture is `tests/consolekit.py` (`test-login-manager`).
+* The supervisor's process and signal calls go through `platform.login_*`;
+  descendant enumeration goes through `system_monitor/proc.zig`. Recheck
+  FreeBSD start stamps after opening handles. `user_bus.zig` starts a missing
+  user bus before the supervisor snapshots preexisting children, and stops it
+  only after the session. `private_publication.zig` updates that bus without
+  systemd's shared-manager lease.
+
 * Login appearance is a flattened snapshot in
   `/var/lib/rediwm-appearance/<uid>/`, provisioned by the DM and written by
   that account's real desktop session. `login_appearance.zig` reads only
   bounded regular files with matching ownership and no symlinks. Never load
   a user's config or discover packs in the greeter. Account changes reset
   the palette and wallpaper before loading the next snapshot.
+
+* **Idle inhibitors** come from two places: idle-inhibit-v1 surfaces count
+  only while visible (re-checked on map, move, minimize, camera and output
+  changes); `org.freedesktop.ScreenSaver` (`screensaver_service.zig`, on the
+  notifications bus connection, so never in the greeter) counts regardless of
+  visibility until UnInhibit or its sender leaves the bus. Chromium makes its
+  surface inhibitor only on a window with pointer or keyboard focus and never
+  retries, so the bus path is what keeps videos awake.
 
 * `Lock.covered()` releases the lock-before-sleep inhibitor; the builtin lock
   also sets `Output.lock_commit_pending`.

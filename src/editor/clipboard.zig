@@ -22,6 +22,7 @@ pub const Clipboard = struct {
     cursor: usize = 0,
     anchor: usize = 0,
     find: bool = false,
+    search_activity: usize = 0,
     pub fn deinit(self: *Clipboard) void {
         if (self.receive) |*r| r.deinit();
         for (self.sends.items) |*s| s.deinit();
@@ -168,6 +169,7 @@ pub const Clipboard = struct {
         self.cursor = self.app.document().cursor;
         self.anchor = self.app.document().anchor;
         self.find = self.app.find_open;
+        self.search_activity = self.app.caret_activity;
         offer.proxy.receive(mime, fds[1]);
     }
     pub fn addPoll(self: *Clipboard, fds: []c.struct_pollfd) usize {
@@ -202,7 +204,7 @@ pub const Clipboard = struct {
                 break :blk true;
             };
             if (done) {
-                if (!expired and !failed and self.app.tabId() == self.tab_id and self.app.editRevision() == r.revision and self.app.document().cursor == self.cursor and self.app.document().anchor == self.anchor and self.app.find_open == self.find) self.app.pasteText(r.bytes.items);
+                if (!expired and !failed and self.app.tabId() == self.tab_id and self.app.editRevision() == r.revision and self.app.document().cursor == self.cursor and self.app.document().anchor == self.anchor and self.app.find_open == self.find and (!self.find or self.app.caret_activity == self.search_activity)) self.app.pasteText(r.bytes.items);
                 r.deinit();
                 self.receive = null;
             }

@@ -10,6 +10,8 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
+const layout = @import("layout.zig");
+pub const Relief = layout.Relief;
 
 const log = std.log.scoped(.theme);
 
@@ -33,8 +35,51 @@ pub const Theme = struct {
     chrome_height: f32 = 46.0,
     /// Space between window controls, independent of their size.
     chrome_control_gap: f32 = 4.0,
+    /// Right padding in the chrome's reference units; downward shift in logical px.
+    chrome_control_right_pad: f32 = 12,
+    chrome_control_offset_y: f32 = 0,
     /// Circular window controls and pill-shaped tabs, including tab controls.
     chrome_round_buttons: bool = false,
+    /// Straight 45-degree cuts on window controls, in reference units; overrides round buttons.
+    chrome_button_bevel: f32 = 0,
+    /// A polygon outline for server-decorated windows instead of the rounded
+    /// rectangle (syntax in `window_shape.zig`); empty keeps `radius_lg`.
+    window_shape: []const u8 = "",
+    /// A strip of this colour along the top of the titlebar, `window_top_band_height`
+    /// logical px tall (0 draws none), clipped by the window's shape.
+    window_top_band: [4]f32 = .{ 0, 0, 0, 0 },
+    window_top_band_height: f32 = 0,
+    /// Angled title plate, capped before the window controls. Zero width disables it.
+    window_title_plate: [4]f32 = .{ 0, 0, 0, 0 },
+    window_title_plate_width: f32 = 0,
+    window_title_plate_fg: ?[4]f32 = null,
+    window_title_plate_inset: f32 = 5,
+    window_title_plate_bevel: f32 = 7,
+    /// Cut at the plate's bottom-left corner (the bevel above is its top-left).
+    window_title_plate_bottom_bevel: f32 = 0,
+    /// Right slant as a fraction of chrome_height; gaps/padding are logical px.
+    window_title_plate_slant: f32 = 0.65,
+    window_title_plate_control_gap: f32 = 8,
+    window_title_plate_text_padding: f32 = 8,
+    /// Short strokes following the actual frame outline at its four corners.
+    window_corner_accent: [4]f32 = .{ 0, 0, 0, 0 },
+    window_corner_extent: f32 = 0,
+    /// Extra length during an interactive resize (zero leaves corners static).
+    window_corner_resize_extra: f32 = 0,
+    window_corner_width: f32 = 3,
+    /// Inset beyond the frame's own border ring, and padding at stroke endpoints.
+    window_corner_inset: f32 = 0,
+    window_corner_end_padding: f32 = 2,
+    /// Band of its own around the stroke on every side, ends included (zero
+    /// width: none). The stroke moves in by the casing width.
+    window_corner_casing: [4]f32 = .{ 0, 0, 0, 0 },
+    window_corner_casing_width: f32 = 0,
+    /// Cut the stroke's (and casing's) ends at 45 degrees, the outer edge longest.
+    window_corner_cut_ends: bool = false,
+    window_corner_resize_ms: f32 = 140,
+    window_corner_restore_ms: f32 = 180,
+    /// out_cubic, in_out_sine or flip_bezier; global animation preferences still apply.
+    window_corner_resize_ease: []const u8 = "out_cubic",
     // Window decorations use neutral charcoal independently of shell glass.
     window_bg: [4]f32 = .{ @as(f32, 7.6) / 255.0, 9.0 / 255.0, 11.0 / 255.0, 0.80 }, // 80% darkness and opacity
     // Neutral foregrounds keep text and monochrome icons free of a blue tint.
@@ -42,6 +87,11 @@ pub const Theme = struct {
     window_dim: [4]f32 = .{ 214.0 / 255.0, 214.0 / 255.0, 214.0 / 255.0, 1 }, // #d6d6d6
     window_border: [4]f32 = .{ 1, 1, 1, 0.09 },
     window_border_hover: [4]f32 = .{ 1, 1, 1, 0.13 },
+    /// Outer window frame, logical px (1–16, rounded to whole pixels).
+    window_border_width: f32 = 1,
+    /// Continuous inner frame band, reserved outside the client (zero: none).
+    window_inner_border: [4]f32 = .{ 0, 0, 0, 0 },
+    window_inner_border_width: f32 = 0,
     /// Active window outline in opt-in workspace mode (#ed1b2e).
     workspace_active_border: [4]f32 = .{ 237.0 / 255.0, 27.0 / 255.0, 46.0 / 255.0, 1 },
     window_divider: [4]f32 = .{ 1, 1, 1, 0.045 },
@@ -73,6 +123,8 @@ pub const Theme = struct {
     app_sidebar_selected_marker: ?[4]f32 = null,
     /// Corners of sidebar row highlights (hover and selection).
     app_sidebar_item_radius: f32 = 5,
+    /// Straight 45-degree corners on sidebar and item highlights; zero stays rounded.
+    app_highlight_bevel: f32 = 0,
     app_surface_hover: ?[4]f32 = null,
     app_menu_bg: ?[4]f32 = null,
     app_field_bg: ?[4]f32 = null,
@@ -80,6 +132,18 @@ pub const Theme = struct {
     dock_bg: ?[4]f32 = null,
     dock_border: ?[4]f32 = null,
     dock_radius: f32 = 0, // zero follows the window frame radius
+    /// Straight 45-degree corners on the dock instead of `dock_radius`; zero is rounded.
+    dock_bevel: f32 = 0,
+    /// A resting tile behind every dock icon (unset: none, the ghost button's
+    /// hover only), its outline, and the outline while hovered, pressed or the
+    /// highlighted active app (unset: the accent). Corners cut by `dock_item_bevel`.
+    dock_item_bg: ?[4]f32 = null,
+    dock_item_border: ?[4]f32 = null,
+    dock_item_hover_border: ?[4]f32 = null,
+    dock_item_bevel: f32 = 0,
+    /// How far dock icons are drained of colour at rest (0 keeps them, 1 is
+    /// grey); a hovered icon, or the highlighted active app, shows its colours.
+    dock_icon_grey: f32 = 0,
     notification_bg: ?[4]f32 = null,
     notification_fg: ?[4]f32 = null,
     notification_dim: ?[4]f32 = null,
@@ -110,7 +174,16 @@ pub const Theme = struct {
     scrollbar_thumb: [4]f32 = .{ 89.0 / 255.0, 98.0 / 255.0, 110.0 / 255.0, 1 }, // #59626e
     /// Unset follows the surface accent during hover/drag.
     scrollbar_thumb_active: ?[4]f32 = null,
-    /// Strength of the light on a hovered/dragged/scrolling thumb (1 = subtle).
+    /// Optional stationary diagonal hatching, shared by Cairo and widget bars.
+    scrollbar_track: [4]f32 = .{ 0, 0, 0, 0 },
+    scrollbar_track_stripe: [4]f32 = .{ 0, 0, 0, 0 },
+    /// Pattern distances along the bar; slope 1 is diagonal, 0 is transverse.
+    /// Zero period or width hides the stripes, retaining the track fill.
+    scrollbar_track_stripe_period: f32 = 10,
+    scrollbar_track_stripe_width: f32 = 5,
+    scrollbar_track_stripe_slope: f32 = 1,
+    /// Strength of the light on a hovered/dragged/scrolling thumb (1 = subtle,
+    /// 0 = a flat thumb: no highlight stripe, only the colour feedback).
     scrollbar_glow: f32 = 1.0,
     taskbar_title_size: f32 = 12.5,
     clock_bold: bool = false,
@@ -123,6 +196,10 @@ pub const Theme = struct {
     taskbar_edge_gap: f32 = 0,
     taskbar_length: f32 = 100,
     taskbar_radius: f32 = 0,
+    // A polygon outline for the bar instead of the rounded rectangle, in the
+    // syntax of `window_shape` but against the bar's own box; empty keeps
+    // `taskbar_radius`. Items keep clear of its slanted ends, nothing else.
+    taskbar_shape: []const u8 = "",
     // Thickness of the bar's own outline (colour: `taskbar_outline`). With a
     // flush, full-width, square bar only the edge facing the windows is drawn.
     taskbar_outline_width: f32 = 1,
@@ -197,16 +274,76 @@ pub const Theme = struct {
     /// (`Toplevel.setGlow`). Its alpha is the strength at full proximity; zero
     /// turns it off.
     border_glow_enabled: bool = true,
+    /// Shared gate for proximity highlights painted inside interactive
+    /// widget surfaces. The legacy key name is retained for theme compatibility.
+    /// Colour and reach/length/depth are shared with the window-edge glow.
+    button_hover_glow_enabled: bool = true,
     border_glow: [4]f32 = .{ 237.0 / 255.0, 27.0 / 255.0, 46.0 / 255.0, 0.60 },
     border_glow_length: f32 = 72.0, // along the edge, logical px; fades out smoothly
     border_glow_reach: f32 = 56.0, // pointer distance from the edge where it appears
     border_glow_depth: f32 = 3.0, // how far it bleeds inward past the 1 px ring
     shadow_size: f32 = 24.0, // blur/softness radius, logical px
     shadow_offset_y: f32 = 8.0, // vertical offset, logical px
+    /// Neumorphic relief of buttons, fields and inset panels (`ui/relief.zig`):
+    /// each casts a dark and a light shadow shifted `relief_depth` logical px
+    /// from its edge, away from and toward the light. 0 turns relief off.
+    relief_depth: f32 = 0,
+    /// Fade-out length of those shadows, logical px; 0 follows 1.5 x the depth.
+    relief_softness: f32 = 0,
+    /// Where the light sits, in degrees counter-clockwise from the right (135
+    /// is the upper left).
+    relief_light_angle: f32 = 135,
+    relief_dark: [4]f32 = .{ 0, 0, 0, 0.35 },
+    relief_light: [4]f32 = .{ 1, 1, 1, 0.10 },
+
+    // Component-level relief styles. Flat defaults preserve existing rendering
+    // for controls that did not previously request relief.
+    button_relief: Relief = .flat,
+    button_pressed_relief: Relief = .flat,
+    field_relief: Relief = .flat,
+    dialog_inset_relief: Relief = .flat,
+    /// The dialog card itself (`widgets/dialog.zig`). Raised shadows lie outside
+    /// it, so keep them within the host's backdrop margin.
+    dialog_frame_relief: Relief = .flat,
+    /// The cards around Settings entries. The page scrolls in a clipped
+    /// container, so a raised card's shadow is cut at its edge: prefer `inset`.
+    settings_card_relief: Relief = .flat,
+    /// Taskbar window chips, idle and active (focused). The chip raster ends a
+    /// few px past the chip, so both shade inside the edge: `inset` is a
+    /// groove, `raised` the same shading with light and dark swapped. Main
+    /// theme only; `[taskbar_theme]` does not carry them.
+    taskbar_chip_relief: Relief = .flat,
+    taskbar_chip_active_relief: Relief = .flat,
+    select_relief: Relief = .flat,
+    select_popup_relief: Relief = .flat,
+    checkbox_relief: Relief = .flat,
+    toggle_track_relief: Relief = .flat,
+    toggle_thumb_relief: Relief = .flat,
+    slider_track_relief: Relief = .flat,
+    slider_thumb_relief: Relief = .flat,
+    // Relief for the controls that had none: the segmented control (frame and
+    // selected cell), stepper, swatch, a slider's value pill, and list rows
+    // (hovered, selected). A raised box casts shadows `relief_depth +
+    // relief_softness` past its edge, so cells and rows packed into a layout
+    // want `inset`.
+    segmented_relief: Relief = .flat,
+    segmented_selected_relief: Relief = .flat,
+    stepper_relief: Relief = .flat,
+    swatch_relief: Relief = .flat,
+    pill_relief: Relief = .flat,
+    row_hover_relief: Relief = .flat,
+    row_selected_relief: Relief = .flat,
+    /// The scrollbar's channel (`widgets/scrollbar.zig`): flat draws no track at
+    /// all (the thumb alone), inset a groove the thumb sits in.
+    scrollbar_track_relief: Relief = .flat,
+    /// Relief on the scrollbar thumb; raised shadows stay inside its channel.
+    scrollbar_thumb_relief: Relief = .flat,
     // 0 sizes the menu to the output (`start_menu/size.zig`); set either to pin it.
     start_menu_width: f32 = 0,
     start_menu_max_height: f32 = 0,
     start_menu_radius: f32 = 14.0,
+    /// Straight 45-degree panel corners instead of start_menu_radius; zero is rounded.
+    start_menu_bevel: f32 = 0,
     start_menu_bg: [4]f32 = .{ 29.0 / 255.0, 34.0 / 255.0, 41.0 / 255.0, 0.98 }, // #1d2229
     start_menu_border: [4]f32 = .{ 1, 1, 1, 0.12 },
     start_menu_search_bg: [4]f32 = .{ 21.0 / 255.0, 26.0 / 255.0, 31.0 / 255.0, 1 },
@@ -274,9 +411,10 @@ pub const Theme = struct {
     desktop_fg: [4]f32 = .{ 238.0 / 255.0, 241.0 / 255.0, 251.0 / 255.0, 1 },
     desktop_text_shadow: [4]f32 = .{ 0, 0, 0, 0.22 },
     desktop_hover: [4]f32 = .{ 1, 1, 1, 0.06 },
-    desktop_selected: [4]f32 = .{ 237.0 / 255.0, 27.0 / 255.0, 46.0 / 255.0, 0.12 },
-    desktop_selection: [4]f32 = .{ 237.0 / 255.0, 27.0 / 255.0, 46.0 / 255.0, 0.15 },
-    desktop_selection_border: [4]f32 = .{ 237.0 / 255.0, 27.0 / 255.0, 46.0 / 255.0, 1 },
+    /// Unset desktop selection colours follow the shell accent.
+    desktop_selected: ?[4]f32 = null,
+    desktop_selection: ?[4]f32 = null,
+    desktop_selection_border: ?[4]f32 = null,
     desktop_drop_border: [4]f32 = .{ 237.0 / 255.0, 27.0 / 255.0, 46.0 / 255.0, 0.8 },
     desktop_dialog_bg: [4]f32 = .{ 0.035, 0.043, 0.094, 0.98 },
     desktop_notice_bg: [4]f32 = .{ 0.12, 0.035, 0.06, 0.95 },
@@ -362,6 +500,9 @@ pub const Theme = struct {
     start_button_radius: f32 = 6,
     polkit_backdrop: [4]f32 = .{ 0, 0, 0, 0.55 },
     power_menu_backdrop: [4]f32 = .{ 0, 0, 0, 0.45 },
+    /// Straight 45-degree corners on the power menu panel, logical px; its tiles
+    /// and selection outline take three quarters. Zero keeps them rounded.
+    power_menu_bevel: f32 = 0,
     mini_map_bg_opacity: f32 = 0.91,
     mini_map_grid_alpha: f32 = 0.065,
     mini_map_border_alpha: f32 = 0.12,
@@ -421,6 +562,23 @@ pub const Theme = struct {
         if (t.selection) |color| return color;
         return .{ t.accent[0], t.accent[1], t.accent[2], t.accent[3] * t.selection_alpha };
     }
+
+    pub fn desktopSelectedColor(t: Theme) [4]f32 {
+        return t.desktop_selected orelse t.desktopAccent(0.12);
+    }
+
+    pub fn desktopSelectionColor(t: Theme) [4]f32 {
+        return t.desktop_selection orelse t.desktopAccent(0.15);
+    }
+
+    pub fn desktopSelectionBorder(t: Theme) [4]f32 {
+        return t.desktop_selection_border orelse t.desktopAccent(1);
+    }
+
+    fn desktopAccent(t: Theme, alpha: f32) [4]f32 {
+        const color = t.shell_accent orelse t.start_menu_selected_marker;
+        return .{ color[0], color[1], color[2], color[3] * alpha };
+    }
 };
 
 /// Neutral window greys with the start menu's marker as accent: the palette
@@ -479,7 +637,7 @@ pub fn taskbar(comptime token: TaskbarToken) @FieldType(Theme, @tagName(token)) 
 /// holds, so nothing else of `t` (its strings in particular) is kept.
 pub fn taskbarTokens(t: Theme) Theme {
     var out: Theme = .{};
-    inline for (std.meta.fields(TaskbarToken)) |field| @field(out, field.name) = @field(t, field.name);
+    inline for (@typeInfo(TaskbarToken).@"enum".field_names) |field_name| @field(out, field_name) = @field(t, field_name);
     return out;
 }
 
@@ -487,8 +645,8 @@ pub fn taskbarTokens(t: Theme) Theme {
 /// compare as `writeTaskbarInto` stores them, so a saved and reloaded theme
 /// still equals the preset it came from.
 pub fn taskbarTokensEql(a: Theme, b: Theme) bool {
-    inline for (std.meta.fields(TaskbarToken)) |field| {
-        if (!sameWritten(@field(a, field.name), @field(b, field.name))) return false;
+    inline for (@typeInfo(TaskbarToken).@"enum".field_names) |field_name| {
+        if (!sameWritten(@field(a, field_name), @field(b, field_name))) return false;
     }
     return true;
 }
@@ -524,19 +682,19 @@ pub const RadiusPreset = enum { sharp, default, round };
 /// Whether a token is one the Sharp/Default/Round presets rescale. The
 /// taskbar's corner radius is a shape of its own (its square default has
 /// nothing to scale), so a preset must neither reset nor be undone by it.
-fn presetRadius(comptime field: std.builtin.Type.StructField) bool {
-    if (field.type != f32) return false;
-    if (!std.mem.startsWith(u8, field.name, "radius") and !std.mem.endsWith(u8, field.name, "_radius")) return false;
-    return !std.mem.eql(u8, field.name, "taskbar_radius");
+fn presetRadius(comptime name: []const u8) bool {
+    if (@FieldType(Theme, name) != f32) return false;
+    if (!std.mem.startsWith(u8, name, "radius") and !std.mem.endsWith(u8, name, "_radius")) return false;
+    return !std.mem.eql(u8, name, "taskbar_radius");
 }
 
 pub fn applyRadiusPreset(t: *Theme, preset: RadiusPreset) void {
     @setEvalBranchQuota(10000);
     const defaults: Theme = .{};
-    inline for (std.meta.fields(Theme)) |field| {
-        if (comptime presetRadius(field)) {
-            const base = @field(defaults, field.name);
-            @field(t, field.name) = switch (preset) {
+    inline for (@typeInfo(Theme).@"struct".field_names) |field_name| {
+        if (comptime presetRadius(field_name)) {
+            const base = @field(defaults, field_name);
+            @field(t, field_name) = switch (preset) {
                 .sharp => @min(base, 4),
                 .default => base,
                 .round => base * 1.3,
@@ -553,9 +711,9 @@ pub fn radiusPreset(t: Theme) ?RadiusPreset {
         var candidate: Theme = .{};
         applyRadiusPreset(&candidate, preset);
         var matches = true;
-        inline for (std.meta.fields(Theme)) |field| {
-            if (comptime presetRadius(field)) {
-                if (@abs(@field(t, field.name) - @field(candidate, field.name)) > 0.001) matches = false;
+        inline for (@typeInfo(Theme).@"struct".field_names) |field_name| {
+            if (comptime presetRadius(field_name)) {
+                if (@abs(@field(t, field_name) - @field(candidate, field_name)) > 0.001) matches = false;
             }
         }
         if (matches) return preset;

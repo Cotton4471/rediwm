@@ -42,7 +42,7 @@ def build_engine(tmp):
         'ft_free': ([C.c_void_p], None),
         'ft_start': ([C.c_void_p, C.c_char_p, C.c_char_p, C.c_char_p, C.c_bool], C.c_int),
         'ft_pty': ([C.c_void_p], C.c_int), 'ft_channel': ([C.c_void_p], C.c_int),
-        'ft_pidfd': ([C.c_void_p], C.c_int),
+        'ft_exit_fd': ([C.c_void_p], C.c_int),
         'ft_wants_write': ([C.c_void_p], C.c_bool),
         'ft_wants_request': ([C.c_void_p], C.c_bool),
         'ft_io': ([C.c_void_p, C.c_bool, C.c_bool, C.c_bool, C.c_bool], None),
@@ -73,7 +73,7 @@ class Engine:
     def pump(self, timeout=.05):
         poll = select.poll()
         fds = [self.lib.ft_pty(self.handle), self.lib.ft_channel(self.handle),
-               self.lib.ft_pidfd(self.handle)]
+               self.lib.ft_exit_fd(self.handle)]
         for i, fd in enumerate(fds):
             if fd >= 0:
                 output = (i == 0 and self.lib.ft_wants_write(self.handle)) or (
@@ -442,6 +442,20 @@ def ui_tests(tmp, home, env):
             other_shell = wait_for(lambda: int(pidfile.read_text()) if pidfile.read_text() != str(shell) else None, 'independent terminal')
             assert other_shell != shell
             ipc.focus_window(ident)
+            # An idle shell is not work: only a job asks for confirmation.
+            def session_members():
+                members = []
+                for entry in Path('/proc').iterdir():
+                    try:
+                        if entry.name.isdigit() and int(entry.name) != shell and os.getsid(int(entry.name)) == shell:
+                            members.append(int(entry.name))
+                    except OSError:
+                        pass
+                return members
+            assert not session_members(), 'idle shell has no other session members'
+            command('sleep 60')
+            wait_for(session_members, 'foreground job started')
+            key(62)
             # Close confirmation also covers the hidden terminal; cancellation preserves it.
             ipc.action('close_window', {'id': ident})
             time.sleep(.15)
@@ -454,7 +468,11 @@ def ui_tests(tmp, home, env):
             first.wait(timeout=4)
             assert not Path(f'/proc/{shell}').exists(), 'shell reaped on close'
             assert second.poll() is None and Path(f'/proc/{other_shell}').exists()
-        print('Files: F4/repeat, input, copy/paste, selection, external launch, following, divider/resize, idle, workspaces, minimize, independent windows and close/cancel', flush=True)
+            # Opened once and left alone: closing needs no confirmation.
+            ipc.action('close_window', {'id': second_window['id']})
+            second.wait(timeout=4)
+            assert not Path(f'/proc/{other_shell}').exists(), 'idle shell hung up on close'
+        print('Files: F4/repeat, input, copy/paste, selection, external launch, following, divider/resize, idle, workspaces, minimize, independent windows and close/cancel and idle close', flush=True)
     except Exception:
         for path in tmp.glob('*.log'):
             print(path.name, path.read_text()[-6000:])

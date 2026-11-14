@@ -232,7 +232,11 @@ test "a huge single line folds into bounded pieces without scanning it all" {
 test "a folded paragraph breaks after a space when one is near" {
     // No word is longer than the 8 bytes looked back at this cut, so every
     // piece can end after a space.
-    const text = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau " ** 3;
+    const text = comptime blk: {
+        var repeated: []const u8 = "";
+        for (0..3) |_| repeated = repeated ++ "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau ";
+        break :blk repeated;
+    };
     var seg = at(text, 0, 64);
     var pieces: usize = 0;
     while (true) : (pieces += 1) {

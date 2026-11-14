@@ -14,7 +14,7 @@ are free functions taking `self: *App` in `app_*.zig`, grouped by concern:
 `app_fileops`, `app_chooser`, `app_layout` (geometry), `app_folder_size`,
 `app_places` (sidebar rows, pins, devices), `app_sidebar_paint`,
 `app_git_sidebar`, `app_scroll`, `app_opening`, `app_pointer`,
-`app_keyboard`, `app_menu`, `app_paint`, `app_items`. Shared enums and
+`app_keyboard`, `app_menu`, `app_paint`, `app_items`, `app_trash`. Shared enums and
 records are in `app_model.zig`, drawing helpers in `app_draw.zig`, tests in
 `app_tests.zig` (with `app_*_tests.zig` by area). A new method goes in its
 group file plus an alias line in `App`; a file that calls a sibling's
@@ -40,8 +40,9 @@ and headless fixtures. The pinned library is compiled only into Files/tests.
   title, foreground PID or quiet output alone never authorizes a directory
   change. Unsupported and nested shells keep pending following suspended.
 * Spawn the fresh helper with `posix_spawn`, so PTY setup and scope placement
-  never run in a forked multithreaded Files child. Confirm every live session
-  on close; bound asynchronous cleanup and retain the session leader until
+  never run in a forked multithreaded Files child. Close asks only when
+  `ft_active` finds a foreground job or another session member (an idle shell
+  is just hung up); bound asynchronous cleanup and retain the session leader until
   session members have been signaled through pidfds and it can be reaped.
 * Cell metrics use the exact shared mono advance. Paint non-ASCII/wide cells
   separately so fallback shaping cannot move later cells. Preserve the
@@ -70,6 +71,45 @@ and headless fixtures. The pinned library is compiled only into Files/tests.
   XDG data, preserving existing MIME defaults. Registration keeps the image
   in place, uses its canonical absolute path and drops bundled TryExec,
   working-directory, desktop-action and D-Bus activation references.
+
+## Trash
+
+* **Moving in stays on `gio trash`** (`ops.trashItems`, which knows the
+  per-volume rules) and so does Empty Trash (`gio trash --empty`, followed by
+  `trash.sweepOrphans`). Everything else on the home trash is native in
+  `trash.zig`: restore, permanent delete, `.trashinfo` parsing and the
+  `directorysizes` line. Tests build fixture trash directories, no `gio`.
+* **Home trash only.** Per-volume trashes (`$topdir/.Trash-$uid`) are neither
+  listed nor restored, though `gio trash --empty` still clears them. Their
+  `Path=` is relative to the volume and arrives from removable media, so it
+  needs containment checks (reject `..`, check `.Trash` sticky bits) first.
+* **Restore never overwrites.** The destination name comes from `Path=`, not
+  from the name in `files/` (collisions are renamed there). A taken name
+  (a dangling symlink counts) gets `generateUniqueName`, missing parents are
+  recreated and removed again if the move fails, and the move is
+  `renameat2(RENAME_NOREPLACE)` through `ops.moveItem`. The item moves first,
+  its metadata goes after; delete does the same, so a crash leaves orphan
+  metadata (`sweepOrphans`), never an unrestorable item.
+* **`trashRelation()`** (`app_trash.zig`) is the one test for "in Trash": `root`
+  lists the trashed entries, `inside` is a trashed folder (no metadata of its
+  own: open, copy and properties only). The view is read-only: no new,
+  rename, cut, paste or drop (`executeTransfer` refuses), and drags out offer
+  copy only, because a move would leave the `.trashinfo` behind.
+* **Restore is faded, not hidden,** when no selected entry has usable
+  metadata (`trash_restorable`, worked out when the menu opens, not per paint;
+  `context_menu.Row.disabled`). Delete inside the Trash uses the shared delete
+  dialog with `in_trash`: permanent, no checkbox.
+* **Trash Properties** (sidebar row, and the desktop's Trash icon) is
+  `trash_properties.zig`, one window for both hosts: `properties_card.zig`
+  (the identity row and fields shared with file Properties, so they cannot
+  drift) minus permissions, with the icon looked up like the sidebar's (a pack's
+  `user-trash`, else the `trash_can` glyph). Items are the top-level entries of
+  `Trash/files`, the size every payload byte under them (`trash_totals.zig`:
+  links never followed, metadata excluded); the count is a thread per open
+  window that writes the host's wake fd, and `partial` reads "At least".
+* Tests: `trash_tests.zig`, `app_trash_tests.zig`, `trash_totals_tests.zig`,
+  `trash_properties_tests.zig`, `tests/files_trash.py`
+  (keyboard driven, filesystem as ground truth, fake `gio`).
 
 ## Git
 
@@ -169,8 +209,10 @@ revision so a delayed receive cannot type after focus/session changes;
 control bytes are refused because terminal paste would alter them.
 
 * Files sources advertise `application/x-rediwm-file-transfer`: the receiving
-  job owns moves and the source never deletes on `dnd_finished`. Ctrl at drag
-  start offers copy only; other sources copy.
+  job owns moves and the source never deletes on `dnd_finished`. Files offers
+  both copy and move; the compositor chooses from the current Ctrl state at
+  drag start and on modifier changes. Pins, terminal drops and sources without
+  the Files transfer marker use copy only.
 * After `drop` the offer leaves `drag_offer` (a `leave` would destroy it) and
   is read through a nonblocking pipe (`drop_receiving`, poll slot 15).
   Snapshot the destination before reading.
@@ -178,6 +220,10 @@ control bytes are refused because terminal paste would alter them.
   state; reject a folder dropped into itself or a descendant, including
   through symlinks. Pins take their gap from `pin_drop`.
 * Ctrl-click deselection waits for release so Ctrl-drag keeps the selection.
+* The sidebar's Trash row (`trashDropAt`, `trash_drop` outline) takes
+  *move* only, like the dock's Trash: `trashDropped` runs `ops.trashItems`
+  with no dialog and skips what is in the Trash already. Copy-only sources
+  (Files' Trash view, most browsers) are refused. `tests/files_drag.py --trash`.
 
 ## BitTorrent transfers
 
@@ -212,3 +258,27 @@ See `docs/files-torrents.md` for dependencies, storage and lifecycle.
   exits a stopped helper; active downloads/seeding keep it alive.
 * `zig build test-files-torrents` uses a private bus, temporary state and a
   noninstalled loopback network shim. Never fetch public torrents in tests.
+
+## Audio toolbar
+
+`app_audio_bar.zig` lays out the now-playing bar between toolbar groups, or
+in an extra row on narrow windows (`contentTop` includes it). It appears for
+playing and paused tracks, independently of the current folder; stopped/ended
+playback and file choosers have no bar. Controls are shared circular buttons
+(Previous, Play/Pause, Next, Stop, Playlist), the Settings slider through
+`ui.paint.paintSlider` (never the shaded variant directly) and MPRIS through
+`player_link`. Under 520 px the title and time stack above the slider in a
+40 px bar; wider bars put them on one row with the time in a value pill.
+Previous/Next step through the playlist snapshot with OpenUri (Previous
+restarts a track past 3 s) and are disabled at its ends. Playing progress and
+slider feedback schedule repaint deadlines. Hover keys 920–925 damage the bar.
+`tests/files_audio.py` covers toolbar seeking, Previous/Next, folder
+navigation, wide and narrow layouts, pause/resume and Stop.
+
+`app_audio_playlist.zig` owns the playlist popover (click, keyboard and scrolling).
+The link thread snapshots supported audio files beside the playing track, sorted
+by filename, once per playback folder. Browsing does not replace the snapshot;
+opening audio from another folder does. Immutable reference-counted snapshots
+cross the link mutex and are released by `stopAudio`; UI code never scans folders.
+The popover selects tracks through normal MPRIS OpenUri; it is not an automatic
+queue and does not change the player's end-of-track policy.

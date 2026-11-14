@@ -1,5 +1,6 @@
 // Standalone text editor; decoration negotiation follows files/main.zig.
 const std = @import("std");
+const platform = @import("platform");
 const ClientCursor = @import("ui").client_cursor;
 const wl = @import("wayland").client.wl;
 const xdg = @import("wayland").client.xdg;
@@ -67,6 +68,9 @@ pub const Client = struct {
     outstanding: usize = 0,
     buffers: [2]?*Buffer = @splat(null),
     applied_scale: i32 = 0,
+    /// Pending `wl_surface.frame` callback of the last commit. Glow-only
+    /// frames wait for it, so they follow the display, not the pointer rate.
+    frame_callback: ?*wl.Callback = null,
     xkb_context: ?*c.xkb_context = null,
     xkb_state: ?*c.xkb_state = null,
     key_repeat: key_repeat.KeyRepeat = .{},
@@ -175,7 +179,7 @@ pub const Buffer = struct {
 };
 
 pub fn run(init: std.process.Init, paths: []const [:0]const u8, instance: *@import("instance.zig").Instance, initial_token: []const u8) !void {
-    _ = c.signal(c.SIGPIPE, c.SIG_IGN);
+    platform.process.ignoreBrokenPipes();
     const force_csd = init.minimal.environ.getPosix("REDIWM_EDITOR_FORCE_CSD") != null;
     @import("../files/settings.zig").loadTheme(init.gpa, init.io, init.minimal.environ);
     defer @import("../files/settings.zig").deinitTheme();
@@ -193,6 +197,8 @@ pub fn run(init: std.process.Init, paths: []const [:0]const u8, instance: *@impo
     const display = try wl.Display.connect(null);
     defer display.disconnect();
     var self = Client{ .display = display, .app = try app_mod.App.init(init.io) };
+    self.app.environ = init.minimal.environ;
+    self.app.openDrafts(init.minimal.environ);
     for (paths) |path| self.app.open(path);
     self.ime = .{ .app = &self.app };
     defer self.ime.deinit();
@@ -268,10 +274,13 @@ pub fn run(init: std.process.Init, paths: []const [:0]const u8, instance: *@impo
     // Initial commit to start xdg configuration sequence
     self.surface.commit();
 
-    var pending_token = try a.dupeZ(u8, initial_token);
+    var pending_token = try a.dupeSentinel(u8, initial_token, 0);
     defer a.free(pending_token);
     while (self.running) {
         self.app.sync();
+        self.app.stepDrafts(key_repeat.nowMs());
+        // The session is ending: leave without asking; `deinit` writes the drafts.
+        if (self.app.signaled()) self.app.closed = true;
         if (self.app.closed) {
             self.close();
             break;
@@ -294,12 +303,13 @@ pub fn run(init: std.process.Init, paths: []const [:0]const u8, instance: *@impo
             before.top != caret_state.top or before.dy != caret_state.dy or before.scroll_x != caret_state.scroll_x or
             before.width != caret_state.width or before.height != caret_state.height or before.scale != caret_state.scale else true;
         self.caret_state = caret_state;
+        self.app.stepReflow(now);
         self.app.stepCaret(now, caret_state.active, restart, snap);
         try self.render();
         if (self.configured and self.applied_scale > 0 and pending_token.len > 0) {
             if (self.activation) |activation| activation.activate(pending_token, self.surface);
             a.free(pending_token);
-            pending_token = try a.dupeZ(u8, "");
+            pending_token = try a.dupeSentinel(u8, "", 0);
         }
 
         while (!display.prepareRead()) {
@@ -320,11 +330,16 @@ pub fn run(init: std.process.Init, paths: []const [:0]const u8, instance: *@impo
         fds[0] = .{ .fd = display.getFd(), .events = @intCast(c.POLLIN | @as(c_int, if (flushed == .AGAIN) c.POLLOUT else 0)), .revents = 0 };
         fds[1] = .{ .fd = if (self.app.operation) |job| job.fd else -1, .events = c.POLLIN, .revents = 0 };
         fds[2] = .{ .fd = instance.fd, .events = c.POLLIN, .revents = 0 };
-        const fd_count = 3 + self.clipboard.addPoll(fds[3..]);
+        fds[3] = .{ .fd = self.app.draftWake(), .events = c.POLLIN, .revents = 0 };
+        const fd_count = 4 + self.clipboard.addPoll(fds[4..]);
         const poll_now = key_repeat.nowMs();
         var timeout: c_int = if (self.key_repeat.timeoutMs(poll_now)) |wait| @intCast(@min(wait, 60_000)) else -1;
         if (self.app.barTimeout(poll_now)) |wait| timeout = if (timeout < 0) @intCast(wait) else @min(timeout, @as(c_int, @intCast(wait)));
-        const result = c.poll(&fds, fd_count, self.app.caret.timeout(poll_now, self.clipboard.timeout(timeout)));
+        if (self.app.draftTimeout(poll_now)) |wait| {
+            const ms: c_int = @intCast(@min(wait, 60_000));
+            timeout = if (timeout < 0) ms else @min(timeout, ms);
+        }
+        const result = c.poll(&fds, @intCast(fd_count), self.app.caret.timeout(poll_now, self.clipboard.timeout(timeout)));
         if (result > 0 and (fds[0].revents & c.POLLIN != 0)) {
             if (display.readEvents() != .SUCCESS) return error.DisplayFailed;
         } else {
@@ -332,6 +347,7 @@ pub fn run(init: std.process.Init, paths: []const [:0]const u8, instance: *@impo
         }
         if ((fds[0].revents & (c.POLLERR | c.POLLHUP)) != 0) return error.DisplayFailed;
         if (display.dispatchPending() != .SUCCESS) return error.DisplayFailed;
+        if (fds[3].revents & c.POLLIN != 0) self.app.drainDrafts();
         if (fds[2].revents & c.POLLIN != 0) {
             var request_buf: [16384]u8 = undefined;
             if (instance.receive(&request_buf)) |bytes| {
@@ -340,7 +356,7 @@ pub fn run(init: std.process.Init, paths: []const [:0]const u8, instance: *@impo
                     const req = parsed.value;
                     if (req.path.len == 0) self.app.newTab() catch {} else if (std.fs.path.isAbsolute(req.path) and std.mem.indexOfScalar(u8, req.path, 0) == null) self.app.open(req.path);
                     if (req.token.len > 0 and std.mem.indexOfScalar(u8, req.token, 0) == null) {
-                        const owned = try a.dupeZ(u8, req.token);
+                        const owned = try a.dupeSentinel(u8, req.token, 0);
                         a.free(pending_token);
                         pending_token = owned;
                     }

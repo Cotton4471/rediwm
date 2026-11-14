@@ -1,10 +1,11 @@
 //! Follow the compositor's persisted theme without blocking the UI thread.
-//! `watch` arms inotify on the files' directories so followers sleep until a
+//! `watch` watches the files' directories so followers sleep until a
 //! change; `poll` stats at most once per second and reads only after changes,
 //! including atomic replacement. Shared by the Files, Images, PDF and System
 //! Monitor clients.
 const std = @import("std");
 const c = @import("c.zig").api;
+const platform = @import("platform");
 const anim = @import("ui").anim;
 const anim_config = @import("config").animations;
 const theme = @import("ui").theme;
@@ -20,6 +21,7 @@ pub const ThemeUpdate = struct {
     icon_theme: []const u8 = "",
     io: std.Io,
     single_click_open: bool = true,
+    audio_player: bool = true,
     terminal_opacity: ?f32 = null,
 
     fn init(a: std.mem.Allocator, t: theme.Theme, prefs: config.RegionConfig, root: []const u8, icon_name: []const u8, io: std.Io) !ThemeUpdate {
@@ -99,8 +101,8 @@ pub const Settings = struct {
         defer if (path) |p| a.free(p);
         var self: Settings = .{ .env = env };
         errdefer self.deinit(a);
-        if (path) |p| self.config_path = try a.dupeZ(u8, p);
-        if (theme.resolvePath(env)) |p| self.theme_path = try a.dupeZ(u8, p);
+        if (path) |p| self.config_path = try a.dupeSentinel(u8, p, 0);
+        if (theme.resolvePath(env)) |p| self.theme_path = try a.dupeSentinel(u8, p, 0);
         return self;
     }
 
@@ -109,19 +111,14 @@ pub const Settings = struct {
         if (self.theme_path) |p| a.free(p);
     }
 
-    /// Adds inotify watches on the directories holding the config and theme
-    /// files, so atomic saves are seen too. A missing directory is replaced by
-    /// its nearest existing parent: call again after events, so a created
-    /// directory gets its own watch (re-adding a watch is harmless).
-    pub fn watch(self: *const Settings, fd: c_int) void {
+    /// Watches the directories holding the config and theme files, so atomic
+    /// saves are seen too. A missing directory is replaced by its nearest
+    /// existing parent: call again after events, so a created directory gets
+    /// its own watch (re-adding a watch is harmless).
+    pub fn watch(self: *const Settings, watcher: platform.watch.Watcher) void {
         for ([_]?[:0]const u8{ self.config_path, self.theme_path }) |maybe_path| {
-            var parent = std.fs.path.dirname(maybe_path orelse continue) orelse continue;
-            while (true) {
-                var buf: [4096]u8 = undefined;
-                const path = std.fmt.bufPrintZ(&buf, "{s}", .{parent}) catch break;
-                if (c.inotify_add_watch(fd, path, c.IN_CLOSE_WRITE | c.IN_MOVED_TO | c.IN_CREATE | c.IN_DELETE | c.IN_DELETE_SELF | c.IN_MOVE_SELF) >= 0) break;
-                parent = std.fs.path.dirname(parent) orelse break;
-            }
+            const parent = std.fs.path.dirname(maybe_path orelse continue) orelse continue;
+            _ = watcher.addOrParent(parent, .{ .written = true, .moved_to = true, .created = true, .deleted = true });
         }
     }
 
@@ -158,6 +155,7 @@ pub const Settings = struct {
         var root: []const u8 = "";
         var prefs: config.RegionConfig = .{};
         var single_click_open = true;
+        var audio_player = true;
         var terminal_opacity: ?f32 = null;
         self.animations = .{};
         self.region = .{};
@@ -176,6 +174,7 @@ pub const Settings = struct {
                     icon_name = arena.allocator().dupe(u8, icon_name) catch return null;
                     t = value.theme;
                     single_click_open = value.compositor.files_single_click_open;
+                    audio_player = value.compositor.files_audio_player;
                     terminal_opacity = value.compositor.terminal_opacity;
                     if (value.theme_pack) |pack| root = arena.allocator().dupe(u8, pack.root) catch return null;
                     inline for (.{ "font", "mono_font", "start_button_icon" }) |field| @field(t, field) = arena.allocator().dupe(u8, @field(t, field)) catch return null;
@@ -194,6 +193,7 @@ pub const Settings = struct {
         self.region.first_day_of_week = prefs.first_day_of_week;
         var update = ThemeUpdate.init(a, t, prefs, root, icon_name, io) catch return null;
         update.single_click_open = single_click_open;
+        update.audio_player = audio_player;
         update.terminal_opacity = terminal_opacity;
         return update;
     }
@@ -361,6 +361,10 @@ pub fn iconRoot() []const u8 {
 }
 pub fn iconTheme() []const u8 {
     return if (applied_theme) |t| t.icon_theme else "";
+}
+
+pub fn audioPlayer() bool {
+    return if (applied_theme) |t| t.audio_player else true;
 }
 
 pub fn singleClickOpen() bool {

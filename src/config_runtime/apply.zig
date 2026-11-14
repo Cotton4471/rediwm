@@ -1,6 +1,6 @@
 //! Apply parsed configuration to the running compositor. Kept outside the config module.
 const std = @import("std");
-const wlr = @import("wlroots");
+const Pointer = @import("../Pointer.zig");
 const Server = @import("../Server.zig");
 const loader = @import("config").loader;
 const Config = loader.Config;
@@ -23,6 +23,7 @@ const themeEql = loader.themeEql;
 const wheelAccel = loader.wheelAccel;
 pub const applyInactiveOpacity = applyWindowOpacity;
 pub fn applyDiff(server: *Server, old: Config, new: Config) void {
+    server.world.overview.cancel(&server.world);
     const pack_changed = !std.mem.eql(u8, old.theme_base, new.theme_base) or
         !std.mem.eql(u8, if (old.theme_pack) |p| p.root else "", if (new.theme_pack) |p| p.root else "") or
         !std.mem.eql(u8, if (old.theme_pack) |p| p.bytes else "", if (new.theme_pack) |p| p.bytes else "");
@@ -47,9 +48,6 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
         while (output_it.next()) |output| output.applyConfig();
         @import("../Output.zig").syncLayout(server);
     }
-    // Output enables and `lid_close` both decide whether a closed lid hides the panel.
-    @import("../Output.zig").applyLid(server);
-    if (server.power) |power| power.syncInhibitors();
     if (!outputsColorEql(old.outputs, new.outputs) or !nightLightEql(old.night_light, new.night_light)) {
         server.night_light.reconfigure(new.night_light);
     }
@@ -76,7 +74,7 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
         }
     }
 
-    if (!inputEql(old.input, new.input)) {
+    if (!inputEql(old.input, new.input) or !@import("config").input_device.eql(old.input_devices, new.input_devices)) {
         applyInputConfig(server, new.input);
     }
     if (!@import("config").keymap.namesEqual(old.input, new.input)) {
@@ -87,6 +85,9 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
                 _ = kb.device.toKeyboard().setKeymap(map);
             }
         }
+    }
+    if (!@import("config").keymap.namesEqual(old.input, new.input) or !std.mem.eql(u8, old.input.xkb_labels, new.input.xkb_labels)) {
+        if (server.input_sources) |sources| sources.reload();
     }
 
     if (old.compositor.canvas_columns != new.compositor.canvas_columns or
@@ -156,8 +157,14 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
     }
 
     if (server.idle) |im| {
-        im.applyConfig(new.idle);
+        var desired = new.idle;
+        if (server.power_policy.enabled()) {
+            desired = @import("config").power.idle(new.power.profile(server.power_policy.source orelse .plugged_in), new.idle);
+            if (new.power.enabled) |active| desired.enabled = active;
+        } else if (new.power.enabled == false) desired.enabled = false;
+        if (!std.meta.eql(im.config, desired)) im.applyConfig(desired);
     }
+    server.power_policy.reload();
     server.syncDesktop();
 
     if (!std.mem.eql(u8, old.notifications.daemon, new.notifications.daemon)) {
@@ -183,12 +190,24 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
         if (server.input.open_control_center) |cc| cc.refresh();
     }
 
+    if (old.effects.window_move.enabled != new.effects.window_move.enabled or
+        old.effects.minimize().enabled != new.effects.minimize().enabled or
+        old.effects.resize().enabled != new.effects.resize().enabled or
+        !std.meta.eql(old.effects.find(old.effects.window_move.preset), new.effects.find(new.effects.window_move.preset)) or
+        !std.meta.eql(old.effects.find(old.effects.minimize().preset), new.effects.find(new.effects.minimize().preset)) or
+        !std.meta.eql(old.effects.find(old.effects.resize().preset), new.effects.find(new.effects.resize().preset)))
+        @import("../effects/window_move.zig").configure(server);
+
     const theme_changed = pack_changed or !themeEql(old.theme, new.theme) or old.compositor.border_radius != new.compositor.border_radius;
     const taskbar_theme_changed = !theme_mod.taskbarOverrideEql(old.taskbar_theme, new.taskbar_theme);
+    if (theme_changed or old.compositor.follow_app_colors != new.compositor.follow_app_colors or old.compositor.dark_mode != new.compositor.dark_mode) {
+        @import("app_colors.zig").sync(server);
+        if (server.input.open_control_center) |cc| cc.refresh();
+    }
     if (theme_changed) {
         server.saveLoginTheme();
         if (server.notifications) |manager| manager.themeChanged();
-        if (server.desktop) |desktop| desktop.app.themeChanged();
+        if (server.desktop) |desktop| desktop.themeChanged();
         if (server.locker) |lock| lock.themeChanged();
         server.refreshTaskbarsGeometry();
         var top_it = server.world.toplevels.iterator(.forward);
@@ -212,7 +231,9 @@ pub fn applyDiff(server: *Server, old: Config, new: Config) void {
         server.refreshTaskbars();
     }
 
-    if (!std.meta.eql(old.compositor.taskbar_items, new.compositor.taskbar_items)) {
+    if (!std.meta.eql(old.compositor.taskbar_items, new.compositor.taskbar_items) or
+        old.compositor.taskbar_alignment != new.compositor.taskbar_alignment)
+    {
         if (!theme_changed) server.refreshTaskbarsGeometry();
         if (server.input.open_control_center) |cc| cc.refresh();
     }
@@ -282,7 +303,7 @@ pub fn applyInputConfig(server: *Server, cfg: InputConfig) void {
     server.input.updateAccel(cfg.accel_profile, cfg.accel_p1, cfg.accel_p2, cfg.accel_max_speed);
 
     var pit = server.input.pointers.iterator(.forward);
-    while (pit.next()) |pointer| applyPointerDevice(pointer.device, cfg);
+    while (pit.next()) |pointer| applyPointerDevice(pointer);
 
     var kit = server.input.keyboards.iterator(.forward);
     while (kit.next()) |kb| {
@@ -290,17 +311,24 @@ pub fn applyInputConfig(server: *Server, cfg: InputConfig) void {
     }
 }
 
-pub fn applyPointerDevice(device: *wlr.InputDevice, cfg: InputConfig) void {
-    if (libinput.isTouchpad(device)) {
-        libinput.setPointerSpeed(device, cfg.pointer_speed_touchpad);
-        libinput.setDisableWhileTyping(device, cfg.disable_while_typing_touchpad);
-    } else {
-        libinput.setPointerSpeed(device, cfg.pointer_speed);
-        libinput.setDisableWhileTyping(device, cfg.disable_while_typing);
+pub fn applyPointerDevice(pointer: *Pointer) void {
+    const config = &pointer.input.server.config;
+    const device = pointer.device;
+    const effective = @import("config").input_device.resolve(config.input, config.input_devices, pointer.persistentId(), libinput.isTouchpad(device));
+    inline for (.{
+        .{ "pointer_speed", libinput.setPointerSpeed },
+        .{ "natural_scroll", libinput.setNaturalScroll },
+        .{ "left_handed", libinput.setLeftHanded },
+        .{ "tap_to_click", libinput.setTapToClick },
+        .{ "tap_drag", libinput.setTapDrag },
+        .{ "disable_while_typing", libinput.setDisableWhileTyping },
+    }) |setting| {
+        // Unsupported settings inherit harmlessly; rejected supported values
+        // are logged, and Settings reads the actual backend state.
+        if (setting[1](device, @field(effective, setting[0])) == .failed) {
+            log.warn("could not apply pointer setting '{s}' to '{s}'", .{ setting[0], libinput.getName(device) orelse "pointer" });
+        }
     }
-    libinput.setNaturalScroll(device, cfg.natural_scroll);
-    libinput.setTapToClick(device, cfg.tap_to_click);
-    libinput.setTapDrag(device, cfg.tap_drag);
 }
 
 pub fn applyWindowOpacity(server: *Server) void {

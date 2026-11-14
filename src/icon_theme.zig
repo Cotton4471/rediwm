@@ -113,7 +113,7 @@ pub fn findPack(allocator: Allocator, io: Io, cfg: Config, icon_name: []const u8
             defer allocator.free(rel);
             if (@import("config").theme_pack.asset(allocator, io, cfg.override_root, rel)) |path| {
                 defer allocator.free(path);
-                return .{ .path = try allocator.dupeZ(u8, path), .svg = std.mem.eql(u8, ext, "svg"), .pack = true };
+                return .{ .path = try allocator.dupeSentinel(u8, path, 0), .svg = std.mem.eql(u8, ext, "svg"), .pack = true };
             } else |_| {}
         }
     }

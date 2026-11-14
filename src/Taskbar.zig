@@ -68,6 +68,7 @@ pub const buttonSize = taskbar_metrics.buttonSize;
 pub const startButtonGap = taskbar_metrics.startButtonGap;
 pub const startButtonLeft = taskbar_metrics.startButtonLeft;
 pub const endInset = taskbar_metrics.endInset;
+pub const hasPolygon = taskbar_metrics.hasPolygon;
 pub const rightPad = taskbar_metrics.rightPad;
 pub const startButtonBox = taskbar_metrics.startButtonBox;
 pub const startIconSize = taskbar_metrics.startIconSize;
@@ -161,7 +162,12 @@ capture_sessions: usize = 0,
 start: start_button.State = .{},
 start_logo: ?icon_service.Entry = null,
 chips: std.ArrayList(ChipState) = .empty,
-tray: [tray_count]TrayState = .{ .{ .kind = .volume }, .{ .kind = .wifi }, .{ .kind = .power }, .{ .kind = .wired } },
+// Stable window IDs in taskbar presentation order. This is deliberately
+// independent of `world.toplevels`, which remains the focus/raise stack.
+chip_order: std.ArrayList(u64) = .empty,
+tray: [tray_count]TrayState = .{ .{ .kind = .volume }, .{ .kind = .wifi }, .{ .kind = .power }, .{ .kind = .wired }, .{ .kind = .input_source } },
+// Touchpad scrolling over the input source item, gathered into steps.
+source_scroll: f32 = 0,
 capture_hover: Anim = .{},
 capture_press: Anim = .{ .to = 1 },
 hover_target: Target = .none,
@@ -178,7 +184,8 @@ audio_muted: bool = false,
 // colour, like a muted speaker. Pushed by `network.Manager`, never polled.
 network_offline: bool = false,
 // Whether a wireless adapter exists and a cable is connected: decides the
-// automatic Wi-Fi and Ethernet items. Pushed by `network.Manager`.
+// automatic Wi-Fi and Ethernet items. Pushed by `network.Manager`; its
+// `input_sources` part comes from `input_sources.Manager`.
 network_presence: taskbar_items.Presence = .{},
 // While offline the wifi icon also blinks (one cycle a second) so a dropped
 // connection stands out. A real deadline only while offline: the timer is
@@ -187,8 +194,8 @@ network_presence: taskbar_items.Presence = .{},
 blink_timer: ?*wl.EventSource = null,
 blink_dim: bool = false,
 
-clock_time: [16]u8 = [_]u8{0} ** 16,
-clock_date: [128]u8 = [_]u8{0} ** 128,
+clock_time: [16]u8 = @splat(0),
+clock_date: [128]u8 = @splat(0),
 clock_locale: c_time.locale_t = null,
 clock_minute: c_time.time_t = 0,
 // Layout and every tick ask for these; shaping them each time showed up in
@@ -212,9 +219,9 @@ pub const BarBuffer = taskbar_types.BarBuffer;
 pub const ChipPaint = taskbar_types.ChipPaint;
 pub const ChipFlat = taskbar_types.ChipFlat;
 
-// `wired` comes last so the IPC tray indices of the other icons stay put.
-pub const TrayKind = enum { volume, wifi, power, wired };
-pub const tray_count = std.meta.fields(TrayKind).len;
+// New kinds come last so the IPC tray indices of the others stay put.
+pub const TrayKind = enum { volume, wifi, power, wired, input_source };
+pub const tray_count = @typeInfo(TrayKind).@"enum".field_names.len;
 
 pub const AppKind = enum { file_explorer, notes, terminal, settings, text_doc, browser, other };
 
@@ -269,9 +276,13 @@ pub fn create(server: *Server, wlr_output: *wlr.Output) !*Taskbar {
         .capture_node = capture_node,
         .battery_node = battery_node,
         .glass_effect = glass_effect,
-        .battery_state = battery.read(server.io, gpa),
+        .battery_state = server.power_policy.state,
         .network_offline = if (server.network) |network| network.offline() else false,
-        .network_presence = if (server.network) |network| network.presence() else .{},
+        .network_presence = presence: {
+            var presence: taskbar_items.Presence = if (server.network) |network| network.presence() else .{};
+            presence.input_sources = if (server.input_sources) |sources| sources.switchable() else false;
+            break :presence presence;
+        },
         .clock_minute = @divFloor(c_time.time(null), 60),
         .timer = undefined,
     };
@@ -310,12 +321,14 @@ pub fn destroy(bar: *Taskbar) void {
         if (chip.icon) |e| bar.server.iconRelease(e.id);
     }
     bar.chips.deinit(gpa);
+    bar.chip_order.deinit(gpa);
     bar.tree.node.destroy();
     gpa.destroy(bar);
 }
 
 /// Takes a fresh `battery.read` snapshot; only a change requests a frame.
 pub fn applyBattery(bar: *Taskbar, next: battery.State) void {
+    bar.server.updateBatteryWarning(next);
     if (std.meta.eql(next, bar.battery_state)) return;
     const layout_changed = (next.percent == null) != (bar.battery_state.percent == null);
     bar.battery_shimmer.update(bar.battery_state, next, nowMs());
@@ -341,15 +354,17 @@ pub fn applyNetwork(bar: *Taskbar, offline: bool) void {
     bar.network_offline = offline;
     bar.blink_dim = false;
     bar.syncBlink();
-    bar.tray_dirty[@intFromEnum(TrayKind.wifi)] = true;
-    bar.tray_dirty[@intFromEnum(TrayKind.wired)] = true;
+    bar.tray_dirty[@backingInt(TrayKind.wifi)] = true;
+    bar.tray_dirty[@backingInt(TrayKind.wired)] = true;
     bar.markDirty(paint_tray);
     bar.wlr_output.scheduleFrame();
 }
 
 /// An adapter or a cable appearing or going shows or hides the automatic
 /// items, which moves their neighbours like a battery coming or going.
-pub fn applyNetworkPresence(bar: *Taskbar, next: taskbar_items.Presence) void {
+pub fn applyNetworkPresence(bar: *Taskbar, network: taskbar_items.Presence) void {
+    var next = network;
+    next.input_sources = bar.network_presence.input_sources;
     if (std.meta.eql(next, bar.network_presence)) return;
     bar.network_presence = next;
     _ = bar.reconcile(nowMs());
@@ -357,6 +372,26 @@ pub fn applyNetworkPresence(bar: *Taskbar, next: taskbar_items.Presence) void {
     bar.clock_dirty = true;
     bar.capture_dirty = true;
     bar.markDirty(paint_tray | paint_clock | paint_capture);
+    bar.wlr_output.scheduleFrame();
+}
+
+/// The active input source or the number of sources changed. Only the
+/// indicator repaints unless it appears or goes, which moves its neighbours.
+pub fn applyInputSource(bar: *Taskbar, presence_changed: bool) void {
+    const switchable = if (bar.server.input_sources) |sources| sources.switchable() else false;
+    if (presence_changed or switchable != bar.network_presence.input_sources) {
+        var next = bar.network_presence;
+        next.input_sources = switchable;
+        bar.network_presence = next;
+        _ = bar.reconcile(nowMs());
+        bar.tray_dirty = @splat(true);
+        bar.clock_dirty = true;
+        bar.capture_dirty = true;
+        bar.markDirty(paint_tray | paint_clock | paint_capture);
+    } else {
+        bar.tray_dirty[@backingInt(TrayKind.input_source)] = true;
+        bar.markDirty(paint_tray);
+    }
     bar.wlr_output.scheduleFrame();
 }
 
@@ -392,19 +427,19 @@ pub fn onBlink(bar: *Taskbar) c_int {
 
 pub fn repaintWifi(bar: *Taskbar) void {
     if (!bar.itemShown(.wifi) and !bar.itemShown(.wired)) return;
-    bar.tray_dirty[@intFromEnum(TrayKind.wifi)] = true;
-    bar.tray_dirty[@intFromEnum(TrayKind.wired)] = true;
+    bar.tray_dirty[@backingInt(TrayKind.wifi)] = true;
+    bar.tray_dirty[@backingInt(TrayKind.wired)] = true;
     bar.markDirty(paint_tray);
     bar.wlr_output.scheduleFrame();
 }
 
 pub fn onTick(bar: *Taskbar) c_int {
-    // Seconds only repaint the clock. Keep expensive sysfs reads and the
-    // calendar on their minute cadence; plug events have their own uevent.
+    // Seconds only repaint the clock. Keep the
+    // calendar on its minute cadence; battery reads belong to power_policy.
     const minute = @divFloor(c_time.time(null), 60);
     if (minute != bar.clock_minute) {
         bar.clock_minute = minute;
-        bar.applyBattery(battery.read(bar.server.io, gpa));
+
         if (Output.fromWlr(bar.wlr_output)) |output| {
             if (output.calendar) |calendar| calendar.refresh();
         }
@@ -444,6 +479,7 @@ pub const bleedFor = taskbar_layout.bleedFor;
 pub const boxesOverlap = taskbar_layout.boxesOverlap;
 pub const isPlaced = taskbar_layout.isPlaced;
 pub const relayout = taskbar_layout.relayout;
+pub const applyClip = taskbar_layout.applyClip;
 pub const notifyToplevelsChanged = taskbar_layout.notifyToplevelsChanged;
 
 /// Logical px the bar's background reaches past the far edges of its output.
@@ -489,6 +525,8 @@ pub const battery_width = battery_badge.width;
 pub const refreshStartLogo = taskbar_reconcile.refreshStartLogo;
 pub const updateIcon = taskbar_reconcile.updateIcon;
 pub const taskbarOrderLessThan = taskbar_reconcile.taskbarOrderLessThan;
+pub const chipOrderIndex = taskbar_reconcile.chipOrderIndex;
+pub const moveChipOrder = taskbar_reconcile.moveChipOrder;
 pub const reconcile = taskbar_reconcile.reconcile;
 
 // taskbar/tick.zig
@@ -504,6 +542,11 @@ pub const pointerMotion = taskbar_pointer.pointerMotion;
 pub const pointerLeave = taskbar_pointer.pointerLeave;
 pub const setHover = taskbar_pointer.setHover;
 pub const pointerPress = taskbar_pointer.pointerPress;
+pub const pointerPressChip = taskbar_pointer.pointerPressChip;
+pub const dragMove = taskbar_pointer.dragMove;
+pub const ChipSlot = taskbar_pointer.ChipSlot;
+pub const InsertionTarget = taskbar_pointer.InsertionTarget;
+pub const insertionTarget = taskbar_pointer.insertionTarget;
 pub const scrollVolume = taskbar_pointer.scrollVolume;
 
 // taskbar/classify.zig

@@ -1,9 +1,7 @@
 //! Shared contract between the portal backend and Files' chooser mode.
 const std = @import("std");
 const mime_db = @import("../mime_db.zig");
-const c = @cImport({
-    @cInclude("fnmatch.h");
-});
+const c = @import("c");
 
 pub const Mode = enum { open, save, folder };
 pub const Rule = struct { kind: u32, value: []const u8 };
@@ -31,10 +29,10 @@ pub const Result = struct {
 
 pub fn matches(filter: Filter, name: []const u8) bool {
     var name_buf: [4096]u8 = undefined;
-    const zname = std.fmt.bufPrintZ(&name_buf, "{s}", .{name}) catch return false;
+    const zname = std.fmt.bufPrintSentinel(&name_buf, "{s}", .{name}, 0) catch return false;
     for (filter.rules) |rule| {
         var buf: [4096]u8 = undefined;
-        const pattern = std.fmt.bufPrintZ(&buf, "{s}", .{rule.value}) catch continue;
+        const pattern = std.fmt.bufPrintSentinel(&buf, "{s}", .{rule.value}, 0) catch continue;
         if (rule.kind == 0) {
             if (c.fnmatch(pattern, zname, 0) == 0) return true;
         } else if (rule.kind == 1) {

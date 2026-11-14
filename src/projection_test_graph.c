@@ -258,6 +258,58 @@ static void test_clip_geometry(void) {
   assert(rediwm_coverage(-.5) == 1 && rediwm_coverage(-3) == 1 && rediwm_coverage(.5) == 0 &&
          rediwm_coverage(9) == 0 && near(rediwm_coverage(0), .5) && near(rediwm_coverage(.25), .25));
 }
+// A polygon outline: the distance, the part of the box that is surely inside, and
+// the cover built from it. A 100x60 frame with its top-left corner cut and a 10 px
+// step in the top edge from x = 60.
+static void test_polygon_geometry(void) {
+  const struct rediwm_xform id = {1, 0, 0};
+  struct rediwm_clip_spec spec = {.width = 100, .height = 60, .poly_count = 7, .border = 1};
+  const double v[7][2] = {{0, 20}, {20, 0}, {60, 0}, {70, 10}, {100, 10}, {100, 60}, {0, 60}};
+  memcpy(spec.poly, v, sizeof(v));
+  struct rediwm_clip clip = rediwm_clip_resolve(id, 10, 5, &spec);
+  assert(clip.poly_count == 7 && near(clip.poly[1][0], 30) && near(clip.poly[1][1], 5));
+  // The distance: inside is negative, a straight edge is exact, the cut is outside.
+  assert(rediwm_clip_distance(&clip, 60, 35) < 0);
+  assert(near(rediwm_clip_distance(&clip, 40, 5), 0));        // On the top edge.
+  assert(near(rediwm_clip_distance(&clip, 40, 2), 3));        // 3 above it.
+  assert(near(rediwm_clip_distance(&clip, 90, 15), 0));       // On the step.
+  assert(near(rediwm_clip_distance(&clip, 90, 12), 3));       // Above the lower edge.
+  assert(near(rediwm_clip_distance(&clip, 10, 65), 0));       // On the bottom edge.
+  assert(near(rediwm_clip_distance(&clip, 11, 6), 18 * sqrt(.5))); // Beside the cut.
+  assert(rediwm_clip_distance(&clip, 10, 5) > 0);             // The cut-away corner.
+  // Either winding.
+  struct rediwm_clip_spec rev = spec;
+  for (int i = 0; i < 7; i++) memcpy(rev.poly[i], v[6 - i], sizeof(v[0]));
+  const struct rediwm_clip back = rediwm_clip_resolve(id, 10, 5, &rev);
+  for (double px = 8; px < 112; px += 7.3)
+    for (double py = 3; py < 68; py += 6.1)
+      assert(near(rediwm_clip_distance(&clip, px, py), rediwm_clip_distance(&back, px, py)));
+  // What is surely inside leaves out the cut and the step, nothing more than needed.
+  assert(clip.inset >= 10 && clip.inset <= 21);
+  struct rediwm_snap cover[3];
+  const int n = rediwm_clip_opaque(&clip, cover);
+  assert(n == 1);
+  for (int y = cover[0].y; y < cover[0].y + cover[0].height; y++)
+    for (int x = cover[0].x; x < cover[0].x + cover[0].width; x++)
+      assert(rediwm_clip_distance(&clip, x + .5, y + .5) < -.5);
+  // The rounded rectangle is unchanged: no polygon, inset = the largest radius.
+  const struct rediwm_clip_spec round = {.width = 100, .height = 60, .radii = {4, 9, 6, 2}};
+  const struct rediwm_clip rc = rediwm_clip_resolve(id, 0, 0, &round);
+  assert(rc.poly_count == 0 && near(rc.inset, 9));
+  // Same outline wherever it sits; a different point is a different outline.
+  const struct rediwm_clip moved = rediwm_clip_resolve(id, 50, 80, &spec);
+  assert(rediwm_clip_outline_equal(&clip, &moved));
+  spec.poly[3][0] = 66;
+  const struct rediwm_clip edited = rediwm_clip_resolve(id, 10, 5, &spec);
+  assert(!rediwm_clip_outline_equal(&clip, &edited));
+  // A triangle has a rectangle in it only well inside, and claims just that.
+  const struct rediwm_clip_spec thin = {.width = 40, .height = 40, .poly_count = 3, .poly = {{0, 0}, {40, 20}, {0, 40}}};
+  const struct rediwm_clip tc = rediwm_clip_resolve(id, 0, 0, &thin);
+  assert(rediwm_clip_opaque(&tc, cover) == 1);
+  for (int y = cover[0].y; y < cover[0].y + cover[0].height; y++)
+    for (int x = cover[0].x; x < cover[0].x + cover[0].width; x++)
+      assert(rediwm_clip_distance(&tc, x + .5, y + .5) < -.5);
+}
 // Every pixel the opaque cover claims must be fully covered by the shape, and it
 // may leave out only the corner squares. Checked in the clip's own pixel grid,
 // for fractional origins and for clips authored at fractional scales.
@@ -330,8 +382,8 @@ static void test_clip_opaque(void) {
   // pill keeps the full-height column between its two semicircles.
   struct rediwm_snap one[3];
   const struct rediwm_xform identity = {1, 0, 0};
-  assert(rediwm_clip_opaque(&(struct rediwm_clip){rediwm_xform_rect(identity, 0, 0, 8, 8), {4, 4, 4, 4}, 0, {0}, 0, 0, 0, 0, {0}}, one) == 0);
-  assert(rediwm_clip_opaque(&(struct rediwm_clip){rediwm_xform_rect(identity, 5, 7, 120, 80), {40, 40, 40, 40}, 0, {0}, 0, 0, 0, 0, {0}}, one) == 1);
+  assert(rediwm_clip_opaque(&(struct rediwm_clip){.edges = rediwm_xform_rect(identity, 0, 0, 8, 8), .radii = {4, 4, 4, 4}}, one) == 0);
+  assert(rediwm_clip_opaque(&(struct rediwm_clip){.edges = rediwm_xform_rect(identity, 5, 7, 120, 80), .radii = {40, 40, 40, 40}}, one) == 1);
   assert(one[0].x == 5 + 42 && one[0].y == 7 && one[0].width == 120 - 84 && one[0].height == 80);
 }
 static void test_clip_projection(struct rediwm_scene_outputs *scene) {

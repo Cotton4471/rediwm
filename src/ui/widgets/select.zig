@@ -17,7 +17,7 @@ pub const Saved = struct {
     id: usize = 0,
 };
 
-fn optionKey(labels: []const []const u8, disabled: []const usize) u64 {
+fn optionKey(labels: []const []const u8, disabled: []const usize, icons: []const layout.IconId) u64 {
     var hash = std.hash.Wyhash.init(0);
     for (labels) |label| {
         const len = label.len;
@@ -26,7 +26,15 @@ fn optionKey(labels: []const []const u8, disabled: []const usize) u64 {
     }
     const count = labels.len;
     hash.update(std.mem.asBytes(&count));
+    const disabled_count = disabled.len;
+    hash.update(std.mem.asBytes(&disabled_count));
     hash.update(std.mem.sliceAsBytes(disabled));
+    const icon_count = icons.len;
+    hash.update(std.mem.asBytes(&icon_count));
+    for (icons) |icon| {
+        const tag: u32 = @backingInt(icon);
+        hash.update(std.mem.asBytes(&tag));
+    }
     return hash.final();
 }
 
@@ -46,7 +54,7 @@ pub fn capture(root: *const Widget, saved: *Saved, focused: ?*const Widget) void
     saved.selected = data.selected;
     saved.highlighted = data.highlighted;
     saved.first_visible = data.first_visible;
-    saved.options = optionKey(data.labels, data.disabled_options);
+    saved.options = optionKey(data.labels, data.disabled_options, data.icons);
     saved.owner = data.owner;
     saved.id = data.id;
 }
@@ -62,7 +70,7 @@ pub fn restore(root: *Widget, saved: *const Saved) ?*Widget {
             !data.disabled and data.selected == saved.selected and
             data.owner == saved.owner and data.id == saved.id and
             data.labels.len > saved.highlighted and
-            optionKey(data.labels, data.disabled_options) == saved.options)
+            optionKey(data.labels, data.disabled_options, data.icons) == saved.options)
         {
             data.open = true;
             data.highlighted = saved.highlighted;
@@ -224,6 +232,9 @@ test "a refreshed dropdown keeps authoritative values and refuses incompatible s
     changed.kind.select.disabled_options = &.{1};
     try std.testing.expect(restore(&changed, &saved) == null);
     changed.kind.select.disabled_options = &.{};
+    changed.kind.select.icons = &.{ .mouse, .touchpad };
+    try std.testing.expect(restore(&changed, &saved) == null);
+    changed.kind.select.icons = &.{};
     changed.kind.select.disabled = true;
     try std.testing.expect(restore(&changed, &saved) == null);
     changed.kind.select.disabled = false;

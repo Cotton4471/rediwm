@@ -1,6 +1,7 @@
 //! Folder size tests: the dirsize walker and the App's folder size column.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const history_mod = @import("history.zig");
 const worker_mod = @import("worker.zig");
 const app_mod = @import("app.zig");
@@ -95,11 +96,11 @@ test "dirsize: a hardlink pair is counted once" {
     defer a.free(f1);
     try writeTestFile(f1, "hardlink payload");
 
-    const f1_z = try a.dupeZ(u8, f1);
+    const f1_z = try a.dupeSentinel(u8, f1, 0);
     defer a.free(f1_z);
     const f2 = try std.fmt.allocPrint(a, "{s}/file2_hardlink.txt", .{tmp});
     defer a.free(f2);
-    const f2_z = try a.dupeZ(u8, f2);
+    const f2_z = try a.dupeSentinel(u8, f2, 0);
     defer a.free(f2_z);
 
     try std.testing.expect(c.link(f1_z, f2_z) == 0);
@@ -201,6 +202,7 @@ test "dirsize: an unreadable folder gives a partial result" {
 }
 
 test "dirsize: cancelling mid-walk leaks no fds" {
+    if (comptime builtin.os.tag != .linux) return error.SkipZigTest; // counts /proc/self/fd, which FreeBSD lacks without fdescfs
     const a = std.testing.allocator;
     var tmp_buf: [256]u8 = undefined;
     const tmp = try makeTestDir(&tmp_buf);

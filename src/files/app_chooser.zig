@@ -218,7 +218,7 @@ pub fn collectChooser(self: *App) !void {
             return error.NoSelection;
         } else try std.fs.path.join(self.allocator, &.{ self.history.current, name });
         defer self.allocator.free(path);
-        const zpath = try self.allocator.dupeZ(u8, path);
+        const zpath = try self.allocator.dupeSentinel(u8, path, 0);
         defer self.allocator.free(zpath);
         var stat: c.struct_stat = undefined;
         const exists = c.stat(zpath, &stat) == 0;
@@ -228,7 +228,7 @@ pub fn collectChooser(self: *App) !void {
         }
         if (opts.mode == .open and (!exists or c.access(zpath, c.R_OK) != 0)) return error.Inaccessible;
         if (opts.mode == .save) {
-            const parent = try self.allocator.dupeZ(u8, self.history.current);
+            const parent = try self.allocator.dupeSentinel(u8, self.history.current, 0);
             defer self.allocator.free(parent);
             if (c.access(parent, c.W_OK | c.X_OK) != 0) return error.Inaccessible;
         }
@@ -241,7 +241,7 @@ pub fn collectChooser(self: *App) !void {
     } else {
         for (self.items.items) |item| {
             if (!item.selected or item.is_broken or item.is_dir != (opts.mode == .folder)) continue;
-            const zpath = try self.allocator.dupeZ(u8, item.path);
+            const zpath = try self.allocator.dupeSentinel(u8, item.path, 0);
             defer self.allocator.free(zpath);
             var stat: c.struct_stat = undefined;
             if (c.stat(zpath, &stat) != 0 or c.access(zpath, c.R_OK) != 0 or (stat.st_mode & c.S_IFMT == c.S_IFDIR) != (opts.mode == .folder)) return error.Inaccessible;
@@ -265,7 +265,7 @@ pub fn collectChooser(self: *App) !void {
             while (true) : (index += 1) {
                 if (index > 10000) return error.TooManyFiles;
                 const path = if (index == 0) try std.fs.path.join(self.allocator, &.{ folder, name }) else try std.fmt.allocPrint(self.allocator, "{s}/{s}.{d}", .{ folder, name, index });
-                const zpath = try self.allocator.dupeZ(u8, path);
+                const zpath = try self.allocator.dupeSentinel(u8, path, 0);
                 defer self.allocator.free(zpath);
                 var stat: c.struct_stat = undefined;
                 var exists = c.lstat(zpath, &stat) == 0;

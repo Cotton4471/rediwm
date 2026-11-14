@@ -1,5 +1,6 @@
 const std = @import("std");
 const wl = @import("wayland").server.wl;
+const platform = @import("platform");
 
 const CompositorServer = @import("../Server.zig");
 const protocol = @import("protocol.zig");
@@ -320,15 +321,6 @@ pub fn onSequenceComplete(vi: *@import("../input/virtual.zig").VirtualInput, seq
     client.updateFdInterest() catch {};
 }
 
-const Ucred = extern struct {
-    pid: std.posix.pid_t,
-    uid: std.posix.uid_t,
-    gid: std.posix.gid_t,
-};
-
-const SO_PEERPIDFD: c_int = 77;
-extern "c" fn pidfd_send_signal(pidfd: c_int, sig: c_int, info: ?*anyopaque, flags: c_uint) c_int;
-
 pub fn parseFlatpakAppId(content: []const u8) ?[]const u8 {
     var in_application_section = false;
     var line_it = std.mem.splitScalar(u8, content, '\n');
@@ -356,48 +348,44 @@ pub fn parseFlatpakAppId(content: []const u8) ?[]const u8 {
     return null;
 }
 
-fn detectSandbox(pid: i32, client_fd: c_int, allocator: std.mem.Allocator) ?SandboxCaller {
-    if (pid <= 0) return null;
+/// Has the process that made the connection exited (a zombie counts), or is it
+/// unknown? Without a pidfd from the socket this asks about the credentials'
+/// pid, which a reuse could have handed to another process.
+fn peerGone(process: ?platform.child.Handle, pid: i32) bool {
+    return if (process) |handle| handle.exited() else !platform.child.exists(pid);
+}
 
-    var pidfd: c_int = -1;
-    var pidfd_len: std.posix.socklen_t = @sizeOf(c_int);
-    if (c.getsockopt(client_fd, std.posix.SOL.SOCKET, SO_PEERPIDFD, @ptrCast(&pidfd), &pidfd_len) < 0 or pidfd < 0) {
-        const rc = std.os.linux.pidfd_open(pid, 0);
-        if (std.os.linux.errno(rc) == .SUCCESS) {
-            pidfd = @intCast(rc);
-        } else {
-            pidfd = -1;
-        }
-    }
-    defer if (pidfd >= 0) closeFd(pidfd);
+/// Null means "not sandboxed". `error.Unclassifiable` is a connector that is
+/// gone or that this process cannot see: its credentials outlive it, and a
+/// child that inherited the socket (and the sandbox) may still be writing, so
+/// nothing can be said and the connection is refused.
+fn detectSandbox(pid: i32, client_fd: c_int, allocator: std.mem.Allocator) error{Unclassifiable}!?SandboxCaller {
+    // SO_PEERCRED gives pid 0 for a process in a pid namespace we cannot see.
+    if (pid <= 0) return error.Unclassifiable;
+
+    const process: ?platform.child.Handle = platform.child.Handle.peer(client_fd) orelse platform.child.Handle.open(pid) catch null;
+    defer if (process) |handle| handle.close();
+    if (peerGone(process, pid)) return error.Unclassifiable;
 
     var proc_buf: [64]u8 = undefined;
-    const proc_path = std.fmt.bufPrintZ(&proc_buf, "/proc/{d}", .{pid}) catch return null;
+    const proc_path = std.fmt.bufPrintSentinel(&proc_buf, "/proc/{d}", .{pid}, 0) catch return null;
 
     const proc_fd = c.open(proc_path.ptr, .{ .ACCMODE = .RDONLY, .DIRECTORY = true, .CLOEXEC = true });
-    if (proc_fd < 0) return null;
+    // Alive but without a /proc entry: no procfs here, so there is nothing to read.
+    if (proc_fd < 0) return if (peerGone(process, pid)) error.Unclassifiable else null;
     defer closeFd(proc_fd);
 
     const file_fd = c.openat(proc_fd, "root/.flatpak-info", .{ .ACCMODE = .RDONLY, .CLOEXEC = true });
     if (file_fd < 0) {
         const err = std.posix.errno(file_fd);
-        if (err == .NOENT) {
-            return null;
-        }
+        if (err == .NOENT) return if (peerGone(process, pid)) error.Unclassifiable else null;
         return .{ .app_id = null, .engine = "org.flatpak" };
     }
     defer closeFd(file_fd);
 
-    if (pidfd >= 0) {
-        if (pidfd_send_signal(pidfd, 0, null, 0) != 0) {
-            return .{ .app_id = null, .engine = "org.flatpak" };
-        }
-    } else {
-        const rc = std.os.linux.syscall2(.kill, @as(usize, @bitCast(@as(isize, pid))), 0);
-        if (std.os.linux.errno(rc) != .SUCCESS) {
-            return .{ .app_id = null, .engine = "org.flatpak" };
-        }
-    }
+    // The peer must still be the process whose root we read.
+    const present = if (process) |handle| handle.alive() else platform.child.exists(pid);
+    if (!present) return .{ .app_id = null, .engine = "org.flatpak" };
 
     var buf: [16 * 1024]u8 = undefined;
     const nread = c.read(file_fd, &buf, buf.len);
@@ -427,26 +415,22 @@ fn handleListenerFd(fd: c_int, mask: wl.EventMask, ipc: *IpcServer) c_int {
     );
     if (client_fd < 0) return 0;
 
-    var ucred: Ucred = undefined;
-    var ucred_len: std.posix.socklen_t = @sizeOf(Ucred);
-    if (c.getsockopt(
-        client_fd,
-        std.posix.SOL.SOCKET,
-        std.posix.SO.PEERCRED,
-        @ptrCast(&ucred),
-        &ucred_len,
-    ) < 0) {
+    const peer = platform.peer.of(client_fd) orelse {
+        closeFd(client_fd);
+        return 0;
+    };
+
+    if (peer.uid != c.getuid()) {
+        log.warn("rejecting IPC connection from UID {d} (expected {d})", .{ peer.uid, c.getuid() });
         closeFd(client_fd);
         return 0;
     }
 
-    if (ucred.uid != c.getuid()) {
-        log.warn("rejecting IPC connection from UID {d} (expected {d})", .{ ucred.uid, c.getuid() });
+    const sandbox_opt = detectSandbox(peer.pid, client_fd, ipc.allocator) catch {
+        log.warn("rejecting IPC connection: its process exited or cannot be seen, so it cannot be checked for a sandbox", .{});
         closeFd(client_fd);
         return 0;
-    }
-
-    const sandbox_opt = detectSandbox(ucred.pid, client_fd, ipc.allocator);
+    };
     if (sandbox_opt) |sb| {
         const groups = ipc.compositor.config.sandboxAllowGroups(sb.app_id, sb.engine);
         if (!groups.contains(.ipc)) {
@@ -675,15 +659,12 @@ fn resolveSocketPath(allocator: std.mem.Allocator, wayland_display: []const u8) 
 /// as `$XDG_RUNTIME_DIR` does; the socket mode alone does not stop another
 /// user from replacing it between sessions.
 fn requirePrivateDir(dir: []const u8) IpcError!void {
-    const linux = std.os.linux;
     var buf: [108:0]u8 = undefined;
     if (dir.len >= buf.len) return error.SocketPathTooLong;
     @memcpy(buf[0..dir.len], dir);
     buf[dir.len] = 0;
-    var info: linux.Statx = undefined;
-    const rc = linux.statx(linux.AT.FDCWD, &buf, 0, .{ .UID = true, .MODE = true }, &info);
-    if (linux.errno(rc) != .SUCCESS) return error.NoRuntimeDir;
-    if (info.uid != linux.getuid() or info.mode & 0o077 != 0) {
+    const info = platform.fs.stat(&buf) orelse return error.NoRuntimeDir;
+    if (info.uid != c.getuid() or info.mode & 0o077 != 0) {
         log.err("IPC socket directory {s} is not private to this uid", .{dir});
         return error.RuntimeDirNotPrivate;
     }

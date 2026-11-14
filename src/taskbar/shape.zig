@@ -4,6 +4,7 @@
 const std = @import("std");
 const wlr = @import("wlroots");
 const sdf = @import("ui").sdf;
+const window_shape = @import("ui").window_shape;
 
 /// The narrowest a bar is drawn however short it is asked to be: the start
 /// button, a few icons and the clock still have to fit.
@@ -13,8 +14,9 @@ pub const Spec = struct {
     height: i32,
     /// Logical px between the bar and the output edge it sits on.
     edge_gap: i32 = 0,
-    /// Percent of the output's width; the bar is centred.
+    /// Percent of the output's width.
     length: f32 = 100,
+    alignment: @import("config").types.TaskbarAlignment = .center,
     radius: f32 = 0,
     top: bool = false,
 };
@@ -32,7 +34,11 @@ pub fn place(output: wlr.Box, spec: Spec) Placement {
     const gap = std.math.clamp(spec.edge_gap, 0, @max(0, output.height - spec.height));
     return .{
         .box = .{
-            .x = output.x + @divTrunc(output.width - width, 2),
+            .x = output.x + switch (spec.alignment) {
+                .left => @as(i32, 0),
+                .center => @divTrunc(output.width - width, 2),
+                .right => output.width - width,
+            },
             .y = if (spec.top) output.y + gap else output.y + output.height - spec.height - gap,
             .width = width,
             .height = spec.height,
@@ -43,8 +49,8 @@ pub fn place(output: wlr.Box, spec: Spec) Placement {
 
 /// Flush means the original bar: edge to edge, on the output's edge, square.
 /// It keeps its single hairline on the side facing the windows.
-pub fn flush(output: wlr.Box, placed: wlr.Box, radius: f32) bool {
-    return radius <= 0 and placed.width >= output.width and placed.x == output.x and
+pub fn flush(output: wlr.Box, placed: wlr.Box, radius: f32, outlined: bool) bool {
+    return !outlined and radius <= 0 and placed.width >= output.width and placed.x == output.x and
         (placed.y == output.y or placed.y + placed.height == output.y + output.height);
 }
 
@@ -90,108 +96,180 @@ fn coverage(distance: f32, scale: f32) f32 {
     return std.math.clamp(0.5 - distance * scale, 0, 1);
 }
 
-const TestColor = struct {
-    r: f32 = 0,
-    g: f32 = 0,
-    b: f32 = 0,
-    a: f32 = 0,
+test {
+    _ = @import("shape_tests.zig");
+}
 
-    fn over(source: TestColor, destination: TestColor) TestColor {
-        const alpha = source.a + destination.a * (1 - source.a);
-        if (alpha == 0) return .{};
-        return .{
-            .r = (source.r * source.a + destination.r * destination.a * (1 - source.a)) / alpha,
-            .g = (source.g * source.a + destination.g * destination.a * (1 - source.a)) / alpha,
-            .b = (source.b * source.a + destination.b * destination.a * (1 - source.a)) / alpha,
-            .a = alpha,
-        };
+/// The bar's polygon outline in a bar of `width` x `height` logical px, from the
+/// theme's `taskbar_shape` text, or null for the rounded rectangle (no text, a
+/// text that does not parse, or an outline the size folds over itself).
+pub fn polygon(text: []const u8, width: f64, height: f64) ?window_shape.Resolved {
+    const outline = (window_shape.parse(text) catch return null) orelse return null;
+    const resolved = window_shape.resolve(outline, width, height, 1);
+    return if (window_shape.usable(resolved)) resolved else null;
+}
+
+pub const Insets = struct { left: i32 = 0, right: i32 = 0 };
+
+/// How far from either end of a bar with this outline the items have to start
+/// to stay inside it, over the band `top` to `bottom` (logical px from the bar's
+/// top): the first column from that end where every row of the band is inside.
+/// A row with no inside near the end (a notch the band reaches into) is left to
+/// the clip rather than pushing the items off the bar. The outline is resolved at
+/// a width past any slanted end, so the answer does not depend on the bar's
+/// length for the usual px-anchored ends.
+pub fn polygonInsets(text: []const u8, height: f64, top: f64, bottom: f64) Insets {
+    const reference: f64 = 1600;
+    const reach: i32 = 160;
+    const poly = polygon(text, reference, height) orelse return .{};
+    var out: Insets = .{};
+    const rows = 8;
+    for (0..rows + 1) |i| {
+        const y = top + (bottom - top) * @as(f64, @floatFromInt(i)) / rows;
+        var x: i32 = 0;
+        while (x < reach and window_shape.sdPolygon(poly, @floatFromInt(x), y) > 0) x += 1;
+        if (x < reach) out.left = @max(out.left, x);
+        x = 0;
+        while (x < reach and window_shape.sdPolygon(poly, reference - @as(f64, @floatFromInt(x)), y) > 0) x += 1;
+        if (x < reach) out.right = @max(out.right, x);
     }
-    fn scaled(color: TestColor, alpha: f32) TestColor {
-        return .{ .r = color.r, .g = color.g, .b = color.b, .a = std.math.clamp(color.a * alpha, 0, 1) };
-    }
+    return out;
+}
+
+/// A raster of device pixels the bar paints itself into.
+pub const Raster = struct {
+    pixels: []u32,
+    stride: usize,
+    width: usize,
+    height: usize,
+    scale: f32,
 };
 
-test "the bar is centred, keeps its gap on the edge it sits on and never gets too short" {
-    const output: wlr.Box = .{ .x = 100, .y = 50, .width = 1920, .height = 1080 };
-    const flat = place(output, .{ .height = 44 });
-    try std.testing.expectEqual(wlr.Box{ .x = 100, .y = 50 + 1080 - 44, .width = 1920, .height = 44 }, flat.box);
-    try std.testing.expectEqual(@as(i32, 44), flat.reserved);
+const max_edges = window_shape.max_points;
 
-    const floating = place(output, .{ .height = 44, .edge_gap = 12, .length = 60 });
-    try std.testing.expectEqual(wlr.Box{ .x = 100 + 384, .y = 50 + 1080 - 44 - 12, .width = 1152, .height = 44 }, floating.box);
-    try std.testing.expectEqual(@as(i32, 56), floating.reserved);
-
-    const top = place(output, .{ .height = 44, .edge_gap = 12, .length = 60, .top = true });
-    try std.testing.expectEqual(@as(i32, 50 + 12), top.box.y);
-    try std.testing.expectEqual(@as(i32, 56), top.reserved);
-
-    // Shorter than the items need, or than the output is wide.
-    try std.testing.expectEqual(min_width, place(output, .{ .height = 44, .length = 20 }).box.width);
-    const narrow: wlr.Box = .{ .x = 0, .y = 0, .width = 300, .height = 600 };
-    try std.testing.expectEqual(@as(i32, 300), place(narrow, .{ .height = 44, .length = 50 }).box.width);
-    // Out-of-range asks fall back into range instead of leaving the output.
-    try std.testing.expectEqual(@as(i32, 1920), place(output, .{ .height = 44, .length = 400 }).box.width);
-    try std.testing.expectEqual(@as(i32, 1080), place(output, .{ .height = 44, .edge_gap = 5000 }).reserved);
+/// The bar's background for a polygon outline: `fill` inside it, with `outline`
+/// (`outline_width` logical px, composited over the fill) along its edge, and
+/// transparent outside, the way `background` paints the rounded bar, except that
+/// the outer edge is not anti-aliased: the tree's clip (`Taskbar.applyClip`)
+/// shapes and smooths it on the GPU, and a second ramp would thin it.
+///
+/// Only the pixels within reach of an edge cost a distance. For each row the
+/// stretches that are near an edge (its extent in the row, widened by the
+/// outline and a pixel) are worked out exactly; the rest of the row is flat,
+/// filled in runs by the even-odd crossings of the row. A long flat top or
+/// bottom edge is the whole of its rows, but the rows in between hold a few
+/// short stretches, so a bar costs a fraction of one distance per pixel.
+pub fn paintPolygon(comptime C: type, raster: Raster, poly: window_shape.Resolved, outline_width: f32, fill: C, outline: C) void {
+    const scale: f64 = raster.scale;
+    const reach: f64 = @max(outline_width, 0) + 1.0 / scale;
+    const fill_px: u32 = fill.argb();
+    const width: i32 = @intCast(raster.width);
+    for (0..raster.height) |row_index| {
+        const py = (@as(f64, @floatFromInt(row_index)) + 0.5) / scale;
+        const row = raster.pixels[row_index * raster.stride ..][0..raster.width];
+        var active: [max_edges]u8 = undefined;
+        var active_count: usize = 0;
+        var near: [max_edges][2]i32 = undefined;
+        var crossings: [max_edges]f64 = undefined;
+        var crossing_count: usize = 0;
+        for (0..poly.count) |i| {
+            const a = poly.points[i];
+            const b = poly.points[(i + 1) % poly.count];
+            if ((a[1] <= py) != (b[1] <= py)) {
+                crossings[crossing_count] = a[0] + (py - a[1]) * (b[0] - a[0]) / (b[1] - a[1]);
+                crossing_count += 1;
+            }
+            if (@max(a[1], b[1]) < py - reach or @min(a[1], b[1]) > py + reach) continue;
+            // The part of the edge within reach of this row, and the columns it spans.
+            var t0: f64 = 0;
+            var t1: f64 = 1;
+            const dy = b[1] - a[1];
+            if (dy != 0) {
+                const u = (py - reach - a[1]) / dy;
+                const v = (py + reach - a[1]) / dy;
+                t0 = std.math.clamp(@min(u, v), 0, 1);
+                t1 = std.math.clamp(@max(u, v), 0, 1);
+            }
+            const x0 = a[0] + t0 * (b[0] - a[0]);
+            const x1 = a[0] + t1 * (b[0] - a[0]);
+            active[active_count] = @intCast(i);
+            near[active_count] = .{
+                std.math.clamp(@as(i32, @intFromFloat(@floor((@min(x0, x1) - reach) * scale))), 0, width),
+                std.math.clamp(@as(i32, @intFromFloat(@ceil((@max(x0, x1) + reach) * scale))) + 1, 0, width),
+            };
+            active_count += 1;
+        }
+        std.mem.sort(f64, crossings[0..crossing_count], {}, std.sort.asc(f64));
+        // Where each crossing falls among the pixel centres: the first column right of it.
+        var bounds: [max_edges]i32 = undefined;
+        for (crossings[0..crossing_count], 0..) |x, i| {
+            bounds[i] = std.math.clamp(@as(i32, @intFromFloat(@floor(x * scale - 0.5))) + 1, 0, width);
+        }
+        // The near stretches, merged left to right.
+        std.mem.sort([2]i32, near[0..active_count], {}, struct {
+            fn less(_: void, a: [2]i32, b: [2]i32) bool {
+                return a[0] < b[0];
+            }
+        }.less);
+        var cursor: i32 = 0;
+        var i: usize = 0;
+        while (i < active_count) {
+            var start = near[i][0];
+            var end = near[i][1];
+            i += 1;
+            while (i < active_count and near[i][0] <= end) : (i += 1) end = @max(end, near[i][1]);
+            start = @max(start, cursor);
+            if (end <= start) continue;
+            flatRun(row, cursor, start, bounds[0..crossing_count], fill_px);
+            for (@as(usize, @intCast(start))..@as(usize, @intCast(end))) |x| {
+                const px = (@as(f64, @floatFromInt(x)) + 0.5) / scale;
+                var d2: f64 = std.math.inf(f64);
+                for (active[0..active_count]) |edge| d2 = @min(d2, segmentDistanceSquared(poly.points[edge], poly.points[(edge + 1) % poly.count], px, py));
+                const distance: f64 = if (insideAt(bounds[0..crossing_count], @intCast(x))) -@sqrt(d2) else @sqrt(d2);
+                row[x] = edgePixel(C, distance, scale, outline_width, fill, outline);
+            }
+            cursor = end;
+        }
+        flatRun(row, cursor, width, bounds[0..crossing_count], fill_px);
+    }
 }
 
-test "only the original bar is flush" {
-    const output: wlr.Box = .{ .x = 0, .y = 0, .width = 1920, .height = 1080 };
-    const bottom = place(output, .{ .height = 44 }).box;
-    try std.testing.expect(flush(output, bottom, 0));
-    try std.testing.expect(flush(output, place(output, .{ .height = 44, .top = true }).box, 0));
-    try std.testing.expect(!flush(output, bottom, 8));
-    try std.testing.expect(!flush(output, place(output, .{ .height = 44, .edge_gap = 6 }).box, 0));
-    try std.testing.expect(!flush(output, place(output, .{ .height = 44, .length = 80 }).box, 0));
+/// Whether column `x` is inside: an odd number of the row's crossings lie left of it.
+fn insideAt(bounds: []const i32, x: i32) bool {
+    var count: usize = 0;
+    for (bounds) |b| count += @intFromBool(b <= x);
+    return count % 2 == 1;
 }
 
-test "items clear a rounded end by exactly what the curve takes" {
-    try std.testing.expectEqual(@as(i32, 0), cornerInset(0, 4));
-    // Margin as tall as the radius: the item's corner is past the curve.
-    try std.testing.expectEqual(@as(i32, 0), cornerInset(6, 6));
-    // A pill 44 high: an item 4 from the top starts about 9.4 px in.
-    try std.testing.expectEqual(@as(i32, 10), cornerInset(22, 4));
-    try std.testing.expectEqual(@as(f32, 22), effectiveRadius(80, 44));
-    try std.testing.expectEqual(@as(f32, 0), effectiveRadius(-3, 44));
-    // The reported inset really does put the item corner inside the arc.
-    const r: f32 = 22;
-    const inset: f32 = @floatFromInt(cornerInset(r, 4));
-    try std.testing.expect((r - inset) * (r - inset) + (r - 4) * (r - 4) <= r * r);
+/// Columns `from` to `to` of a row away from every edge: the fill inside, nothing outside.
+fn flatRun(row: []u32, from: i32, to: i32, bounds: []const i32, fill_px: u32) void {
+    if (to <= from) return;
+    var k: usize = 0;
+    while (k < bounds.len and bounds[k] <= from) k += 1;
+    var x = from;
+    while (x < to) {
+        const next = if (k < bounds.len) @min(to, bounds[k]) else to;
+        @memset(row[@intCast(x)..@intCast(next)], if (k % 2 == 1) fill_px else 0);
+        x = next;
+        k += 1;
+    }
 }
 
-test "the flush background is the original fill and hairline, on the side facing the windows" {
-    const fill: TestColor = .{ .r = 0.1, .g = 0.1, .b = 0.1, .a = 0.96 };
-    const line: TestColor = .{ .r = 1, .g = 1, .b = 1, .a = 0.06 };
-    const bottom: Look = .{ .width = 400, .height = 44, .radius = 0, .outline = 1, .flush = true, .top = false };
-    try std.testing.expectEqualDeep(line.over(fill), background(TestColor, bottom, 100, 0.5, 1, fill, line));
-    try std.testing.expectEqualDeep(fill, background(TestColor, bottom, 100, 1.5, 1, fill, line));
-    var top = bottom;
-    top.top = true;
-    try std.testing.expectEqualDeep(fill, background(TestColor, top, 100, 0.5, 1, fill, line));
-    try std.testing.expectEqualDeep(line.over(fill), background(TestColor, top, 100, 43.5, 1, fill, line));
-    var bare = bottom;
-    bare.outline = 0;
-    try std.testing.expectEqualDeep(fill, background(TestColor, bare, 100, 0.5, 1, fill, line));
+fn segmentDistanceSquared(a: [2]f64, b: [2]f64, px: f64, py: f64) f64 {
+    const ex = b[0] - a[0];
+    const ey = b[1] - a[1];
+    const wx = px - a[0];
+    const wy = py - a[1];
+    const h = std.math.clamp((wx * ex + wy * ey) / @max(ex * ex + ey * ey, 1e-4), 0, 1);
+    const bx = wx - ex * h;
+    const by = wy - ey * h;
+    return bx * bx + by * by;
 }
 
-fn expectColor(expected: TestColor, actual: TestColor) !void {
-    inline for (.{ "r", "g", "b", "a" }) |channel| try std.testing.expectApproxEqAbs(@field(expected, channel), @field(actual, channel), 1e-5);
-}
-
-test "a floating background rounds its corners and wears its outline all round" {
-    const fill: TestColor = .{ .r = 0.1, .g = 0.1, .b = 0.1, .a = 0.9 };
-    const line: TestColor = .{ .r = 1, .g = 0, .b = 0, .a = 0.5 };
-    const look: Look = .{ .width = 400, .height = 44, .radius = 22, .outline = 2, .flush = false, .top = false };
-    // The corner is cut away, the middle is plain fill, the rim carries the outline.
-    try std.testing.expectEqual(@as(f32, 0), background(TestColor, look, 0.5, 0.5, 1, fill, line).a);
-    try expectColor(fill, background(TestColor, look, 200, 22, 1, fill, line));
-    try expectColor(line.over(fill), background(TestColor, look, 200, 0.5, 1, fill, line));
-    try expectColor(line.over(fill), background(TestColor, look, 200, 43.5, 1, fill, line));
-    try expectColor(line.over(fill), background(TestColor, look, 0.5, 22, 1, fill, line));
-    // Square but floating (only a gap or a length): the corners stay filled.
-    var square = look;
-    square.radius = 0;
-    try std.testing.expect(background(TestColor, square, 1, 1, 1, fill, line).a > 0.9);
-    // The ramp is antialiased across the curve.
-    const edge = background(TestColor, look, 6.4, 6.4, 1, fill, line).a;
-    try std.testing.expect(edge > 0 and edge < 1);
+/// One pixel at signed distance `distance` (logical px, negative inside).
+pub fn edgePixel(comptime C: type, distance: f64, scale: f64, outline_width: f32, fill: C, outline: C) u32 {
+    if (distance * scale >= 0.5) return 0;
+    if (outline_width <= 0) return fill.argb();
+    const inside = coverage(@floatCast(distance + outline_width), @floatCast(scale));
+    return outline.scaled(1 - inside).over(fill).argb();
 }

@@ -2,7 +2,7 @@
 Type=Application
 Name=Install theme
 Comment=Validate and install a RediWM theme pack
-Exec=rediwm-theme install %f
+Exec=@BINDIR@/rediwm-theme install %f
 MimeType=application/x-rediwm-theme;
 Icon=preferences-desktop-theme
 Terminal=false

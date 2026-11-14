@@ -5,6 +5,7 @@
 //! picks an account and session and signs in through rediwm-dm, then exits.
 const i18n = @import("i18n");
 const std = @import("std");
+const platform = @import("platform");
 const Child = @import("child.zig");
 const wl = @import("wayland").server.wl;
 const wlr = @import("wlroots");
@@ -31,12 +32,7 @@ const ImageBuffer = @import("../ImageBuffer.zig");
 const lock_account = @import("lock_account.zig");
 const lock_events = @import("lock_events.zig");
 const lock_input = @import("lock_input.zig");
-pub const c = @cImport({
-    @cInclude("time.h");
-    @cInclude("unistd.h");
-    @cInclude("sys/mman.h");
-    @cInclude("sys/prctl.h");
-});
+pub const c = @import("c");
 const text_field = ui.widgets.field;
 const SecretInput = ui.widgets.secret_input.Input;
 const Auth = opaque {};
@@ -90,6 +86,10 @@ pub const Lock = struct {
     avatar: ?png.Image = null,
     /// Volume and brightness sliders; none in the greeter.
     controls: Controls = .{},
+    /// The active keyboard layout's text for the layout button; empty hides
+    /// it (one layout, or the greeter). Copied, so painting needs no server.
+    layout_label: [24]u8 = undefined,
+    layout_label_len: u8 = 0,
 
     pub fn start(server: *Server) void {
         if (server.locker != null) return;
@@ -137,12 +137,19 @@ pub const Lock = struct {
         // First, so a crash anywhere below still restarts the session locked.
         announce(server, true);
         _ = c.mlock(&self.password, self.password.len);
-        _ = c.prctl(c.PR_SET_DUMPABLE, @as(c_ulong, 0), @as(c_ulong, 0), @as(c_ulong, 0), @as(c_ulong, 0));
+        platform.process.denyDumps() catch {};
+        server.world.overview.cancel(&server.world);
         server.switcher.cancel();
         server.screenshot_selector.cancel();
         server.locker = self;
+        self.refreshLayoutLabel();
         if (server.bluetooth) |bluetooth| bluetooth.closed();
-        if (server.input.open_control_center) |cc| cc.bluetooth.clearPin();
+        if (server.input.open_control_center) |cc| {
+            cc.bluetooth.clearPin();
+            cc.key_settings.clearSecrets();
+            if (cc.key_settings.client) |client| client.cancel();
+            cc.refresh();
+        }
         @import("../extra_protocols.zig").rediwm_protocols_revoke(server.extra_protocols);
         server.world.mini_map.hide();
         if (server.ipc) |ipc| ipc.wait_mgr.failAll("SessionLocked");
@@ -290,6 +297,8 @@ pub const Lock = struct {
 
     pub const changed = lock_events.changed;
     pub const themeChanged = lock_events.themeChanged;
+    pub const inputSourceChanged = lock_events.inputSourceChanged;
+    pub const refreshLayoutLabel = lock_events.refreshLayoutLabel;
     pub const controlsChanged = lock_events.controlsChanged;
     pub const showControl = lock_events.showControl;
     pub const showControls = lock_events.showControls;
@@ -331,6 +340,8 @@ pub const unlock_hint = "Press Enter to unlock";
 pub const login_hint = "Press Enter to log in";
 pub const focus_account: u8 = 5;
 pub const focus_session: u8 = 6;
+/// The keyboard layout button (`lock_view.layoutButtonShown`).
+pub const focus_layout: u8 = 7;
 
 const lock_view = @import("lock_view.zig");
 pub const Geometry = lock_view.Geometry;

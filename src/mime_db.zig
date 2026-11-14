@@ -104,7 +104,7 @@ pub const Db = struct {
             } else if (key[0] == '*' and std.mem.indexOfAny(u8, key[1..], "*?[\\") == null) {
                 try self.putGlob(&self.suffixes, &self.suffixes_ci, key[1..], pattern[1..], glob, case_sensitive);
             } else {
-                try self.patterns.append(a, .{ .glob = glob, .pattern = try a.dupeZ(u8, key), .case_sensitive = case_sensitive });
+                try self.patterns.append(a, .{ .glob = glob, .pattern = try a.dupeSentinel(u8, key, 0), .case_sensitive = case_sensitive });
             }
         }
     }

@@ -29,7 +29,6 @@ test "titlebar glass holds only while the titlebar is at least 98% opaque" {
 pub fn sampleTitlebarMemo() TitlebarMemo {
     return .{
         .width = 200,
-        .height = 100,
         .title_ptr = null,
         .scale = 1,
         .hover = 0,
@@ -109,27 +108,49 @@ test "TitlebarMemo.capture reads title_size from theme.global" {
     const saved = theme.global;
     defer theme.global = saved;
     theme.global.title_size = 19.25;
-    const memo = TitlebarMemo.capture(10, 10, null, .{ .scale = 1 });
+    const memo = TitlebarMemo.capture(10, null, .{ .scale = 1 });
     try std.testing.expectEqual(@as(f32, 19.25), memo.title_size);
 }
 
 test "chrome geometry changes invalidate retained titlebar pixels" {
     const saved = theme.global;
     defer theme.global = saved;
-    const before = TitlebarMemo.capture(400, 320, null, .{});
+    const before = TitlebarMemo.capture(400, null, .{});
+    theme.global.window_border_width = 2;
+    try std.testing.expectEqual(@as(i32, 2), chrome_mod.frameBorder());
+    try std.testing.expect(!before.reusableFor(TitlebarMemo.capture(400, null, .{})));
+    theme.global.window_inner_border_width = 3;
+    try std.testing.expectEqual(@as(i32, 5), chrome_mod.frameBorder());
+    try std.testing.expectEqual(@as(i32, 2), chrome_mod.outerBorder());
+    try std.testing.expect(!before.reusableFor(TitlebarMemo.capture(400, null, .{})));
+    theme.global = saved;
     theme.global.chrome_control_gap += 1;
-    const spaced = TitlebarMemo.capture(400, 320, null, .{});
+    const spaced = TitlebarMemo.capture(400, null, .{});
     try std.testing.expect(!before.eql(spaced));
     try std.testing.expect(!before.reusableFor(spaced));
     theme.global.chrome_control_gap = saved.chrome_control_gap;
     theme.global.chrome_height += 1;
-    const taller = TitlebarMemo.capture(400, 320, null, .{});
+    const taller = TitlebarMemo.capture(400, null, .{});
     try std.testing.expect(!before.reusableFor(taller));
     theme.global.chrome_height = saved.chrome_height;
     theme.global.chrome_round_buttons = !saved.chrome_round_buttons;
-    const round = TitlebarMemo.capture(400, 320, null, .{});
+    const round = TitlebarMemo.capture(400, null, .{});
     try std.testing.expect(!before.eql(round));
     try std.testing.expect(!before.reusableFor(round));
+    theme.global = saved;
+    theme.global.chrome_control_right_pad = 2;
+    try std.testing.expect(!before.reusableFor(TitlebarMemo.capture(400, null, .{})));
+    theme.global = saved;
+    theme.global.chrome_control_offset_y = 5;
+    try std.testing.expect(!before.reusableFor(TitlebarMemo.capture(400, null, .{})));
+    theme.global = saved;
+    theme.global.chrome_button_bevel = 7;
+    try std.testing.expect(!before.reusableFor(TitlebarMemo.capture(400, null, .{})));
+    inline for (.{ "window_title_plate_inset", "window_title_plate_bevel", "window_title_plate_slant", "window_title_plate_control_gap", "window_title_plate_text_padding" }) |field| {
+        theme.global = saved;
+        @field(theme.global, field) += 0.1;
+        try std.testing.expect(!before.reusableFor(TitlebarMemo.capture(400, null, .{})));
+    }
 }
 
 test "chrome controls fit and stay centered at every supported height and density" {
@@ -165,6 +186,7 @@ test "ShadowMemo.eql ignores geometry while the shadow is disabled" {
         .offset_y = 0,
         .scale = 1,
         .disabled = true,
+        .shape = 0,
     };
     var b = a;
     b.width = 999;
@@ -183,6 +205,7 @@ test "ShadowMemo.eql is false when softness changes" {
         .offset_y = 8,
         .scale = 1,
         .disabled = false,
+        .shape = 0,
     };
     var b = a;
     try std.testing.expect(a.eql(b));
@@ -191,6 +214,18 @@ test "ShadowMemo.eql is false when softness changes" {
 }
 
 test "cached chrome updates exactly match complete rasters across hover controls and scales" {
+    const saved = theme.global;
+    defer theme.global = saved;
+    try checkCachedChromeUpdates();
+    theme.global.window_title_plate = .{ 1, 0.9, 0, 1 };
+    theme.global.window_title_plate_width = 310;
+    theme.global.window_title_plate_fg = .{ 0, 0, 0, 1 };
+    theme.global.chrome_control_right_pad = 2;
+    theme.global.chrome_control_offset_y = 5;
+    try checkCachedChromeUpdates();
+}
+
+fn checkCachedChromeUpdates() !void {
     for ([_]i32{ 20, 200, 640 }) |width| {
         for ([_]f32{ 1, 1.25, 1.5, 2 }) |scale| {
             for ([_]f32{ 1, 0.75, 1.0 / 1.7 }) |density| {

@@ -220,11 +220,11 @@ fn setCursor(listener: *wl.Listener(*wlr.TabletV2TabletTool.event.SetCursor), ev
 fn handleAxis(listener: *wl.Listener(*wlr.Tablet.event.Axis), event: *wlr.Tablet.event.Axis) void {
     const self: *Self = @fieldParentPtr("axis", listener);
     const tool = self.toolFor(event.tool) orelse return;
-    const tablet = self.findTablet(event.device) orelse return;
+    const tablet = self.findTablet(&event.tablet.base) orelse return;
     if (self.input.server.idle) |im| im.notifyActivity(.tablet);
     const axes = event.updated_axes;
     if (axes.x or axes.y) {
-        self.moveTool(tablet, tool, event.device, if (axes.x) event.x else std.math.nan(f64), if (axes.y) event.y else std.math.nan(f64), event.dx, event.dy, event.time_msec);
+        self.moveTool(tablet, tool, &event.tablet.base, if (axes.x) event.x else std.math.nan(f64), if (axes.y) event.y else std.math.nan(f64), event.dx, event.dy, event.time_msec);
     }
     if (axes.tilt_x) tool.tilt_x = event.tilt_x;
     if (axes.tilt_y) tool.tilt_y = event.tilt_y;
@@ -241,7 +241,7 @@ fn handleAxis(listener: *wl.Listener(*wlr.Tablet.event.Axis), event: *wlr.Tablet
 fn handleProximity(listener: *wl.Listener(*wlr.Tablet.event.Proximity), event: *wlr.Tablet.event.Proximity) void {
     const self: *Self = @fieldParentPtr("proximity", listener);
     const tool = self.toolFor(event.tool) orelse return;
-    const tablet = self.findTablet(event.device) orelse return;
+    const tablet = self.findTablet(&event.tablet.base) orelse return;
     if (event.state == .out) {
         self.leaveClient(tool);
         self.leavePointer(tool, event.time_msec);
@@ -250,9 +250,9 @@ fn handleProximity(listener: *wl.Listener(*wlr.Tablet.event.Proximity), event: *
     }
     if (self.input.server.idle) |im| im.notifyActivity(.tablet);
     if (tool.relative()) {
-        self.moveTool(tablet, tool, event.device, std.math.nan(f64), std.math.nan(f64), 0, 0, event.time_msec);
+        self.moveTool(tablet, tool, &event.tablet.base, std.math.nan(f64), std.math.nan(f64), 0, 0, event.time_msec);
     } else {
-        self.moveTool(tablet, tool, event.device, event.x, event.y, 0, 0, event.time_msec);
+        self.moveTool(tablet, tool, &event.tablet.base, event.x, event.y, 0, 0, event.time_msec);
     }
 }
 
@@ -260,17 +260,17 @@ fn handleTip(listener: *wl.Listener(*wlr.Tablet.event.Tip), event: *wlr.Tablet.e
     const self: *Self = @fieldParentPtr("tip", listener);
     const input = self.input;
     const tool = self.toolFor(event.tool) orelse return;
-    const tablet = self.findTablet(event.device) orelse return;
+    const tablet = self.findTablet(&event.tablet.base) orelse return;
     if (event.state == .down) {
         if (input.server.idle) |im| {
-            if (im.state != .active) {
+            if (im.isBlanked()) {
                 im.notifyActivity(.tablet);
                 tool.tip_swallowed = true;
                 return;
             }
             im.notifyActivity(.tablet);
         }
-        if (tool.route == .none) self.moveTool(tablet, tool, event.device, event.x, event.y, 0, 0, event.time_msec);
+        if (tool.route == .none) self.moveTool(tablet, tool, &event.tablet.base, event.x, event.y, 0, 0, event.time_msec);
         tool.tip_down = true;
         switch (tool.route) {
             .client => {
@@ -279,8 +279,8 @@ fn handleTip(listener: *wl.Listener(*wlr.Tablet.event.Tip), event: *wlr.Tablet.e
             },
             else => {
                 tool.route = .pointer;
-                tool.device = event.device;
-                input.processButton(event.device, Input.btn_left, .pressed, event.time_msec);
+                tool.device = &event.tablet.base;
+                input.processButton(&event.tablet.base, Input.btn_left, .pressed, event.time_msec);
                 input.seat.pointerNotifyFrame();
             },
         }
@@ -296,10 +296,10 @@ fn handleTip(listener: *wl.Listener(*wlr.Tablet.event.Tip), event: *wlr.Tablet.e
         .client => {
             if (tool.v2) |v2| v2.notifyUp();
             // Lifted over another surface: hand the tool to it now.
-            self.moveTool(tablet, tool, event.device, std.math.nan(f64), std.math.nan(f64), 0, 0, event.time_msec);
+            self.moveTool(tablet, tool, &event.tablet.base, std.math.nan(f64), std.math.nan(f64), 0, 0, event.time_msec);
         },
         .pointer => {
-            input.processButton(event.device, Input.btn_left, .released, event.time_msec);
+            input.processButton(&event.tablet.base, Input.btn_left, .released, event.time_msec);
             input.seat.pointerNotifyFrame();
         },
         .none => {},
@@ -325,8 +325,8 @@ fn handleButton(listener: *wl.Listener(*wlr.Tablet.event.Button), event: *wlr.Ta
     if (pressed == (tool.held_buttons & bit != 0)) return;
     tool.held_buttons ^= bit;
     tool.route = .pointer;
-    tool.device = event.device;
-    input.processButton(event.device, pointerButton(bit), if (pressed) .pressed else .released, event.time_msec);
+    tool.device = &event.tablet.base;
+    input.processButton(&event.tablet.base, pointerButton(bit), if (pressed) .pressed else .released, event.time_msec);
     input.seat.pointerNotifyFrame();
 }
 

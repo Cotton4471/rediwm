@@ -16,9 +16,9 @@ msgstr ""
 "X-RediWM-Locale: de_DE.UTF-8\n"
 "X-RediWM-Reviewed: no\n"
 
-#: src/system_monitor/app.zig
-msgid " · /proc unavailable"
-msgstr " · /proc nicht verfügbar"
+#: src/system_monitor/app_footer.zig
+msgid " · Process data unavailable"
+msgstr " · Prozessdaten nicht verfügbar"
 
 #: src/control_center/sections/printers.zig
 msgid " · Default"
@@ -1144,7 +1144,7 @@ msgstr "Klassisch (überlappend)"
 msgid "Clear search"
 msgstr "Suche leeren"
 
-#: src/editor/app_input.zig
+#: src/editor/app_edit.zig
 msgid "Clipboard selections are limited to 1 MiB."
 msgstr "Zwischenablageauswahlen sind auf 1 MiB begrenzt."
 
@@ -1374,10 +1374,6 @@ msgstr "Druckeroption konnte nicht angewendet werden."
 msgid "Could not apply this choice. Please try again."
 msgstr "Diese Auswahl konnte nicht angewendet werden. Versuche es erneut."
 
-#: src/session/power_requests.zig
-msgid "Could not build the request."
-msgstr "Anfrage konnte nicht erstellt werden."
-
 #: src/files/properties.zig
 msgid "Could not change permissions"
 msgstr "Zugriffsrechte konnten nicht geändert werden"
@@ -1565,6 +1561,14 @@ msgstr "CUPS-Start konnte nicht angefordert werden."
 #: src/systemd/requests.zig
 msgid "Could not request authentication. Check that polkit is running."
 msgstr "Authentifizierung konnte nicht angefordert werden. Prüfe, ob polkit läuft."
+
+#: src/files/app_trash.zig
+msgid "Could not restore the items in Trash"
+msgstr "Die Objekte im Papierkorb konnten nicht wiederhergestellt werden"
+
+#: src/files/app_trash.zig
+msgid "Could not restore the selected items"
+msgstr "Die ausgewählten Objekte konnten nicht wiederhergestellt werden"
 
 #: src/images/app_input.zig
 msgid "Could not rotate: not enough memory."
@@ -1868,6 +1872,10 @@ msgstr "Standard-Terminal"
 msgid "Deferred"
 msgstr "Zurückgestellt"
 
+#: src/files/app_model.zig
+msgid "Delete Permanently"
+msgstr "Endgültig löschen"
+
 #: src/delete_dialog.zig
 msgid "Delete file?"
 msgstr "Datei löschen?"
@@ -1887,6 +1895,10 @@ msgstr "Objekte löschen?"
 #: src/delete_dialog.zig
 msgid "Delete permanently"
 msgstr "Endgültig löschen"
+
+#: src/files/app_dialogs.zig
+msgid "Delete permanently?"
+msgstr "Endgültig löschen?"
 
 #: src/control_center/sections/users.zig
 msgid "Delete user…"
@@ -1967,10 +1979,6 @@ msgstr "Drucker deaktivieren"
 #: src/control_center/sections/shortcuts.zig
 msgid "Disable shortcut"
 msgstr "Tastenkürzel deaktivieren"
-
-#: src/control_center/search_index.zig
-msgid "Disable touchpad while typing"
-msgstr "Touchpad beim Tippen deaktivieren"
 
 #: src/control_center/sections/services.zig
 msgid "Disabled"
@@ -2260,10 +2268,6 @@ msgstr "Prozess beenden"
 msgid "Enlarge this window to show the terminal"
 msgstr "Vergrößere dieses Fenster, um das Terminal anzuzeigen"
 
-#: src/calculator/app.zig
-msgid "Enter =   Esc clear   F9 ±   % = ÷100"
-msgstr "Eingabe =   Esc leeren   F9 ±   % = ÷100"
-
 #: src/polkit/dialog.zig
 msgid "Enter Password"
 msgstr "Passwort eingeben"
@@ -2516,7 +2520,7 @@ msgstr "Im Dokument suchen…"
 msgid "Find ▲"
 msgstr "Suchen ▲"
 
-#: src/editor/app_paint.zig
+#: src/editor/app_search.zig
 msgid "Find…"
 msgstr "Suchen…"
 
@@ -3324,7 +3328,7 @@ msgstr "Mittel"
 msgid "Memory (resident)"
 msgstr "Speicher (resident)"
 
-#: src/editor/client_render.zig
+#: src/editor/app_paint.zig
 msgid "Menu"
 msgstr "Menü"
 
@@ -3415,10 +3419,6 @@ msgstr "Eingebunden"
 #: src/files/app_places.zig
 msgid "Mounting…"
 msgstr "Wird eingebunden…"
-
-#: src/control_center/search_index.zig
-msgid "Mouse speed"
-msgstr "Mausgeschwindigkeit"
 
 #: src/control_center/sections/shortcuts.zig
 msgid "Move To Workspace"
@@ -3604,7 +3604,7 @@ msgstr "Neuer Tab"
 msgid "Newest first"
 msgstr "Neueste zuerst"
 
-#: src/editor/app_paint.zig
+#: src/editor/app_search.zig
 msgid "Next"
 msgstr "Weiter"
 
@@ -4011,6 +4011,10 @@ msgstr "Wird geöffnet…"
 #: src/control_center/sections/services.zig
 msgid "Optimize"
 msgstr "Optimieren"
+
+#: src/files/app_menu.zig
+msgid "Original location unknown: these items have no Trash information"
+msgstr "Ursprünglicher Ort unbekannt: Für diese Objekte gibt es keine Papierkorb-Informationen"
 
 #: src/files/properties.zig
 msgid "Others"
@@ -4724,7 +4728,7 @@ msgstr "Wiederholverzögerung"
 msgid "Repeat rate"
 msgstr "Wiederholrate"
 
-#: src/files/app_chooser.zig
+#: src/editor/app.zig
 msgid "Replace"
 msgstr "Ersetzen"
 
@@ -4832,6 +4836,14 @@ msgstr "Die Schreibtisch-Shell neu starten."
 msgid "Restart? Activate Restart again to confirm."
 msgstr "Neu starten? Aktiviere Neustart erneut zum Bestätigen."
 
+#: src/files/app_model.zig
+msgid "Restore"
+msgstr "Wiederherstellen"
+
+#: src/files/app_menu.zig
+msgid "Restore All"
+msgstr "Alle wiederherstellen"
+
 #: src/control_center/sections/shortcuts.zig
 msgid "Restore Layout"
 msgstr "Anordnung wiederherstellen"
@@ -4855,6 +4867,20 @@ msgstr "Den Schreibtischzoom wiederherstellen."
 #: src/control_center/sections/shortcuts.zig
 msgid "Restore the focused window's size."
 msgstr "Größe des fokussierten Fensters wiederherstellen."
+
+#: src/files/app_dialogs.zig
+msgid "Restore the folder to change what is inside it"
+msgstr "Stelle den Ordner wieder her, um seinen Inhalt zu ändern"
+
+#: src/files/app_trash.zig
+msgid "Restored"
+msgstr "Wiederhergestellt"
+
+#: src/files/app_trash.zig
+msgid "Restored {count} item"
+msgid_plural "Restored {count} items"
+msgstr[0] "{count} Objekt wiederhergestellt"
+msgstr[1] "{count} Objekte wiederhergestellt"
 
 #: src/calculator/model.zig
 msgid "Result is too large"
@@ -5408,9 +5434,21 @@ msgstr "Socket"
 msgid "Soft"
 msgstr "Weich"
 
+#: src/files/app_trash.zig
+msgid "Some could not be restored"
+msgstr "Einige konnten nicht wiederhergestellt werden"
+
 #: src/control_center/sections/users.zig
 msgid "Some groups cannot be safely shown; group changes are disabled."
 msgstr "Einige Gruppen können nicht sicher angezeigt werden; Gruppenänderungen sind deaktiviert."
+
+#: src/files/app_trash.zig
+msgid "Some have no Trash information"
+msgstr "Für einige gibt es keine Papierkorb-Informationen"
+
+#: src/files/app_trash.zig
+msgid "Some kept under a new name"
+msgstr "Einige unter neuem Namen behalten"
 
 #: src/systemd/requests.zig
 msgid "Some startup times are unavailable."
@@ -5744,7 +5782,7 @@ msgstr "Textdatei"
 msgid "Text files are limited to 4 GiB."
 msgstr "Textdateien sind auf 4 GiB begrenzt."
 
-#: src/editor/app_input.zig
+#: src/editor/app_search.zig
 msgid "Text not found"
 msgstr "Text nicht gefunden"
 
@@ -6148,10 +6186,6 @@ msgstr "Oben"
 msgid "Torrent file or magnet link"
 msgstr "Torrent-Datei oder Magnet-Link"
 
-#: src/control_center/search_index.zig
-msgid "Touchpad speed"
-msgstr "Touchpad-Geschwindigkeit"
-
 #: src/files/app_torrents.zig
 msgid "Transfer"
 msgstr "Übertragung"
@@ -6196,9 +6230,17 @@ msgstr "Transformation"
 msgid "Trash"
 msgstr "Papierkorb"
 
+#: src/files/app_trash.zig
+msgid "Trash can't be edited. Restore items to change them."
+msgstr "Der Papierkorb kann nicht bearbeitet werden. Stelle Objekte wieder her, um sie zu ändern."
+
 #: src/files/app_fileops.zig
 msgid "Trash emptied"
 msgstr "Papierkorb geleert"
+
+#: src/files/app_trash.zig
+msgid "Trash is empty"
+msgstr "Der Papierkorb ist leer"
 
 #: src/images/app_dialogs.zig
 msgid "Trash is unavailable: install gio to use it."
@@ -6403,6 +6445,10 @@ msgstr "24-Stunden-Format verwenden"
 #: src/network/manager.zig
 msgid "Use 8–63 characters or a 64-digit hex key."
 msgstr "Verwende 8–63 Zeichen oder einen 64-stelligen Hexadezimalschlüssel."
+
+#: src/files/app_fileops.zig
+msgid "Use Move to Trash to put items in Trash"
+msgstr "Verwende „In den Papierkorb verschieben“, um Objekte in den Papierkorb zu legen"
 
 #: src/images/app_dialogs.zig
 msgid "Use a .png filename to save a PNG copy."
@@ -6913,10 +6959,6 @@ msgid "keep icons in place"
 msgstr "symbole fixieren"
 
 #: src/control_center/search_index.zig
-msgid "keyboard trackpad"
-msgstr "tastatur touchpad"
-
-#: src/control_center/search_index.zig
 msgid "laptop suspend sleep"
 msgstr "laptop bereitschaft schlafen"
 
@@ -7007,10 +7049,6 @@ msgstr "panel oben unten"
 #: src/control_center/search_index.zig
 msgid "panel width"
 msgstr "panelbreite"
-
-#: src/control_center/search_index.zig
-msgid "pointer acceleration sensitivity"
-msgstr "zeiger beschleunigung empfindlichkeit"
 
 #: src/control_center/search_index.zig
 msgid "pointer mouse"
@@ -7157,10 +7195,6 @@ msgid "touchpad trackpad"
 msgstr "touchpad trackpad"
 
 #: src/control_center/search_index.zig
-msgid "trackpad acceleration sensitivity"
-msgstr "touchpad beschleunigung empfindlichkeit"
-
-#: src/control_center/search_index.zig
 msgid "transparency"
 msgstr "transparenz"
 
@@ -7242,11 +7276,25 @@ msgid_plural "{columns} × {rows}  ·  {n} screens total"
 msgstr[0] "{columns} × {rows}  ·  insgesamt {n} Bildschirm"
 msgstr[1] "{columns} × {rows}  ·  insgesamt {n} Bildschirme"
 
+#: src/files/app_trash.zig
+msgid "{count} could not be restored"
+msgstr "Nicht wiederhergestellt: {count}"
+
+#: src/files/app_trash.zig
+msgid "{count} has no Trash information"
+msgid_plural "{count} have no Trash information"
+msgstr[0] "{count} Objekt ohne Papierkorb-Informationen"
+msgstr[1] "{count} Objekte ohne Papierkorb-Informationen"
+
 #: src/files/app_paint.zig
 msgid "{count} item selected  ·  {size}"
 msgid_plural "{count} items selected  ·  {size}"
 msgstr[0] "{count} Objekt ausgewählt  ·  {size}"
 msgstr[1] "{count} Objekte ausgewählt  ·  {size}"
+
+#: src/files/app_trash.zig
+msgid "{count} kept under a new name"
+msgstr "Unter neuem Namen behalten: {count}"
 
 #: src/files/open_with.zig
 msgid "{count} selected file"
@@ -7358,11 +7406,11 @@ msgid_plural "{n} completed sheets reported by CUPS"
 msgstr[0] "{n} fertiggestelltes Blatt von CUPS gemeldet"
 msgstr[1] "{n} fertiggestellte Blätter von CUPS gemeldet"
 
-#: src/system_monitor/app.zig
-msgid "{n} process · Swap {swap}{status}"
-msgid_plural "{n} processes · Swap {swap}{status}"
-msgstr[0] "{n} Prozess · Auslagerung {swap}{status}"
-msgstr[1] "{n} Prozesse · Auslagerung {swap}{status}"
+#: src/system_monitor/app_footer.zig
+msgid "{n} process{status}"
+msgid_plural "{n} processes{status}"
+msgstr[0] "{n} Prozess{status}"
+msgstr[1] "{n} Prozesse{status}"
 
 #: src/control_center/sections/services.zig
 msgid "{n} service, {enabled} enabled"
@@ -7444,7 +7492,7 @@ msgctxt "desktop:Comment"
 msgid "Edit text files in tabs"
 msgstr "Textdateien in Tabs bearbeiten"
 
-#: data/rediwm.desktop
+#: data/rediwm-release-safe.desktop
 msgctxt "desktop:Comment"
 msgid "RediWM Wayland compositor"
 msgstr "RediWM-Wayland-Compositor"
@@ -7519,7 +7567,7 @@ msgctxt "desktop:Name"
 msgid "PDF Viewer"
 msgstr "PDF-Betrachter"
 
-#: data/rediwm.desktop
+#: data/rediwm-release-safe.desktop
 msgctxt "desktop:Name"
 msgid "RediWM"
 msgstr "RediWM"
@@ -7575,3 +7623,391 @@ msgstr "Einstellungen;Steuerung;Bedienfeld;Voreinstellungen;Bildschirm;Erscheinu
 #: src/control_center/sections/region.zig
 msgid "English"
 msgstr "Englisch"
+
+#: src/battery_popup.zig
+msgid "No power profile service is running."
+msgstr ""
+
+#: src/battery_popup.zig
+msgid "Power profiles unavailable"
+msgstr ""
+
+#: src/editor/app_search.zig
+msgid "Replace All"
+msgstr ""
+
+#: src/editor/app_search.zig
+msgid "Replace with…"
+msgstr ""
+
+#: src/editor/app_search.zig
+msgid "Matches replaced: {count}"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "Disable while typing"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "Left-handed mode"
+msgstr ""
+
+#: src/control_center/sections/input.zig
+msgid "No devices"
+msgstr ""
+
+#: src/control_center/sections/input.zig
+msgid "No pointer devices connected."
+msgstr ""
+
+#: src/control_center/sections/input.zig
+msgid "No unique device identity; settings are unavailable."
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "Pointer device"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "Pointer speed"
+msgstr ""
+
+#: src/control_center/sections/input.zig
+msgid "Settings apply only to this device."
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "Tap and drag"
+msgstr ""
+
+#: src/control_center/sections/input.zig
+msgid "The device could not apply this setting."
+msgstr ""
+
+#: src/control_center/sections/input.zig
+msgid "This setting is unavailable on the selected device."
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "keyboard touchpad trackpad"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "mouse buttons swap primary"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "mouse touchpad trackpad acceleration sensitivity"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "mouse touchpad trackpad select"
+msgstr ""
+
+#: src/control_center/sections/input.zig
+msgid "Could not reset or restore the previous settings."
+msgstr ""
+
+#: src/control_center/sections/input.zig
+msgid "Could not reset. The previous settings were restored."
+msgstr ""
+
+#: src/control_center/sections/input.zig
+msgid "Could not save or restore the previous settings."
+msgstr ""
+
+#: src/control_center/sections/input.zig
+msgid "Could not save. The previous settings were restored."
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "Reset pointer settings"
+msgstr ""
+
+#: src/control_center/sections/input.zig
+msgid "Reset to defaults"
+msgstr ""
+
+#: src/control_center/search_index.zig
+msgid "mouse touchpad trackball default custom inherit"
+msgstr ""
+
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "A file already exists at that location. Choose another name."
+msgstr "An diesem Ort existiert bereits eine Datei. Wähle einen anderen Namen."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "An empty passphrase leaves the private key unencrypted."
+msgstr "Ohne Passphrase bleibt der private Schlüssel unverschlüsselt."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Back to SSH keys"
+msgstr "Zurück zu SSH-Schlüsseln"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Change passphrase"
+msgstr "Passphrase ändern"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Change passphrase…"
+msgstr "Passphrase ändern…"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Comment"
+msgstr "Kommentar"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Confirm passphrase"
+msgstr "Passphrase bestätigen"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Copy public key"
+msgstr "Öffentlichen Schlüssel kopieren"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Could not load SSH keys."
+msgstr "Die Schlüsselhilfe konnte nicht gestartet werden."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Could not start the key operation."
+msgstr "Die Schlüsselaktion konnte nicht gestartet werden."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Current passphrase"
+msgstr "Aktuelle Passphrase"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Edit comment…"
+msgstr "Kommentar bearbeiten…"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Edit label…"
+msgstr "Bezeichnung bearbeiten…"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Enter a filename without slashes or a leading dot."
+msgstr "Gib einen Dateinamen ohne Schrägstriche oder führenden Punkt ein."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Filename in ~/.ssh"
+msgstr "Dateiname in ~/.ssh"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Fix permissions"
+msgstr "Berechtigungen korrigieren"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Generate key"
+msgstr "Schlüssel erzeugen"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Install OpenSSH to generate or change keys."
+msgstr "Installiere OpenSSH, um Schlüssel zu erzeugen oder zu ändern."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Install gio to move keys to Trash."
+msgstr "Installiere gio, um Schlüssel in den Papierkorb zu verschieben."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Keys & Certificates"
+msgstr "Schlüssel & Zertifikate"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Label"
+msgstr "Bezeichnung"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Labels apply to every copy of this public fingerprint."
+msgstr "Bezeichnungen gelten für alle Kopien mit diesem öffentlichen Fingerabdruck."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Manage the current user's keys in ~/.ssh."
+msgstr "Verwalte die Schlüssel des aktuellen Benutzers in ~/.ssh."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Missing .pub file"
+msgstr ".pub-Datei fehlt"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Move this key to Trash?"
+msgstr "Diesen Schlüssel in den Papierkorb verschieben?"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Move to Trash…"
+msgstr "In den Papierkorb verschieben…"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "New Ed25519 key"
+msgstr "Neuer Ed25519-Schlüssel"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "New SSH key"
+msgstr "Neuer SSH-Schlüssel"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "New key…"
+msgstr "Neuer Schlüssel…"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "New passphrase"
+msgstr "Neue Passphrase"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "New passphrase (optional)"
+msgstr "Neue Passphrase (optional)"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "No passphrase"
+msgstr "Keine Passphrase"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "No supported SSH keys found."
+msgstr "Keine unterstützten SSH-Schlüssel gefunden."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Passphrase protected"
+msgstr "Mit Passphrase geschützt"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Public file does not match"
+msgstr "Öffentliche Datei stimmt nicht überein"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Public key copied."
+msgstr "Öffentlicher Schlüssel kopiert."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Public key only"
+msgstr "Nur öffentlicher Schlüssel"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Recreate missing .pub file"
+msgstr "Fehlende .pub-Datei neu erstellen"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "SSH keys"
+msgstr "SSH-Schlüssel"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Some files were skipped: unsupported, unreadable, too large or unsafe to open."
+msgstr "Einige Dateien wurden übersprungen: nicht unterstützt, unlesbar, zu groß oder unsicher zu öffnen."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "The .ssh directory is accessible to other users. Fix permissions from a key's details."
+msgstr "Das Verzeichnis .ssh ist für andere Benutzer zugänglich. Korrigiere die Berechtigungen in den Schlüsseldetails."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "The key changed since it was selected. Refresh and try again."
+msgstr "Der Schlüssel wurde seit der Auswahl geändert. Aktualisiere die Ansicht und versuche es erneut."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "The key could not be changed. Check the current passphrase."
+msgstr "Der Schlüssel konnte nicht geändert werden. Prüfe die aktuelle Passphrase."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Could not load SSH keys. Refresh to try again."
+msgstr "Die Schlüsselhilfe ist fehlgeschlagen. Aktualisiere die Ansicht, um es erneut zu versuchen."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Loading SSH keys timed out. Refresh to try again."
+msgstr "Zeitüberschreitung der Schlüsselhilfe. Aktualisiere die Ansicht, um es erneut zu versuchen."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "The key operation could not be completed. Refresh and try again."
+msgstr "Die Schlüsselaktion konnte nicht abgeschlossen werden. Aktualisiere die Ansicht und versuche es erneut."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "The passphrases do not match. Enter them again."
+msgstr "Die Passphrasen stimmen nicht überein. Gib sie erneut ein."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "This location and its matching .pub file will move to Trash. Other copies stay where they are. References in SSH configuration and servers may still need this key."
+msgstr "Diese Datei und ihre passende .pub-Datei werden in den Papierkorb verschoben. Andere Kopien bleiben erhalten. Verweise in der SSH-Konfiguration und auf Servern benötigen diesen Schlüssel möglicherweise noch."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Unsafe permissions"
+msgstr "Unsichere Berechtigungen"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Use at most 512 bytes without line breaks or control characters."
+msgstr "Verwende höchstens 512 Bytes ohne Zeilenumbrüche oder Steuerzeichen."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Weak algorithm or key size"
+msgstr "Schwacher Algorithmus oder zu kurzer Schlüssel"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "Your SSH keys, public identities and passphrases."
+msgstr "Deine SSH-Schlüssel, öffentlichen Identitäten und Passphrasen."
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "copy public permissions label comment delete trash"
+msgstr "kopieren öffentlich berechtigungen bezeichnung kommentar löschen papierkorb"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "generate ed25519 passphrase"
+msgstr "erzeugen ed25519 passphrase"
+
+#. SSH settings draft; native review pending.
+#, fuzzy
+msgid "ssh security public private identity fingerprint passphrase"
+msgstr "ssh sicherheit öffentlich privat identität fingerabdruck passphrase"
+
+#: src/system_monitor/app_footer.zig
+msgid "GPU"
+msgstr "GPU"

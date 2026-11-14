@@ -170,6 +170,13 @@ pub const App = struct {
     h: i32 = 700,
     scale: i32 = 1,
     dirty: bool = true,
+    /// Only the toolbar strip changed (its buttons' proximity glow): the
+    /// client may repaint and damage just that strip instead of the window.
+    toolbar_dirty: bool = false,
+    /// What pointer motion changed outside the toolbar strip (proximity glow
+    /// of content items, the hover hint), in app coordinates: like
+    /// `toolbar_dirty`, a frame with only this repaints just these rects.
+    pointer_damage: @import("ui").repaint.Region = .{},
     title_changed: bool = true,
     title: [1024:0]u8 = @splat(0),
     closed: bool = false,
@@ -236,7 +243,7 @@ pub const App = struct {
         errdefer std.heap.page_allocator.destroy(secret);
         if (c.api.mlock(secret, secret.len) != 0) return error.PasswordMemoryFailed;
         errdefer _ = c.api.munlock(secret, secret.len);
-        const path = try a.dupeZ(u8, initial_path);
+        const path = try a.dupeSentinel(u8, initial_path, 0);
         errdefer a.free(path);
 
         var self = App{
@@ -355,6 +362,7 @@ pub const App = struct {
 
     // app_pointer.zig
     pub const handleMotion = app_pointer.handleMotion;
+    pub const buttonProximity = app_pointer.buttonProximity;
     pub const handleButton = app_pointer.handleButton;
     pub const clearSelectionText = app_pointer.clearSelectionText;
     pub const updateSelection = app_pointer.updateSelection;

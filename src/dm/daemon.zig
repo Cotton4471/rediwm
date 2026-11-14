@@ -13,11 +13,9 @@ const state_mod = @import("state.zig");
 const proto = @import("proto.zig");
 const dm_ipc = @import("dm_ipc");
 const ws = @import("wayland_sessions");
+const platform = @import("platform");
 
-const c = @cImport({
-    @cInclude("pwd.h");
-    @cInclude("sys/mman.h");
-});
+const c = @import("c");
 
 const log = std.log.scoped(.rediwm_dm);
 
@@ -39,7 +37,7 @@ fn defaultUserValidator(user: []const u8, range: ws.UidRange) bool {
     var pw: c.struct_passwd = undefined;
     var res: ?*c.struct_passwd = null;
     var name_buf: [256:0]u8 = undefined;
-    const name_z = std.fmt.bufPrintZ(&name_buf, "{s}", .{user}) catch return false;
+    const name_z = std.fmt.bufPrintSentinel(&name_buf, "{s}", .{user}, 0) catch return false;
     if (c.getpwnam_r(name_z.ptr, &pw, &buf, buf.len, &res) != 0 or res == null) return false;
     const shell = if (pw.pw_shell) |s| std.mem.span(s) else "";
     return ws.loginAccount(range, pw.pw_uid, shell);
@@ -60,12 +58,12 @@ pub const Daemon = struct {
     gpa: std.mem.Allocator = std.heap.c_allocator,
     is_test: bool = false,
     confdir: ?[]const u8 = null,
-    marker_path: []const u8 = "/run/rediwm-dm/autologin-done",
+    marker_path: []const u8 = @import("install_paths").rundir ++ "/rediwm-dm/autologin-done",
     search_dirs: []const []const u8 = ws.standard_data_dirs,
     range: ws.UidRange = .{},
     relay: state_mod.Relay,
 
-    children: @import("child_set") = .{},
+    children: platform.child.Set = .{},
     signal_fd: i32 = -1,
     timer_fd: i32 = -1,
     timer: Timer = .none,
@@ -226,7 +224,7 @@ pub const Daemon = struct {
         self.children.add(self.gpa, pid) catch |err| {
             _ = linux.kill(pid, .KILL);
             var status: u32 = 0;
-            while (linux.errno(linux.wait4(pid, &status, 0, null)) == .INTR) {}
+            while (linux.errno(linux.wait4(pid, @ptrCast(&status), 0, null)) == .INTR) {}
             reaped = true;
             return err;
         };
@@ -279,23 +277,23 @@ pub const Daemon = struct {
         for ([_]?[*:0]const u8{
             "rediwm-dm",
             "--worker",
-            (std.fmt.bufPrintZ(&ctrl_buf, "{d}", .{ctrl_fd}) catch linux.exit_group(1)).ptr,
+            (std.fmt.bufPrintSentinel(&ctrl_buf, "{d}", .{ctrl_fd}, 0) catch linux.exit_group(1)).ptr,
         }) |arg| {
             args[n] = arg;
             n += 1;
         }
         if (greeter_fd >= 0) {
             args[n] = "--greeter-fd";
-            args[n + 1] = (std.fmt.bufPrintZ(&greeter_buf, "{d}", .{greeter_fd}) catch linux.exit_group(1)).ptr;
+            args[n + 1] = (std.fmt.bufPrintSentinel(&greeter_buf, "{d}", .{greeter_fd}, 0) catch linux.exit_group(1)).ptr;
             n += 2;
         }
         if (self.confdir) |dir| {
             args[n] = "--confdir";
-            args[n + 1] = (std.fmt.bufPrintZ(&confdir_buf, "{s}", .{dir}) catch linux.exit_group(1)).ptr;
+            args[n + 1] = (std.fmt.bufPrintSentinel(&confdir_buf, "{s}", .{dir}, 0) catch linux.exit_group(1)).ptr;
             n += 2;
         }
         if (self.is_test) args[n] = "--test";
-        _ = linux.execve("/proc/self/exe", &args, @ptrCast(std.c.environ));
+        platform.exe.execSelf(&args, @ptrCast(std.c.environ));
         linux.exit_group(127);
     }
 
@@ -327,6 +325,10 @@ pub const Daemon = struct {
         };
         switch (action) {
             .none => {},
+            .greeter_ready => @import("notify.zig").greeterReady() catch |err| {
+                log.err("cannot publish greeter readiness: {}", .{err});
+                self.dropGreeter("readiness notification failed");
+            },
             .spawn_login => self.beginLogin(parsed.request.login),
             .kill_worker => self.killLogin(),
             .handoff => self.beginHandoff(),
@@ -450,7 +452,7 @@ pub const Daemon = struct {
         };
         if (payload.len == 0) return;
         const text = payload[1..];
-        switch (@as(proto.Report, @enumFromInt(payload[0]))) {
+        switch (@as(proto.Report, @fromBackingInt(@intCast(payload[0])))) {
             .auth_ok => self.sendStart(worker, self.config.greeter_command, "", "") catch |err|
                 log.err("cannot start the greeter: {}", .{err}),
             .denied, .failed => log.err("cannot open the greeter account '{s}': {s}", .{ self.config.greeter_user, text }),
@@ -471,7 +473,7 @@ pub const Daemon = struct {
         };
         if (payload.len == 0) return;
         const text = payload[1..];
-        switch (@as(proto.Report, @enumFromInt(payload[0]))) {
+        switch (@as(proto.Report, @fromBackingInt(@intCast(payload[0])))) {
             .session_started => {
                 self.session_running = true;
                 self.session_started_at = monotonicMs();
@@ -479,7 +481,7 @@ pub const Daemon = struct {
             .session_failed => log.err("cannot open the session: {s}", .{text}),
             .session_ended => log.info("session ended (wait status {s})", .{text}),
             else => if (self.user_autologin) {
-                if (payload[0] == @intFromEnum(proto.Report.auth_ok)) {
+                if (payload[0] == @backingInt(proto.Report.auth_ok)) {
                     const session = self.autologin_session.?;
                     self.sendStart(worker, session.exec, session.id, session.desktops) catch |err|
                         log.err("cannot start the autologin session: {}", .{err});

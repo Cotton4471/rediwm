@@ -42,7 +42,7 @@ pub fn activate(vtnr: u32) !void {
 /// hidden text buffer, so this can run ahead of the switch.
 pub fn blank(vtnr: u32) !void {
     var path_buf: [32]u8 = undefined;
-    const path = try std.fmt.bufPrintZ(&path_buf, "/dev/tty{d}", .{vtnr});
+    const path = try std.fmt.bufPrintSentinel(&path_buf, "/dev/tty{d}", .{vtnr}, 0);
     const rc = linux.open(path.ptr, .{ .ACCMODE = .WRONLY, .NOCTTY = true, .CLOEXEC = true, .NONBLOCK = true }, 0);
     if (linux.errno(rc) != .SUCCESS) return error.OpenTtyFailed;
     const fd: i32 = @intCast(rc);

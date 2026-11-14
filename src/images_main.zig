@@ -45,7 +45,7 @@ fn run(init: std.process.Init) !void {
         var it = std.mem.splitScalar(u8, bytes.items[0 .. bytes.items.len - 1], 0);
         while (it.next()) |p| {
             if (p.len == 0 or !std.fs.path.isAbsolute(p)) return error.InvalidList;
-            try paths.append(a, try a.dupeZ(u8, p));
+            try paths.append(a, try a.dupeSentinel(u8, p, 0));
         }
     } else {
         var first: usize = 1;
@@ -53,12 +53,12 @@ fn run(init: std.process.Init) !void {
         for (args[first..]) |arg| {
             const real = c.realpath(arg, null) orelse return error.FileNotFound;
             defer c.free(real);
-            try paths.append(a, try a.dupeZ(u8, std.mem.span(real)));
+            try paths.append(a, try a.dupeSentinel(u8, std.mem.span(real), 0));
         }
         if (paths.items.len == 1) {
-            const target = try a.dupeZ(u8, paths.items[0]);
+            const target = try a.dupeSentinel(u8, paths.items[0], 0);
             defer a.free(target);
-            const dir = try a.dupeZ(u8, std.fs.path.dirname(target).?);
+            const dir = try a.dupeSentinel(u8, std.fs.path.dirname(target).?, 0);
             defer a.free(dir);
             if (c.opendir(dir)) |directory| {
                 defer _ = c.closedir(directory);

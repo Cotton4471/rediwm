@@ -11,12 +11,7 @@
 //! and libXcursor animate.
 const std = @import("std");
 const Io = std.Io;
-const c = @cImport({
-    @cInclude("cairo.h");
-    @cInclude("stdio.h");
-    @cInclude("sys/stat.h");
-    @cInclude("unistd.h");
-});
+const c = @import("c_gfx");
 
 const Handle = opaque {};
 const GError = opaque {};
@@ -282,7 +277,7 @@ fn writeFile(allocator: std.mem.Allocator, dir: []const u8, name: []const u8, by
 fn link(allocator: std.mem.Allocator, dir: []const u8, target: []const u8, alias: []const u8) !void {
     if (std.mem.eql(u8, target, alias)) return;
     const path = try std.fmt.allocPrintSentinel(allocator, "{s}/{s}", .{ dir, alias }, 0);
-    const to = try allocator.dupeZ(u8, target);
+    const to = try allocator.dupeSentinel(u8, target, 0);
     _ = c.unlink(path.ptr);
     if (c.symlink(to.ptr, path.ptr) != 0) return error.LinkFailed;
 }
@@ -291,7 +286,7 @@ fn mkdirs(allocator: std.mem.Allocator, path: []const u8) !void {
     var i: usize = 1;
     while (i <= path.len) : (i += 1) {
         if (i != path.len and path[i] != '/') continue;
-        const part = try allocator.dupeZ(u8, path[0..i]);
+        const part = try allocator.dupeSentinel(u8, path[0..i], 0);
         if (c.mkdir(part.ptr, 0o755) != 0 and std.c._errno().* != @intFromEnum(std.posix.E.EXIST)) return error.MkdirFailed;
     }
 }

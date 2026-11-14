@@ -1,19 +1,20 @@
 //! Server wake handlers: audio, battery and the GPU timer.
 
 const std = @import("std");
+const platform = @import("platform");
+const i18n = @import("i18n");
 const Server = @import("../Server.zig");
 const wl = @import("wayland").server.wl;
 const battery_mod = @import("../taskbar/battery.zig");
 const Taskbar = @import("../Taskbar.zig");
 const gpu_timer_idle_ns = Server.gpu_timer_idle_ns;
+const gpu_timer_sched_keep_ns = 10 * std.time.ns_per_s;
 
 /// Best-effort: `null` on any failure just means the taskbar/control-center
 /// UI catches up to an external volume change (another app, `pactl`) on its
 /// next incidental repaint instead of immediately — never fatal.
 pub fn createAudioWakeFd() ?std.posix.fd_t {
-    const rc = std.os.linux.eventfd(0, std.os.linux.EFD.NONBLOCK | std.os.linux.EFD.CLOEXEC);
-    if (std.os.linux.errno(rc) != .SUCCESS) return null;
-    return @intCast(rc);
+    return platform.wake.create();
 }
 
 /// Runs on the compositor thread, woken by `audio.AudioManager`'s PA-thread
@@ -41,12 +42,43 @@ pub fn handleAudioWake(fd: c_int, mask: wl.EventMask, server: *Server) c_int {
 pub fn handleBatteryUevent(fd: c_int, mask: wl.EventMask, server: *Server) c_int {
     _ = mask;
     if (!battery_mod.drainUevents(fd)) return 0;
-    const state = battery_mod.read(server.io, @import("../main.zig").gpa);
-    var it = server.outputs.iterator(.forward);
-    while (it.next()) |output| {
-        if (output.taskbar) |bar| bar.applyBattery(state);
-    }
+    server.power_policy.refresh();
     return 0;
+}
+
+/// Uses the same snapshots as the badge, without another timer or sysfs read.
+pub fn updateBatteryWarning(server: *Server, state: battery_mod.State) void {
+    if (server.greeter_mode) return;
+    const manager = server.notifications orelse return;
+    switch (server.battery_warning.update(state)) {
+        .none => {},
+        .clear => {
+            if (server.battery_warning_id) |id| manager.closeNotification(id, 3);
+            server.battery_warning_id = null;
+        },
+        .show => {
+            var buf: [256]u8 = undefined;
+            const body = i18n.fmt(&buf, i18n.tr("Battery is at {percent}%. Plug in your charger."), .{ .percent = state.percent.? }) catch i18n.tr("Plug in your charger.");
+            server.battery_warning_id = manager.postNotification(
+                "RediWM",
+                0,
+                "battery-caution",
+                i18n.tr("Low battery"),
+                body,
+                &.{},
+                2,
+                false,
+                false,
+                0,
+                "",
+                null,
+            ) catch blk: {
+                // Retry on the next normal update if posting failed.
+                server.battery_warning.notified = false;
+                break :blk null;
+            };
+        },
+    }
 }
 
 pub fn ensureGpuTimer(server: *Server) void {
@@ -56,10 +88,20 @@ pub fn ensureGpuTimer(server: *Server) void {
     server.gpu_timer = @import("../gpu_timing.zig").Timer.create(server.renderer);
 }
 
+/// Late rendering's claim on the GPU timer: starts it if needed and keeps it
+/// for `gpu_timer_sched_keep_ns` after the last scheduling decision. It does
+/// not turn on the per-stage timing that stats requests enable.
+pub fn keepGpuTimer(server: *Server, now_ns: u64) void {
+    server.gpu_timer_sched_ns = now_ns;
+    if (server.gpu_timer_tried) return;
+    server.gpu_timer_tried = true;
+    server.gpu_timer = @import("../gpu_timing.zig").Timer.create(server.renderer);
+}
+
 /// Whether a stats request came in recently enough that per-stage frame timing
 /// is worth its clock reads (the same window the GPU timer uses).
 pub fn observingStats(server: *const Server, now_ns: u64) bool {
-    return server.gpu_timer_tried and now_ns -% server.gpu_timer_used_ns < gpu_timer_idle_ns;
+    return server.gpu_timer_tried and server.gpu_timer_used_ns != 0 and now_ns -% server.gpu_timer_used_ns < gpu_timer_idle_ns;
 }
 
 /// One `perf` query must not leave the timer's per-frame cost (measured
@@ -67,7 +109,9 @@ pub fn observingStats(server: *const Server, now_ns: u64) bool {
 /// five minutes without a stats request it stops; the next request restarts it.
 pub fn expireGpuTimer(server: *Server) void {
     const timer = server.gpu_timer orelse return;
-    if (@import("../ipc/stats.zig").nowNs() -% server.gpu_timer_used_ns < gpu_timer_idle_ns) return;
+    const now = @import("../ipc/stats.zig").nowNs();
+    if (server.gpu_timer_used_ns != 0 and now -% server.gpu_timer_used_ns < gpu_timer_idle_ns) return;
+    if (server.gpu_timer_sched_ns != 0 and now -% server.gpu_timer_sched_ns < gpu_timer_sched_keep_ns) return;
     timer.destroy();
     server.gpu_timer = null;
     server.gpu_timer_tried = false;

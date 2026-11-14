@@ -46,6 +46,17 @@ pub fn iconDistance(id: IconId, px: f32, py: f32, cx: f32, cy: f32, half: f32, t
             sdSegment(px, py, cx, cy - half * 0.5, cx + half, cy + half * 0.3, t),
         ),
         .play => sdf.sdQuad(px, py, cx - half * 0.65, cy - half, cx + half, cy, cx - half * 0.65, cy + half, cx - half * 0.65, cy),
+        // `.play` rotated a quarter turn: same degenerate quad, tip at the top.
+        .caret_up => sdf.sdQuad(px, py, cx - half, cy + half * 0.65, cx, cy - half, cx + half, cy + half * 0.65, cx, cy + half * 0.65),
+        .skip_next => @min(
+            sdf.sdQuad(px, py, cx - half * 0.9, cy - half * 0.9, cx + half * 0.45, cy, cx - half * 0.9, cy + half * 0.9, cx - half * 0.9, cy),
+            sdBox(px, py, cx + half * 0.72, cy, half * 0.18, half * 0.9),
+        ),
+        .skip_previous => @min(
+            sdf.sdQuad(px, py, cx + half * 0.9, cy - half * 0.9, cx - half * 0.45, cy, cx + half * 0.9, cy + half * 0.9, cx + half * 0.9, cy),
+            sdBox(px, py, cx - half * 0.72, cy, half * 0.18, half * 0.9),
+        ),
+        .stop => sdRoundedBoxCentered(px, py, cx, cy, half * 0.75, half * 0.75, half * 0.15),
         .pause => @min(sdBox(px, py, cx - half * 0.45, cy, half * 0.22, half), sdBox(px, py, cx + half * 0.45, cy, half * 0.22, half)),
         .minimize => sdSegment(px, py, cx - half, cy, cx + half, cy, t),
         .drag_handle => @min(
@@ -174,7 +185,7 @@ pub fn iconDistance(id: IconId, px: f32, py: f32, cx: f32, cy: f32, half: f32, t
             const bar = sdSegment(px, py, cx, cy - half * 0.95, cx, cy - half * 0.05, t);
             break :blk @min(@max(ring, -gap), bar);
         },
-        .clock => 1000, // Embedded SVG; no procedural fallback.
+        .clock, .divide, .cpu, .ram => 1000, // Embedded SVG; no procedural fallback.
         .power_saver, .power_balanced, .power_performance => blk: {
             // Upper three quarters of a ring, open at the bottom, with a
             // needle from the hub.
@@ -266,7 +277,7 @@ pub fn iconDistance(id: IconId, px: f32, py: f32, cx: f32, cy: f32, half: f32, t
             const base = @min(ring_open, arrow);
             break :blk if (id == .restart_shell) @min(base, sdCircle(px, py, cx, cy, half * 0.24)) else base;
         },
-        .git_branch, .home, .generic, .folder, .document, .terminal, .settings, .keyboard, .edit, .browser, .wifi, .ethernet, .globe, .mouse, .display, .music, .headphones, .bluetooth, .battery, .notification, .eye, .eye_off, .refresh, .cut, .copy, .paste, .trash, .trash_can, .view_grid, .view_list, .sort, .filter, .zoom_in, .zoom_out, .rotate, .crop, .undo, .save, .fit, .print, .open, .usb_stick, .drive, .eject, .users, .squares => sdCircle(px, py, cx, cy, half * 0.6),
+        .git_branch, .home, .generic, .folder, .document, .terminal, .settings, .keyboard, .edit, .browser, .wifi, .ethernet, .globe, .mouse, .touchpad, .trackball, .display, .music, .headphones, .bluetooth, .battery, .notification, .eye, .eye_off, .refresh, .cut, .copy, .paste, .trash, .trash_can, .view_grid, .view_list, .sort, .filter, .zoom_in, .zoom_out, .rotate, .crop, .undo, .save, .fit, .print, .open, .usb_stick, .drive, .eject, .users, .squares => sdCircle(px, py, cx, cy, half * 0.6),
     };
 }
 

@@ -1,12 +1,9 @@
 //! Nonblocking polkit helper transport. Callbacks borrow text until return and
 //! may respond/cancel, but must not destroy this object or dispatch the loop.
 const std = @import("std");
+const platform = @import("platform");
 const wl = @import("wayland").server.wl;
-const c = @cImport({
-    @cInclude("sys/socket.h");
-    @cInclude("sys/un.h");
-    @cInclude("unistd.h");
-});
+const c = @import("c");
 const Child = @import("../session/child.zig");
 extern fn rediwm_polkit_spawn([*:0]const u8, *std.posix.pid_t) c_int;
 extern fn rediwm_polkit_secret_new() ?*anyopaque;
@@ -68,7 +65,7 @@ pub const Helper = struct {
         self.fd = c.socket(c.AF_UNIX, c.SOCK_STREAM | c.SOCK_NONBLOCK | c.SOCK_CLOEXEC, 0);
         if (self.fd < 0) return error.SocketFailed;
         var spawned = false;
-        if (c.connect(self.fd, @ptrCast(&addr), @sizeOf(@TypeOf(addr))) < 0) {
+        if (std.c.connect(self.fd, @ptrCast(&addr), @sizeOf(@TypeOf(addr))) < 0) {
             switch (std.posix.errno(@as(c_int, -1))) {
                 .INPROGRESS => self.connecting = true,
                 .NOENT, .CONNREFUSED => {
@@ -81,9 +78,7 @@ pub const Helper = struct {
                     self.fd = rediwm_polkit_spawn(&user, &pid);
                     if (self.fd < 0) return error.HelperUnavailable;
                     self.child = Child.watch(allocator, loop, pid, self, childExited) catch |err| {
-                        _ = std.os.linux.kill(pid, .KILL);
-                        var status: u32 = 0;
-                        while (std.os.linux.errno(std.os.linux.wait4(pid, &status, 0, null)) == .INTR) {}
+                        platform.child.killAndReap(pid);
                         return err;
                     };
                     spawned = true;
@@ -361,7 +356,7 @@ test "socketpair helper frames split/coalesced reads and wipes sent responses" {
     // Maximum accepted response includes its newline in a single fgets buffer.
     events.automatic = false;
     helper.awaiting_response = true;
-    const maximum = [_]u8{'x'} ** max_response;
+    const maximum = @as([max_response]u8, @splat('x'));
     try helper.respond(&maximum);
     try loop.dispatch(100);
     const maximum_n = c.read(fds[1], &response, response.len);
@@ -392,7 +387,7 @@ test "helper bounds responses before copying and wipes every terminal path" {
     defer helper.cancel();
     // Rejected input never needs an event source and never reaches the buffer.
     helper.awaiting_response = true;
-    const oversized = [_]u8{'x'} ** 511;
+    const oversized = @as([511]u8, @splat('x'));
     try std.testing.expectError(error.ResponseTooLong, helper.respond(&oversized));
     for ([_][]const u8{ "a\nb", "a\rb", "a\x00b" }) |bad| try std.testing.expectError(error.InvalidLine, helper.respond(bad));
     try std.testing.expect(std.mem.allEqual(u8, secret, 0));
@@ -413,7 +408,7 @@ test "helper bounds responses before copying and wipes every terminal path" {
     try std.testing.expect(std.mem.allEqual(u8, secret, 0));
     helper.finished = false;
     try std.testing.expectError(error.InvalidHelperLine, helper.feed("SUCCESSx\n"));
-    const huge = [_]u8{'x'} ** (max_line + 1);
+    const huge = @as([max_line + 1]u8, @splat('x'));
     try std.testing.expectError(error.LineTooLong, helper.feed(&huge));
 }
 
@@ -433,9 +428,10 @@ test "helper preserves a backpressured response until cancellation erases it" {
     helper.timer = try loop.addTimer(*Helper, Helper.onTimeout, &helper);
     const size: c_int = 4096;
     try std.testing.expectEqual(0, c.setsockopt(helper.fd, c.SOL_SOCKET, c.SO_SNDBUF, &size, @sizeOf(c_int)));
-    const padding = [_]u8{0} ** 4096;
+    const padding = @as([4096]u8, @splat(0));
     var full = false;
-    for (0..16) |_| {
+    // Unix stream buffers differ by OS (FreeBSD's default is at least 64 KiB).
+    for (0..4096) |_| {
         const n = c.send(helper.fd, &padding, padding.len, c.MSG_NOSIGNAL);
         if (n < 0) {
             try std.testing.expectEqual(std.posix.E.AGAIN, std.posix.errno(n));

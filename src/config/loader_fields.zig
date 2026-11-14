@@ -53,6 +53,7 @@ pub const input_rules: std.enums.EnumFieldStruct(std.meta.FieldEnum(InputConfig)
     .xkb_variant = .string,
     .xkb_options = .string,
     .xkb_model = .string,
+    .xkb_labels = .string,
     .natural_scroll = .boolean,
     .invert_scroll = .boolean,
     .pointer_speed = .{ .float = .{ .min = -1, .max = 1 } },
@@ -70,6 +71,7 @@ pub const input_rules: std.enums.EnumFieldStruct(std.meta.FieldEnum(InputConfig)
     .smooth_scroll = .boolean,
     .smooth_scroll_exclude = .string_list,
     .wheel_debounce_ms = .{ .uint = .{ .min = 0, .max = 200 } },
+    .left_handed = .boolean,
     .tap_to_click = .boolean,
     .tap_drag = .boolean,
     .disable_while_typing = .boolean,
@@ -83,6 +85,16 @@ pub const input_rules: std.enums.EnumFieldStruct(std.meta.FieldEnum(InputConfig)
     .caret_blink_ms = .{ .uint = .{ .min = 0, .max = 10_000 } },
     .caret_blink_timeout = .{ .uint = .{ .min = 0, .max = 3600 } },
     .caret_motion_ms = .{ .uint = .{ .min = 0, .max = 2000 } },
+};
+
+pub const input_device_rules: std.enums.EnumFieldStruct(std.meta.FieldEnum(@import("input_device.zig").Record), FieldRule, null) = .{
+    .id = .string,
+    .pointer_speed = input_rules.pointer_speed,
+    .natural_scroll = input_rules.natural_scroll,
+    .left_handed = input_rules.left_handed,
+    .tap_to_click = input_rules.tap_to_click,
+    .tap_drag = input_rules.tap_drag,
+    .disable_while_typing = input_rules.disable_while_typing,
 };
 
 pub const region_rules: std.enums.EnumFieldStruct(std.meta.FieldEnum(RegionConfig), FieldRule, null) = .{
@@ -110,6 +122,7 @@ pub const compositor_rules: std.enums.EnumFieldStruct(std.meta.FieldEnum(Composi
     .dock_pinned_apps = .json_string_list,
     .taskbar_items = .taskbar_items,
     .taskbar_position = .enumeration,
+    .taskbar_alignment = .enumeration,
     .icon_theme = .string,
     .window_tab_apps = .json_string_list,
     .default_file_manager = .string,
@@ -136,17 +149,23 @@ pub const compositor_rules: std.enums.EnumFieldStruct(std.meta.FieldEnum(Composi
     .drag_scale = .{ .float = .{ .min = drag_scale_min, .max = drag_scale_max } },
     .dodge_file_drags = .boolean,
     .files_single_click_open = .boolean,
+    .files_audio_player = .boolean,
     .inactive_opacity = .{ .float = .{ .min = 0, .max = 1 } },
     .terminal_opacity = .{ .float = .{ .min = 0, .max = 1 } },
     .inactive_dim = .boolean,
     .inactive_dim_amount = .{ .float = .{ .min = 0, .max = 0.5 } },
+    .switcher_style = .enumeration,
     .switcher_opacity = .{ .float = .{ .min = 0, .max = 1 } },
+    .switcher_circle_bg = .boolean,
     .border_radius = .{ .uint = .{ .min = 0, .max = 128 } },
     .allow_tearing = .boolean,
+    .late_render = .boolean,
+    .late_render_margin_ms = .{ .float = .{ .min = 0.5, .max = 8 } },
     .xwayland = .boolean,
     .xwayland_native_scaling = .boolean,
     .xwayland_scale = .{ .float = .{ .min = 0, .max = 4 } },
     .dark_mode = .boolean,
+    .follow_app_colors = .boolean,
     .placeholder_delay_ms = .{ .uint = .{ .min = 0, .max = 10_000 } },
     .wallpaper = .string,
     .sound_theme = .string,
@@ -218,40 +237,40 @@ pub fn enumHint(comptime T: type) []const u8 {
 }
 
 pub fn fieldHint(comptime T: type, comptime rules: anytype, key: []const u8) []const u8 {
-    inline for (std.meta.fields(T)) |field| {
-        if (std.mem.eql(u8, key, field.name)) {
-            if (comptime @field(rules, field.name) == .enumeration) return comptime enumHint(field.type);
-            return comptime ruleHint(@field(rules, field.name));
+    inline for (@typeInfo(T).@"struct".field_names) |field_name| {
+        if (std.mem.eql(u8, key, field_name)) {
+            if (comptime @field(rules, field_name) == .enumeration) return comptime enumHint(@FieldType(T, field_name));
+            return comptime ruleHint(@field(rules, field_name));
         }
     }
     return "valid";
 }
 
 pub fn applyField(target: anytype, allocator: Allocator, comptime rules: anytype, key: []const u8, value: []const u8) !bool {
-    inline for (std.meta.fields(@TypeOf(target.*))) |field| {
-        const rule = comptime @field(rules, field.name);
-        if (rule != .derived and std.mem.eql(u8, key, field.name)) {
+    inline for (@typeInfo(@TypeOf(target.*)).@"struct".field_names) |field_name| {
+        const rule = comptime @field(rules, field_name);
+        if (rule != .derived and std.mem.eql(u8, key, field_name)) {
             switch (comptime rule) {
-                .taskbar_items => @field(target, field.name) = try TaskbarItems.parse(value),
-                .boolean => @field(target, field.name) = try parseBool(value),
-                .string => @field(target, field.name) = try parseString(allocator, value),
-                .string_list => @field(target, field.name) = try window_rules.parseStringOrArray(allocator, value),
-                .json_string_list => @field(target, field.name) = try std.json.parseFromSliceLeaky([]const []const u8, allocator, value, .{ .allocate = .alloc_always }),
-                .uint => |range| @field(target, field.name) = try parseU32Range(value, range.min, range.max),
-                .int => |range| @field(target, field.name) = try parseI32Range(value, range.min, range.max),
-                .output_scale => @field(target, field.name) = try parseOutputScale(value),
-                .output_transform => @field(target, field.name) = try output_transform.parse(value),
+                .taskbar_items => @field(target, field_name) = try TaskbarItems.parse(value),
+                .boolean => @field(target, field_name) = try parseBool(value),
+                .string => @field(target, field_name) = try parseString(allocator, value),
+                .string_list => @field(target, field_name) = try window_rules.parseStringOrArray(allocator, value),
+                .json_string_list => @field(target, field_name) = try std.json.parseFromSliceLeaky([]const []const u8, allocator, value, .{ .allocate = .alloc_always }),
+                .uint => |range| @field(target, field_name) = try parseU32Range(value, range.min, range.max),
+                .int => |range| @field(target, field_name) = try parseI32Range(value, range.min, range.max),
+                .output_scale => @field(target, field_name) = try parseOutputScale(value),
+                .output_transform => @field(target, field_name) = try output_transform.parse(value),
                 .float => |range| {
-                    const Float = if (@typeInfo(field.type) == .optional) @typeInfo(field.type).optional.child else field.type;
+                    const Float = if (@typeInfo(@FieldType(@TypeOf(target.*), field_name)) == .optional) @typeInfo(@FieldType(@TypeOf(target.*), field_name)).optional.child else @FieldType(@TypeOf(target.*), field_name);
                     const v = try std.fmt.parseFloat(Float, value);
                     if (!std.math.isFinite(v) or v < range.min or v > range.max or
                         (range.exclusive_min and v == range.min)) return error.InvalidValue;
-                    @field(target, field.name) = v;
+                    @field(target, field_name) = v;
                 },
                 .zoom_steps => try parseZoomSteps(target, value),
-                .accel_profile => @field(target, field.name) = try parseAccelProfile(value),
-                .accel_point => @field(target, field.name) = try parseVec2(value),
-                .enumeration => @field(target, field.name) = try parseEnum(field.type, value),
+                .accel_profile => @field(target, field_name) = try parseAccelProfile(value),
+                .accel_point => @field(target, field_name) = try parseVec2(value),
+                .enumeration => @field(target, field_name) = try parseEnum(@FieldType(@TypeOf(target.*), field_name), value),
                 .derived => unreachable,
             }
             return true;

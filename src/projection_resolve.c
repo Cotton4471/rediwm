@@ -22,8 +22,8 @@ static bool clip_same_shape(const struct rediwm_clip *a, const struct rediwm_cli
       a->edges.y2 - a->edges.y1 != b->edges.y2 - b->edges.y1 || a->border != b->border)
     return false;
   for (int i = 0; i < 4; i++)
-    if (a->radii[i] != b->radii[i] || a->border_color[i] != b->border_color[i]) return false;
-  return true;
+    if (a->border_color[i] != b->border_color[i]) return false;
+  return rediwm_clip_outline_equal(a, b);
 }
 // Where the highlight is, as far as it can be seen: a square around its point.
 static bool clip_glow_box(const struct rediwm_clip *c, pixman_box32_t *out) {
@@ -45,10 +45,7 @@ static bool clip_same_glow(const struct rediwm_clip *a, const struct rediwm_clip
 static void clip_rim(pixman_region32_t *out, const struct rediwm_clip *c, const pixman_box32_t *only) {
   const struct rediwm_snap f = rediwm_edges_snap(c->edges);
   if (f.width <= 0 || f.height <= 0) return;
-  double radius = 0;
-  for (int i = 0; i < 4; i++)
-    if (c->radii[i] > radius) radius = c->radii[i];
-  const int inset = (int)ceil(radius) + (int)ceil(c->border) + (int)ceil(c->glow_depth) + 2;
+  const int inset = (int)ceil(c->inset) + (int)ceil(c->border) + (int)ceil(c->glow_depth) + 2;
   pixman_region32_t rim;
   pixman_region32_init_rect(&rim, f.x, f.y, f.width, f.height);
   if (f.width > 2 * inset && f.height > 2 * inset) {
@@ -161,10 +158,9 @@ static void resolve_leaf(struct rediwm_projection *p, struct group *g, struct re
     memcpy(item->content.color, r->color, sizeof(item->content.color));
   } else {
     struct rediwm_buffer *b = rediwm_buffer_from_node(node);
-    if (l->effect) g->has_effect = true;
-    item->kind = l->effect ? REDIWM_ITEM_EFFECT
-                 : l->surface                      ? REDIWM_ITEM_SURFACE
-                                                   : REDIWM_ITEM_BUFFER;
+    if (l->intrinsic_kind == REDIWM_ITEM_EFFECT) g->has_effect = true;
+    item->kind = l->intrinsic_kind != REDIWM_ITEM_BUFFER ? l->intrinsic_kind
+                 : l->surface ? REDIWM_ITEM_SURFACE : REDIWM_ITEM_BUFFER;
     item->width = b->dst_width;
     item->height = b->dst_height;
     if (item->kind == REDIWM_ITEM_EFFECT) {
@@ -185,6 +181,7 @@ static void resolve_leaf(struct rediwm_projection *p, struct group *g, struct re
     }
     struct rediwm_content *content = &item->content;
     content->src_box = b->src_box;
+    memcpy(content->sector_rect, b->sector_rect, sizeof(content->sector_rect));
     content->transform = b->transform;
     content->opacity = b->opacity;
     content->filter_mode = rediwm_filter_at_scale(w->t.scale, b->filter_mode);
@@ -197,11 +194,11 @@ static void resolve_leaf(struct rediwm_projection *p, struct group *g, struct re
     item->content.dim_brightness = w->dim->brightness;
     item->content.dim_saturation = w->dim->saturation;
   }
-  if (w->shadow && node->type == REDIWM_NODE_BUFFER) {
+  if (w->shadow && node->type == REDIWM_NODE_BUFFER && item->kind != REDIWM_ITEM_RIBBON) {
     item->kind = REDIWM_ITEM_SHADOW;
     l->shadow = *w->shadow;
     item->shadow = &l->shadow;
-  } else if (item->shadow) {
+  } else if (item->kind != REDIWM_ITEM_RIBBON && item->shadow) {
     item->shadow = NULL;
   }
   item->edges = rediwm_xform_rect(w->t, x, y, item->width, item->height);

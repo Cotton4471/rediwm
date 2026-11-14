@@ -135,7 +135,7 @@ void rediwm_scene_pass_end_backdrop(struct wlr_render_pass *base, struct rediwm_
 void rediwm_scene_pass_add_backdrop(struct wlr_render_pass *base, const struct rediwm_pass_shape *shape,
         struct wlr_box box, const struct rediwm_pass_backdrop *o) {
     struct pass *p = owned_pass(base);
-    struct program *g = &p->renderer->shaped;
+    struct program *g = shaped_for(p->renderer, shape, false);
     if (p->failed || (o->clip && !pixman_region32_not_empty(o->clip))) return;
     const struct rediwm_backdrop *b = o->backdrop;
     if (!g->id || !shape_usable(shape) || !b || !b->width || !isfinite(o->saturation) ||

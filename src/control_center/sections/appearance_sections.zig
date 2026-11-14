@@ -87,6 +87,11 @@ pub fn buildTaskbarSection(out: *Section, t: theme.Theme, pal: theme.Theme) Widg
         .{ .name = "taskbar_position", .kind = .{ .segmented = .{ .labels = panel.translatedLabels(&.{ i18n.msg("Top"), i18n.msg("Bottom") }), .selected = @intFromEnum(out.cc.server.config.compositor.taskbar_position), .owner = out, .on_change = &onTaskbarPositionChanged } }, .width = .{ .fixed = segmented_width } },
     };
     const position_row: Widget = .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.taskbar_position_children };
+    out.taskbar_alignment_children = .{
+        labelWidget(i18n.tr("Taskbar alignment")),
+        .{ .name = "taskbar_alignment", .kind = .{ .segmented = .{ .labels = panel.translatedLabels(&.{ i18n.msg("Left"), i18n.msg("Center"), i18n.msg("Right") }), .selected = @intFromEnum(out.cc.server.config.compositor.taskbar_alignment), .owner = out, .on_change = &appearance_chrome.onTaskbarAlignmentChanged } }, .width = .{ .fixed = segmented_width } },
+    };
+    const alignment_row: Widget = .{ .kind = .container, .direction = .row, .justify = .space_between, .@"align" = .center, .children = &out.taskbar_alignment_children };
     const taskbar_min: f32 = @floatFromInt(Taskbar.min_bar_height);
     const taskbar_row = pxGroup(out, px_taskbar_size, i18n.tr("Taskbar size"), std.math.clamp(t.taskbar_size, taskbar_min, 84.0), taskbar_min, 84, 2, &PxHandler(px_taskbar_size, "taskbar_size", true).changed);
     // A floating bar: its gap from the edge, its length and its corners. At
@@ -119,6 +124,7 @@ pub fn buildTaskbarSection(out: *Section, t: theme.Theme, pal: theme.Theme) Widg
         out.item_controls[i] = .{
             .{ .kind = .{ .button = .{ .label = i18n.tr("Drag to move"), .icon = .drag_handle, .variant = .ghost, .owner = out, .id = i } }, .width = .{ .fixed = 28 }, .height = .{ .fixed = 28 } },
             .{ .kind = .{ .text = .{ .content = "", .font_size = theme.global.app_text_size, .weight = 600, .color = pal.fg } }, .width = .{ .flex = 1 } },
+            .{ .kind = .{ .segmented = .{ .labels = panel.translatedLabels(&.{ i18n.msg("Left"), i18n.msg("Center"), i18n.msg("Right") }), .selected = 0, .owner = out, .id = i, .on_change = &appearance_items.onItemSectionChanged } }, .width = .{ .fixed = appearance_items.item_section_width } },
             .{ .kind = .{ .toggle = .{ .on = false, .owner = out, .on_change = &ItemToggle(i).changed } } },
         };
         out.item_rows[i] = .{ .kind = .{ .rect = itemRowStyle(false) }, .direction = .row, .gap = 8, .@"align" = .center, .padding = .{ .top = 6, .right = 10, .bottom = 6, .left = 6 }, .children = &out.item_controls[i] };
@@ -149,7 +155,7 @@ pub fn buildTaskbarSection(out: *Section, t: theme.Theme, pal: theme.Theme) Widg
             i18n.tr("Warning: Screen capture is hidden. Recording and screen sharing can continue without a visible indicator or Stop sharing button. Hiding it is not recommended."), .font_size = theme.global.settings_description_size, .color = pal.dim } } },
     };
     const items_group: Widget = .{ .kind = .container, .direction = .column, .gap = 8, .@"align" = .stretch, .children = &out.items_children };
-    out.taskbar_section_children = .{ panel.sectionTitle(i18n.tr("Taskbar")), position_row, taskbar_row, edge_gap_row, length_row, radius_row, chip_width_row, chip_gap_row, start_gap_row, start_icon_row, clock_bold_row, clock_italic_row, items_group };
+    out.taskbar_section_children = .{ panel.sectionTitle(i18n.tr("Taskbar")), position_row, alignment_row, taskbar_row, edge_gap_row, length_row, radius_row, chip_width_row, chip_gap_row, start_gap_row, start_icon_row, clock_bold_row, clock_italic_row, items_group };
     const taskbar_section: Widget = .{ .kind = .container, .direction = .column, .gap = 12, .children = &out.taskbar_section_children };
     return taskbar_section;
 }

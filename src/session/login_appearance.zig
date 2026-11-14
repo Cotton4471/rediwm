@@ -4,13 +4,7 @@ const std = @import("std");
 const theme = @import("ui").theme;
 const png = @import("../png.zig");
 const wallpapers = @import("../wallpapers.zig");
-const c = @cImport({
-    @cUndef("_FORTIFY_SOURCE");
-    @cInclude("fcntl.h");
-    @cInclude("sys/stat.h");
-    @cInclude("unistd.h");
-    @cInclude("stdio.h");
-});
+const c = @import("c");
 pub const root = @import("../dm/appearance.zig").root;
 const max_theme_bytes = 64 * 1024;
 const max_edge = 1920;
@@ -35,7 +29,7 @@ pub fn writableDirectory(a: std.mem.Allocator) ?[]u8 {
 
 fn openDirectory(path: []const u8, uid: u32) !c_int {
     var buf: [std.fs.max_path_bytes]u8 = undefined;
-    const z = try std.fmt.bufPrintZ(&buf, "{s}", .{path});
+    const z = try std.fmt.bufPrintSentinel(&buf, "{s}", .{path}, 0);
     const fd = c.open(z, c.O_RDONLY | c.O_DIRECTORY | c.O_NOFOLLOW | c.O_CLOEXEC);
     if (fd < 0) return error.OpenDirectoryFailed;
     errdefer _ = c.close(fd);
@@ -75,7 +69,7 @@ fn writeAtomic(path: []const u8, name: [:0]const u8, parts: []const []const u8) 
     const dir = try openDirectory(path, c.getuid());
     defer _ = c.close(dir);
     var buf: [100]u8 = undefined;
-    const temp = try std.fmt.bufPrintZ(&buf, ".{s}.{d}.{d}", .{ name, c.getpid(), serial.fetchAdd(1, .monotonic) });
+    const temp = try std.fmt.bufPrintSentinel(&buf, ".{s}.{d}.{d}", .{ name, c.getpid(), serial.fetchAdd(1, .monotonic) }, 0);
     const fd = c.openat(dir, temp, c.O_WRONLY | c.O_CREAT | c.O_EXCL | c.O_CLOEXEC | c.O_NOFOLLOW, @as(c_uint, 0o600));
     if (fd < 0) return error.CreateFileFailed;
     defer _ = c.close(fd);

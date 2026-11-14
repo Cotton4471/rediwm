@@ -6,7 +6,7 @@ OnFailure=plymouth-quit.service
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/rediwm-dm
+ExecStart=@BINDIR@/rediwm-dm
 Restart=always
 RestartSec=1s
 

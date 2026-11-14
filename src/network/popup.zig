@@ -385,26 +385,25 @@ pub const Popup = struct {
     }
     pub fn keyRepeats(self: *Popup, sym: xkb.Keysym, utf8: []const u8) bool {
         if (self.focus != .password and self.focus != .ssid) return false;
-        return switch (@intFromEnum(sym)) {
+        return switch (sym) {
             xkb.Keysym.BackSpace, xkb.Keysym.Delete, xkb.Keysym.Left, xkb.Keysym.Right => true,
-            else => utf8.len > 0 and @intFromEnum(sym) != xkb.Keysym.Return and @intFromEnum(sym) != xkb.Keysym.Tab and @intFromEnum(sym) != xkb.Keysym.Escape,
+            else => utf8.len > 0 and sym != xkb.Keysym.Return and sym != xkb.Keysym.Tab and sym != xkb.Keysym.Escape,
         };
     }
     pub fn key(self: *Popup, sym: xkb.Keysym, utf8: []const u8, mods: wlr.Keyboard.ModifierMask) void {
-        const code = @intFromEnum(sym);
-        if (self.focus == .settings and (code == xkb.Keysym.Return or code == xkb.Keysym.KP_Enter or code == xkb.Keysym.space)) {
+        if (self.focus == .settings and (sym == xkb.Keysym.Return or sym == xkb.Keysym.KP_Enter or sym == xkb.Keysym.space)) {
             self.openSettings();
             return;
         }
-        if (code == xkb.Keysym.Escape) {
+        if (sym == xkb.Keysym.Escape) {
             self.output.closeWifi();
             return;
         }
-        if (code == xkb.Keysym.Tab or code == xkb.Keysym.ISO_Left_Tab) {
-            self.navigate(mods.shift or code == xkb.Keysym.ISO_Left_Tab);
+        if (sym == xkb.Keysym.Tab or sym == xkb.Keysym.ISO_Left_Tab) {
+            self.navigate(mods.shift or sym == xkb.Keysym.ISO_Left_Tab);
             return;
         }
-        if (code == xkb.Keysym.Return or code == xkb.Keysym.KP_Enter) {
+        if (sym == xkb.Keysym.Return or sym == xkb.Keysym.KP_Enter) {
             if (self.focus == .password or self.focus == .ssid) {
                 if (self.canUse()) self.join();
             } else self.activate();
@@ -417,8 +416,8 @@ pub const Popup = struct {
             if (!self.canUse()) return;
             const input = if (self.focus == .password) &self.password else &self.name;
             if (mods.ctrl) {
-                if (code == xkb.Keysym.u) input.clear();
-            } else if (!mods.alt and !mods.logo) switch (code) {
+                if (sym == xkb.Keysym.u) input.clear();
+            } else if (!mods.alt and !mods.logo) switch (sym) {
                 xkb.Keysym.BackSpace => input.backspace(),
                 xkb.Keysym.Delete => input.delete(),
                 xkb.Keysym.Left => input.left(),
@@ -434,11 +433,11 @@ pub const Popup = struct {
             self.refresh();
             return;
         }
-        if (code == xkb.Keysym.Up or code == xkb.Keysym.Down) {
-            self.navigate(code == xkb.Keysym.Up);
+        if (sym == xkb.Keysym.Up or sym == xkb.Keysym.Down) {
+            self.navigate(sym == xkb.Keysym.Up);
             return;
         }
-        if (code == xkb.Keysym.space) {
+        if (sym == xkb.Keysym.space) {
             self.activate();
             self.refresh();
             self.ensureFormVisible();

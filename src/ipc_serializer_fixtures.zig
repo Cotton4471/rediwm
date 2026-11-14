@@ -10,18 +10,18 @@ pub fn sample(comptime T: type, comptime populated: bool) T {
         .float => if (populated) 1.23456 else 0,
         .optional => |o| if (populated) sample(o.child, populated) else null,
         .@"enum" => std.meta.tags(T)[0],
-        .array => |a| [_]a.child{sample(a.child, populated)} ** a.len,
+        .array => |a| @as([a.len]a.child, @splat(sample(a.child, populated))),
         .pointer => |p| if (p.size == .slice)
             (if (p.child == u8) "text \"quoted\"\n\\" else &[_]p.child{sample(p.child, populated)})
         else
             @compileError("add pointer fixture for " ++ @typeName(T)),
         .@"struct" => blk: {
             var value: T = undefined;
-            for (std.meta.fields(T)) |f| {
-                if (std.mem.eql(u8, f.name, "placeholder") or std.mem.eql(u8, f.name, "tab_group") or (@hasField(T, "tab_group") and (std.mem.eql(u8, f.name, "tag") or std.mem.eql(u8, f.name, "description") or std.mem.eql(u8, f.name, "content_type")))) {
-                    @field(value, f.name) = null;
+            for (@typeInfo(T).@"struct".field_names) |name| {
+                if (std.mem.eql(u8, name, "placeholder") or std.mem.eql(u8, name, "tab_group") or (@hasField(T, "tab_group") and (std.mem.eql(u8, name, "tag") or std.mem.eql(u8, name, "description") or std.mem.eql(u8, name, "content_type")))) {
+                    @field(value, name) = null;
                 } else {
-                    @field(value, f.name) = sample(f.type, populated);
+                    @field(value, name) = sample(@FieldType(T, name), populated);
                 }
             }
             break :blk value;

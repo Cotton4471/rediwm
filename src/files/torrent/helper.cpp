@@ -7,6 +7,7 @@
 // and takes their commands; helper_tray.cpp is the StatusNotifierItem and
 // its menu. helper.hpp has what they share.
 #include "helper.hpp"
+#include "../../platform/self_exe.h"
 
 namespace helper {
 
@@ -269,9 +270,10 @@ int main(int argc, char **argv) {
     if (lstat(state_dir.c_str(), &state_stat) || !S_ISDIR(state_stat.st_mode) ||
         state_stat.st_uid != getuid() || (state_stat.st_mode & 077))
       throw std::runtime_error("Transfer state directory is not private");
-    executable =
-        (fs::canonical("/proc/self/exe").parent_path() / "rediwm-files")
-            .string();
+    char self[4096];
+    if (rediwm_self_exe(self, sizeof self) < 0)
+      throw std::runtime_error("Cannot locate the Files executable");
+    executable = (fs::path(self).parent_path() / "rediwm-files").string();
     // Scope policy is supplied by the Files launcher, which uses the same
     // native/nested rules as its other user-app launches.
     use_scopes = argc > 1 && !strcmp(argv[1], "--scope");

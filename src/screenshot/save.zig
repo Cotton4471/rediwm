@@ -1,22 +1,15 @@
 //! Publish only complete PNGs: file browsers may inspect a path at IN_CREATE.
 //! All I/O runs on the capture worker, never on the compositor event loop.
 const std = @import("std");
-const c = @cImport({
-    // Match files/c.zig: Zig 0.16 cannot translate fortified libc wrappers.
-    @cUndef("_FORTIFY_SOURCE");
-    @cDefine("_GNU_SOURCE", "1");
-    @cInclude("stdlib.h");
-    @cInclude("unistd.h");
-    @cInclude("fcntl.h");
-    @cInclude("stdio.h");
-});
+const platform = @import("platform");
+const c = @import("c");
 
 pub fn writePngFile(path: []const u8, bytes: []const u8) !void {
     if (bytes.len < 8 or !std.mem.eql(u8, bytes[0..8], "\x89PNG\r\n\x1a\n")) return error.InvalidPng;
     var path_buf: [4096]u8 = undefined;
-    const destination = try std.fmt.bufPrintZ(&path_buf, "{s}", .{path});
+    const destination = try std.fmt.bufPrintSentinel(&path_buf, "{s}", .{path}, 0);
     var temporary_buf: [4096]u8 = undefined;
-    const temporary = try std.fmt.bufPrintZ(&temporary_buf, "{s}/.rediwm-screenshot-XXXXXX", .{std.fs.path.dirname(path) orelse "."});
+    const temporary = try std.fmt.bufPrintSentinel(&temporary_buf, "{s}/.rediwm-screenshot-XXXXXX", .{std.fs.path.dirname(path) orelse "."}, 0);
     const fd = c.mkostemp(temporary.ptr, c.O_CLOEXEC);
     if (fd < 0) return error.CreateFailed;
     var closed = false;
@@ -41,5 +34,5 @@ pub fn writePngFile(path: []const u8, bytes: []const u8) !void {
     if (close_result != 0) return error.CloseFailed;
     // NOREPLACE retains the IPC's no-overwrite guarantee, including symlinks
     // and another writer winning the race after queueRequest checked the path.
-    if (c.renameat2(c.AT_FDCWD, temporary.ptr, c.AT_FDCWD, destination.ptr, c.RENAME_NOREPLACE) != 0) return error.PublishFailed;
+    platform.fs.renameNoReplace(temporary.ptr, destination.ptr) catch return error.PublishFailed;
 }

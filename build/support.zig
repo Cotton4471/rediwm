@@ -1,19 +1,53 @@
-//! Small build helpers: the private wlroots prefix, C sources and assets shared by
+//! Small build helpers: translated C headers, C sources and assets shared by
 //! several artifacts, localized data files and the catalog inputs.
 
 const std = @import("std");
 
-pub fn usePrivateWlroots(b: *std.Build, prefix: []const u8) void {
-    prependEnvPath(b, "PKG_CONFIG_PATH", b.fmt("{s}/lib/pkgconfig:{s}/share/pkgconfig", .{ prefix, prefix }));
-    // Tests and `zig build run` execute from the cache, where the installed
-    // RUNPATH doesn't reach lib/rediwm.
-    prependEnvPath(b, "LD_LIBRARY_PATH", b.pathJoin(&.{ prefix, "runtime" }));
+/// C headers as modules: Zig 0.17 has no @cImport. Each translates one header
+/// root under src/c/ (src/wlr/c.h for wlroots). The module is created without
+/// the translation's link objects, so importing one never links its libraries:
+/// artifacts link what they call. pkg-config only supplies include paths.
+pub const CHeaders = struct {
+    /// libc and Linux (`c`).
+    libc: *std.Build.Module,
+    /// libc, cairo, fontconfig, freetype, harfbuzz, xkbcommon (`c_gfx`).
+    gfx: *std.Build.Module,
+    pulse: *std.Build.Module,
+    libinput: *std.Build.Module,
+    png: *std.Build.Module,
+    archive: *std.Build.Module,
+};
+
+pub const gfx_libs = [_][]const u8{ "cairo", "fontconfig", "freetype2", "harfbuzz", "xkbcommon" };
+
+pub fn cHeaders(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.lang.Optimize) CHeaders {
+    return .{
+        .libc = cHeader(b, target, optimize, b.path("src/c/libc.h"), &.{}),
+        .gfx = cHeader(b, target, optimize, b.path("src/c/gfx.h"), &gfx_libs),
+        .pulse = cHeader(b, target, optimize, b.path("src/c/pulse.h"), &.{"libpulse"}),
+        .libinput = cHeader(b, target, optimize, b.path("src/c/libinput.h"), &.{ "libinput", "libudev" }),
+        .png = cHeader(b, target, optimize, b.path("src/c/png.h"), &.{"libpng16"}),
+        .archive = cHeader(b, target, optimize, b.path("src/c/archive.h"), &.{"libarchive"}),
+    };
 }
 
-pub fn prependEnvPath(b: *std.Build, key: []const u8, dirs: []const u8) void {
-    const env = &b.graph.environ_map;
-    const value = if (env.get(key)) |prev| b.fmt("{s}:{s}", .{ dirs, prev }) else dirs;
-    env.put(key, value) catch @panic("OOM");
+pub fn cHeader(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.lang.Optimize, header: std.Build.LazyPath, libs: []const []const u8) *std.Build.Module {
+    return b.createModule(.{ .root_source_file = cTranslation(b, target, optimize, header, libs).getOutput() });
+}
+
+pub fn cTranslation(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.lang.Optimize, header: std.Build.LazyPath, libs: []const []const u8) *std.Build.Step.TranslateC {
+    const translate = b.addTranslateC(.{ .root_source_file = header, .target = target, .optimize = optimize });
+    for (libs) |lib| translate.linkSystemLibrary(lib, .{});
+    return translate;
+}
+
+/// A directory under the install prefix as a Run argument. The prefix is known
+/// only when the build runs, so it cannot be a string.
+pub fn installed(base: enum { prefix, bin }, sub_path: []const u8) std.Build.LazyPath {
+    return .{ .relative = .{ .base = switch (base) {
+        .prefix => .install_prefix,
+        .bin => .install_bin,
+    }, .sub_path = sub_path } };
 }
 
 pub fn addBass(b: *std.Build, module: *std.Build.Module) void {
@@ -29,7 +63,7 @@ pub fn addBassDsp(b: *std.Build, target: std.Build.ResolvedTarget) void {
         .linkage = .dynamic,
         // Realtime audio code: optimized in every build mode, and no UBSan
         // runtime for PipeWire's dlopen to resolve.
-        .root_module = b.createModule(.{ .target = target, .optimize = .ReleaseFast, .link_libc = true, .sanitize_c = .off }),
+        .root_module = b.createModule(.{ .target = target, .optimize = .fast, .link_libc = true, .sanitize_c = .off }),
     });
     dsp.root_module.addCSourceFile(.{ .file = b.path("src/audio/bass_dsp.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra" } });
     dsp.root_module.linkSystemLibrary("m", .{});
@@ -45,7 +79,7 @@ pub fn addBassDsp(b: *std.Build, target: std.Build.ResolvedTarget) void {
 pub const projection_sources = [_][]const u8{ "src/projection.c", "src/projection_props.c", "src/projection_resolve.c", "src/projection_present.c", "src/projection_pass.c", "src/projection_pick.c" };
 
 /// scene_output.c and its parts (scene_output_internal.h).
-pub const scene_output_sources = [_][]const u8{ "src/scene_output.c", "src/scene_output_collect.c", "src/scene_output_effects.c", "src/scene_output_draw.c" };
+pub const scene_output_sources = [_][]const u8{ "src/scene_output.c", "src/scene_output_collect.c", "src/scene_output_effects.c", "src/scene_output_draw.c", "src/scene_output_ribbon.c", "src/scene_output_snapshot.c" };
 
 pub fn addGlass(b: *std.Build, module: *std.Build.Module, damage_audit: bool) void {
     module.linkSystemLibrary("wlroots-0.20", .{});
@@ -55,11 +89,13 @@ pub fn addGlass(b: *std.Build, module: *std.Build.Module, damage_audit: bool) vo
     module.addCSourceFile(.{ .file = b.path("src/node.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     module.addCSourceFiles(.{ .files = &.{ "src/node_surface.c", "src/node_subsurface_tree.c", "src/node_xdg_shell.c" }, .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     module.addCSourceFile(.{ .file = b.path("src/scene_outputs.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
-    module.addCSourceFiles(.{ .files = &.{ "src/scene_pass.c", "src/scene_pass_draw.c", "src/scene_pass_backdrop.c" }, .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    module.addCSourceFiles(.{ .files = &.{ "src/scene_pass.c", "src/scene_pass_draw.c", "src/scene_pass_backdrop.c", "src/scene_pass_ribbon.c" }, .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     module.addCSourceFiles(.{ .files = &scene_output_sources, .flags = if (damage_audit) &.{ "-std=c11", "-Wall", "-Wextra", "-Werror", "-DREDIWM_DAMAGE_AUDIT" } else &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     module.addCSourceFile(.{ .file = b.path("src/scene_damage.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    module.addCSourceFile(.{ .file = b.path("src/ribbon.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     module.addCSourceFile(.{ .file = b.path("src/glass.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra" } });
     module.addCSourceFile(.{ .file = b.path("src/explicit_sync.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    module.addCSourceFile(.{ .file = b.path("src/switcher_preview.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     module.addCSourceFile(.{ .file = b.path("src/extra_protocols.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
 }
 
@@ -70,6 +106,7 @@ pub fn addGlass(b: *std.Build, module: *std.Build.Module, damage_audit: bool) vo
 pub fn addThumbCodec(b: *std.Build, module: *std.Build.Module) void {
     module.addIncludePath(b.path("src/files"));
     module.addCSourceFile(.{ .file = b.path("src/files/thumb_codec.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    module.addImport("c_thumb_codec", cHeader(b, module.resolved_target.?, module.optimize.?, b.path("src/files/thumb_codec.h"), &.{}));
     inline for (.{ "libjpeg", "libpng16" }) |lib| module.linkSystemLibrary(lib, .{});
 }
 
@@ -82,12 +119,24 @@ pub fn addFilesTerminal(b: *std.Build, module: *std.Build.Module, for_tests: boo
     module.addIncludePath(b.path("src/files/terminal"));
     const flags: []const []const u8 = if (for_tests) &.{ "-std=c11", "-Wall", "-Wextra", "-Werror", "-DFT_TEST" } else &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" };
     module.addCSourceFile(.{ .file = b.path("src/files/terminal/engine.c"), .flags = flags });
+    const engine = cTranslation(b, module.resolved_target.?, module.optimize.?, b.path("src/files/terminal/engine.h"), &.{});
+    if (for_tests) engine.defineCMacro("FT_TEST", "1");
+    module.addImport("c_terminal", b.createModule(.{ .root_source_file = engine.getOutput() }));
     module.linkSystemLibrary("util", .{});
 }
 
 pub fn addVolumes(b: *std.Build, module: *std.Build.Module) void {
     module.addIncludePath(b.path("src/files"));
     module.addCSourceFile(.{ .file = b.path("src/files/volumes.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    module.addImport("c_volumes", cHeader(b, module.resolved_target.?, module.optimize.?, b.path("src/files/volumes.h"), &.{}));
+    inline for (.{ "gio-2.0", "gobject-2.0", "glib-2.0" }) |lib| module.linkSystemLibrary(lib, .{});
+}
+
+/// Files' link to rediwm-player (src/files/player_link.c).
+pub fn addPlayerLink(b: *std.Build, module: *std.Build.Module) void {
+    module.addIncludePath(b.path("src/files"));
+    module.addCSourceFile(.{ .file = b.path("src/files/player_link.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    module.addImport("c_player_link", cHeader(b, module.resolved_target.?, module.optimize.?, b.path("src/files/player_link.h"), &.{}));
     inline for (.{ "gio-2.0", "gobject-2.0", "glib-2.0" }) |lib| module.linkSystemLibrary(lib, .{});
 }
 
@@ -103,17 +152,17 @@ pub fn addShellUi(b: *std.Build, module: *std.Build.Module) void {
 pub fn addShellIcons(b: *std.Build, module: *std.Build.Module) void {
     module.addAnonymousImport("redi-logo", .{ .root_source_file = b.path("assets/redi-logo.svg") });
     module.addAnonymousImport("rediwm-settings-icon", .{ .root_source_file = b.path("assets/icons/rediwm-settings.png") });
-    inline for (.{ "git-branch", "home", "folder", "terminal", "settings", "keyboard", "edit", "mouse", "display", "music", "headphones", "wifi", "ethernet", "globe", "bluetooth", "battery", "notification-bell", "speaker", "speaker-xmark", "power-button", "clock", "lock", "logout", "restart", "eye", "eye-off", "refresh", "cut", "copy", "paste", "trash-outline", "trash", "view-grid", "view-list", "sort", "filter", "zoom-in", "zoom-out", "rotate", "crop", "undo", "save", "fit", "print", "open", "usb-stick", "drive", "eject", "users", "squares" }) |name| {
+    inline for (.{ "git-branch", "home", "folder", "terminal", "settings", "keyboard", "edit", "mouse", "touchpad", "trackball", "display", "music", "headphones", "wifi", "ethernet", "globe", "bluetooth", "battery", "notification-bell", "speaker", "speaker-xmark", "power-button", "clock", "cpu", "ram", "lock", "logout", "restart", "eye", "eye-off", "refresh", "cut", "copy", "paste", "trash-outline", "trash", "view-grid", "view-list", "sort", "filter", "zoom-in", "zoom-out", "rotate", "crop", "undo", "save", "fit", "print", "open", "usb-stick", "drive", "eject", "users", "squares", "divide" }) |name| {
         module.addAnonymousImport("shell-icon-" ++ name, .{ .root_source_file = b.path("assets/icons/" ++ name ++ ".svg") });
     }
 }
 
 /// Localize installed metadata from the same reviewed catalog entries as UI.
-pub fn localizedData(b: *std.Build, tool: *std.Build.Step.Compile, path: []const u8) std.Build.LazyPath {
+pub fn localizedData(b: *std.Build, tool: *std.Build.Step.Compile, prefix: []const u8, path: []const u8) std.Build.LazyPath {
     const run = b.addRunArtifact(tool);
     run.setCwd(b.path("."));
     run.addArg("data");
-    run.addFileArg(b.path(path));
+    run.addFileArg(@import("install_paths.zig").configure(b, path, prefix));
     const result = run.addOutputFileArg(std.fs.path.basename(path));
     run.addDirectoryArg(b.path("po"));
     addCatalogInputs(b, run);
@@ -124,7 +173,8 @@ pub fn localizedData(b: *std.Build, tool: *std.Build.Step.Compile, path: []const
 /// explicitly so edits, review flags and newly added languages invalidate both
 /// compiled UI tables and installed desktop/polkit metadata.
 pub fn addCatalogInputs(b: *std.Build, run: *std.Build.Step.Run) void {
-    var dir = b.build_root.handle.openDir(b.graph.io, "po", .{ .iterate = true }) catch @panic("cannot open po/");
+    b.dependOnDirectoryContents(b.path("po"));
+    var dir = b.root.openDir(b.graph.io, "po", .{ .iterate = true }) catch @panic("cannot open po/");
     defer dir.close(b.graph.io);
     var paths: std.ArrayList([]const u8) = .empty;
     var it = dir.iterate();

@@ -3,6 +3,23 @@
 * `proc.zig`, `collector.zig`, `model.zig` and `actions.zig` have no compositor
   or UI dependencies. IPC reuses the stat reader but keeps its window-only,
   request-driven sampling contract.
+* **`proc.zig` is the interface to the OS.** The record types and arithmetic
+  are `proc_common.zig`; one backend reads them: `proc_linux.zig` (`/proc`, a
+  `Process` holds the `/proc/<pid>` directory open) or `proc_freebsd.zig`
+  (`kern.proc` sysctls; a `Process` holds the `kinfo_proc` taken at open, CPU is
+  in microseconds). Never read
+  `/proc` outside a backend; a new OS needs `Process`, `List`, `cpuTotals`,
+  `cpuCores`, `memoryTotals`, `systemStats` and `ticksPerSecond`. Per-CPU
+  loads pair cores by kernel id, not position (CPUs go offline). Optional footer telemetry
+  lives in `proc_linux_system.zig`; rates reset with the worker generation.
+  CPU and GPU temperatures stay separate; GPU hwmon reads only the die/package
+  channel. Optional NVIDIA NVML (`proc_gpu.zig`) is owned by the active worker,
+  released on pause/minimize and shutdown, and never starts a subprocess.
+  The Linux parsers are pure and tested
+  everywhere through `proc_linux.zig`.
+  `descendants` also supplies the supervisor's teardown tree: Linux walks
+  task children; FreeBSD follows parent links in one `kern.proc` snapshot.
+  Its start stamps must match after a kqueue handle opens, before signaling.
 * A snapshot owns its arena. The worker publishes under its mutex through an
   eventfd; the UI takes ownership. A generation change cancels enumeration and
   publication, resets CPU baselines, and wakes the worker. Inactive workers
@@ -12,6 +29,10 @@
   action opens a pidfd first, checks the proc identity, UIDs and protected exe,
   verifies the pidfd's fdinfo identity and liveness, then signals that fd.
   Never fall back to `kill(pid)`. Tests signal only disposable fixtures.
+* The CPU/RAM cards and the expanded card's collapse button are shared
+  widgets (`App.cards`) that `app_summary.layout` places over hand-painted
+  cards; visible cards toggle expansion, and the hidden card has no size to hit.
+  Expansion is applied after dispatch (`card_request`) and eases `card_t`.
 * `App.ensureWidgets` runs after App has a stable address. Widget trees persist
   across snapshots so focus, presses and field strings survive. Callbacks set
   pending actions; modal tree changes happen after dispatch returns.

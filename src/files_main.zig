@@ -69,7 +69,7 @@ fn resolveTarget(allocator: std.mem.Allocator, environ: std.process.Environ, tar
     errdefer allocator.free(resolved);
 
     var zpath_buf: [4096]u8 = undefined;
-    const zpath = std.fmt.bufPrintZ(&zpath_buf, "{s}", .{resolved}) catch return error.NameTooLong;
+    const zpath = std.fmt.bufPrintSentinel(&zpath_buf, "{s}", .{resolved}, 0) catch return error.NameTooLong;
 
     var stat_buf: c.struct_stat = undefined;
     if (c.stat(zpath, &stat_buf) != 0) {
@@ -133,7 +133,7 @@ pub fn main(init: std.process.Init) void {
                 extern fn g_filename_from_uri([*:0]const u8, ?*?[*:0]u8, ?*anyopaque) ?[*:0]u8;
                 extern fn g_free(?*anyopaque) void;
             };
-            const raw = Gio.g_filename_from_uri(a.dupeZ(u8, source) catch return, null, null) orelse return;
+            const raw = Gio.g_filename_from_uri(a.dupeSentinel(u8, source, 0) catch return, null, null) orelse return;
             defer Gio.g_free(raw);
             torrent_source = a.dupe(u8, std.mem.span(raw)) catch return;
         } else if (!std.mem.startsWith(u8, source, "magnet:?")) torrent_source = std.fs.path.resolve(a, &.{source}) catch return;

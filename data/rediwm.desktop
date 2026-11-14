@@ -1,7 +1,7 @@
 [Desktop Entry]
 Name=RediWM
 Comment=RediWM Wayland compositor
-Exec=rediwm-session
-TryExec=rediwm-session
+Exec=@BINDIR@/rediwm-session
+TryExec=@BINDIR@/rediwm-session
 Type=Application
 DesktopNames=rediwm

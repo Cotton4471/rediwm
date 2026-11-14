@@ -273,18 +273,18 @@ test "response serializers preserve baseline fields rounding and omissions" {
     @setEvalBranchQuota(200_000);
     const fixtures = @import("../ipc_serializer_fixtures.zig");
     var lines = std.mem.splitScalar(u8, @embedFile("../ipc_serializers.jsonl"), '\n');
-    inline for (std.meta.fields(protocol.ResponsePayload)) |field| {
+    inline for (@typeInfo(protocol.ResponsePayload).@"union".field_names) |field_name| {
         inline for (.{ false, true }) |populated| {
             var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
             defer arena.deinit();
             const a = arena.allocator();
-            const payload = @unionInit(protocol.ResponsePayload, field.name, fixtures.sample(field.type, populated));
+            const payload = @unionInit(protocol.ResponsePayload, field_name, fixtures.sample(@FieldType(protocol.ResponsePayload, field_name), populated));
             var list: std.ArrayList(u8) = .empty;
             try protocol.stringifyResponse(.{ .ok = payload }, protocol.BufferWriter{ .list = &list, .allocator = a });
             const actual = try std.json.parseFromSlice(std.json.Value, a, list.items, .{});
             const expected = try std.json.parseFromSlice(std.json.Value, a, lines.next().?, .{});
             expectJsonEqual(expected.value, actual.value) catch |err| {
-                std.debug.print("serializer {s}, populated={}\n", .{ field.name, populated });
+                std.debug.print("serializer {s}, populated={}\n", .{ field_name, populated });
                 return err;
             };
         }

@@ -2,7 +2,7 @@
 Type=Application
 Name=System Monitor
 Comment=View CPU, memory and processes
-Exec=rediwm-monitor
+Exec=@BINDIR@/rediwm-monitor
 Icon=rediwm-monitor
 Terminal=false
 Categories=System;Monitor;

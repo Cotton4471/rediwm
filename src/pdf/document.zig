@@ -273,7 +273,7 @@ pub const Document = struct {
         if (text_ptr == null) return null;
         defer c.g_free(text_ptr);
 
-        return try allocator.dupeZ(u8, std.mem.span(text_ptr.?));
+        return try allocator.dupeSentinel(u8, std.mem.span(text_ptr.?), 0);
     }
 
     /// One rectangle per Unicode character, in top-left page coordinates.
@@ -367,7 +367,7 @@ pub const Document = struct {
                     if (any_action.type == c.POPPLER_ACTION_URI) {
                         const uri_action: *c.PopplerActionUri = @ptrCast(@alignCast(action_raw));
                         if (uri_action.uri) |uri_ptr| {
-                            const uri_str = try allocator.dupeZ(u8, std.mem.span(uri_ptr));
+                            const uri_str = try allocator.dupeSentinel(u8, std.mem.span(uri_ptr), 0);
                             try results.append(allocator, .{ .area = area, .target = .{ .uri = uri_str } });
                         }
                     } else if (any_action.type == c.POPPLER_ACTION_GOTO_DEST) {
@@ -415,7 +415,7 @@ pub const Document = struct {
             if (action_raw) |act| {
                 defer c.poppler_action_free(act);
                 const any_act: *c.PopplerActionAny = @ptrCast(@alignCast(act));
-                const title = if (any_act.title) |t| try allocator.dupeZ(u8, std.mem.span(t)) else try allocator.dupeZ(u8, "");
+                const title = if (any_act.title) |t| try allocator.dupeSentinel(u8, std.mem.span(t), 0) else try allocator.dupeSentinel(u8, "", 0);
 
                 var page_target: ?usize = null;
                 if (any_act.type == c.POPPLER_ACTION_GOTO_DEST) {

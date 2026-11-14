@@ -6,13 +6,8 @@ const std = @import("std");
 const wl = @import("wayland").server.wl;
 const Server = @import("../Server.zig");
 const chooser = @import("../files/chooser.zig");
-const c = @cImport({
-    @cUndef("_FORTIFY_SOURCE");
-    @cDefine("_GNU_SOURCE", "1");
-    @cInclude("sys/mman.h");
-    @cInclude("unistd.h");
-    @cInclude("fcntl.h");
-});
+const c = @import("c");
+const platform = @import("platform");
 
 const a = std.heap.c_allocator;
 /// A path in JSON; anything larger is not a result.
@@ -21,7 +16,7 @@ const max_output = 64 * 1024;
 const Picker = struct {
     server: *Server,
     fd: c_int,
-    pidfd: c_int,
+    process: platform.child.Handle,
     source: ?*wl.EventSource = null,
     output: std.ArrayList(u8) = .empty,
     owner: ?*anyopaque,
@@ -30,8 +25,8 @@ const Picker = struct {
     fn destroy(self: *Picker) void {
         if (active == self) active = null;
         if (self.source) |s| s.remove();
-        _ = std.os.linux.pidfd_send_signal(self.pidfd, .TERM, null, 0);
-        _ = c.close(self.pidfd);
+        self.process.signal(.TERM) catch {};
+        self.process.close();
         _ = c.close(self.fd);
         self.output.deinit(a);
         a.destroy(self);
@@ -112,21 +107,18 @@ pub fn startWithOptions(server: *Server, opts: chooser.Options, owner: ?*anyopaq
     var env = try server.environ.createMap(a);
     defer env.deinit();
     try server.applyChildEnv(&env);
-    var pathbuf: [4096]u8 = undefined;
-    const n = c.readlink("/proc/self/exe", &pathbuf, pathbuf.len);
-    const executable = if (n > 0 and n < pathbuf.len) try std.fmt.allocPrint(alloc, "{s}/rediwm-files", .{std.fs.path.dirname(pathbuf[0..@intCast(n)]).?}) else "rediwm-files";
+    var pathbuf: [platform.exe.max_path]u8 = undefined;
+    const executable: []const u8 = platform.exe.sibling(&pathbuf, "rediwm-files") orelse "rediwm-files";
     var child = try std.process.spawn(server.io, .{ .argv = &.{ executable, "--chooser-stdin" }, .environ_map = &env, .stdin = .{ .file = .{ .handle = input, .flags = .{ .nonblocking = false } } }, .stdout = .pipe });
     errdefer child.kill(server.io);
     @import("../session/app_scope.zig").place(server, child.id.?, "file-chooser");
-    const pidfd_result = std.os.linux.pidfd_open(child.id.?, 0);
-    if (std.os.linux.errno(pidfd_result) != .SUCCESS) return error.PidfdFailed;
-    const pidfd: c_int = @intCast(pidfd_result);
-    errdefer _ = c.close(pidfd);
+    const process = try platform.child.Handle.open(child.id.?);
+    errdefer process.close();
     const fd = child.stdout.?.handle;
     if (c.fcntl(fd, c.F_SETFL, @as(c_int, c.O_NONBLOCK)) < 0) return error.NonblockingFailed;
     const picker = try a.create(Picker);
     errdefer a.destroy(picker);
-    picker.* = .{ .server = server, .fd = fd, .pidfd = pidfd, .owner = owner, .on_done = on_done };
+    picker.* = .{ .server = server, .fd = fd, .process = process, .owner = owner, .on_done = on_done };
     picker.source = try server.wl_server.getEventLoop().addFd(*Picker, fd, .{ .readable = true }, Picker.readable, picker);
     errdefer picker.source.?.remove();
     _ = try @import("../session/child.zig").watch(a, server.wl_server.getEventLoop(), child.id.?, null, null);

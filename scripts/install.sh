@@ -15,6 +15,7 @@
 # the release). That path installs build dependencies, bootstraps a pinned Zig
 # from ziglang.org, gets the source (the current checkout if run from inside
 # one, otherwise a clone) and hands off to scripts/install-session.sh.
+# --prebuilt-only fails instead of building from source (release checks use it).
 # Arguments are forwarded (`curl ... | sh -s -- --dm`).
 #
 # This never replaces the login manager: RediWM is added as a session entry,
@@ -44,6 +45,7 @@ if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo"; fi
 
 # Our own flags are consumed here; everything else goes to install-session.sh.
 BUILD=no
+PREBUILT_ONLY=no
 DEPS_ONLY=no
 DM=no
 n=$#
@@ -51,14 +53,30 @@ while [ "$n" -gt 0 ]; do
     arg=$1; shift; n=$((n - 1))
     case "$arg" in
         --build) BUILD=yes ;;
+        --prefix=*) BUILD=yes; set -- "$@" "$arg" ;;
+        --prebuilt-only) PREBUILT_ONLY=yes ;;
         # For scripts/release-build.sh: install what a release build needs.
         --build-deps-only) BUILD=yes; DEPS_ONLY=yes ;;
         --dm) DM=yes; set -- "$@" "$arg" ;;
         *) set -- "$@" "$arg" ;;
     esac
 done
-# Running from a checkout means the user wants that checkout built.
-if [ -f ./build.zig.zon ] && grep -q '\.name = \.rediwm,' ./build.zig.zon 2>/dev/null; then
+# Build the working files, including uncommitted edits and new files. Also
+# recognize an installer invoked by path from outside the checkout.
+is_source_dir() {
+    [ -f "$1/build.zig.zon" ] && grep -q '\.name = \.rediwm,' "$1/build.zig.zon" 2>/dev/null
+}
+LOCAL_SRC_DIR=""
+if is_source_dir .; then
+    LOCAL_SRC_DIR=$(pwd)
+elif [ -f "$0" ]; then
+    script_repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+    if is_source_dir "$script_repo"; then
+        LOCAL_SRC_DIR=$script_repo
+    fi
+fi
+if [ -n "${REDIWM_INSTALL_PREFIX:-}" ] && [ "$REDIWM_INSTALL_PREFIX" != /usr/local ]; then BUILD=yes; fi
+if [ -n "$LOCAL_SRC_DIR" ]; then
     BUILD=yes
 fi
 
@@ -191,8 +209,11 @@ if [ "$BUILD" = no ] && fetch_release; then
     else
         log "This system doesn't have the packages the prebuilt release needs"
     fi
+    [ "$PREBUILT_ONLY" = no ] || die "the prebuilt release can't be used here (see above); --prebuilt-only forbids building from source"
     log "Falling back to building from source"
 fi
+[ "$PREBUILT_ONLY" = no ] || [ "$BUILD" = no ] || die "--prebuilt-only conflicts with --build"
+[ "$PREBUILT_ONLY" = no ] || die "no prebuilt release could be fetched (see above); --prebuilt-only forbids building from source"
 
 # ---------------------------------------------------------------------------
 # 3. Source build: build dependencies
@@ -214,8 +235,8 @@ log "Installing dependencies (needs sudo)..."
 case "$FAMILY" in
     arch)
         deps="wayland wayland-protocols pixman libxkbcommon \
-            freetype2 harfbuzz fontconfig librsvg cairo pango libinput poppler-glib libseccomp \
-            libarchive libwebp libpng libjpeg-turbo libpulse pipewire pam libcups mesa pkgconf git python readline gcc boost libtorrent-rasterbar json-glib \
+            freetype2 harfbuzz fontconfig librsvg cairo pango libinput poppler-glib \
+            libarchive libwebp libpng libjpeg-turbo libpulse pipewire pam libcups mesa pkgconf git readline gcc boost libtorrent-rasterbar json-glib \
             xorg-xwayland xdg-desktop-portal xdg-desktop-portal-wlr xdg-desktop-portal-gtk"
         if [ "$PRIVATE_WLROOTS" = no ]; then
             deps="wlroots0.20 $deps"
@@ -230,7 +251,7 @@ case "$FAMILY" in
         fi
         ;;
     debian)
-        deps="build-essential meson ninja-build pkg-config git curl ca-certificates xz-utils python3 \
+        deps="build-essential meson ninja-build pkg-config git curl ca-certificates xz-utils \
             bison libexpat1-dev libffi-dev hwdata patchelf \
             libwayland-dev wayland-protocols libdrm-dev libxkbcommon-dev xkb-data libpixman-1-dev \
             libdisplay-info-dev libegl-dev libgles-dev libgbm-dev libinput-dev libseat-dev libudev-dev liblcms2-dev \
@@ -238,15 +259,15 @@ case "$FAMILY" in
             libxcb-res0-dev libxcb-xfixes0-dev libxcb-dri3-dev libxcb-present-dev \
             libxcb-render-util0-dev libxcb-shm0-dev libxcb-xinput-dev xwayland \
             libfreetype-dev libharfbuzz-dev libfontconfig-dev librsvg2-dev libcairo2-dev libpango1.0-dev libgdk-pixbuf-2.0-dev \
-            libglib2.0-dev libarchive-dev libwebp-dev libpng-dev libjpeg-dev libpulse-dev libpipewire-0.3-dev libpam0g-dev libcups2-dev libpoppler-glib-dev libseccomp-dev libreadline-dev libtorrent-rasterbar-dev libjson-glib-dev \
+            libglib2.0-dev libarchive-dev libwebp-dev libpng-dev libjpeg-dev libpulse-dev libpipewire-0.3-dev libpam0g-dev libaudit-dev libcups2-dev libgnutls28-dev libavahi-client-dev libpoppler-glib-dev libreadline-dev libtorrent-rasterbar-dev libjson-glib-dev \
             xdg-desktop-portal xdg-desktop-portal-wlr xdg-desktop-portal-gtk"
         ;;
     fedora)
         deps="wayland-devel wayland-protocols-devel pixman-devel libxkbcommon-devel \
             freetype-devel harfbuzz-devel fontconfig-devel librsvg2-devel cairo-devel pango-devel libinput-devel \
-            libarchive-devel libwebp-devel libpng-devel libjpeg-turbo-devel pulseaudio-libs-devel pipewire-devel pam-devel cups-devel poppler-glib-devel libseccomp-devel \
+            libarchive-devel libwebp-devel libpng-devel libjpeg-turbo-devel pulseaudio-libs-devel pipewire-devel pam-devel cups-devel poppler-glib-devel \
             mesa-libEGL-devel mesa-libGLES-devel glibc-devel readline-devel gcc-c++ json-glib-devel \
-            pkgconf-pkg-config git python3 rb_libtorrent-devel \
+            pkgconf-pkg-config git rb_libtorrent-devel \
             xorg-x11-server-Xwayland \
             xdg-desktop-portal xdg-desktop-portal-wlr xdg-desktop-portal-gtk"
         if [ "$PRIVATE_WLROOTS" = no ]; then
@@ -261,9 +282,9 @@ case "$FAMILY" in
     opensuse)
         deps="wlroots-devel wayland-devel wayland-protocols-devel libpixman-1-0-devel libxkbcommon-devel \
             freetype2-devel harfbuzz-devel fontconfig-devel librsvg-devel cairo-devel pango-devel libinput-devel \
-            libarchive-devel libwebp-devel libpng16-devel libjpeg8-devel libpulse-devel pipewire-devel pam-devel cups-devel libpoppler-glib-devel libseccomp-devel \
+            libarchive-devel libwebp-devel libpng16-devel libjpeg8-devel libpulse-devel pipewire-devel pam-devel cups-devel libpoppler-glib-devel \
             Mesa-libEGL-devel Mesa-libGLESv2-devel glibc-devel readline-devel gcc-c++ json-glib-devel \
-            pkg-config git python3 libtorrent-rasterbar-devel \
+            pkg-config git libtorrent-rasterbar-devel \
             xwayland \
             xdg-desktop-portal xdg-desktop-portal-wlr xdg-desktop-portal-gtk"
         ;;
@@ -272,7 +293,7 @@ case "$FAMILY" in
             media-libs/freetype media-libs/harfbuzz media-libs/fontconfig gnome-base/librsvg x11-libs/cairo x11-libs/pango dev-libs/libinput \
             app-arch/libarchive media-libs/libwebp media-libs/libpng media-libs/libjpeg-turbo media-libs/libpulse media-video/pipewire sys-libs/pam net-print/cups \
             media-libs/mesa sys-libs/readline net-libs/libtorrent-rasterbar dev-libs/json-glib sys-devel/gcc \
-            virtual/pkgconfig dev-vcs/git dev-lang/python \
+            virtual/pkgconfig dev-vcs/git \
             x11-base/xwayland \
             sys-apps/xdg-desktop-portal gui-libs/xdg-desktop-portal-wlr sys-apps/xdg-desktop-portal-gtk"
         ;;
@@ -298,17 +319,13 @@ default_ref() {
     echo "$ref"
 }
 
-if [ -f ./build.zig.zon ] && grep -q '\.name = \.rediwm,' ./build.zig.zon 2>/dev/null; then
-    SRC_DIR=$(pwd)
-    log "Running from an existing checkout at $SRC_DIR"
-elif [ -d "$SRC_DIR/.git" ]; then
-    [ -n "$REPO_REF" ] || REPO_REF=$(default_ref)
-    log "Updating existing checkout at $SRC_DIR"
-    git -C "$SRC_DIR" fetch --depth 1 origin "$REPO_REF"
-    git -C "$SRC_DIR" checkout "$REPO_REF"
-    git -C "$SRC_DIR" reset --hard "origin/$REPO_REF"
+if [ -n "$LOCAL_SRC_DIR" ]; then
+    SRC_DIR=$LOCAL_SRC_DIR
+    log "Building working files at $SRC_DIR (including local changes)"
+elif is_source_dir "$SRC_DIR"; then
+    log "Building working files at $SRC_DIR (including local changes; update this source manually if needed)"
 elif [ -e "$SRC_DIR" ]; then
-    die "$SRC_DIR exists but isn't a git checkout; move it aside or set REDIWM_SRC_DIR and re-run"
+    die "$SRC_DIR exists but isn't a RediWM source directory; move it aside or set REDIWM_SRC_DIR and re-run"
 else
     [ -n "$REPO_REF" ] || REPO_REF=$(default_ref)
     log "Cloning $REPO_URL ($REPO_REF) into $SRC_DIR"

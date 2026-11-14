@@ -1,7 +1,7 @@
 .{
     .name = .rediwm,
-    .version = "0.1.7",
-    .minimum_zig_version = "0.16.0",
+    .version = "0.1.9",
+    .minimum_zig_version = "0.17.0",
     .paths = .{
         "build.zig",
         "build.zig.zon",
@@ -17,22 +17,9 @@
             .url = "https://www.leonerd.org.uk/code/libvterm/libvterm-0.3.3.tar.gz",
             .hash = "N-V-__8AAFwIBQAS1j3S14ozuJ18ebNtLQ-c5Kl6W4J7PoJt",
         },
-        // v0.20.1 is the current Zig 0.16-compatible release for wlroots 0.20.
-        .wlroots = .{
-            .url = "https://github.com/swaywm/zig-wlroots/archive/refs/tags/v0.20.1.tar.gz",
-            .hash = "wlroots-0.20.1-jmOlcqNVBAB3uB5oqBTzpRlwu-FmMyyZMVAWCe5kmcSt",
-        },
-        .pixman = .{
-            .url = "https://codeberg.org/ifreund/zig-pixman/archive/v0.3.0.tar.gz",
-            .hash = "pixman-0.3.0-LClMnz2VAAAs7QSCGwLimV5VUYx0JFnX5xWU6HwtMuDX",
-        },
         .wayland = .{
-            .url = "https://codeberg.org/ifreund/zig-wayland/archive/v0.6.0.tar.gz",
-            .hash = "wayland-0.6.0-lQa1kqz8AQADQmdNJsNhLoNHcnEGEUjrOaPV-dtEnEmX",
-        },
-        .xkbcommon = .{
-            .url = "https://codeberg.org/ifreund/zig-xkbcommon/archive/v0.3.0.tar.gz",
-            .hash = "xkbcommon-0.3.0-VDqIe3K9AQB2fG5ZeRcMC9i7kfrp5m2rWgLrmdNn9azr",
+            .url = "https://codeberg.org/ifreund/zig-wayland/archive/v0.7.0.tar.gz",
+            .hash = "wayland-0.7.0-lQa1kuP8AQD5dW7_o-VKLVD_QbqXe7Zob78r2su7Pyex",
         },
     },
     .fingerprint = 0x6c5977b13cbceb1,

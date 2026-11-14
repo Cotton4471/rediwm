@@ -1,6 +1,7 @@
 //! Standalone System Monitor Wayland host. Uses the same decoration, input,
 //! cursor and released-buffer lifecycle as the other native RediWM clients.
 const std = @import("std");
+const platform = @import("platform");
 const ClientCursor = @import("ui").client_cursor;
 const wl = @import("wayland").client.wl;
 const xdg = @import("wayland").client.xdg;
@@ -338,7 +339,7 @@ pub const Client = struct {
                     if (self.outputs.items.len > 0) {
                         const output = self.outputs.items[0];
                         if (output.logical_width > 0) width = std.math.clamp(output.logical_width - 160, 640, 1080);
-                        if (output.logical_height > 0) height = std.math.clamp(output.logical_height - 200, 400, 640);
+                        if (output.logical_height > 0) height = std.math.clamp(output.logical_height - 200, 480, 640);
                     }
                     self.app.resize(width, height);
                 }
@@ -347,7 +348,7 @@ pub const Client = struct {
                     suspended = true;
                 };
                 self.app.setSuspended(suspended);
-                self.xdg_toplevel.setMinSize(640, 400 + tbh);
+                self.xdg_toplevel.setMinSize(640, 480 + tbh);
                 self.app.dirty = true;
             },
             .close => {
@@ -756,7 +757,7 @@ const Buffer = struct {
 };
 
 pub fn run(init: std.process.Init) !void {
-    _ = c.signal(c.SIGPIPE, c.SIG_IGN);
+    platform.process.ignoreBrokenPipes();
     defer @import("../files/settings.zig").deinitTheme();
     var watch = try @import("settings_watch.zig").Watch.init(init.io, init.minimal.environ);
     defer watch.deinit();
@@ -819,7 +820,7 @@ pub fn run(init: std.process.Init) !void {
     // Real min size is set from xdgToplevelEvent once the decoration mode
     // (and thus titlebar height) is known; this is just a safe pre-configure
     // default sized for the worst case (self-decorated).
-    self.xdg_toplevel.setMinSize(640, 400 + CSD_TITLEBAR_H);
+    self.xdg_toplevel.setMinSize(640, 480 + CSD_TITLEBAR_H);
 
     // Prefer server-side decorations; the compositor may still tell us via
     // decorationEvent to self-decorate (e.g. it has no SSD implementation),
@@ -869,7 +870,7 @@ pub fn run(init: std.process.Init) !void {
         var fds = [_]c.struct_pollfd{
             .{ .fd = display.getFd(), .events = @intCast(c.POLLIN | @as(c_int, if (flushed == .AGAIN) c.POLLOUT else 0)), .revents = 0 },
             .{ .fd = self.app.worker.notify_fd, .events = c.POLLIN, .revents = 0 },
-            .{ .fd = watch.fd, .events = c.POLLIN, .revents = 0 },
+            .{ .fd = watch.fd(), .events = c.POLLIN, .revents = 0 },
         };
         const now = key_repeat.nowMs();
         var timeout: c_int = if (self.key_repeat.timeoutMs(now)) |wait| @intCast(@min(wait, 60_000)) else -1;

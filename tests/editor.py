@@ -22,6 +22,21 @@ def run():
         (docs / "binary.txt").write_bytes(b"binary\x00data")
         from PIL import Image
         Image.new("RGB", (40, 40), "red").save(docs / "z image.png")
+        gamma = docs / "gamma.txt"
+        gamma.write_text("from the recent list\n")
+        # An older shared history: a text file, a missing one and a picture. Open
+        # Recent must offer only the first.
+        entries = "".join(
+            f'<bookmark href="{path.as_uri()}" added="2020-01-01T00:00:00Z" modified="2020-01-01T00:00:00Z" visited="2020-01-01T00:00:0{n}Z">'
+            f'<info><metadata owner="http://freedesktop.org"><mime:mime-type type="{mime}"/>'
+            '<bookmark:applications><bookmark:application name="Seed" exec="seed %f" modified="2020-01-01T00:00:00Z" count="1"/></bookmark:applications>'
+            '</metadata></info></bookmark>'
+            for n, (path, mime) in enumerate([(gamma, "text/plain"), (docs / "gone.txt", "text/plain"), (docs / "z image.png", "image/png")]))
+        (tmp / "data").mkdir()
+        (tmp / "data" / "recently-used.xbel").write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>\n<xbel version="1.0" '
+            'xmlns:bookmark="http://www.freedesktop.org/standards/desktop-bookmarks" '
+            'xmlns:mime="http://www.freedesktop.org/standards/shared-mime-info">' + entries + '</xbel>\n')
         config = tmp / "config.toml"
         config.write_text('[compositor]\nxwayland = false\n')
         env = dict(os.environ, HOME=directory, XDG_RUNTIME_DIR=directory,
@@ -80,7 +95,7 @@ def run():
                     box = ipc.get_window_debug(win["id"])["client_box"]
                     # CSD hosts the menu in its header; SSD uses the tab bar.
                     click(win, box["width"] - (132 if csd else 18), 23)
-                    separators = int(row >= 2) + int(row >= 4)
+                    separators = int(row >= 3) + int(row >= 5)
                     click(win, box["width"] - 200, (52 if csd else 44) + 6 + row * 32 + separators * 7 + 16)
 
                 def window_control(offset):
@@ -120,10 +135,30 @@ def run():
                 title("alpha.txt")
                 key(21, ctrl=True)  # redo x
                 title("* alpha.txt")
-                menu_action(2)  # Save through the application menu.
+                menu_action(3)  # Save through the application menu.
                 wait_for(lambda: first.read_bytes() == b"\xef\xbb\xbfhello\r\nworld\r\nx", "save bytes and BOM/CRLF")
                 title("alpha.txt")
                 print("Space opens text; typing, undo/redo and lossless save", flush=True)
+
+                # A load and a save add the file to the shared history under the editor's name.
+                history = tmp / "data" / "recently-used.xbel"
+                wait_for(lambda: "RediWM Editor" in history.read_text() and "alpha.txt" in history.read_text(), "editor records recent files")
+                # Open Recent lists the newest text file first (the one just saved), then the
+                # seeded one; the missing file and the picture are left out.
+                def recent_entry(index):
+                    win = editor()
+                    box = ipc.get_window_debug(win["id"])["client_box"]
+                    click(win, box["width"] - (132 if csd else 18), 23)
+                    y = (52 if csd else 44) + 6 + 2 * 32 + 16
+                    click(win, box["width"] - 200, y)  # the row opens its submenu beside the menu
+                    click(win, box["width"] - 460, y + index * 32)
+                recent_entry(1)
+                win = title("gamma.txt")
+                assert "(2/2)" in win["title"], win
+                key(17, ctrl=True)  # close it again
+                win = title("alpha.txt")
+                assert "(1/1)" in win["title"], win
+                print("Open Recent lists text files that exist and opens one", flush=True)
 
                 ipc.focus_window(files["id"])
                 key(106)  # next file in grid
@@ -201,6 +236,53 @@ def run():
                 title("beta.txt")
                 print("find, selection replacement and undo", flush=True)
 
+                # Replace one and all through the real fields and buttons. A
+                # replacement containing its query must not be searched again.
+                key(30, ctrl=True)
+                ipc.type_text("cat cat cafe cat")
+                key(31, ctrl=True)
+                wait_for(lambda: second.read_text() == "cat cat cafe cat", "replacement fixture saved")
+                key(35, ctrl=True)  # Ctrl+H
+                ipc.type_text("cat")
+                key(15)  # Tab focuses replacement
+                ipc.type_text("catfish")
+                if output := os.environ.get("REDIWM_EDITOR_REPLACE_PREVIEW"):
+                    ipc.screenshot(path=output)
+                key(28)  # Replace current/next match
+                key(31, ctrl=True)
+                wait_for(lambda: second.read_text() == "catfish cat cafe cat", "replace one")
+                key(44, ctrl=True)  # Undo while the replacement field has focus
+                key(31, ctrl=True)
+                wait_for(lambda: second.read_text() == "cat cat cafe cat", "replace-one undo")
+                box = ipc.get_window_debug(editor()["id"])["client_box"]
+                click(editor(), box["width"] - 76, header + 99)  # Replace All
+                key(31, ctrl=True)
+                wait_for(lambda: second.read_text() == "catfish catfish cafe catfish", "replace all without rescanning replacements")
+                key(44, ctrl=True)
+                key(31, ctrl=True)
+                wait_for(lambda: second.read_text() == "cat cat cafe cat", "replace-all single undo")
+                key(21, ctrl=True)
+                key(31, ctrl=True)
+                wait_for(lambda: second.read_text() == "catfish catfish cafe catfish", "replace-all redo")
+                key(1)
+                menu_action(6)  # Replace is also discoverable in the menu
+                ipc.type_text("catfish")
+                key(15)
+                key(14)  # Empty replacement deletes every match
+                key(28, ctrl=True)
+                key(31, ctrl=True)
+                wait_for(lambda: second.read_text() == "  cafe ", "replace all with empty text")
+                key(35, ctrl=True)
+                ipc.type_text("missing")
+                key(15)
+                ipc.type_text("unused")
+                key(28, ctrl=True)
+                key(31, ctrl=True)
+                title("beta.txt")
+                assert second.read_text() == "  cafe ", "no-match replace changed text"
+                key(1)
+                print("replace one/all, empty replacement, no match and atomic undo/redo", flush=True)
+
                 # Drive the actual text-input-v3 client with the existing IM peer.
                 im_log = tmp / "ime.log"
                 with im_log.open("w") as log:
@@ -257,6 +339,109 @@ def run():
                 window_control(24)  # close all clean tabs
                 wait_for(lambda: not windows("rediwm-editor"), "editor closes")
                 print("binary rejection and clean window close", flush=True)
+
+                # Unsaved text outlives a kill, a signal and closing the window.
+                import json, signal
+                drafts = tmp / "state/rediwm/editor-drafts"
+
+                def kept():
+                    try:
+                        return json.loads((drafts / "session.json").read_text())["tabs"]
+                    except (OSError, ValueError):
+                        return None
+
+                def gone(proc):
+                    wait_for(lambda: proc.poll() is not None and not windows("rediwm-editor"), "editor exits")
+
+                notes = docs / "draft-notes.txt"
+                notes.write_text("on disk\n")
+                proc = start("rediwm-editor", notes)
+                win = title("draft-notes.txt")
+                ipc.focus_window(win["id"])
+                key(107, ctrl=True)
+                ipc.type_text("typed in file")
+                key(49, ctrl=True)  # new tab
+                ipc.type_text("never saved note")
+                title("* Untitled")
+                wait_for(lambda: len(kept() or []) == 2, "drafts written after a pause in typing")
+                assert oct((drafts / "session.json").stat().st_mode & 0o777) == "0o600"
+                assert oct(drafts.stat().st_mode & 0o777) == "0o700"
+                proc.send_signal(signal.SIGKILL)
+                proc.wait()
+                wait_for(lambda: not windows("rediwm-editor"), "killed editor unmaps")
+                assert notes.read_text() == "on disk\n"
+
+                proc = start("rediwm-editor")
+                win = title("* Untitled")
+                assert "(2/2)" in win["title"], win["title"]
+                ipc.focus_window(win["id"])
+                key(104, ctrl=True)  # previous tab: the file, edited, still unsaved
+                title("* draft-notes.txt")
+                key(31, ctrl=True)
+                wait_for(lambda: notes.read_bytes() == b"on disk\ntyped in file", "restored file draft saves over its file")
+                title("draft-notes.txt")
+                wait_for(lambda: len(kept() or []) == 1, "a saved tab leaves the drafts")
+                assert len(list(drafts.glob("*.txt"))) == 1
+
+                # Closing the window asks about what is unsaved, like closing a
+                # tab; the drafts are for a session that ends some other way.
+                ipc.action("close_window", {"id": editor()["id"]})
+                time.sleep(.3)
+                assert editor(), "window closed on unsaved work without asking"
+                key(1)  # cancel
+                win = title("* Untitled")
+                assert "(1/1)" in win["title"], win["title"]
+                ipc.focus_window(win["id"])
+                ipc.type_text(" and more")
+                time.sleep(.3)
+                proc.terminate()  # SIGTERM before the pause: written on the way out
+                gone(proc)
+                assert any(b"never saved note and more" in p.read_bytes() for p in drafts.glob("*.txt")), "SIGTERM flushed the last typing"
+                proc = start("rediwm-editor")
+                win = title("* Untitled")
+                ipc.focus_window(win["id"])
+
+                # Discarding on purpose is the only way to lose it.
+                key(17, ctrl=True)
+                box = ipc.get_window_debug(editor()["id"])["client_box"]
+                header = 46 if csd else 0
+                click(editor(), (box["width"]-420)/2+200, (box["height"]-header-170)/2+130+header)
+                gone(proc)
+                assert kept() == [] and not list(drafts.glob("*.txt")), "discarded draft is removed"
+                proc = start("rediwm-editor")
+                title("Untitled")
+                assert "(1/1)" in editor()["title"] and not editor()["title"].startswith("*")
+                key(17, ctrl=True)
+                gone(proc)
+                print("unsaved text survives kill and signal, and closing asks, until discarded", flush=True)
+
+                # Many tabs share the strip down to a minimum width, then it scrolls.
+                proc = start("rediwm-editor")
+                win = title("Untitled")
+                ipc.focus_window(win["id"])
+                for _ in range(11):
+                    key(49, ctrl=True)
+                assert "(12/12)" in title("Untitled")["title"]
+                box = ipc.get_window_debug(editor()["id"])["client_box"]
+                header = 46 if csd else 0
+                strip = box["width"] - (40 if csd else 80)
+                assert strip / 12 < 112 < 12 * 112 - strip + 1, strip
+                # Away from the close buttons, which sit at the right of each tab.
+                click(editor(), strip - 60, header + 18)
+                assert "(12/12)" in title("Untitled")["title"], "the newest tab is scrolled into view"
+                reached = []
+                for dy in (2000, -2000):
+                    ipc.move_cursor(round(box["x"] + 300), round(box["y"] + header + 18))
+                    ipc.scroll(0, dy)
+                    time.sleep(.2)
+                    click(editor(), 60, header + 18)
+                    reached.append(int(editor()["title"].rsplit("(", 1)[1].split("/")[0]))
+                far = int((60 + 12 * 112 - strip) // 112) + 1
+                assert sorted(reached) == [1, far], ("the wheel scrolls the strip to both ends", reached, far)
+                for _ in range(12):
+                    key(17, ctrl=True)
+                gone(proc)
+                print("tabs share the strip, shrink to a minimum and scroll", flush=True)
 
                 # Beyond the old 16 MiB limit, and past the size where a save is
                 # copied: opening must not lay the whole text out, End must reach

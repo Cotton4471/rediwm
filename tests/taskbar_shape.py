@@ -15,9 +15,10 @@ from ui_driver import UIDriver
 BAR = 44
 
 
-def expected_box(output, gap, length, top=False):
+def expected_box(output, gap, length, top=False, alignment="center"):
     width = max(min(420, output["w"]), min(output["w"], round(output["w"] * length / 100)))
-    return {"x": (output["w"] - width) // 2, "y": gap if top else output["h"] - BAR - gap,
+    x = {"left": 0, "center": (output["w"] - width) // 2, "right": output["w"] - width}[alignment]
+    return {"x": x, "y": gap if top else output["h"] - BAR - gap,
             "width": width, "height": BAR}
 
 
@@ -84,6 +85,22 @@ def run():
                 expected = expected_box(output, gap, length)
                 wait_for(lambda: bar_box() == expected, f"bar did not float: {bar_box()} != {expected}")
 
+                # Inline choices move the whole bar and survive a page rebuild.
+                assert ui.find("taskbar_alignment")["selected_index"] == 1
+                for alignment, index in (("left", 0), ("right", 2), ("center", 1)):
+                    widget = ui.scroll_into_view("taskbar_alignment")
+                    box = widget["global_box"]
+                    ipc.click_at(round(box["x"] + box["width"] * (index + .5) / 3),
+                                 round(box["y"] + box["height"] / 2))
+                    ipc.wait_for_panel_settled("control_center")
+                    wait_for(lambda: bar_box() == expected_box(output, gap, length, alignment=alignment),
+                             f"taskbar alignment {alignment}")
+                    assert tomllib.loads(config_path.read_text())["compositor"]["taskbar_alignment"] == alignment
+                    ipc.close_panel("control_center")
+                    ipc.action("open_appearance")
+                    ipc.wait_for_panel_settled("control_center")
+                    assert ui.find("taskbar_alignment")["selected_index"] == index
+
                 # A maximized window gives up the gap along with the bar.
                 ipc.wait_for("window_geometry_settled", window_id=win_id)
                 floating = ipc.get_window_debug(win_id)["chrome_box"]
@@ -114,6 +131,14 @@ def run():
                 wait_for(lambda: bar_box() == expected, f"theme geometry on top: {bar_box()} != {expected}")
                 wait_for(lambda: (lambda b: b["y"] == BAR + 20 and b["y"] + b["height"] == output["h"])(
                     ipc.get_window_debug(win_id)["chrome_box"]), f"maximized window under the top bar: {ipc.get_window_debug(win_id)['chrome_box']}")
+
+                for alignment in ("left", "right", "center"):
+                    current = tomllib.loads(config_path.read_text())["compositor"]["taskbar_alignment"]
+                    config_path.write_text(config_path.read_text().replace(
+                        f'taskbar_alignment = "{current}"', f'taskbar_alignment = "{alignment}"'))
+                    ipc.reload_config()
+                    wait_for(lambda: bar_box() == expected_box(output, 20, 50, top=True, alignment=alignment),
+                             f"reloaded top taskbar alignment {alignment}")
 
                 # Too short a bar keeps room for its items; a bad value is refused.
                 config_path.write_text(config_path.read_text().replace("taskbar_length = 50", "taskbar_length = 20"))

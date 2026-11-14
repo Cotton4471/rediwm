@@ -33,7 +33,7 @@ pub const source =
     \\selection_alpha = 0.35       # highlight opacity when it follows the accent
     \\taskbar_size = 44.0         # taskbar height in pixels (36.0 to 84.0)
     \\# taskbar_edge_gap = 0       # floating taskbar: px between it and the screen edge (0–64)
-    \\# taskbar_length   = 100     # percent of the screen edge it spans, centred (20–100)
+    \\# taskbar_length   = 100     # percent of the screen edge it spans (20–100)
     \\# taskbar_radius   = 0       # corner radius in px; a pill at half the taskbar size
     \\# taskbar_outline_width = 1  # the bar's outline, px (0–8); colour: taskbar_outline
     \\# taskbar_outline = "rgba(255,255,255,0.06)"   # unset follows border_soft
@@ -89,13 +89,17 @@ pub const source =
     \\#                          # which smooth wheel scrolling themselves
     \\wheel_debounce_ms = 60        # 0-200; ignore a wheel click against the run this soon after
     \\                              # the last one (worn wheels bounce); 0 = off
+    \\left_handed      = false     # true swaps left/right mouse buttons (touchpad: tap and click too)
     \\tap_to_click      = true
     \\tap_drag          = true
     \\disable_while_typing = true
     \\disable_while_typing_touchpad = true
     \\# Empty XKB names use XKB_DEFAULT_* or system defaults.
-    \\xkb_layout = ""              # e.g. "us,ru"
-    \\xkb_variant = ""
+    \\# Several layouts are input sources (at most 4): the taskbar shows the active
+    \\# one and switches on click; super+shift+space cycles them.
+    \\xkb_layout = ""              # e.g. "fr" for AZERTY, "us,ru"
+    \\xkb_variant = ""             # by position, e.g. ",nodeadkeys"
+    \\xkb_labels = ""              # optional indicator texts by position, e.g. ",,JP"
     \\xkb_options = ""             # e.g. "grp:caps_toggle"
     \\xkb_model = ""
     \\key_repeat_delay  = 400       # ms
@@ -104,7 +108,13 @@ pub const source =
     \\cursor_size       = 32
     \\caret_blink_ms    = 1060      # full on+off cycle; 0 = never blink
     \\caret_blink_timeout = 10      # seconds idle before it goes solid; 0 = never
-    \\caret_motion_ms   = 80        # glide between positions; 0 = snap
+    \\caret_motion_ms   = 80        # glide between positions (editor lines glide 1.5x as long); 0 = snap
+    \\# Pointer values above are defaults. Settings > Input saves only changed
+    \\# values in [[input_device]] records keyed by a stable generated id.
+    \\# Omitted device fields inherit these defaults; delete a field to reset it.
+    \\# Device fields: pointer_speed, natural_scroll, left_handed, tap_to_click,
+    \\# tap_drag, disable_while_typing. The latter and speed inherit the *_touchpad
+    \\# defaults on touchpads. invert_scroll and pan_speed always remain global.
     \\
     \\# ───────────────────────────────────────────────
     \\# Compositor behaviour
@@ -119,6 +129,12 @@ pub const source =
     \\floating_apps = []          # app ID glob patterns that float in workspaces
     \\# Allow fullscreen clients to request asynchronous presentation (may tear).
     \\allow_tearing = false
+    \\# Render as late as the display allows, so input made just before a refresh
+    \\# still reaches it. Only displays that report presentation times qualify
+    \\# (DRM; not VRR, tearing or nested ones), and it steps back by itself when
+    \\# deadlines are missed. The margin is the least safety time kept (ms).
+    \\late_render = false
+    \\late_render_margin_ms = 2.0
     \\# Only windows launched with the chrome + join that window’s tabs.
     \\window_tab_apps = []       # app IDs; Appearance provides a checkbox list
     \\# Desktop application IDs; empty keeps Files and the automatic terminal.
@@ -136,9 +152,11 @@ pub const source =
     \\dock_pinned_apps = [] # desktop entry IDs pinned by dragging them from the start menu
     \\# Taskbar sections, ordered within each section; prefix with - to hide an item.
     \\taskbar_position = "bottom" # top or bottom
-    \\taskbar_items = ["left:start", "left:windows", "right:capture", "right:tray", "right:battery", "~right:wifi", "~right:wired", "right:volume", "right:clock", "-right:power"]
+    \\taskbar_alignment = "center" # left, center or right; visible below 100% length
+    \\taskbar_items = ["left:start", "left:windows", "right:capture", "right:tray", "right:battery", "~right:wifi", "~right:wired", "~right:input_source", "right:volume", "right:clock", "-right:power"]
     \\# A ~ prefix (~right:wifi, ~right:wired) shows the item only while a wireless adapter
-    \\# exists, or a cable is connected; a plain or - entry always shows or hides it.
+    \\# exists, or a cable is connected, and ~right:input_source while there is more than
+    \\# one keyboard layout or input method; a plain or - entry always shows or hides it.
     \\# Hiding capture (-right:capture) removes the recording/sharing indicator; not recommended.
     \\focus_follows_mouse   = false
     \\canvas_columns        = 3      # screens wide (1-10)
@@ -159,7 +177,10 @@ pub const source =
     \\drag_scale            = 1.002  # drag lift multiplier, 1.000-1.100
     \\dodge_file_drags      = true   # a file manager slides aside while you drag a file out of it
     \\files_single_click_open = true # Files: one click on an icon opens the file or folder
+    \\files_audio_player    = true # Files: play audio files in the built-in player, with a play button on each row
+    \\switcher_style        = "linear" # linear or circular; circular stacks windows from the same app
     \\switcher_opacity      = 1.0   # 0.0-1.0, background only; previews stay opaque
+    \\switcher_circle_bg    = false # circular style only: paint a disc behind it, using window chrome's opacity/darkness
     \\inactive_opacity      = 1.0   # 0.0-1.0, 1.0 = no change
     \\# terminal_opacity   = 0.9   # 0.0-1.0 terminal background (Foot, kitty, Alacritty, Ghostty, WezTerm); new windows only. Unset keeps their own
     \\inactive_dim          = true  # windows that are not the focus lose a little brightness and colour
@@ -169,6 +190,7 @@ pub const source =
     \\xwayland_native_scaling = false # sharp X11 apps on fractional scales (requires restart)
     \\xwayland_scale = 0 # global render factor: 0 = automatic, 1.0-4.0 = explicit (requires restart)
     \\dark_mode             = false # apps and web pages prefer dark (live; via the Settings portal)
+    \\follow_app_colors     = false # keep GTK/Qt application colors in sync with the main theme
     \\placeholder_delay_ms  = 0     # show splash only if app hasn't appeared after N ms (0 disables)
     \\# wallpaper = ""               # empty = RediWM's; a file in ~/.local/share/rediwm/wallpapers, or a path
     \\lid_close             = "display_off" # closing the laptop lid: display_off (built-in screen off while another display is on), lock, suspend, ignore
@@ -189,6 +211,31 @@ pub const source =
     \\# ───────────────────────────────────────────────
     \\# Animations — springs by default; hot-reload keeps in-flight velocity
     \\# ───────────────────────────────────────────────
+    \\# Optional soft flame trails while dragging windows. No effect resources or
+    \\# animation wakeups while disabled. Respects animations/reduced motion.
+    \\# Settings → Appearance → Effects switches each one on and off.
+    \\# [effects.window_move]
+    \\# enabled = false
+    \\# preset = "soft_flame"
+    \\# Minimizing follows window_move unless configured separately:
+    \\# [effects.window_minimize]
+    \\# enabled = true
+    \\# preset = "soft_flame"
+    \\# Resizing also follows window_move unless configured separately:
+    \\# [effects.window_resize]
+    \\# enabled = true
+    \\# preset = "soft_flame"
+    \\# [effects.presets.soft_flame]
+    \\# type = "flame_ribbon"
+    \\# color = "#ff1820"
+    \\# core_color = "#ffe0c0"
+    \\# opacity = 0.9
+    \\# width_px = 56
+    \\# max_length_px = 420
+    \\# lifetime_ms = 3000        # 50–10000; linger after movement
+    \\# turbulence = 0.3
+    \\# quality = "balanced"       # low | balanced | high
+    \\#
     \\# [animations]
     \\# enabled = true
     \\# speed = 1.0                 # 0 = jump to the target; 0.5 = half speed
@@ -337,6 +384,7 @@ pub const source =
     \\"super+b"           = "spawn firefox"
     \\"super+e"           = "spawn default-file-manager"
     \\"super+space"       = "toggle_start_menu"
+    \\"super+shift+space" = "input_source_next"
     \\
     \\# Window management
     \\"super+q"           = "close_window"
@@ -359,6 +407,7 @@ pub const source =
     \\"super+0"           = "zoom_reset"
     \\
     \\# Camera
+    \\"super+a"           = "toggle_overview"
     \\"super+shift+equal" = "camera_zoom_in"
     \\"super+shift+minus" = "camera_zoom_out"
     \\"super+shift+0"     = "camera_zoom_reset"

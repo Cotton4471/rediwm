@@ -265,6 +265,8 @@ static void shaped_gates(struct rediwm_scene_renderer *r, struct wlr_allocator *
     gate_no_seams(r, buf, &img);
     gate_border_partition(r, buf, &img, &ref);
     gate_premultiplied(r, buf, &img);
+    gate_polygon(r, buf, &img, &ref);
+    gate_sector(r, buf, &img);
     gate_dim(r, buf, &img);
     gate_opaque_cover(r, buf, &img, &ref);
     gate_shadow(r, buf, &img);

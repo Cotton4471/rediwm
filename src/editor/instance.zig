@@ -1,14 +1,6 @@
 //! One editor per Wayland display. A private runtime socket receives open requests.
 const std = @import("std");
-const c = @cImport({
-    @cUndef("_FORTIFY_SOURCE");
-    @cInclude("sys/socket.h");
-    @cInclude("sys/un.h");
-    @cInclude("sys/file.h");
-    @cInclude("sys/stat.h");
-    @cInclude("unistd.h");
-    @cInclude("fcntl.h");
-});
+const c = @import("c");
 const a = std.heap.c_allocator;
 pub const Request = struct { path: []const u8 = "", token: []const u8 = "" };
 pub const Instance = struct {
@@ -17,7 +9,7 @@ pub const Instance = struct {
     primary: bool,
     pub fn init(environ: std.process.Environ) !Instance {
         const runtime = environ.getPosix("XDG_RUNTIME_DIR") orelse return error.NoRuntimeDirectory;
-        const dir = try a.dupeZ(u8, runtime);
+        const dir = try a.dupeSentinel(u8, runtime, 0);
         defer a.free(dir);
         var st: c.struct_stat = undefined;
         if (c.lstat(dir, &st) != 0 or st.st_mode & c.S_IFMT != c.S_IFDIR or st.st_uid != c.getuid() or st.st_mode & 0o077 != 0) return error.RuntimeDirectoryNotPrivate;
@@ -38,11 +30,11 @@ pub const Instance = struct {
         const fd = c.socket(c.AF_UNIX, c.SOCK_DGRAM | c.SOCK_CLOEXEC | c.SOCK_NONBLOCK, 0);
         if (fd < 0) return error.SocketFailed;
         errdefer _ = c.close(fd);
-        if (c.connect(fd, @ptrCast(&address), @sizeOf(c.struct_sockaddr_un)) == 0) return .{ .fd = fd, .path = path, .primary = false };
+        if (std.c.connect(fd, @ptrCast(&address), @sizeOf(c.struct_sockaddr_un)) == 0) return .{ .fd = fd, .path = path, .primary = false };
         const err = std.posix.errno(@as(c_int, -1));
         if (err != .NOENT and err != .CONNREFUSED) return error.ConnectFailed;
         _ = c.unlink(path);
-        if (c.bind(fd, @ptrCast(&address), @sizeOf(c.struct_sockaddr_un)) != 0) return error.BindFailed;
+        if (std.c.bind(fd, @ptrCast(&address), @sizeOf(c.struct_sockaddr_un)) != 0) return error.BindFailed;
         _ = c.chmod(path, 0o600);
         return .{ .fd = fd, .path = path, .primary = true };
     }

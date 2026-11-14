@@ -2,13 +2,11 @@
 // text.zig; this module answers "which installed file covers this character
 // or family?" so fallback does not hardcode paths.
 //
-// fontconfig.h is a clean C API (no glib), so it @cInclude's unlike rsvg.
+// fontconfig.h is a clean C API (no glib), so it is translated, unlike rsvg.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const c = @cImport({
-    @cInclude("fontconfig/fontconfig.h");
-});
+const c = @import("c_gfx");
 
 const log = std.log.scoped(.fontconfig);
 
@@ -211,7 +209,7 @@ fn candidateFromPattern(allocator: Allocator, font: *c.FcPattern) ?Candidate {
     var cs: ?*c.FcCharSet = null;
     if (c.FcPatternGetCharSet(font, c.FC_CHARSET, 0, &cs) != c.FcResultMatch) return null;
     const copied = c.FcCharSetCopy(cs orelse return null) orelse return null;
-    const path = allocator.dupeZ(u8, file) catch {
+    const path = allocator.dupeSentinel(u8, file, 0) catch {
         c.FcCharSetDestroy(copied);
         return null;
     };

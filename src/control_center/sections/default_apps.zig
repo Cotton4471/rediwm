@@ -78,7 +78,7 @@ extern fn g_app_info_reset_type_associations(content_type: [*:0]const u8) void;
 extern fn g_object_unref(object: *anyopaque) void;
 
 fn setDirectoryDefault(id: []const u8) !void {
-    const terminated = try gpa.dupeZ(u8, if (id.len == 0) "rediwm-files.desktop" else id);
+    const terminated = try gpa.dupeSentinel(u8, if (id.len == 0) "rediwm-files.desktop" else id, 0);
     defer gpa.free(terminated);
     const app = g_desktop_app_info_new(terminated) orelse return error.ApplicationUnavailable;
     defer g_object_unref(app);

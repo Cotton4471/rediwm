@@ -16,6 +16,7 @@ pub const window_rules = @import("window_rules.zig");
 pub const WindowRule = window_rules.WindowRule;
 pub const sandbox_allow = @import("sandbox_allow.zig");
 pub const SandboxAllowRule = sandbox_allow.SandboxAllowRule;
+pub const input_device = @import("input_device.zig");
 const anim = @import("ui").anim;
 const anim_cfg = @import("animations.zig");
 const output_transform = @import("output_transform.zig");
@@ -92,6 +93,9 @@ pub const InputConfig = struct {
     xkb_variant: []const u8 = "",
     xkb_options: []const u8 = "",
     xkb_model: []const u8 = "",
+    /// Optional indicator texts for the layouts above, by position
+    /// (`input_sources.zig`); empty entries use the layout's language code.
+    xkb_labels: []const u8 = "",
     natural_scroll: bool = true,
     // Compositor-side flip applied to every scroll axis event regardless of
     // device/backend support, unlike `natural_scroll` which only takes
@@ -130,6 +134,8 @@ pub const InputConfig = struct {
     // A wheel click against the run this soon after its last click is held
     // as a likely encoder bounce (`input/wheel_debounce.zig`). 0 disables.
     wheel_debounce_ms: u32 = 60,
+    // Swap the primary and secondary buttons (libinput left-handed mode).
+    left_handed: bool = false,
     tap_to_click: bool = true,
     tap_drag: bool = true,
     disable_while_typing: bool = true,
@@ -194,6 +200,7 @@ pub const CompositorConfig = struct {
     dock_pinned_apps: []const []const u8 = &.{},
     taskbar_items: TaskbarItems = .{},
     taskbar_position: types.TaskbarPosition = .bottom,
+    taskbar_alignment: types.TaskbarAlignment = .center,
     /// App identities opted into compositor tabs. Only + launches join a group.
     window_tab_apps: []const []const u8 = &.{},
     focus_follows_mouse: bool = false,
@@ -227,6 +234,9 @@ pub const CompositorConfig = struct {
     dodge_file_drags: bool = true,
     /// Files opens an item with one click on its icon; names still select.
     files_single_click_open: bool = true,
+    /// Files plays audio files in the built-in player (rediwm-player), with a
+    /// play button on audio rows, unless an explicit default application is set.
+    files_audio_player: bool = true,
     inactive_opacity: f32 = 1.0,
     /// Background alpha handed to Foot, kitty, Alacritty, Ghostty and WezTerm at launch (`config/terminal_theme.zig`).
     /// Unset keeps the `alpha` of the user's own Foot configuration.
@@ -235,9 +245,19 @@ pub const CompositorConfig = struct {
     /// brightness and of its colour (`Toplevel.applyDim`).
     inactive_dim: bool = true,
     inactive_dim_amount: f32 = 0.08,
+    /// Alt+Tab layout; circular stacks windows belonging to the same app.
+    switcher_style: types.SwitcherStyle = .linear,
     switcher_opacity: f32 = 1.0,
+    /// Circular style only: paint a disc behind it, coloured by the window
+    /// chrome's own opacity and darkness settings.
+    switcher_circle_bg: bool = false,
     border_radius: u32 = 10,
     allow_tearing: bool = false,
+    /// Start frames as late as the display allows instead of right after
+    /// each vblank (`output/late_render.zig`).
+    late_render: bool = false,
+    /// The least safety time (ms) late rendering keeps before a vblank.
+    late_render_margin_ms: f32 = 2.0,
     xwayland: bool = true,
     xwayland_native_scaling: bool = false,
     /// 0 follows the native-scaling policy; explicit factors require restart.
@@ -245,6 +265,8 @@ pub const CompositorConfig = struct {
     /// Colour scheme apps are told to prefer through the Settings portal
     /// (`session/settings_portal.zig`): dark when true, light when false.
     dark_mode: bool = false,
+    /// Export the main palette to installed GTK/Qt integrations on theme changes.
+    follow_app_colors: bool = false,
     /// Delay before showing a placeholder frame for an unmapped launch (ms).
     /// 0 disables the placeholder frame.
     placeholder_delay_ms: u32 = 0,
@@ -353,12 +375,14 @@ pub const Config = struct {
     /// Null (no section) follows the main theme. Only taskbar tokens are set.
     taskbar_theme: ?Theme = null,
     input: InputConfig = .{},
+    input_devices: []input_device.Record = &.{},
     input_method: struct { env: types.InputMethod = .none } = .{},
     keyboard_keymap: ?*xkb.Keymap = null,
     compositor: CompositorConfig = .{},
     region: RegionConfig = .{},
     polkit: PolkitConfig = .{},
     idle: IdleConfig = .{},
+    power: @import("power.zig").Config = .{},
     night_light: NightLightConfig = .{},
     notifications: NotificationsConfig = .{},
     desktop: DesktopConfig = .{},
@@ -373,6 +397,7 @@ pub const Config = struct {
     notification_rules: []NotificationRule = &.{},
     sandbox_allow: []SandboxAllowRule = &.{},
     animations: anim.Settings = .{},
+    effects: @import("effects.zig").Config = .{},
     path: []const u8 = "",
     arena: std.heap.ArenaAllocator,
 
@@ -392,8 +417,8 @@ pub const Config = struct {
     }
 
     pub fn sandboxAllowGroups(self: *const Config, app_id: ?[]const u8, engine: ?[]const u8) sandbox_allow.GroupSet {
-        if (app_id == null) return sandbox_allow.GroupSet.initEmpty();
-        var set = sandbox_allow.GroupSet.initEmpty();
+        if (app_id == null) return sandbox_allow.GroupSet.empty;
+        var set = sandbox_allow.GroupSet.empty;
         for (self.sandbox_allow) |rule| {
             if (rule.app_id.len > 0 and std.mem.eql(u8, rule.app_id, app_id.?)) {
                 if (rule.engine == null or engine == null or std.mem.eql(u8, rule.engine.?, engine.?)) {

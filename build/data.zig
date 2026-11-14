@@ -26,13 +26,18 @@ pub fn add(ctx: Context) void {
         "share/xdg-desktop-portal-wlr/config",
     ).step);
     b.getInstallStep().dependOn(&b.addInstallFileWithDir(
-        localizedData(b, i18n_tool, "data/rediwm.desktop"),
+        localizedData(b, i18n_tool, ctx.layout.prefix, "data/rediwm.desktop"),
         .prefix,
         "share/wayland-sessions/rediwm.desktop",
     ).step);
 
-    b.getInstallStep().dependOn(&b.addInstallFileWithDir(localizedData(b, i18n_tool, "data/org.rediwm.accounts.policy"), .prefix, "share/polkit-1/actions/org.rediwm.accounts.policy").step);
-    b.getInstallStep().dependOn(&b.addInstallFileWithDir(localizedData(b, i18n_tool, "data/rediwm-release-safe.desktop"), .prefix, "share/wayland-sessions/rediwm-release-safe.desktop").step);
+    b.getInstallStep().dependOn(&b.addInstallFileWithDir(localizedData(b, i18n_tool, ctx.layout.prefix, "data/org.rediwm.accounts.policy"), .prefix, "share/polkit-1/actions/org.rediwm.accounts.policy").step);
+    b.getInstallStep().dependOn(&b.addInstallFileWithDir(localizedData(b, i18n_tool, ctx.layout.prefix, "data/rediwm-release-safe.desktop"), .prefix, "share/wayland-sessions/rediwm-release-safe.desktop").step);
+
+    inline for (.{ "rediwm-dm.conf", "rediwm-dm.service" }) |name| {
+        const configured = @import("install_paths.zig").configure(b, "data/" ++ name, ctx.layout.prefix);
+        b.getInstallStep().dependOn(&b.addInstallFileWithDir(configured, .prefix, "share/rediwm/" ++ name).step);
+    }
 
     // Wallpapers, found at runtime through share/rediwm/wallpapers next to
     // the binaries (wallpapers.zig); `[compositor] wallpaper` picks one.
@@ -50,7 +55,7 @@ pub fn add(ctx: Context) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/cursor_theme_gen.zig"),
             .target = b.graph.host,
-            .optimize = .ReleaseSafe,
+            .optimize = .safe,
             .link_libc = true,
         }),
         .use_llvm = use_llvm,
@@ -58,12 +63,14 @@ pub fn add(ctx: Context) void {
     });
     cursorgen.root_module.linkSystemLibrary("librsvg-2.0", .{});
     cursorgen.root_module.linkSystemLibrary("cairo", .{});
+    cursorgen.root_module.addImport("c_gfx", support.cHeader(b, b.graph.host, .safe, b.path("src/c/gfx.h"), &support.gfx_libs));
     const cursorgen_run = b.addRunArtifact(cursorgen);
     cursorgen_run.addDirectoryArg(b.path("assets/cursors"));
     const cursor_themes = cursorgen_run.addOutputDirectoryArg("icons");
     // Cursor aliases are symlinks, which InstallDir drops; cp -a keeps them.
-    const install_cursors = b.addSystemCommand(&.{ "sh", "-c", "mkdir -p \"$2\" && cp -a -T \"$1\" \"$2\"", "sh" });
+    // "$1/." copies the contents into the existing "$2" with GNU and BSD cp (-T is GNU only).
+    const install_cursors = b.addSystemCommand(&.{ "sh", "-c", "mkdir -p \"$2\" && cp -a \"$1/.\" \"$2\"", "sh" });
     install_cursors.addDirectoryArg(cursor_themes);
-    install_cursors.addArg(b.getInstallPath(.prefix, "share/icons"));
+    install_cursors.addDirectoryArg(support.installed(.prefix, "share/icons"));
     b.getInstallStep().dependOn(&install_cursors.step);
 }

@@ -200,13 +200,13 @@ fn format(writer: *std.Io.Writer, pattern: []const u8, args: anytype) FormatErro
             const end = std.mem.indexOfScalarPos(u8, pattern, i + 1, '}') orelse return error.InvalidFormat;
             const name = pattern[i + 1 .. end];
             var found = false;
-            inline for (std.meta.fields(@TypeOf(args))) |field| {
-                if (std.mem.eql(u8, name, field.name)) {
-                    const value = @field(args, field.name);
-                    switch (@typeInfo(field.type)) {
+            inline for (@typeInfo(@TypeOf(args)).@"struct".field_names) |field_name| {
+                if (std.mem.eql(u8, name, field_name)) {
+                    const value = @field(args, field_name);
+                    switch (@typeInfo(@FieldType(@TypeOf(args), field_name))) {
                         .int, .comptime_int, .float, .comptime_float => writer.print("{d}", .{value}) catch return error.NoSpaceLeft,
                         .pointer, .array => writer.print("{s}", .{value}) catch return error.NoSpaceLeft,
-                        else => @compileError("i18n argument " ++ field.name ++ " must be string or integer, got " ++ @typeName(field.type)),
+                        else => @compileError("i18n argument " ++ field_name ++ " must be string or integer, got " ++ @typeName(@FieldType(@TypeOf(args), field_name))),
                     }
                     found = true;
                 }

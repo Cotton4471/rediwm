@@ -8,11 +8,12 @@ const std = @import("std");
 const Context = @import("build/context.zig").Context;
 const protocols = @import("build/protocols.zig");
 const apps = @import("build/apps.zig");
+const player_build = @import("build/player.zig");
+const qt_style = @import("build/qt_style.zig");
 const data = @import("build/data.zig");
 const session_build = @import("build/session.zig");
 const tests = @import("build/tests.zig");
 const support = @import("build/support.zig");
-const usePrivateWlroots = support.usePrivateWlroots;
 const addBass = support.addBass;
 const addBassDsp = support.addBassDsp;
 const addGlass = support.addGlass;
@@ -23,31 +24,70 @@ const addCatalogInputs = support.addCatalogInputs;
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
+    const layout = @import("build/install_paths.zig").Layout.init(b, target.result.os.tag);
     const optimize = b.standardOptimizeOption(.{});
-    const use_llvm = b.option(bool, "llvm", "Use LLVM and LLD (default for optimized builds)") orelse (optimize != .Debug);
+    // On FreeBSD the self-hosted backend's executables lack crt1's `environ`, which libc.so.7 needs
+    // (a Debug rediwm-cursorgen died at startup, its ReleaseSafe build did not), so LLVM is the default there.
+    const use_llvm = b.option(bool, "llvm", "Use LLVM and LLD (default for optimized builds and on FreeBSD)") orelse (optimize != .debug or target.result.os.tag == .freebsd);
     // Debug aid (TESTING.md): redraw every frame whole and log what the damage missed.
     const damage_audit = b.option(bool, "damage-audit", "Compare every frame with a full repaint and log the difference (slow)") orelse false;
+    // Debug aid: log the timing of every frame (event, render, commit, presentation).
+    const frame_trace = b.option(bool, "frame-trace", "Log per-frame timing for frame scheduling measurements (src/output/frame_trace.zig)") orelse false;
+    const trace_options = b.addOptions();
+    trace_options.addOption(bool, "frame_trace", frame_trace);
+    const trace_mod = trace_options.createModule();
     // Set by scripts/build-wlroots.sh builds on distros without wlroots 0.20
-    // (Debian/Ubuntu). Must be applied before anything runs pkg-config.
-    const wlroots_prefix = b.option([]const u8, "wlroots-prefix", "Use wlroots and its bundled dependencies from this private prefix (see scripts/build-wlroots.sh)");
-    if (wlroots_prefix) |prefix| usePrivateWlroots(b, prefix);
+    // (Debian/Ubuntu). pkg-config runs in zig build's own environment, so
+    // start it through scripts/with-wlroots.sh to find the prefix.
+    const wlroots_prefix = b.option([]const u8, "wlroots-prefix", "Use wlroots and its bundled dependencies from this private prefix (run through scripts/with-wlroots.sh)");
 
+    const c_headers = support.cHeaders(b, target, optimize);
     const wayland = protocols.module(b);
-    const xkbcommon = b.dependency("xkbcommon", .{}).module("xkbcommon");
-    const pixman = b.dependency("pixman", .{}).module("pixman");
-    const wlroots = b.dependency("wlroots", .{}).module("wlroots");
+    // Hand-written facades over the parts of xkbcommon and pixman this
+    // compositor actually calls; see src/wlr/xkbcommon.zig and
+    // src/wlr/pixman.zig. Neither has a package dependency.
+    const xkbcommon = b.createModule(.{ .root_source_file = b.path("src/wlr/xkbcommon.zig") });
+    const pixman = b.createModule(.{ .root_source_file = b.path("src/wlr/pixman.zig") });
+    // One header-backed module supplies every compositor wlroots binding.
+    const wlr_facade = b.createModule(.{
+        .root_source_file = b.path("src/wlr/wlr.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    wlr_facade.addImport("wayland", wayland);
+    wlr_facade.addImport("pixman", pixman);
+    wlr_facade.addImport("xkbcommon", xkbcommon);
+    wlr_facade.linkSystemLibrary("wlroots-0.20", .{});
+    // Keyboard.setLayoutGroup calls xkbcommon directly (xkb_state_update_latched_locked).
+    wlr_facade.linkSystemLibrary("xkbcommon", .{});
+    const wlr_c = support.cTranslation(b, target, optimize, b.path("src/wlr/c.h"), &.{"wlroots-0.20"});
 
-    wlroots.addImport("wayland", wayland);
-    wlroots.addImport("xkbcommon", xkbcommon);
-    wlroots.addImport("pixman", pixman);
+    // These public wlroots headers include protocol headers which wlroots
+    // does not install. Generate them from the same XML as our Zig bindings.
+    inline for (.{ "wlr-output-power-management-unstable-v1", "wlr-layer-shell-unstable-v1" }) |name| {
+        const run = b.addSystemCommand(&.{ "wayland-scanner", "server-header" });
+        run.addFileArg(b.path("protocol/" ++ name ++ ".xml"));
+        const header = run.addOutputFileArg(name ++ "-protocol.h");
+        wlr_c.addIncludePath(header.dirname());
+    }
+    wlr_facade.addImport("wlr_c", b.createModule(.{ .root_source_file = wlr_c.getOutput() }));
 
-    // Expose the wlroots include path from pkg-config to its @cImport calls.
-    wlroots.resolved_target = target;
-    wlroots.linkSystemLibrary("wlroots-0.20", .{});
+    const wlroots = wlr_facade;
 
     // Module roots enforce one-way dependencies: shared code cannot import Server.
     const memory_mod = b.createModule(.{ .root_source_file = b.path("src/memory/allocator.zig"), .target = target, .optimize = optimize });
-    const i18n_tool = b.addExecutable(.{ .name = "i18n-tool", .root_module = b.createModule(.{ .root_source_file = b.path("tools/i18n.zig"), .target = b.graph.host, .optimize = .ReleaseSafe }) });
+    // The OS-specific parts (children, file watching, own path): std only.
+    const platform_mod = b.createModule(.{ .root_source_file = b.path("src/platform/mod.zig"), .target = target, .optimize = optimize });
+    // Exact copies of Redinit's exported client/wire modules; no compositor protocol implementation.
+    const redi_options = b.addOptions();
+    redi_options.addOption([]const u8, "name", "redinit");
+    const redi_proto = b.createModule(.{ .root_source_file = b.path("src/platform/redinit_client/ctl_proto.zig"), .target = target, .optimize = optimize });
+    redi_proto.addOptions("config", redi_options);
+    const redi_client = b.createModule(.{ .root_source_file = b.path("src/platform/redinit_client/ctl_client.zig"), .target = target, .optimize = optimize });
+    redi_client.addImport("ctl_proto", redi_proto);
+    platform_mod.addImport("redi_ctl", redi_client);
+    const i18n_tool = b.addExecutable(.{ .name = "i18n-tool", .root_module = b.createModule(.{ .root_source_file = b.path("tools/i18n.zig"), .target = b.graph.host, .optimize = .safe }) });
     const catalog_compile = b.addRunArtifact(i18n_tool);
     catalog_compile.setCwd(b.path("."));
     catalog_compile.addArg("compile");
@@ -62,17 +102,28 @@ pub fn build(b: *std.Build) void {
         run.addArg(entry[0]);
         b.step("i18n-" ++ entry[0], entry[1]).dependOn(&run.step);
     }
+    const border_glow_mod = b.createModule(.{ .root_source_file = b.path("src/border_glow.zig"), .target = target, .optimize = optimize });
     const ui_mod = b.createModule(.{ .root_source_file = b.path("src/ui/mod.zig"), .target = target, .optimize = optimize, .link_libc = true });
+    ui_mod.addImport("border_glow", border_glow_mod);
     ui_mod.addImport("i18n", i18n_mod);
     ui_mod.addImport("memory", memory_mod);
     ui_mod.addImport("wayland", wayland);
+    ui_mod.addImport("c_gfx", c_headers.gfx);
     ui_mod.linkSystemLibrary("xkbcommon", .{});
     addShellUi(b, ui_mod);
     ui_mod.addAnonymousImport("theme-rediwm-dark", .{ .root_source_file = b.path("assets/themes/rediwm-dark.toml") });
     ui_mod.addAnonymousImport("theme-rediwm-light", .{ .root_source_file = b.path("assets/themes/rediwm-light.toml") });
     ui_mod.addAnonymousImport("theme-redi-blue", .{ .root_source_file = b.path("assets/themes/redi-blue.toml") });
     ui_mod.addAnonymousImport("theme-redi-mocha", .{ .root_source_file = b.path("assets/themes/redi-mocha.toml") });
+    ui_mod.addAnonymousImport("theme-chamfer-blue", .{ .root_source_file = b.path("assets/themes/chamfer-blue.toml") });
     ui_mod.addAnonymousImport("theme-gold", .{ .root_source_file = b.path("assets/themes/gold.toml") });
+    ui_mod.addAnonymousImport("theme-blackout", .{ .root_source_file = b.path("assets/themes/blackout.toml") });
+    b.getInstallStep().dependOn(&b.addInstallDirectory(.{
+        .source_dir = b.path("assets/themes/blackout"),
+        .install_dir = .prefix,
+        .install_subdir = "share/rediwm/themes/blackout",
+    }).step);
+    b.getInstallStep().dependOn(&b.addInstallFileWithDir(b.path("assets/themes/blackout.toml"), .prefix, "share/rediwm/themes/blackout/theme.toml").step);
     b.getInstallStep().dependOn(&b.addInstallDirectory(.{
         .source_dir = b.path("assets/themes/gold"),
         .install_dir = .prefix,
@@ -98,12 +149,13 @@ pub fn build(b: *std.Build) void {
     theme_helper.root_module.addImport("config", config_mod);
     theme_helper.root_module.addImport("ui", ui_mod);
     theme_helper.root_module.addImport("i18n", i18n_mod);
+    theme_helper.root_module.addImport("platform", platform_mod);
     theme_helper.root_module.addCSourceFile(.{ .file = b.path("src/theme_helper/native.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     inline for (.{ "libarchive", "librsvg-2.0", "gdk-pixbuf-2.0" }) |lib| theme_helper.root_module.linkSystemLibrary(lib, .{});
     addThumbCodec(b, theme_helper.root_module);
     theme_helper.root_module.linkSystemLibrary("libwebp", .{});
     b.installArtifact(theme_helper);
-    b.getInstallStep().dependOn(&b.addInstallFileWithDir(localizedData(b, i18n_tool, "data/rediwm-theme.desktop"), .prefix, "share/applications/rediwm-theme.desktop").step);
+    b.getInstallStep().dependOn(&b.addInstallFileWithDir(localizedData(b, i18n_tool, layout.prefix, "data/rediwm-theme.desktop"), .prefix, "share/applications/rediwm-theme.desktop").step);
     b.getInstallStep().dependOn(&b.addInstallFileWithDir(b.path("data/rediwm-theme.xml"), .prefix, "share/mime/packages/rediwm-theme.xml").step);
 
     const protocol_mod = b.createModule(.{
@@ -128,6 +180,9 @@ pub fn build(b: *std.Build) void {
     compositor.root_module.addImport("xkbcommon", xkbcommon);
     compositor.root_module.addImport("wlroots", wlroots);
     compositor.root_module.addImport("pixman", pixman);
+    compositor.root_module.addImport("c_pulse", c_headers.pulse);
+    compositor.root_module.addImport("c_libinput", c_headers.libinput);
+    compositor.root_module.addImport("c_png", c_headers.png);
     compositor.root_module.linkSystemLibrary("wayland-server", .{});
     compositor.root_module.linkSystemLibrary("cups", .{});
     compositor.root_module.addCSourceFile(.{ .file = b.path("src/printing/direct.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-deprecated-declarations" } });
@@ -144,6 +199,7 @@ pub fn build(b: *std.Build) void {
     // (accel speed, natural scroll, tap-to-click). Header is a clean, glib-free
     // C API so it's @cInclude'd directly, unlike librsvg (see AGENTS.md, "Build and platform gotchas").
     compositor.root_module.linkSystemLibrary("libinput", .{});
+    compositor.root_module.linkSystemLibrary("libudev", .{});
     compositor.root_module.linkSystemLibrary("png16", .{});
     // PipeWire's PulseAudio-compat client library — see src/audio/pipewire.zig.
     compositor.root_module.linkSystemLibrary("libpulse", .{});
@@ -151,9 +207,10 @@ pub fn build(b: *std.Build) void {
     addBassDsp(b, target);
     compositor.root_module.linkSystemLibrary("pam", .{});
     compositor.root_module.linkSystemLibrary("xcb", .{});
-    compositor.root_module.addCSourceFile(.{ .file = b.path("src/session/auth.c"), .flags = &.{"-std=c11"} });
+    compositor.root_module.addCSourceFile(.{ .file = b.path("src/session/auth.c"), .flags = &.{ "-std=c11", b.fmt("-DREDIWM_SYSCONFDIR=\"{s}\"", .{layout.sysconfdir}) } });
     compositor.root_module.addCSourceFile(.{ .file = b.path("src/polkit/native.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     addGlass(b, compositor.root_module, damage_audit);
+    if (frame_trace) compositor.root_module.addCMacro("REDIWM_FRAME_TRACE", "1");
     compositor.root_module.addCSourceFile(.{ .file = b.path("src/gpu_timing.c"), .flags = &.{"-std=c11"} });
     b.step("rediwm", "Build the compositor").dependOn(&compositor.step);
 
@@ -175,10 +232,19 @@ pub fn build(b: *std.Build) void {
 
     const ctx: Context = .{
         .b = b,
+        .layout = layout,
         .target = target,
         .optimize = optimize,
         .use_llvm = use_llvm,
         .wlroots_prefix = wlroots_prefix,
+        // Files hides Transfers (src/files/app_torrents.zig `enabled`), so the helper is
+        // unused for now. Off on FreeBSD, where its libtorrent, glib and peer-credential
+        // code is not ported (docs/plans/freebsd.md).
+        .transfers = b.option(bool, "transfers", "Build and install the torrent transfers helper (default: on, except on FreeBSD)") orelse (target.result.os.tag != .freebsd),
+        // rediwm-session and rediwm-dm still run on signalfd, epoll, pidfd and Linux VT ioctls; the FreeBSD
+        // port starts the compositor from the console (docs/plans/freebsd.md, D2 and phase 2).
+        .display_manager = b.option(bool, "display-manager", "Build and install rediwm-dm (default: on, except on FreeBSD)") orelse (target.result.os.tag != .freebsd),
+        .login_session = b.option(bool, "login-session", "Build and install rediwm-session (default: on, except on FreeBSD)") orelse (target.result.os.tag != .freebsd),
         .i18n_tool = i18n_tool,
         .wayland = wayland,
         .xkbcommon = xkbcommon,
@@ -187,10 +253,14 @@ pub fn build(b: *std.Build) void {
         .i18n_mod = i18n_mod,
         .ui_mod = ui_mod,
         .dbus_mod = dbus_mod,
+        .platform_mod = platform_mod,
         .config_mod = config_mod,
         .protocol_mod = protocol_mod,
+        .c = c_headers,
     };
     const app = apps.add(ctx);
+    player_build.add(ctx);
+    qt_style.add(ctx);
     const files = app.files;
     const images = app.images;
     const monitor = app.monitor;
@@ -205,7 +275,7 @@ pub fn build(b: *std.Build) void {
             .install_dir = .lib,
             .install_subdir = "rediwm",
         });
-        for ([_]*std.Build.Step.Compile{ compositor, files, images, share_picker, pdf, editor }) |exe|
+        for ([_]*std.Build.Step.Compile{ compositor, files, images, share_picker, pdf, editor, monitor, calculator, theme_helper }) |exe|
             exe.root_module.addRPathSpecial("$ORIGIN/../lib/rediwm");
     }
     data.add(ctx);
@@ -214,6 +284,7 @@ pub fn build(b: *std.Build) void {
     const session_supervisor = session.session_supervisor;
 
     const zig_tests = tests.addZig(ctx, session);
+    @import("build/keys.zig").add(ctx, zig_tests.test_step, &.{ compositor.root_module, zig_tests.ui_tests_module });
     const ui_tests_module = zig_tests.ui_tests_module;
     const ipc_tests_module = zig_tests.ipc_tests_module;
     const files_tests = zig_tests.files_tests;
@@ -231,10 +302,15 @@ pub fn build(b: *std.Build) void {
         inline for (.{ "cairo", "librsvg-2.0", "freetype2", "harfbuzz", "fontconfig" }) |lib| module.linkSystemLibrary(lib, .{});
     }
     inline for (.{ compositor.root_module, ui_tests_module, files.root_module, images.root_module, editor.root_module, pdf.root_module, share_picker.root_module, monitor.root_module, calculator.root_module, editor_tests.root_module, images_tests.root_module, pdf_tests.root_module, files_tests.root_module, ipc_tests_module, protocol_mod, session_supervisor.root_module, session_tests.root_module, share_picker_tests.root_module, dbus_tests.root_module }) |module| {
+        module.addImport("install_paths", layout.options);
+        module.addImport("trace", trace_mod);
         module.addImport("ui", ui_mod);
         module.addImport("i18n", i18n_mod);
         module.addImport("config", config_mod);
         module.addImport("memory", memory_mod);
+        module.addImport("platform", platform_mod);
+        module.addImport("c", c_headers.libc);
+        module.addImport("c_gfx", c_headers.gfx);
     }
     inline for (.{ compositor.root_module, ui_tests_module, dbus_tests.root_module, dbus_service.root_module, polkit_service.root_module, session_supervisor.root_module, session_tests.root_module, share_picker_tests.root_module, files_tests.root_module }) |module| {
         module.addImport("dbus", dbus_mod);
@@ -242,15 +318,18 @@ pub fn build(b: *std.Build) void {
 
     tests.addC(ctx, zig_tests.test_step);
 
-    const run_cmd = b.addRunArtifact(compositor);
+    // Autostart looks up `rediwm-desktop` / `rediwm-files` on PATH. Run the
+    // cached artifact with the installed bin directory first on PATH.
+    const run_cmd = b.addSystemCommand(&.{ "sh", "-c", "PATH=\"$0:$PATH\" exec \"$@\"" });
+    run_cmd.addDirectoryArg(support.installed(.bin, ""));
+    run_cmd.addArtifactArg(compositor);
     // The development run target is always nested in the current Wayland session.
     run_cmd.setEnvironmentVariable("WLR_BACKENDS", "wayland");
     run_cmd.setEnvironmentVariable("WLR_WL_OUTPUTS", "1");
-    // Autostart looks up `rediwm-desktop` / `rediwm-files` on PATH. The run
-    // artifact lives in the cache, so install the helpers and expose zig-out/bin.
     run_cmd.step.dependOn(b.getInstallStep());
-    run_cmd.addPathDir(b.exe_dir);
-    if (b.args) |args| run_cmd.addArgs(args);
+    run_cmd.addPassthruArgs();
     const run_step = b.step("run", "Run the nested compositor (pass a client command after --)");
     run_step.dependOn(&run_cmd.step);
+    // Last: it lists every executable registered above.
+    @import("build/install_paths.zig").writeProgramList(b);
 }

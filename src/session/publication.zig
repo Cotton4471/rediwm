@@ -3,11 +3,11 @@
 //! lets a successor roll back after a supervisor failure. Restoration only
 //! touches values this lease still owns.
 const std = @import("std");
-const linux = std.os.linux;
+const c = std.c;
 const sys = @import("login_sys.zig");
 
 pub const owner_key = "REDIWM_ACTIVATION_OWNER";
-pub const allowlist = [_][]const u8{ "WAYLAND_DISPLAY", "DISPLAY", "REDIWM_SOCKET", "XDG_CURRENT_DESKTOP", "XDG_SESSION_TYPE", "PATH", "QT_QPA_PLATFORMTHEME", "QT_QPA_PLATFORMTHEME_QT6", "QT_STYLE_OVERRIDE", owner_key };
+pub const allowlist = [_][]const u8{ "WAYLAND_DISPLAY", "DISPLAY", "REDIWM_SOCKET", "XDG_CURRENT_DESKTOP", "XDG_SESSION_TYPE", "PATH", "QT_QPA_PLATFORMTHEME", "QT_QPA_PLATFORMTHEME_QT6", "QT_STYLE_OVERRIDE", "QT_PLUGIN_PATH", owner_key };
 
 pub const Env = std.StringArrayHashMapUnmanaged([]const u8);
 pub const Pair = struct { key: []const u8, value: []const u8 };
@@ -63,7 +63,7 @@ pub fn Publication(comptime Bus: type) type {
 
         pub fn acquire(self: *Self) !void {
             const fd = try sys.openZ(self.lock_path, .{ .ACCMODE = .RDWR, .CREAT = true, .NOFOLLOW = true, .CLOEXEC = true }, 0o600);
-            _ = sys.retry(linux.flock, .{ fd, std.posix.LOCK.EX | std.posix.LOCK.NB }) catch {
+            _ = sys.retry(c.flock, .{ fd, std.posix.LOCK.EX | std.posix.LOCK.NB }) catch {
                 sys.close(fd);
                 sys.diagnostic("another RediWM session owns activation publication", .{});
                 return error.PublicationLocked;
@@ -192,7 +192,7 @@ fn pairs(arena: std.mem.Allocator, map: std.StringArrayHashMapUnmanaged([]const 
 
 fn ownerToken(arena: std.mem.Allocator) ![]const u8 {
     var bytes: [16]u8 = undefined;
-    _ = try sys.check(linux.getrandom(&bytes, bytes.len, 0));
+    try sys.random(&bytes);
     return std.fmt.allocPrint(arena, "{x}", .{&bytes});
 }
 
@@ -299,13 +299,16 @@ test "Qt app colors activation lease restores the previous desktop theme" {
     try f.owner.publish(&.{
         .{ .key = "QT_QPA_PLATFORMTHEME", .value = "qt5ct" },
         .{ .key = "QT_QPA_PLATFORMTHEME_QT6", .value = "qt6ct" },
-        .{ .key = "QT_STYLE_OVERRIDE", .value = "Fusion" },
+        .{ .key = "QT_STYLE_OVERRIDE", .value = "" },
+        .{ .key = "QT_PLUGIN_PATH", .value = "/usr/local/lib/rediwm/qt6" },
     });
+    try testing.expectEqualStrings("/usr/local/lib/rediwm/qt6", f.bus.env.get("QT_PLUGIN_PATH").?);
     try testing.expectEqualStrings("qt5ct", f.bus.env.get("QT_QPA_PLATFORMTHEME").?);
     try f.owner.restore();
     try testing.expectEqualStrings("gtk3", f.bus.env.get("QT_QPA_PLATFORMTHEME").?);
     try testing.expect(!f.bus.env.contains("QT_QPA_PLATFORMTHEME_QT6"));
     try testing.expect(!f.bus.env.contains("QT_STYLE_OVERRIDE"));
+    try testing.expect(!f.bus.env.contains("QT_PLUGIN_PATH"));
 }
 
 test "a value changed by someone else is not clobbered" {

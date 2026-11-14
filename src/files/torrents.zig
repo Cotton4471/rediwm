@@ -1,13 +1,8 @@
 //! Bounded, nonblocking client for the per-user transfer helper.
 const std = @import("std");
 const tr = @import("i18n").tr;
-const c = @cImport({
-    @cUndef("_FORTIFY_SOURCE");
-    @cDefine("_GNU_SOURCE", "1");
-    @cInclude("sys/socket.h");
-    @cInclude("sys/un.h");
-    @cInclude("unistd.h");
-});
+const c = @import("c");
+const platform = @import("platform");
 pub const File = struct { index: usize, path: []const u8, size: i64 };
 pub const Transfer = struct {
     source: []const u8 = "",
@@ -66,16 +61,15 @@ pub const Client = struct {
     pub fn connect(self: *Client, runtime: []const u8) bool {
         var address: c.struct_sockaddr_un = std.mem.zeroes(c.struct_sockaddr_un);
         address.sun_family = c.AF_UNIX;
-        _ = std.fmt.bufPrintZ(@ptrCast(&address.sun_path), "{s}/files-transfers.sock", .{runtime}) catch return false;
+        _ = std.fmt.bufPrintSentinel(@ptrCast(&address.sun_path), "{s}/files-transfers.sock", .{runtime}, 0) catch return false;
         const fd = c.socket(c.AF_UNIX, c.SOCK_SEQPACKET | c.SOCK_NONBLOCK | c.SOCK_CLOEXEC, 0);
         if (fd < 0) return false;
-        if (c.connect(fd, .{ .__sockaddr__ = @ptrCast(&address) }, @sizeOf(@TypeOf(address))) != 0) {
+        if (std.c.connect(fd, @ptrCast(&address), @sizeOf(@TypeOf(address))) != 0) {
             _ = c.close(fd);
             return false;
         }
-        var cred: c.struct_ucred = undefined;
-        var len: c.socklen_t = @sizeOf(@TypeOf(cred));
-        if (c.getsockopt(fd, c.SOL_SOCKET, c.SO_PEERCRED, &cred, &len) != 0 or cred.uid != c.getuid()) {
+        const same_user = if (platform.peer.of(fd)) |peer| peer.uid == c.getuid() else false;
+        if (!same_user) {
             _ = c.close(fd);
             return false;
         }

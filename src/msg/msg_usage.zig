@@ -13,25 +13,25 @@ pub const TopCommandTag = blk: {
     @setEvalBranchQuota(20_000);
     for (protocol.commands.specs) |s| {
         if (s.cli) |cli| {
-            for (std.meta.fields(@TypeOf(local_commands))) |field| {
+            for (@typeInfo(@TypeOf(local_commands)).@"struct".field_names) |local| {
                 for (&[_][]const u8{cli.name} ++ cli.aliases) |name| {
-                    if (std.mem.eql(u8, field.name, name)) @compileError("CLI name shadows local command: " ++ name);
+                    if (std.mem.eql(u8, local, name)) @compileError("CLI name shadows local command: " ++ name);
                 }
             }
         }
     }
     var names: []const []const u8 = &.{};
-    for (std.meta.fields(@TypeOf(local_commands))) |field| names = names ++ .{field.name};
-    for (std.meta.fields(protocol.commands.CliTag(false))) |field| names = names ++ .{field.name};
+    for (@typeInfo(@TypeOf(local_commands)).@"struct".field_names) |name| names = names ++ .{name};
+    for (@typeInfo(protocol.commands.CliTag(false)).@"enum".field_names) |name| names = names ++ .{name};
     break :blk @Enum(u8, .exhaustive, names, &std.simd.iota(u8, names.len));
 };
 
 pub fn lookupTopCommand(name: []const u8) ?TopCommandTag {
-    inline for (std.meta.fields(@TypeOf(local_commands))) |field| {
-        if (std.mem.eql(u8, name, field.name)) return @field(TopCommandTag, field.name);
+    inline for (@typeInfo(@TypeOf(local_commands)).@"struct".field_names) |local| {
+        if (std.mem.eql(u8, name, local)) return @field(TopCommandTag, local);
     }
     const tag = protocol.commands.lookupCli(false, name) orelse return null;
-    return @enumFromInt(@intFromEnum(tag) + std.meta.fields(@TypeOf(local_commands)).len);
+    return @enumFromInt(@intFromEnum(tag) + @typeInfo(@TypeOf(local_commands)).@"struct".field_names.len);
 }
 
 pub fn printUsage() void {
@@ -50,9 +50,9 @@ pub fn printUsage() void {
         \\Commands:
         \\
     , .{});
-    inline for (std.meta.fields(@TypeOf(local_commands))) |field| {
-        const c = @field(local_commands, field.name);
-        std.debug.print("  {s} {s}  {s}\n", .{ field.name, c.synopsis, c.description });
+    inline for (@typeInfo(@TypeOf(local_commands)).@"struct".field_names) |name| {
+        const c = @field(local_commands, name);
+        std.debug.print("  {s} {s}  {s}\n", .{ name, c.synopsis, c.description });
     }
     inline for (protocol.commands.specs) |s| {
         if (comptime s.cli) |cli| printCommandHelp("", cli, s.description);

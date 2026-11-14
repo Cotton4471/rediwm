@@ -3,7 +3,18 @@
 The rules every caller follows (callback owners, one look per control, app
 text and colours, secrets) are in the root `AGENTS.md` ("Shared UI").
 
-* **The scrollbar** (`widgets/scrollbar.zig`, Files' look): a track-less thumb
+* **Hover/selection outlines** use `widgets/highlight.zig` in Cairo item and
+  sidebar rows and Settings navigation. `app_highlight_bevel` opts into straight
+  cut corners; zero preserves each caller's rounded radius. Keep sidebar markers
+  clipped to that outline and retained repaint damage unchanged. Any widget
+  rect can cut its corners with `RectStyle.bevel` (`fillRect` hands it to
+  `highlight.fillBeveled`; no relief or `replace`). The power menu uses it
+  through `power_menu_bevel`, rounding its glass to stay inside the cut.
+  Like `fillRectPlain`, a beveled fill shades only the pixels near an edge:
+  each row's interior is one run (stored, blended, or skipped for an outline).
+
+* **The scrollbar** (`widgets/scrollbar.zig`, Files' look): a thumb (track-less
+  unless painted track tokens or `scrollbar_track_relief` enable one; flat at `scrollbar_glow = 0`)
   centred in a `gutter(scrollbar_width)` strip, thin at rest, widening and
   tinting to the accent on hover/drag, holding a faint tint after a scroll.
   `Geometry.compute` gives the thumb for any axis and unit (pixels, or items
@@ -20,6 +31,13 @@ text and colours, secrets) are in the root `AGENTS.md` ("Shared UI").
   dragging and the scroll hold brighten it. `Appearance.illumination` shares
   the existing frame/deadline scheduling (no idle animation). Cairo uses the
   shared raster for the lit thumb, preserving its fractional device position.
+  `scrollbar_track` and `scrollbar_track_stripe` optionally paint a stationary
+  hatched channel (both transparent by default). `scrollbar.hasTrack` also
+  controls Cairo's layer bounds: include the whole channel even without relief.
+  Stripe period, width and slope also come from the theme through `Look`;
+  period/width zero hides the stripes, and slope zero draws transverse bands.
+  App clients paint the channel on every scroll frame: keep its loop free of
+  soft-float calls (`@mod`, `@floor`, `@round` on a baseline x86_64 target).
 * **Text fields with child accessories** reserve text/caret room with
   `field.trailing = .accessory`. Place a shared button in the field's children
   (Settings search uses a ghost clear button), so normal pointer and keyboard
@@ -67,3 +85,20 @@ text and colours, secrets) are in the root `AGENTS.md` ("Shared UI").
   `paint` draws it into any `Renderer`, so the two cannot drift. The caller
   owns the data (hide it when there is no battery) and the connection
   shimmer's clock (`Spec.shimmer`).
+* **Relief on hand-shaded controls.** A control drawn through `fillRect` opts in
+  with `RectStyle.relief` and a theme key. One that lights its own pixels (the
+  shaded toggle and slider) paints first, then calls `Renderer.paintShapeRelief`
+  with `ReliefLimits`: a groove passes `.outside` (the knob), a knob passes
+  `.within` (its track or the control's box), so shadows never cross the thumb
+  or leave the damage bounds. `Renderer.reliefActive` tells it whether to drop
+  the hand-made rim or cast shadow the relief replaces; flat keys must leave
+  its pixels byte-identical.
+* **Pointer effects in Cairo app clients repaint only what they change.**
+  `cairo.drawProximityGlow` returns before allocating a layer when the glow is
+  off, unlit, or outside the context's clip, and sizes its layer to the visible
+  part; paint-only components use `Layer.beginVisible`. Images and PDF record
+  glow and hover changes as rects in `pointer_damage` (`repaint.Region`) and
+  repaint them clipped, paced by the frame callback, with each shm buffer's
+  `stale` region catching up what it missed; never answer a glow change with
+  `dirty` (a full, unpaced repaint at pointer rate). Hand-drawn content must
+  stay inside the rects a damage helper adds for it.

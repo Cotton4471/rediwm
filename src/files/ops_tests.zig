@@ -9,7 +9,7 @@ const makeTestDir = files_tests.makeTestDir;
 
 pub fn writeTestFile(path: []const u8, content: []const u8) !void {
     var path_buf: [4096]u8 = undefined;
-    const path_z = try std.fmt.bufPrintZ(&path_buf, "{s}", .{path});
+    const path_z = try std.fmt.bufPrintSentinel(&path_buf, "{s}", .{path}, 0);
     const fd = c.open(path_z, c.O_WRONLY | c.O_CREAT | c.O_TRUNC | c.O_CLOEXEC, @as(c_uint, 0o644));
     if (fd < 0) return error.WriteFileFailed;
     defer _ = c.close(fd);
@@ -23,7 +23,7 @@ pub fn writeTestFile(path: []const u8, content: []const u8) !void {
 
 pub fn readTestFile(path: []const u8, buf: []u8) ![]u8 {
     var path_buf: [4096]u8 = undefined;
-    const path_z = try std.fmt.bufPrintZ(&path_buf, "{s}", .{path});
+    const path_z = try std.fmt.bufPrintSentinel(&path_buf, "{s}", .{path}, 0);
     const fd = c.open(path_z, c.O_RDONLY | c.O_CLOEXEC);
     if (fd < 0) return error.OpenFileFailed;
     defer _ = c.close(fd);
@@ -34,7 +34,7 @@ pub fn readTestFile(path: []const u8, buf: []u8) ![]u8 {
 
 pub fn testFileExists(path: []const u8) bool {
     var path_buf: [4096]u8 = undefined;
-    const path_z = std.fmt.bufPrintZ(&path_buf, "{s}", .{path}) catch return false;
+    const path_z = std.fmt.bufPrintSentinel(&path_buf, "{s}", .{path}, 0) catch return false;
     var st: c.struct_stat = undefined;
     return c.stat(path_z, &st) == 0;
 }
@@ -72,7 +72,7 @@ test "copyRecursive and copySymlink" {
     // Create symlink inside sub
     const link_src = try std.fmt.allocPrint(allocator, "{s}/link_to_file1", .{sub_dir});
     defer allocator.free(link_src);
-    const link_src_z = try allocator.dupeZ(u8, link_src);
+    const link_src_z = try allocator.dupeSentinel(u8, link_src, 0);
     defer allocator.free(link_src_z);
     _ = c.symlink("../file1.txt", link_src_z);
 
@@ -98,7 +98,7 @@ test "copyRecursive and copySymlink" {
     // Verify symlink target was preserved
     const dst_link = try std.fmt.allocPrint(allocator, "{s}/sub/link_to_file1", .{dst_dir});
     defer allocator.free(dst_link);
-    const dst_link_z = try allocator.dupeZ(u8, dst_link);
+    const dst_link_z = try allocator.dupeSentinel(u8, dst_link, 0);
     defer allocator.free(dst_link_z);
     var target_buf: [256]u8 = undefined;
     const link_len = c.readlink(dst_link_z, &target_buf, target_buf.len);

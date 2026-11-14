@@ -422,6 +422,23 @@ pub fn buildTaskbarWidgetTree(
         });
     }
 
+    if (bar.itemBox(.input_source)) |source_box| {
+        const label = if (server.input_sources) |sources| sources.activeLabel() else "";
+        try widgets.append(allocator, .{
+            .id = widgets.items.len + 1,
+            .parent_index = 0,
+            .role = "button",
+            .name = "input_source",
+            .path = "taskbar/input_source",
+            .semantic_id = "tray_input_source",
+            .label = try allocator.dupe(u8, label),
+            .box = .{ .x = source_box.x - bar.box.x, .y = source_box.y - bar.box.y, .width = source_box.width, .height = source_box.height },
+            .global_box = .{ .x = source_box.x, .y = source_box.y, .width = source_box.width, .height = source_box.height },
+            .visible = true,
+            .is_disabled = false,
+        });
+    }
+
     if (bar.itemBox(.power)) |pbox| {
         try widgets.append(allocator, .{
             .id = widgets.items.len + 1,
@@ -515,7 +532,7 @@ pub fn buildWindowWidgetTree(
     };
 
     for (controls) |c| {
-        const crect = chrome.controlRectScaled(toplevel.chrome_width, c.kind, toplevel.chromeDensity());
+        const crect = chrome.controlRectScaled(toplevel.chrome_width - toplevel.controlInsets().right, c.kind, toplevel.chromeDensity());
         const cpt = toplevel.frameWorld(@floatFromInt(crect.x), @floatFromInt(crect.y));
         const cw = @as(i32, @intFromFloat(@round(@as(f64, @floatFromInt(crect.w)) * toplevel.worldScale())));
         const ch = @as(i32, @intFromFloat(@round(@as(f64, @floatFromInt(crect.h)) * toplevel.worldScale())));

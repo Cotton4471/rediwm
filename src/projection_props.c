@@ -41,6 +41,18 @@ static bool set_tree_scale(struct wlr_addon_set *set, void **slot, double factor
   return true;
 }
 static bool finite_at_least_zero(double value) { return isfinite(value) && value >= 0; }
+// 0 is no polygon. Otherwise 3 to REDIWM_POLY_MAX finite vertices inside the box,
+// none the same as the next (a zero-length edge has no direction).
+static bool valid_polygon(const double v[][2], int count, int width, int height) {
+  if (count == 0) return true;
+  if (count < 3 || count > REDIWM_POLY_MAX) return false;
+  for (int i = 0; i < count; i++) {
+    const double *a = v[i], *b = v[i + 1 < count ? i + 1 : 0];
+    if (!isfinite(a[0]) || !isfinite(a[1]) || a[0] < 0 || a[1] < 0 || a[0] > width || a[1] > height) return false;
+    if (a[0] == b[0] && a[1] == b[1]) return false;
+  }
+  return true;
+}
 static bool set_tree_clip(struct wlr_addon_set *set, void **slot,
                                      const struct rediwm_clip_spec *spec) {
   if (!spec) {
@@ -50,6 +62,10 @@ static bool set_tree_clip(struct wlr_addon_set *set, void **slot,
     return true;
   }
   if (spec->width <= 0 || spec->height <= 0 || !finite_at_least_zero(spec->border)) return false;
+  if (!valid_polygon(spec->poly, spec->poly_count, spec->width, spec->height)) return false;
+  if (!rediwm_sector_valid(&spec->sector) || (spec->sector.radii[1] > 0 && spec->poly_count != 0)) return false;
+  if (!finite_at_least_zero(spec->sector_texture_height) ||
+      (spec->sector_texture_height > 0 && spec->sector.radii[1] <= 0)) return false;
   for (int i = 0; i < 4; i++)
     if (!finite_at_least_zero(spec->radii[i]) || !isfinite(spec->border_color[i]) ||
         !isfinite(spec->glow_color[i]))
@@ -75,6 +91,7 @@ static bool set_tree_shadow(struct wlr_addon_set *set, void **slot,
   if (spec->width <= 0 || spec->height <= 0 || !finite_at_least_zero(spec->softness) ||
       !isfinite(spec->offset_x) || !isfinite(spec->offset_y))
     return false;
+  if (!valid_polygon(spec->poly, spec->poly_count, spec->width, spec->height)) return false;
   for (int i = 0; i < 4; i++)
     if (!finite_at_least_zero(spec->radii[i]) || !isfinite(spec->color[i])) return false;
   struct tree_props *props = tree_props_get(set, slot);

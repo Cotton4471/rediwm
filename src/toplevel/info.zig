@@ -9,6 +9,7 @@ const sn = @import("../node.zig");
 const Server = @import("../Server.zig");
 const ControlCenter = @import("../control_center/panel.zig").ControlCenter;
 const chrome = @import("../chrome.zig");
+const window_shape = @import("ui").window_shape;
 const geometry = @import("../geometry.zig");
 const resize = @import("../resize.zig");
 const scene_data = @import("../scene_data.zig");
@@ -332,6 +333,9 @@ pub fn insideFrame(toplevel: *Toplevel, px: f32, py: f32) bool {
     const height = toplevel.chrome_height;
     if (width <= 0 or height <= 0) return false;
 
+    if (toplevel.shapePolygon(width, height)) |polygon| {
+        return chrome.coverage(@floatCast(window_shape.sdPolygon(polygon, px, py))) != 0;
+    }
     const radius: f32 = toplevel.cornerRadius();
     return chrome.coverage(chrome.sdRoundedBox(
         px,
@@ -346,7 +350,7 @@ pub fn insideFrame(toplevel: *Toplevel, px: f32, py: f32) bool {
 
 pub fn isResizing(toplevel: *Toplevel) bool {
     const session = toplevel.server.input.resize_session orelse return false;
-    return session.toplevel == toplevel;
+    return session.includes(toplevel);
 }
 
 pub fn isGeometrySettled(toplevel: *Toplevel, now_ms: i64) bool {
@@ -373,7 +377,7 @@ pub fn chromeAcceptsInput(buffer: *sn.Buffer, sx: *f64, sy: *f64) callconv(.c) b
     _ = toplevel.frame_tree.node.coords(&fx, &fy);
     const local = geometry.toLocal(@as(f64, @floatFromInt(ox)) + sx.*, @as(f64, @floatFromInt(oy)) + sy.*, fx, fy);
     const has_control = toplevel.controlAt(local.x, local.y) != null or toplevel.tabAt(local.x, local.y) != .none;
-    if (resize.detectResizeEdges(local.x, local.y, toplevel.chrome_width, toplevel.chrome_height, toplevel.titlebarHeight(), chrome.frame_border, chrome.frame_border, has_control) != null) {
+    if (resize.detectResizeEdges(local.x, local.y, toplevel.chrome_width, toplevel.chrome_height, toplevel.titlebarHeight(), chrome.frameBorder(), chrome.frameBorder(), has_control) != null) {
         return true;
     }
 

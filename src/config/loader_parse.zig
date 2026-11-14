@@ -36,79 +36,45 @@ const default_zoom_percents = loader.default_zoom_percents;
 const OutputConfig = loader.OutputConfig;
 const NotificationRule = loader.NotificationRule;
 const Config = loader.Config;
+const input_device = @import("input_device.zig");
 
-pub fn parse(allocator: Allocator, bytes: []const u8, path: []const u8) !Config {
-    var cfg = try initEmpty(allocator);
-    errdefer cfg.deinit();
-    cfg.path = try cfg.arena.allocator().dupe(u8, path);
+const ParseState = struct {
+    seen_keybinds: bool = false,
+    seen_frame_radius: bool = false,
+    autostart_list: std.ArrayListUnmanaged([]const u8) = .empty,
+    bind_list: std.ArrayListUnmanaged(Keybind) = .empty,
+    workspace_binds: std.ArrayListUnmanaged(Keybind) = .empty,
+    outputs_list: std.ArrayListUnmanaged(OutputConfig) = .empty,
+    current_output: OutputConfig = .{},
+    have_current_output: bool = false,
+    rule_list: std.ArrayListUnmanaged(WindowRule) = .empty,
+    current_rule: WindowRule = .{},
+    have_current_rule: bool = false,
+    notif_rule_list: std.ArrayListUnmanaged(NotificationRule) = .empty,
+    current_notif_rule: NotificationRule = .{},
+    have_current_notif_rule: bool = false,
+    sandbox_allow_list: std.ArrayListUnmanaged(SandboxAllowRule) = .empty,
+    current_sandbox_allow: SandboxAllowRule = .{},
+    have_current_sandbox_allow: bool = false,
+    section: Section = .none,
+    pointer_records: input_device.Parser = .{},
+    target_flags: [anim.Target.count]anim_cfg.TargetFlags = @splat(.{}),
 
-    var seen_keybinds = false;
-    var seen_frame_radius = false;
-    var autostart_list: std.ArrayListUnmanaged([]const u8) = .empty;
-    var bind_list: std.ArrayListUnmanaged(Keybind) = .empty;
-    var workspace_binds: std.ArrayListUnmanaged(Keybind) = .empty;
-    var outputs_list: std.ArrayListUnmanaged(OutputConfig) = .empty;
-    var current_output: OutputConfig = .{};
-    var have_current_output = false;
-    var rule_list: std.ArrayListUnmanaged(WindowRule) = .empty;
-    var current_rule: WindowRule = .{};
-    var have_current_rule = false;
-    var notif_rule_list: std.ArrayListUnmanaged(NotificationRule) = .empty;
-    var current_notif_rule: NotificationRule = .{};
-    var have_current_notif_rule = false;
-    var sandbox_allow_list: std.ArrayListUnmanaged(SandboxAllowRule) = .empty;
-    var current_sandbox_allow: SandboxAllowRule = .{};
-    var have_current_sandbox_allow = false;
-    var section: Section = .none;
-    var target_flags: [anim.Target.count]anim_cfg.TargetFlags = [_]anim_cfg.TargetFlags{.{}} ** anim.Target.count;
-    var line_no: usize = 0;
-
-    var lines = std.mem.splitScalar(u8, bytes, '\n');
-    while (lines.next()) |raw_line| {
-        line_no += 1;
-        const line = theme_mod.stripComment(std.mem.trim(u8, raw_line, " \t\r"));
-        if (line.len == 0) continue;
-
-        if (line[0] == '[') {
-            try flushArrayTables(&cfg, path, line_no, section, &outputs_list, &current_output, &have_current_output, &rule_list, &current_rule, &have_current_rule, &notif_rule_list, &current_notif_rule, &have_current_notif_rule, &sandbox_allow_list, &current_sandbox_allow, &have_current_sandbox_allow);
-            section = parseSection(line) catch |err| {
-                if (err == error.UnknownAnimationTarget) {
-                    const close = std.mem.indexOfScalar(u8, line, ']') orelse line.len;
-                    const name = if (line.len > 1 and close > 1) line[1..close] else line;
-                    const target = if (std.mem.startsWith(u8, name, "animations.")) name["animations.".len..] else name;
-                    fail(path, line_no, "unknown animation target '{s}'", .{target});
-                } else {
-                    fail(path, line_no, "invalid section header", .{});
-                }
-                return error.InvalidConfig;
-            };
-            if (section == .keybinds) seen_keybinds = true;
-            // Its presence alone chooses a taskbar theme, even with no keys.
-            if (section == .taskbar_theme and cfg.taskbar_theme == null) cfg.taskbar_theme = .{};
-            continue;
-        }
-
-        const eq = std.mem.indexOfScalar(u8, line, '=') orelse {
-            fail(path, line_no, "expected key = value", .{});
-            return error.InvalidConfig;
-        };
-        const key = unquoteKey(std.mem.trim(u8, line[0..eq], " \t"));
-        const value = std.mem.trim(u8, line[eq + 1 ..], " \t");
-
-        switch (section) {
+    fn apply(state: *ParseState, cfg: *Config, path: []const u8, line_no: usize, key: []const u8, value: []const u8) !void {
+        switch (state.section) {
             .none => {},
             .theme => {
                 if (std.mem.eql(u8, key, "base")) {
                     const id = try theme_mod.unquote(value);
                     if (id.len > 0 and !@import("theme_pack.zig").validId(id)) return error.InvalidConfig;
                     cfg.theme_base = try cfg.arena.allocator().dupe(u8, id);
-                    continue;
+                    return;
                 }
                 theme_mod.applyKey(cfg.arena.allocator(), &cfg.theme, key, value) catch |err| {
                     fail(path, line_no, "invalid theme field '{s}': {s}", .{ key, @errorName(err) });
                     return error.InvalidConfig;
                 };
-                if (std.mem.eql(u8, key, "radius_lg")) seen_frame_radius = true;
+                if (std.mem.eql(u8, key, "radius_lg")) state.seen_frame_radius = true;
             },
             .taskbar_theme => {
                 // Other theme keys are ignored, so a whole theme file's body can be pasted in.
@@ -126,6 +92,10 @@ pub fn parse(allocator: Allocator, bytes: []const u8, path: []const u8) !Config 
                 fail(path, line_no, "invalid input field '{s}': {s}", .{ key, @errorName(err) });
                 return error.InvalidConfig;
             },
+            .input_device => state.pointer_records.apply(cfg.arena.allocator(), key, value) catch |err| {
+                fail(path, line_no, "invalid input_device field '{s}': {s}", .{ key, @errorName(err) });
+                return error.InvalidConfig;
+            },
             .compositor => applyCompositorKey(&cfg.compositor, cfg.arena.allocator(), key, value) catch |err| {
                 fail(path, line_no, "invalid compositor field '{s}': {s}", .{ key, @errorName(err) });
                 return error.InvalidConfig;
@@ -140,14 +110,14 @@ pub fn parse(allocator: Allocator, bytes: []const u8, path: []const u8) !Config 
                         fail(path, line_no, "autostart cmd must be a quoted string", .{});
                         return error.InvalidConfig;
                     };
-                    autostart_list.append(cfg.arena.allocator(), cmd) catch {
+                    state.autostart_list.append(cfg.arena.allocator(), cmd) catch {
                         return error.OutOfMemory;
                     };
                 }
             },
             .outputs => {
-                have_current_output = true;
-                const known = applyField(&current_output, cfg.arena.allocator(), output_rules, key, value) catch {
+                state.have_current_output = true;
+                const known = applyField(&state.current_output, cfg.arena.allocator(), output_rules, key, value) catch {
                     fail(path, line_no, "outputs {s} must be {s}", .{ key, fieldHint(OutputConfig, output_rules, key) });
                     return error.InvalidConfig;
                 };
@@ -157,15 +127,15 @@ pub fn parse(allocator: Allocator, bytes: []const u8, path: []const u8) !Config 
                 }
             },
             .window_rules => {
-                have_current_rule = true;
-                window_rules.applyRuleKey(&current_rule, cfg.arena.allocator(), key, value) catch |err| {
+                state.have_current_rule = true;
+                window_rules.applyRuleKey(&state.current_rule, cfg.arena.allocator(), key, value) catch |err| {
                     fail(path, line_no, "invalid window_rules field '{s}': {s}", .{ key, @errorName(err) });
                     return error.InvalidConfig;
                 };
             },
             .sandbox_allow => {
-                have_current_sandbox_allow = true;
-                sandbox_allow.applyKey(&current_sandbox_allow, cfg.arena.allocator(), key, value, path, line_no) catch |err| {
+                state.have_current_sandbox_allow = true;
+                sandbox_allow.applyKey(&state.current_sandbox_allow, cfg.arena.allocator(), key, value, path, line_no) catch |err| {
                     fail(path, line_no, "invalid sandbox_allow field '{s}': {s}", .{ key, @errorName(err) });
                     return error.InvalidConfig;
                 };
@@ -178,6 +148,9 @@ pub fn parse(allocator: Allocator, bytes: []const u8, path: []const u8) !Config 
                 fail(path, line_no, "invalid idle field '{s}': {s}", .{ key, @errorName(err) });
                 return error.InvalidConfig;
             },
+            .power => @import("power.zig").apply(&cfg.power, key, value) catch return error.InvalidConfig,
+            .power_battery => @import("power.zig").applyProfile(&cfg.power.on_battery, key, value) catch return error.InvalidConfig,
+            .power_plugged => @import("power.zig").applyProfile(&cfg.power.plugged_in, key, value) catch return error.InvalidConfig,
             .desktop => applyDesktopKey(&cfg.desktop, cfg.arena.allocator(), key, value) catch |err| {
                 fail(path, line_no, "invalid desktop field '{s}': {s}", .{ key, @errorName(err) });
                 return error.InvalidConfig;
@@ -203,7 +176,7 @@ pub fn parse(allocator: Allocator, bytes: []const u8, path: []const u8) !Config 
                     fail(path, line_no, "invalid action '{s}'", .{action_str});
                     return error.InvalidConfig;
                 };
-                const list = if (section == .workspace_keybinds) &workspace_binds else &bind_list;
+                const list = if (state.section == .workspace_keybinds) &state.workspace_binds else &state.bind_list;
                 list.append(cfg.arena.allocator(), .{
                     .modifiers = spec.modifiers,
                     .sym = spec.sym,
@@ -215,18 +188,26 @@ pub fn parse(allocator: Allocator, bytes: []const u8, path: []const u8) !Config 
                 return error.InvalidConfig;
             },
             .notification_rules => {
-                have_current_notif_rule = true;
-                applyNotificationRuleKey(&current_notif_rule, cfg.arena.allocator(), key, value) catch |err| {
+                state.have_current_notif_rule = true;
+                applyNotificationRuleKey(&state.current_notif_rule, cfg.arena.allocator(), key, value) catch |err| {
                     fail(path, line_no, "invalid notification_rules field '{s}': {s}", .{ key, @errorName(err) });
                     return error.InvalidConfig;
                 };
+            },
+            .effect_binding => |kind| cfg.effects.binding(cfg.arena.allocator(), kind, key, value) catch |err| {
+                fail(path, line_no, "invalid effect binding field '{s}': {s}", .{ key, @errorName(err) });
+                return error.InvalidConfig;
+            },
+            .effect_preset => cfg.effects.apply(key, value) catch |err| {
+                fail(path, line_no, "invalid effect preset field '{s}': {s}", .{ key, @errorName(err) });
+                return error.InvalidConfig;
             },
             .animations => anim_cfg.applyGlobalKey(&cfg.animations, key, value) catch |err| {
                 fail(path, line_no, "invalid animations field '{s}': {s}", .{ key, @errorName(err) });
                 return error.InvalidConfig;
             },
             .animation_target => |target| {
-                anim_cfg.applyTargetKey(&cfg.animations, target, &target_flags[@intFromEnum(target)], key, value) catch |err| {
+                anim_cfg.applyTargetKey(&cfg.animations, target, &state.target_flags[@backingInt(target)], key, value) catch |err| {
                     fail(path, line_no, "invalid animations.{s} field '{s}': {s}", .{ @tagName(target), key, @errorName(err) });
                     return error.InvalidConfig;
                 };
@@ -234,81 +215,144 @@ pub fn parse(allocator: Allocator, bytes: []const u8, path: []const u8) !Config 
         }
     }
 
-    // Legacy frame geometry is a fallback; theme numbers take precedence,
-    // including a REDIWM_THEME overlay applied after this parse.
-    if (!seen_frame_radius) cfg.theme.radius_lg = @floatFromInt(cfg.compositor.border_radius);
+    fn finish(state: *ParseState, cfg: *Config, allocator: Allocator, path: []const u8, line_no: usize) !void {
+        // Legacy frame geometry is a fallback; theme numbers take precedence,
+        // including a REDIWM_THEME overlay applied after this parse.
+        if (!state.seen_frame_radius) cfg.theme.radius_lg = @floatFromInt(cfg.compositor.border_radius);
+        if (state.section == .input_device) try flushInputDevices(&state.pointer_records, cfg, path, line_no);
+        cfg.input_devices = state.pointer_records.records.items;
 
-    try flushArrayTables(&cfg, path, line_no, section, &outputs_list, &current_output, &have_current_output, &rule_list, &current_rule, &have_current_rule, &notif_rule_list, &current_notif_rule, &have_current_notif_rule, &sandbox_allow_list, &current_sandbox_allow, &have_current_sandbox_allow);
+        try flushArrayTables(cfg, path, line_no, state.section, &state.outputs_list, &state.current_output, &state.have_current_output, &state.rule_list, &state.current_rule, &state.have_current_rule, &state.notif_rule_list, &state.current_notif_rule, &state.have_current_notif_rule, &state.sandbox_allow_list, &state.current_sandbox_allow, &state.have_current_sandbox_allow);
 
-    if (cfg.idle.blank_after_seconds > 0 and cfg.idle.suspend_after_seconds > 0 and cfg.idle.suspend_after_seconds <= cfg.idle.blank_after_seconds) {
-        fail(path, line_no, "suspend_after_seconds must be greater than blank_after_seconds", .{});
-        return error.InvalidConfig;
-    }
-
-    if (cfg.night_light.start == cfg.night_light.end) {
-        fail(path, line_no, "night_light start cannot equal end", .{});
-        return error.InvalidConfig;
-    }
-
-    const nl_night_span = @mod(@as(i32, cfg.night_light.end) - @as(i32, cfg.night_light.start) + 1440, 1440);
-    const nl_day_span = 1440 - nl_night_span;
-    if (cfg.night_light.transition_minutes >= nl_night_span or cfg.night_light.transition_minutes >= nl_day_span) {
-        fail(path, line_no, "night_light transition_minutes must be shorter than both night and day spans", .{});
-        return error.InvalidConfig;
-    }
-
-    if (cfg.night_light.schedule == .sun) {
-        if (cfg.night_light.latitude == null or cfg.night_light.longitude == null) {
-            fail(path, line_no, "night_light schedule 'sun' requires both latitude and longitude", .{});
+        if (cfg.idle.blank_after_seconds > 0 and cfg.idle.suspend_after_seconds > 0 and cfg.idle.suspend_after_seconds <= cfg.idle.blank_after_seconds) {
+            fail(path, line_no, "suspend_after_seconds must be greater than blank_after_seconds", .{});
             return error.InvalidConfig;
         }
-    }
 
-    if (seen_keybinds) {
-        // Keep laptop controls, System Monitor, nested-session switching and
-        // the way out of an inhibiting client available in existing configs too.
-        // Explicit bindings (including noop) always take precedence.
-        const defaults = try parseKeybindsOnly(cfg.arena.allocator(), default_file.source);
-        for (defaults) |bind| {
-            const nested_switcher = bind.modifiers.ctrl and (bind.action == .focus_next or bind.action == .focus_prev);
-            if (!keybinds.isHardwareAction(bind.action) and !nested_switcher and bind.action != .restore_shortcuts and bind.action != .open_system_monitor) continue;
-            const key = keybinds.pack(bind.modifiers, bind.sym);
-            var overridden = false;
-            for (bind_list.items) |custom| {
-                if (keybinds.pack(custom.modifiers, custom.sym) == key) {
-                    overridden = true;
-                    break;
-                }
+        if (cfg.night_light.start == cfg.night_light.end) {
+            fail(path, line_no, "night_light start cannot equal end", .{});
+            return error.InvalidConfig;
+        }
+
+        const nl_night_span = @mod(@as(i32, cfg.night_light.end) - @as(i32, cfg.night_light.start) + 1440, 1440);
+        const nl_day_span = 1440 - nl_night_span;
+        if (cfg.night_light.transition_minutes >= nl_night_span or cfg.night_light.transition_minutes >= nl_day_span) {
+            fail(path, line_no, "night_light transition_minutes must be shorter than both night and day spans", .{});
+            return error.InvalidConfig;
+        }
+
+        if (cfg.night_light.schedule == .sun) {
+            if (cfg.night_light.latitude == null or cfg.night_light.longitude == null) {
+                fail(path, line_no, "night_light schedule 'sun' requires both latitude and longitude", .{});
+                return error.InvalidConfig;
             }
-            if (!overridden) try bind_list.append(cfg.arena.allocator(), bind);
         }
-        cfg.keybinds = bind_list.items;
-    } else {
-        try applyDefaultKeybinds(&cfg);
+
+        if (state.seen_keybinds) {
+            // Keep laptop controls, System Monitor, nested-session switching, the
+            // overview, input source shortcut and the way out of an inhibiting client
+            // available in existing configs too.
+            // Explicit bindings (including noop) always take precedence.
+            const defaults = try parseKeybindsOnly(cfg.arena.allocator(), default_file.source);
+            for (defaults) |bind| {
+                const nested_switcher = bind.modifiers.ctrl and (bind.action == .focus_next or bind.action == .focus_prev);
+                if (!keybinds.isHardwareAction(bind.action) and !nested_switcher and bind.action != .restore_shortcuts and bind.action != .open_system_monitor and bind.action != .input_source_next and bind.action != .toggle_overview) continue;
+                const key = keybinds.pack(bind.modifiers, bind.sym);
+                var overridden = false;
+                for (state.bind_list.items) |custom| {
+                    if (keybinds.pack(custom.modifiers, custom.sym) == key) {
+                        overridden = true;
+                        break;
+                    }
+                }
+                if (!overridden) try state.bind_list.append(cfg.arena.allocator(), bind);
+            }
+            cfg.keybinds = state.bind_list.items;
+        } else {
+            try applyDefaultKeybinds(cfg);
+        }
+        try applyWorkspaceKeybinds(cfg, state.workspace_binds);
+        cfg.autostart = state.autostart_list.items;
+        cfg.outputs = state.outputs_list.items;
+        var have_primary = false;
+        for (cfg.outputs) |output| {
+            if (!output.primary) continue;
+            if (have_primary) {
+                fail(path, line_no, "outputs may contain only one primary monitor", .{});
+                return error.InvalidConfig;
+            }
+            have_primary = true;
+        }
+        cfg.window_rules = state.rule_list.items;
+        cfg.notification_rules = state.notif_rule_list.items;
+        cfg.sandbox_allow = state.sandbox_allow_list.items;
+        try cfg.effects.validate();
+        try rebuildLookup(cfg);
+        finishCompositor(cfg);
+        // An explicit [animations.camera_desktop] table wins over the settings value.
+        if (std.meta.eql(state.target_flags[@backingInt(anim.Target.camera_desktop)], anim_cfg.TargetFlags{})) {
+            cfg.animations.targets[@backingInt(anim.Target.camera_desktop)].curve = anim.desktopSwitchCurve(cfg.compositor.desktop_switch_ms);
+        }
+        cfg.keyboard_keymap = @import("keymap.zig").compile(allocator, cfg.input) catch return error.InvalidConfig;
     }
-    try applyWorkspaceKeybinds(&cfg, workspace_binds);
-    cfg.autostart = autostart_list.items;
-    cfg.outputs = outputs_list.items;
-    var have_primary = false;
-    for (cfg.outputs) |output| {
-        if (!output.primary) continue;
-        if (have_primary) {
-            fail(path, line_no, "outputs may contain only one primary monitor", .{});
+};
+
+pub fn parse(allocator: Allocator, bytes: []const u8, path: []const u8) !Config {
+    var cfg = try initEmpty(allocator);
+    errdefer cfg.deinit();
+    cfg.path = try cfg.arena.allocator().dupe(u8, path);
+
+    var state: ParseState = .{};
+    var line_no: usize = 0;
+
+    var lines = std.mem.splitScalar(u8, bytes, '\n');
+    while (lines.next()) |raw_line| {
+        line_no += 1;
+        const line = theme_mod.stripComment(std.mem.trim(u8, raw_line, " \t\r"));
+        if (line.len == 0) continue;
+
+        if (line[0] == '[') {
+            if (state.section == .input_device) try flushInputDevices(&state.pointer_records, &cfg, path, line_no);
+            try flushArrayTables(&cfg, path, line_no, state.section, &state.outputs_list, &state.current_output, &state.have_current_output, &state.rule_list, &state.current_rule, &state.have_current_rule, &state.notif_rule_list, &state.current_notif_rule, &state.have_current_notif_rule, &state.sandbox_allow_list, &state.current_sandbox_allow, &state.have_current_sandbox_allow);
+            state.section = parseSection(line) catch |err| {
+                if (err == error.UnknownAnimationTarget) {
+                    const close = std.mem.indexOfScalar(u8, line, ']') orelse line.len;
+                    const name = if (line.len > 1 and close > 1) line[1..close] else line;
+                    const target = if (std.mem.startsWith(u8, name, "animations.")) name["animations.".len..] else name;
+                    fail(path, line_no, "unknown animation target '{s}'", .{target});
+                } else {
+                    fail(path, line_no, "invalid section header", .{});
+                }
+                return error.InvalidConfig;
+            };
+            switch (state.section) {
+                .effect_preset => |name| try cfg.effects.declare(cfg.arena.allocator(), name),
+                else => {},
+            }
+            if (state.section == .keybinds) state.seen_keybinds = true;
+            // Its presence alone chooses a taskbar theme, even with no keys.
+            if (state.section == .taskbar_theme and cfg.taskbar_theme == null) cfg.taskbar_theme = .{};
+            continue;
+        }
+
+        const eq = std.mem.indexOfScalar(u8, line, '=') orelse {
+            fail(path, line_no, "expected key = value", .{});
             return error.InvalidConfig;
-        }
-        have_primary = true;
+        };
+        const key = unquoteKey(std.mem.trim(u8, line[0..eq], " \t"));
+        const value = std.mem.trim(u8, line[eq + 1 ..], " \t");
+
+        try state.apply(&cfg, path, line_no, key, value);
     }
-    cfg.window_rules = rule_list.items;
-    cfg.notification_rules = notif_rule_list.items;
-    cfg.sandbox_allow = sandbox_allow_list.items;
-    try rebuildLookup(&cfg);
-    finishCompositor(&cfg);
-    // An explicit [animations.camera_desktop] table wins over the settings value.
-    if (std.meta.eql(target_flags[@intFromEnum(anim.Target.camera_desktop)], anim_cfg.TargetFlags{})) {
-        cfg.animations.targets[@intFromEnum(anim.Target.camera_desktop)].curve = anim.desktopSwitchCurve(cfg.compositor.desktop_switch_ms);
-    }
-    cfg.keyboard_keymap = @import("keymap.zig").compile(allocator, cfg.input) catch return error.InvalidConfig;
+    try state.finish(&cfg, allocator, path, line_no);
     return cfg;
+}
+
+fn flushInputDevices(parser: *input_device.Parser, cfg: *Config, path: []const u8, line_no: usize) !void {
+    parser.flush(cfg.arena.allocator()) catch |err| {
+        fail(path, line_no, "invalid input_device record: {s}", .{@errorName(err)});
+        return error.InvalidConfig;
+    };
 }
 
 pub const Section = union(enum) {
@@ -316,6 +360,7 @@ pub const Section = union(enum) {
     theme,
     taskbar_theme,
     input,
+    input_device,
     input_method,
     compositor,
     region,
@@ -325,6 +370,9 @@ pub const Section = union(enum) {
     workspace_keybinds,
     polkit,
     idle,
+    power,
+    power_battery,
+    power_plugged,
     window_rules,
     sandbox_allow,
     night_light,
@@ -334,6 +382,8 @@ pub const Section = union(enum) {
     ipc,
     animations,
     animation_target: anim.Target,
+    effect_binding: @import("effects.zig").Target,
+    effect_preset: []const u8,
 };
 
 pub fn flushArrayTables(
@@ -388,18 +438,26 @@ pub fn flushArrayTables(
 
 pub fn parseSection(line: []const u8) !Section {
     if (std.mem.startsWith(u8, line, "[[")) {
-        inline for (.{ .autostart, .outputs, .window_rules, .notification_rules, .sandbox_allow }) |tag| {
+        inline for (.{ .autostart, .outputs, .window_rules, .notification_rules, .sandbox_allow, .input_device }) |tag| {
             if (std.mem.eql(u8, line, "[[" ++ @tagName(tag) ++ "]]")) return tag;
         }
         return error.InvalidConfig;
     }
     const close = std.mem.indexOfScalar(u8, line, ']') orelse return error.InvalidConfig;
     const name = line[1..close];
+    if (std.mem.eql(u8, name, "input_device")) return error.InvalidConfig;
     if (std.mem.eql(u8, name, "keybinds.workspace")) return .workspace_keybinds;
+    if (std.mem.eql(u8, name, "power.on_battery")) return .power_battery;
+    if (std.mem.eql(u8, name, "power.plugged_in")) return .power_plugged;
     // Array tables and internal tags are deliberately not accepted here.
-    inline for (.{ .theme, .taskbar_theme, .input, .input_method, .compositor, .region, .keybinds, .polkit, .idle, .night_light, .notifications, .desktop, .ipc, .animations }) |tag| {
+    inline for (.{ .theme, .taskbar_theme, .input, .input_method, .compositor, .region, .keybinds, .polkit, .idle, .power, .night_light, .notifications, .desktop, .ipc, .animations }) |tag| {
         if (std.mem.eql(u8, name, @tagName(tag))) return tag;
     }
+    if (std.mem.eql(u8, name, "effects.window_move")) return .{ .effect_binding = .window_move };
+    if (std.mem.eql(u8, name, "effects.window_minimize")) return .{ .effect_binding = .window_minimize };
+    if (std.mem.eql(u8, name, "effects.window_resize")) return .{ .effect_binding = .window_resize };
+    if (std.mem.startsWith(u8, name, "effects.presets.")) return .{ .effect_preset = name["effects.presets.".len..] };
+    if (std.mem.eql(u8, name, "effects") or std.mem.startsWith(u8, name, "effects.")) return error.InvalidConfig;
     if (std.mem.startsWith(u8, name, "animations.")) {
         const rest = name["animations.".len..];
         return .{ .animation_target = anim.Target.parse(rest) orelse return error.UnknownAnimationTarget };

@@ -1,6 +1,7 @@
 //! Immutable file/chooser jobs. The UI only consumes results after the eventfd wakes it.
 const std = @import("std");
 const c = @import("../files/c.zig").api;
+const platform = @import("platform");
 const document = @import("document.zig");
 const Document = document.Document;
 const a = std.heap.c_allocator;
@@ -12,31 +13,6 @@ const memory_check_floor: usize = 64 * 1024 * 1024;
 /// A binary or non-UTF-8 file is refused after this many bytes, before the rest is read.
 const sniff_len: usize = 64 * 1024;
 const bom_bytes = "\xef\xbb\xbf";
-extern fn flistxattr(c_int, ?[*]u8, usize) isize;
-extern fn fgetxattr(c_int, [*:0]const u8, ?[*]u8, usize) isize;
-extern fn fsetxattr(c_int, [*:0]const u8, [*]const u8, usize, c_int) c_int;
-fn copyAttributes(source: c_int, destination: c_int) !void {
-    const len = flistxattr(source, null, 0);
-    if (len < 0) {
-        if (std.posix.errno(@as(c_int, -1)) == .OPNOTSUPP) return;
-        return error.MetadataFailed;
-    }
-    if (len == 0) return;
-    if (len > 1024 * 1024) return error.MetadataFailed;
-    const names = try a.alloc(u8, @intCast(len));
-    defer a.free(names);
-    if (flistxattr(source, names.ptr, names.len) != len) return error.FileChanged;
-    var offset: usize = 0;
-    while (offset < names.len) {
-        const name = std.mem.sliceTo(@as([*:0]const u8, @ptrCast(names.ptr + offset)), 0);
-        const size = fgetxattr(source, name, null, 0);
-        if (size < 0 or size > 1024 * 1024) return error.MetadataFailed;
-        const value = try a.alloc(u8, @intCast(size));
-        defer a.free(value);
-        if (fgetxattr(source, name, value.ptr, value.len) != size or fsetxattr(destination, name, value.ptr, value.len, 0) != 0) return error.MetadataFailed;
-        offset += name.len + 1;
-    }
-}
 pub const Stamp = struct {
     dev: u64,
     ino: u64,
@@ -125,17 +101,6 @@ fn ensureMemory(size: usize) !void {
     const available = availableMemory() orelse return;
     if (size + size / 8 > available) return error.OutOfMemory;
 }
-pub fn executable(buf: []u8, name: []const u8) []const u8 {
-    var path: [4096]u8 = undefined;
-    const n = c.readlink("/proc/self/exe", &path, path.len);
-    if (n > 0 and n < path.len) {
-        if (std.fs.path.dirname(path[0..@intCast(n)])) |dir| {
-            const sibling = std.fmt.bufPrintZ(buf, "{s}/{s}", .{ dir, name }) catch return name;
-            if (c.access(sibling, c.X_OK) == 0) return sibling;
-        }
-    }
-    return name;
-}
 pub const Operation = struct {
     pub const Kind = enum { load, save, open_dialog, save_dialog };
     kind: Kind,
@@ -169,7 +134,7 @@ pub const Operation = struct {
         errdefer if (owns) a.free(data);
         const self = try a.create(Operation);
         errdefer a.destroy(self);
-        const owned = try a.dupeZ(u8, path);
+        const owned = try a.dupeSentinel(u8, path, 0);
         errdefer a.free(owned);
         const fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
         if (fd < 0) return error.EventFailed;
@@ -197,7 +162,7 @@ pub const Operation = struct {
     fn canonical(self: *Operation) !void {
         const path = c.realpath(self.path, null) orelse return error.OpenFailed;
         defer c.free(path);
-        const owned = try a.dupeZ(u8, std.mem.span(path));
+        const owned = try a.dupeSentinel(u8, std.mem.span(path), 0);
         a.free(self.path);
         self.path = owned;
     }
@@ -261,7 +226,7 @@ pub const Operation = struct {
             defer _ = c.close(source);
             var source_stat: c.struct_stat = undefined;
             if (c.fstat(source, &source_stat) != 0 or !before.?.eql(Stamp.of(source_stat))) return error.FileChanged;
-            try copyAttributes(source, fd);
+            try platform.fs.copyAttributes(a, source, fd);
         }
         if (self.bom) try writeAll(fd, bom_bytes);
         try writeAll(fd, self.bytes);
@@ -270,10 +235,10 @@ pub const Operation = struct {
             var current: c.struct_stat = undefined;
             if (c.stat(self.path, &current) != 0 or !stamp.eql(Stamp.of(current))) return error.FileChanged;
             if (c.rename(temp, self.path) != 0) return error.WriteFailed;
-        } else if (c.renameat2(c.AT_FDCWD, temp, c.AT_FDCWD, self.path, c.RENAME_NOREPLACE) != 0) return error.FileChanged;
+        } else platform.fs.renameNoReplace(temp, self.path) catch return error.FileChanged;
         if (c.stat(self.path, &st) != 0) return error.WriteFailed;
         self.stamp = Stamp.of(st);
-        const parent_z = try a.dupeZ(u8, parent);
+        const parent_z = try a.dupeSentinel(u8, parent, 0);
         defer a.free(parent_z);
         const dir = c.open(parent_z, c.O_RDONLY | c.O_DIRECTORY | c.O_CLOEXEC);
         if (dir >= 0) {
@@ -298,9 +263,9 @@ pub const Operation = struct {
         defer _ = c.close(output);
         try writeAll(input, json);
         if (c.lseek(input, 0, c.SEEK_SET) < 0) return error.ReadFailed;
-        var exe: [4096]u8 = undefined;
+        var exe: [platform.exe.max_path]u8 = undefined;
         var child = try std.process.spawn(self.io, .{
-            .argv = &.{ executable(&exe, "rediwm-files"), "--chooser-stdin" },
+            .argv = &.{ platform.exe.siblingOrName(&exe, "rediwm-files"), "--chooser-stdin" },
             .stdin = .{ .file = .{ .handle = input, .flags = .{ .nonblocking = false } } },
             .stdout = .{ .file = .{ .handle = output, .flags = .{ .nonblocking = false } } },
         });
@@ -317,7 +282,7 @@ pub const Operation = struct {
         }
         const chosen = parsed.value.paths[0];
         if (!std.fs.path.isAbsolute(chosen) or std.mem.indexOfScalar(u8, chosen, 0) != null) return error.InvalidPath;
-        const owned = try a.dupeZ(u8, chosen);
+        const owned = try a.dupeSentinel(u8, chosen, 0);
         a.free(self.path);
         self.path = owned;
         // Capture the destination the user just approved, before returning to the UI.
@@ -331,7 +296,7 @@ pub const Operation = struct {
 
 test "atomic saves preserve permissions, reject stale files and follow symlink targets" {
     var template: [64:0]u8 = @splat(0);
-    _ = try std.fmt.bufPrintZ(&template, "/tmp/rediwm-editor-XXXXXX", .{});
+    _ = try std.fmt.bufPrintSentinel(&template, "/tmp/rediwm-editor-XXXXXX", .{}, 0);
     const dir = c.mkdtemp(&template) orelse return error.CreateFailed;
     defer _ = c.rmdir(dir);
     const path = try std.fmt.allocPrintSentinel(a, "{s}/note.txt", .{std.mem.span(dir)}, 0);
@@ -340,7 +305,7 @@ test "atomic saves preserve permissions, reject stale files and follow symlink t
     const link = try std.fmt.allocPrintSentinel(a, "{s}/link.txt", .{std.mem.span(dir)}, 0);
     defer a.free(link);
     defer _ = c.unlink(link);
-    var job: Operation = .{ .kind = .save, .tab_id = 1, .path = try a.dupeZ(u8, path), .bytes = try a.dupe(u8, "original"), .expected = null, .io = undefined, .fd = -1 };
+    var job: Operation = .{ .kind = .save, .tab_id = 1, .path = try a.dupeSentinel(u8, path, 0), .bytes = try a.dupe(u8, "original"), .expected = null, .io = undefined, .fd = -1 };
     defer a.free(job.path);
     defer a.free(job.bytes);
     try job.work();
@@ -358,7 +323,7 @@ test "atomic saves preserve permissions, reject stale files and follow symlink t
     try std.testing.expect(c.symlink(path, link) == 0);
     job.expected = Stamp.of(st);
     a.free(job.path);
-    job.path = try a.dupeZ(u8, link);
+    job.path = try a.dupeSentinel(u8, link, 0);
     try job.work();
     try std.testing.expect(c.lstat(link, &st) == 0 and st.st_mode & c.S_IFMT == c.S_IFLNK);
     const fd = c.open(path, c.O_RDONLY);
@@ -374,7 +339,7 @@ test "atomic saves preserve permissions, reject stale files and follow symlink t
 
 test "loading reads one buffer, keeps the BOM aside and refuses binary data early" {
     var template: [64:0]u8 = @splat(0);
-    _ = try std.fmt.bufPrintZ(&template, "/tmp/rediwm-editor-XXXXXX", .{});
+    _ = try std.fmt.bufPrintSentinel(&template, "/tmp/rediwm-editor-XXXXXX", .{}, 0);
     const dir = c.mkdtemp(&template) orelse return error.CreateFailed;
     defer _ = c.rmdir(dir);
     const path = try std.fmt.allocPrintSentinel(a, "{s}/big.txt", .{std.mem.span(dir)}, 0);
@@ -388,7 +353,7 @@ test "loading reads one buffer, keeps the BOM aside and refuses binary data earl
     try std.testing.expect(fd >= 0);
     try writeAll(fd, body.items);
     _ = c.close(fd);
-    var job: Operation = .{ .kind = .load, .tab_id = 1, .path = try a.dupeZ(u8, path), .bytes = "", .owns_bytes = false, .expected = null, .io = undefined, .fd = -1 };
+    var job: Operation = .{ .kind = .load, .tab_id = 1, .path = try a.dupeSentinel(u8, path, 0), .bytes = "", .owns_bytes = false, .expected = null, .io = undefined, .fd = -1 };
     defer a.free(job.path);
     defer if (job.document) |*d| d.deinit();
     try job.work();

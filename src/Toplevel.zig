@@ -20,6 +20,7 @@ const gpa = @import("main.zig").gpa;
 const window_rules = @import("config").window_rules;
 const anim = @import("ui").anim;
 const toplevel_create = @import("toplevel/create.zig");
+const Child = @import("session/child.zig");
 const toplevel_info = @import("toplevel/info.zig");
 const toplevel_focus_close = @import("toplevel/focus_close.zig");
 const toplevel_configure = @import("toplevel/configure.zig");
@@ -54,23 +55,16 @@ pub const Placeholder = struct {
     delay_timer: ?*wl.EventSource = null,
 
     timeout_timer: ?*wl.EventSource = null,
-    child_source: ?*wl.EventSource = null,
-    child_pidfd: i32 = -1,
+    /// Watches the launched process; the services manager owns its status.
+    child: ?*Child = null,
     launch_time_ms: i64,
     matched: bool = false,
     cancelled: bool = false,
 
     pub fn setPid(self: *Placeholder, toplevel: *Toplevel, pid: i32) void {
         self.pid = pid;
-        if (pid <= 0 or self.child_source != null) return;
-        const rc = std.os.linux.pidfd_open(pid, 0);
-        if (std.os.linux.errno(rc) != .SUCCESS) return;
-        self.child_pidfd = @intCast(rc);
-        self.child_source = toplevel.server.wl_server.getEventLoop().addFd(*Toplevel, self.child_pidfd, .{ .readable = true }, handleChildExit, toplevel) catch {
-            _ = std.os.linux.close(self.child_pidfd);
-            self.child_pidfd = -1;
-            return;
-        };
+        if (pid <= 0 or self.child != null) return;
+        self.child = Child.observe(gpa, toplevel.server.wl_server.getEventLoop(), pid, toplevel, handleChildExit) catch null;
     }
 
     pub fn deinit(self: *Placeholder) void {
@@ -82,8 +76,7 @@ pub const Placeholder = struct {
             t.remove();
             self.timeout_timer = null;
         }
-        if (self.child_source) |source| source.remove();
-        if (self.child_pidfd >= 0) _ = std.os.linux.close(self.child_pidfd);
+        if (self.child) |child| child.cancel();
         gpa.free(self.desktop_id);
         gpa.free(self.name);
         gpa.free(self.app_id);
@@ -158,6 +151,8 @@ sidebar_glass_effect: ?*glass.Effect = null,
 titlebar_buffer: *sn.Buffer,
 // Body under the border ring beside and below the client (left, right, bottom).
 frame_fills: [3]*sn.Rect,
+corner_accents: @import("toplevel/corner_accents.zig").State = .{},
+inner_border: @import("toplevel/inner_border.zig").State = .{},
 // The outline of a window that draws its own decorations.
 border_rects: [4]*sn.Rect,
 content_tree: *sn.Tree,
@@ -298,7 +293,7 @@ rules_resolved: bool = false,
 resolved_before_app_id: bool = false,
 open_rules: window_rules.OpenRules = .{},
 live_rules: window_rules.LiveRules = .{},
-matched_rules: std.StaticBitSet(window_rules.max_rules) = std.StaticBitSet(window_rules.max_rules).initEmpty(),
+matched_rules: std.StaticBitSet(window_rules.max_rules) = std.StaticBitSet(window_rules.max_rules).empty,
 maximize_restore: ?RestoreGeometry = null,
 fullscreen_restore: ?RestoreGeometry = null,
 maximize_target: ?RestoreGeometry = null,
@@ -404,6 +399,9 @@ pub const x11Class = toplevel_configure.x11Class;
 pub const x11Instance = toplevel_configure.x11Instance;
 pub const owner = toplevel_configure.owner;
 pub const cornerRadius = toplevel_configure.cornerRadius;
+pub const shapePolygon = toplevel_configure.shapePolygon;
+pub const shapeKey = toplevel_configure.shapeKey;
+pub const controlInsets = toplevel_configure.controlInsets;
 pub const ownsSurface = toplevel_configure.ownsSurface;
 pub const attachSceneData = toplevel_configure.attachSceneData;
 
@@ -519,6 +517,10 @@ pub const visualChromeSize = toplevel_chrome_sync.visualChromeSize;
 pub const syncShadow = toplevel_chrome_sync.syncShadow;
 pub const syncResizeGrab = toplevel_chrome_sync.syncResizeGrab;
 pub const applyShape = toplevel_chrome_sync.applyShape;
+pub const syncCornerAccents = @import("toplevel/corner_accents.zig").syncCornerAccents;
+pub const syncInnerBorder = @import("toplevel/inner_border.zig").syncInnerBorder;
+pub const tickCornerAccents = @import("toplevel/corner_accents.zig").tickCornerAccents;
+pub const wakeCornerAccents = @import("toplevel/corner_accents.zig").wakeCornerAccents;
 pub const syncBorders = toplevel_chrome_sync.syncBorders;
 
 /// How far an easing frame stretches its titlebar raster before rastering anew.

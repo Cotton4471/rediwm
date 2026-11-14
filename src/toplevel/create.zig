@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const Toplevel = @import("../Toplevel.zig");
+const Child = @import("../session/child.zig");
 const glass = @import("../glass.zig");
 const wl = @import("wayland").server.wl;
 const wlr = @import("wlroots");
@@ -207,19 +208,17 @@ pub fn handleLaunchTimeout(toplevel: *Toplevel) c_int {
     return 0;
 }
 
-// Observe the same pidfd exit without reaping: services owns the child status.
-pub fn handleChildExit(_: c_int, _: wl.EventMask, toplevel: *Toplevel) c_int {
-    if (toplevel.backend != .placeholder) return 0;
+// The launched process exited. The watch only observes: services owns the
+// child status, and the watch ends itself once this returns.
+pub fn handleChildExit(owner: ?*anyopaque, _: *Child, _: ?u32) void {
+    const toplevel: *Toplevel = @ptrCast(@alignCast(owner.?));
+    if (toplevel.backend != .placeholder) return;
     const ph = &toplevel.backend.placeholder;
-    if (ph.child_source) |source| source.remove();
-    ph.child_source = null;
-    if (ph.child_pidfd >= 0) _ = std.os.linux.close(ph.child_pidfd);
-    ph.child_pidfd = -1;
+    ph.child = null;
     if (!ph.matched and !ph.cancelled) {
         if (toplevel.server.ipc) |ipc| events.onLaunchTimeout(ipc, ph.desktop_id, ph.pid);
         toplevel.destroyNow();
     }
-    return 0;
 }
 
 pub fn createPlaceholder(
@@ -257,17 +256,17 @@ pub fn createPlaceholder(
     const body_color = col.Straight.fromRgba(theme.global.window_bg).premultiply();
     const body_rect = try col.createRect(nodes.content_tree, init_w, init_h, body_color);
 
-    const desktop_id = try gpa.dupeZ(u8, entry.id);
+    const desktop_id = try gpa.dupeSentinel(u8, entry.id, 0);
     errdefer gpa.free(desktop_id);
-    const name = try gpa.dupeZ(u8, entry.name);
+    const name = try gpa.dupeSentinel(u8, entry.name, 0);
     errdefer gpa.free(name);
-    const app_id = try gpa.dupeZ(u8, if (entry.startup_wm_class) |wmc| wmc else entry.id);
+    const app_id = try gpa.dupeSentinel(u8, if (entry.startup_wm_class) |wmc| wmc else entry.id, 0);
     errdefer gpa.free(app_id);
-    const startup_wm_class = if (entry.startup_wm_class) |wmc| try gpa.dupeZ(u8, wmc) else null;
+    const startup_wm_class = if (entry.startup_wm_class) |wmc| try gpa.dupeSentinel(u8, wmc, 0) else null;
     errdefer if (startup_wm_class) |wmc| gpa.free(wmc);
-    const icon = if (entry.icon) |ico| try gpa.dupeZ(u8, ico) else null;
+    const icon = if (entry.icon) |ico| try gpa.dupeSentinel(u8, ico, 0) else null;
     errdefer if (icon) |ico| gpa.free(ico);
-    const token = if (token_str) |tok| try gpa.dupeZ(u8, tok) else null;
+    const token = if (token_str) |tok| try gpa.dupeSentinel(u8, tok, 0) else null;
     errdefer if (token) |tok| gpa.free(tok);
 
     toplevel.* = .{
@@ -321,8 +320,8 @@ pub fn createPlaceholder(
         toplevel.maximized = true;
         if (target_out) |out| {
             const usable = out.usableBox();
-            const footer = chrome.frame_border;
-            const mw = usable.width - 2 * chrome.frame_border;
+            const footer = chrome.frameBorder();
+            const mw = usable.width - 2 * chrome.frameBorder();
             const mh = usable.height - toplevel.titlebarHeight() - footer;
             toplevel.backend.placeholder.client_width = @max(1, mw);
             toplevel.backend.placeholder.client_height = @max(1, mh);
@@ -332,8 +331,8 @@ pub fn createPlaceholder(
             toplevel.placed = true;
         }
     } else if (target_out) |out| {
-        const footer = chrome.frame_border;
-        const natural_w = init_w + 2 * chrome.frame_border;
+        const footer = chrome.frameBorder();
+        const natural_w = init_w + 2 * chrome.frameBorder();
         const natural_h = init_h + toplevel.titlebarHeight() + footer;
         const geom = pickInitialPlacement(server, out, open_rules, null, natural_w, natural_h);
         toplevel.setPosition(geom.x, geom.y);

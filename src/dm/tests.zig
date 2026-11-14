@@ -6,10 +6,7 @@ const proto = @import("proto.zig");
 const dm_ipc = @import("dm_ipc");
 const ws = @import("wayland_sessions");
 
-const c = @cImport({
-    @cInclude("sys/socket.h");
-    @cInclude("unistd.h");
-});
+const c = @import("c");
 
 test {
     _ = proto;
@@ -68,7 +65,7 @@ const Harness = struct {
 
     fn report(self: *Harness, tag: proto.Report, text: []const u8) !void {
         var frame: [256]u8 = undefined;
-        frame[0] = @intFromEnum(tag);
+        frame[0] = @backingInt(tag);
         @memcpy(frame[1..][0..text.len], text);
         try self.relay.handleWorkerMessage(frame[0 .. text.len + 1]);
     }
@@ -229,4 +226,17 @@ test "autologin decision table" {
     try std.testing.expectEqual(state.AutologinDecision.skip_bad_session, state.checkAutologin(io, "/nonexistent/marker", "valid_user", "../bad/session", &.{}, .{}, mockValidator));
     try std.testing.expectEqual(state.AutologinDecision.skip_bad_session, state.checkAutologin(io, "/nonexistent/marker", "valid_user", "nonexistent_session", &.{}, .{}, mockValidator));
     try std.testing.expectEqual(state.AutologinDecision.skip_marker_exists, state.checkAutologin(io, "/", "valid_user", "session", &.{}, .{}, mockValidator));
+}
+
+test "readiness acknowledgement is separate from an active PAM conversation" {
+    var h: Harness = undefined;
+    try h.init();
+    defer h.deinit();
+    try std.testing.expectEqual(state.Action.spawn_login, try h.request(.{ .login = "alice" }));
+    try std.testing.expectEqual(state.Action.greeter_ready, try h.request(.ready));
+    try std.testing.expectEqual(state.Phase.authenticating, h.relay.phase);
+    var response = try h.greeterGot();
+    defer response.deinit();
+    try std.testing.expect(response.response == .ready);
+    try std.testing.expectEqual(state.Action.drop_greeter, try h.request(.ready));
 }
